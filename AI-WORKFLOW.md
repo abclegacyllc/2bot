@@ -1,214 +1,319 @@
-# AI-First Development Workflow
-> Minimal guide for 100% AI-generated codebase
+# 🤖 AI-First Development Workflow
 
-## 🎯 Project Context (AI Reads This First)
+> **100% AI-Generated Codebase - Optimized for AI Pair Programming**
+
+---
+
+## 📖 How to Use This System
+
+### Starting a New Session
+
+**Tell AI:**
+```
+Read CURRENT-STATE.md first, then continue with the next task.
+```
+
+### The AI Will:
+1. Read CURRENT-STATE.md to understand where we are
+2. Read the relevant phase file (e.g., docs/tasks/phase-0-setup.md)
+3. Execute the next task
+4. Validate the task is complete
+5. Update CURRENT-STATE.md
+
+---
+
+## 📁 Documentation Structure
+
+```
+/home/abcdev/projects/2bot/
+├── CURRENT-STATE.md     ← AI READS THIS FIRST (current progress)
+├── MVP.md               ← V1 scope definition (what we're building)
+├── AI-WORKFLOW.md       ← THIS FILE (how we work)
+├── ROADMAP.md           ← Full reference (V1+V2+V3, don't build all of it)
+└── docs/tasks/
+    ├── phase-0-setup.md     ← Project setup (15 tasks)
+    ├── phase-1-auth.md      ← Authentication (20 tasks)
+    ├── phase-2-gateway.md   ← Gateway system (15 tasks)
+    ├── phase-3-plugin.md    ← Plugin system (12 tasks)
+    ├── phase-4-billing.md   ← Billing + Workspace (15 tasks)
+    └── phase-5-launch.md    ← Polish + Launch (10 tasks)
+```
+
+---
+
+## 🎯 Project Context
 
 ```yaml
 Project: 2Bot Platform
-Type: SaaS automation platform
-Stack: Next.js 14 + Node.js + Express + PostgreSQL + Redis + Docker
-Pattern: Modular monolith with isolated user workspaces
+Type: SaaS automation platform for Telegram + AI
+Stack: Next.js 14 + TypeScript + Express + PostgreSQL + Redis + Docker
 ORM: Prisma
 UI: shadcn/ui + Tailwind CSS
 Queue: BullMQ
 Payments: Stripe
-```
-
-**Key Architecture Rule:** Platform layer (shared) + Docker containers (per-user workspace)
-
----
-
-## 📋 Prompt Templates
-
-### Template 1: New Feature
-```
-TASK: [Feature name]
-TYPE: New Feature
-
-DESCRIPTION:
-[What should this feature do?]
-
-LOCATION:
-- Module: src/modules/[module-name]/
-- Related: [any related files]
-
-MUST FOLLOW:
-- Check ROADMAP.md for specifications
-- Use existing patterns from similar modules
-- Add Zod validation for all inputs
-- Add error handling with AppError class
-- Include JSDoc comments
-
-OUTPUT:
-- List all files created/modified
-- Explain key decisions
-```
-
-### Template 2: Bug Fix
-```
-TASK: Fix [bug description]
-TYPE: Bug Fix
-
-SYMPTOMS:
-[What's happening wrong?]
-
-EXPECTED:
-[What should happen?]
-
-LOCATION:
-[File or module if known]
-
-MUST:
-- Find root cause first
-- Minimal change to fix
-- Don't break other things
-- Add test if missing
-```
-
-### Template 3: Add New Module
-```
-TASK: Create [module-name] module
-TYPE: New Module
-
-PURPOSE:
-[What does this module do?]
-
-STRUCTURE REQUIRED:
-src/modules/[module-name]/
-├── [module-name].controller.ts
-├── [module-name].service.ts
-├── [module-name].repository.ts
-├── [module-name].routes.ts
-├── [module-name].validation.ts
-├── [module-name].types.ts
-├── dto/
-│   ├── create-[entity].dto.ts
-│   └── update-[entity].dto.ts
-└── __tests__/
-    └── [module-name].test.ts
-
-MUST INCLUDE:
-- Zod schemas for validation
-- Proper error handling
-- Repository pattern for DB
-- Route registration in app
-```
-
-### Template 4: Database Change
-```
-TASK: [Database change description]
-TYPE: Database Migration
-
-CHANGES:
-- [ ] New table: [name]
-- [ ] New column: [table.column]
-- [ ] Modify: [what]
-
-MUST:
-- Update prisma/schema.prisma
-- Create migration with descriptive name
-- Update related types
-- Update affected repositories
+Pattern: Platform (shared) + Workspace containers (per-user)
 ```
 
 ---
 
-## 📏 Task Sizing Guide
+## ✅ Task Execution Flow
 
-| Size | Example | OK for Single Request? |
-|------|---------|----------------------|
-| **XS** | Fix typo, update config value | ✅ Yes |
-| **S** | Add validation, new endpoint | ✅ Yes |
-| **M** | New service method, new DTO | ✅ Yes |
-| **L** | New module with 3-5 files | ✅ Yes (use template) |
-| **XL** | New feature spanning multiple modules | ⚠️ Split into L tasks |
-| **XXL** | Entire phase from roadmap | ❌ Must split |
-
-**Rule:** If task needs more than ~10 files, split it.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  EVERY AI SESSION FOLLOWS THIS FLOW                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1️⃣  READ CONTEXT                                               │
+│     └─ Read CURRENT-STATE.md                                    │
+│     └─ Read the current phase file                              │
+│     └─ Read any related source files                            │
+│                                                                 │
+│  2️⃣  UNDERSTAND TASK                                            │
+│     └─ What are the deliverables?                               │
+│     └─ What are the done criteria?                              │
+│     └─ What files need to be created/modified?                  │
+│                                                                 │
+│  3️⃣  IMPLEMENT                                                  │
+│     └─ Create/edit files                                        │
+│     └─ Follow existing patterns                                 │
+│     └─ Add proper error handling                                │
+│     └─ Add types + validation                                   │
+│                                                                 │
+│  4️⃣  VALIDATE                                                   │
+│     └─ Run the validation command                               │
+│     └─ Check done criteria                                      │
+│     └─ Fix any issues                                           │
+│                                                                 │
+│  5️⃣  UPDATE STATE                                               │
+│     └─ Mark task complete in CURRENT-STATE.md                   │
+│     └─ Note any decisions made                                  │
+│     └─ Set next task                                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 📁 Where Things Go
+## 📝 Task Template
+
+Each task in the phase files follows this format:
+
+```markdown
+### Task X.Y.Z: [Task Name]
+
+**Session Type:** Backend | Frontend | Database | Config | Testing
+**Estimated Time:** X minutes
+**Prerequisites:** [What must be done first]
+
+#### Context Files:
+- [Files AI should read before starting]
+
+#### Deliverables:
+- [ ] [Specific file or feature to create]
+- [ ] [Another deliverable]
+
+#### Implementation Notes:
+[Code snippets, patterns to follow, etc.]
+
+#### Done Criteria:
+- [ ] [How to verify this task is complete]
+- [ ] [Another verification step]
+
+#### Validation Command:
+```bash
+[Command to run to verify]
+```
+```
+
+---
+
+## 📏 Task Sizing Rules
+
+| Size | Files | Time | Example |
+|------|-------|------|---------|
+| **XS** | 1 | 10 min | Fix typo, update config |
+| **S** | 1-2 | 15 min | Add endpoint, new component |
+| **M** | 2-4 | 25 min | New service, API + validation |
+| **L** | 4-8 | 35 min | New module with routes |
+| **XL** | 8+ | 45+ min | SPLIT INTO SMALLER TASKS |
+
+**Rule:** If a task touches 8+ files, split it.
+
+---
+
+## 📁 Code Organization
 
 ```
 src/
-├── config/          → Environment, constants
-├── modules/         → Feature modules (auth, billing, bots, etc.)
-├── shared/          → Reusable utilities, types, middleware
-├── platform/        → Core platform services
-└── workspace/       → User workspace container code
+├── app/                    # Next.js pages (App Router)
+│   ├── (auth)/            # Auth pages (login, register)
+│   ├── (dashboard)/       # Protected dashboard pages
+│   └── api/               # API routes (Next.js style, minimal)
+├── components/
+│   ├── ui/                # shadcn/ui components
+│   ├── forms/             # Form components
+│   └── layouts/           # Layout components
+├── lib/                   # Core utilities
+│   ├── prisma.ts          # Prisma client
+│   ├── redis.ts           # Redis client
+│   ├── stripe.ts          # Stripe client
+│   └── utils.ts           # General utilities
+├── modules/               # Feature modules (business logic)
+│   ├── auth/
+│   ├── user/
+│   ├── gateway/
+│   ├── plugin/
+│   └── billing/
+├── shared/
+│   ├── types/             # Shared TypeScript types
+│   ├── constants/         # App constants, plan limits
+│   ├── errors/            # Error classes
+│   └── middleware/        # Express middleware
+└── server/                # Express API server
+    ├── routes/            # Route definitions
+    ├── middleware/        # Server middleware
+    └── index.ts           # Server entry point
 ```
-
-**Naming Conventions:**
-- Files: `kebab-case.ts` (e.g., `user-service.ts`)
-- Classes: `PascalCase` (e.g., `UserService`)
-- Functions: `camelCase` (e.g., `getUserById`)
-- Constants: `SCREAMING_SNAKE_CASE` (e.g., `MAX_RETRIES`)
-- Database tables: `snake_case` (e.g., `user_sessions`)
 
 ---
 
-## ✅ Before Completing Any Task
+## 🏷️ Naming Conventions
 
-AI must verify:
+| Type | Convention | Example |
+|------|------------|---------|
+| Files | kebab-case | `user-service.ts` |
+| Components | PascalCase | `UserProfile.tsx` |
+| Functions | camelCase | `getUserById` |
+| Constants | SCREAMING_SNAKE | `MAX_RETRIES` |
+| Types | PascalCase | `UserResponse` |
+| DB Tables | snake_case | `user_sessions` |
+| Env Vars | SCREAMING_SNAKE | `DATABASE_URL` |
+
+---
+
+## ✅ Code Quality Checklist
+
+Before completing ANY task, verify:
+
 - [ ] Files in correct location per folder structure
 - [ ] Follows existing patterns in codebase
 - [ ] All inputs validated with Zod
-- [ ] Errors use AppError class
-- [ ] Types are explicit (no `any`)
+- [ ] Errors use AppError class hierarchy
+- [ ] Types are explicit (NO `any`)
 - [ ] JSDoc on public functions
 - [ ] Related files updated (routes, exports, types)
-
----
-
-## 🔄 Session Handoff
-
-When ending a session, AI provides:
-```
-SESSION SUMMARY:
-- Completed: [list]
-- In Progress: [list with status]
-- Blocked: [list with reason]
-- Next Steps: [what to do next]
-
-FILES CHANGED:
-- created: [list]
-- modified: [list]
-
-CONTEXT FOR NEXT SESSION:
-[Any important decisions or state]
-```
+- [ ] No TypeScript errors
+- [ ] No ESLint errors
 
 ---
 
 ## 🚫 AI Must NOT
 
-1. Use `any` type (use `unknown` + type guards)
-2. Skip validation on user inputs
-3. Hardcode secrets or URLs
-4. Create files outside defined structure
-5. Modify files without showing changes
-6. Assume - ask if unclear
-7. Make breaking changes without warning
+1. ❌ Use `any` type (use `unknown` + type guards)
+2. ❌ Skip validation on user inputs
+3. ❌ Hardcode secrets or URLs
+4. ❌ Create files outside defined structure
+5. ❌ Modify files without showing changes
+6. ❌ Assume requirements - ask if unclear
+7. ❌ Make breaking changes without warning
+8. ❌ Skip error handling
+9. ❌ Use deprecated APIs
+10. ❌ Leave TODO comments without tracking
 
 ---
 
-## 💡 Quick Commands for Human
+## 🔄 Session Handoff Format
 
-```bash
-# When starting new AI session, tell AI:
-"Read AI-WORKFLOW.md and ROADMAP.md first, then [your task]"
+When ending a session, AI updates CURRENT-STATE.md with:
 
-# When AI seems lost:
-"Check the folder structure in ROADMAP.md section X"
+```markdown
+**Last Updated:** [date]
+**Last Session:** Task X.Y.Z - [name]
+**Next Task:** Task X.Y.Z - [name]
 
-# When output is wrong pattern:
-"Look at src/modules/auth/ for the correct pattern"
+## Completed This Session:
+- [x] Task X.Y.Z - [description]
+- [x] Task X.Y.Z - [description]
 
-# When task is too big:
-"Split this into smaller tasks and list them"
+## Files Changed:
+- created: [list]
+- modified: [list]
+
+## Decisions Made:
+- [Any architectural or implementation decisions]
+
+## Issues Encountered:
+- [Any problems and how they were resolved]
 ```
 
 ---
 
-*Version: 1.0 | Keep this file updated as project evolves*
+## 📋 Prompt Templates
+
+### Template 1: Continue Development
+```
+Read CURRENT-STATE.md first, then continue with the next task.
+```
+
+### Template 2: Specific Task
+```
+Read CURRENT-STATE.md, then complete task [X.Y.Z] from phase [N].
+```
+
+### Template 3: Fix Issue
+```
+There's an issue with [description]. 
+Read CURRENT-STATE.md for context, then fix it.
+The error is: [error message]
+```
+
+### Template 4: Review Code
+```
+Read CURRENT-STATE.md, then review [file/module] for:
+- Security issues
+- Performance problems
+- Code quality
+```
+
+---
+
+## 🎯 V1 MVP Summary
+
+Building only these features (see MVP.md for details):
+
+| ✅ V1 Include | ❌ V2 Defer |
+|---------------|-------------|
+| Email/password auth | OAuth providers |
+| Telegram Bot gateway | Telegram MTProto |
+| AI gateway (OpenAI) | Multiple AI providers |
+| 1 Analytics plugin | Plugin marketplace |
+| Basic dashboard | Widgets, themes |
+| Stripe subscriptions | Credit system |
+| User workspaces | Organizations |
+| 2 plans (Free + Pro) | 5 plan tiers |
+
+**Total: ~87 tasks across 6 phases**
+**Estimated: 56-69 AI sessions**
+
+---
+
+## 🚀 Quick Start
+
+1. **First Session:**
+   ```
+   Read CURRENT-STATE.md and start with task 0.1.1
+   ```
+
+2. **Subsequent Sessions:**
+   ```
+   Read CURRENT-STATE.md and continue with the next task
+   ```
+
+3. **After Each Task:**
+   - AI validates the work
+   - AI updates CURRENT-STATE.md
+   - Ready for next session
+
+---
+
+*Let's build this! 🚀*
