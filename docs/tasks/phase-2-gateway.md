@@ -2,7 +2,7 @@
 
 > **Goal:** Implement Telegram Bot and AI gateways with full lifecycle management
 > **Estimated Sessions:** 10-12
-> **Prerequisites:** Phase 1 complete
+> **Prerequisites:** Phase 1.5 complete
 
 ---
 
@@ -43,33 +43,38 @@
 ```prisma
 model Gateway {
   id              String        @id @default(cuid())
-  userId          String
+  userId          String        @map("user_id")
+  
+  // Organization support (from Phase 1.5)
+  organizationId  String?       @map("organization_id")
   
   name            String
   type            GatewayType
   status          GatewayStatus @default(DISCONNECTED)
   
   // Encrypted credentials (JSON string)
-  credentialsEnc  String        @db.Text
+  credentialsEnc  String        @map("credentials_enc") @db.Text
   
   // Configuration (non-sensitive)
   config          Json          @default("{}")
   
   // Status tracking
-  lastConnectedAt DateTime?
-  lastErrorAt     DateTime?
-  lastError       String?
+  lastConnectedAt DateTime?     @map("last_connected_at")
+  lastErrorAt     DateTime?     @map("last_error_at")
+  lastError       String?       @map("last_error")
   
   // Timestamps
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
   
   // Relations
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   @@index([userId])
+  @@index([organizationId])
   @@index([type])
   @@index([status])
+  @@map("gateways")
 }
 
 enum GatewayType {
@@ -142,21 +147,31 @@ interface CreateGatewayRequest {
 
 #### Methods:
 ```typescript
+import { ServiceContext } from '@/shared/types/context';
+import { audit, auditActions } from '@/lib/audit';
+
 class GatewayService {
-  async create(userId: string, data: CreateGatewayRequest): Promise<Gateway>
-  async findById(id: string, userId: string): Promise<Gateway>
-  async findByUser(userId: string): Promise<Gateway[]>
-  async update(id: string, userId: string, data: UpdateGatewayRequest): Promise<Gateway>
-  async delete(id: string, userId: string): Promise<void>
+  // All methods receive ServiceContext for user/org context + audit logging
+  async create(ctx: ServiceContext, data: CreateGatewayRequest): Promise<Gateway>
+  async findById(ctx: ServiceContext, id: string): Promise<Gateway>
+  async findByUser(ctx: ServiceContext): Promise<Gateway[]>
+  async update(ctx: ServiceContext, id: string, data: UpdateGatewayRequest): Promise<Gateway>
+  async delete(ctx: ServiceContext, id: string): Promise<void>
   async updateStatus(id: string, status: GatewayStatus, error?: string): Promise<void>
   async getDecryptedCredentials(gateway: Gateway): Promise<Credentials>
 }
+
+// Ownership check should respect organizationId:
+// If ctx.organizationId is set, check gateway.organizationId === ctx.organizationId
+// Otherwise check gateway.userId === ctx.userId
 ```
 
 #### Done Criteria:
 - [ ] CRUD operations work
-- [ ] User can only access own gateways
+- [ ] Uses ServiceContext for all operations
+- [ ] Ownership checks work for both user and org context
 - [ ] Credentials encrypted on save
+- [ ] Audit events created for create/delete
 
 ---
 
@@ -173,9 +188,26 @@ class GatewayService {
 - [ ] PUT /api/gateways/:id - Update gateway
 - [ ] DELETE /api/gateways/:id - Delete gateway
 
+#### Implementation Notes:
+```typescript
+// Create ServiceContext from req.user in each route:
+import { createServiceContext } from '@/shared/types/context';
+
+router.get('/', requireAuth, async (req, res) => {
+  const ctx = createServiceContext(req.user, {
+    ipAddress: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+  
+  const gateways = await gatewayService.findByUser(ctx);
+  // ...
+});
+```
+
 #### Done Criteria:
 - [ ] All endpoints require auth
-- [ ] User can only access own gateways
+- [ ] ServiceContext created and passed to service
+- [ ] User/org isolation enforced
 - [ ] Proper validation on create/update
 - [ ] Credentials never returned in response
 

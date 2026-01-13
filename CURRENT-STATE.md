@@ -9,10 +9,10 @@
 | Item | Value |
 |------|-------|
 | **Last Updated** | 2026-01-13 |
-| **Last Session** | Task 1.4.3 - Create email service (basic) |
-| **Current Phase** | Phase 1: Authentication |
-| **Next Task** | Task 1.5.1 - Create registration page UI |
-| **Overall Progress** | 31% (27/87 tasks) |
+| **Last Session** | Architecture Planning - Phase 1.5 created |
+| **Current Phase** | Phase 1.5: Architecture Foundation |
+| **Next Task** | Task 1.5.1.1 - Add UserRole and OrgRole enums |
+| **Overall Progress** | 35% (35/101 tasks) |
 
 ---
 
@@ -21,11 +21,25 @@
 | Phase | Status | Progress | Notes |
 |-------|--------|----------|-------|
 | Phase 0: Setup | ✅ Complete | 15/15 tasks | All tasks complete! |
-| Phase 1: Auth | 🟡 In Progress | 14/20 tasks | Task 1.4.3 complete |
-| Phase 2: Gateway | ⚪ Not Started | 0/15 tasks | |
-| Phase 3: Plugin | ⚪ Not Started | 0/12 tasks | |
-| Phase 4: Billing | ⚪ Not Started | 0/15 tasks | |
+| Phase 1: Auth | ✅ Complete | 20/20 tasks | Committed to git ✓ |
+| Phase 1.5: Architecture | 🟡 In Progress | 0/14 tasks | ⭐ NEW - Architecture Foundation |
+| Phase 2: Gateway | ⚪ Not Started | 0/15 tasks | Updated for ServiceContext |
+| Phase 3: Plugin | ⚪ Not Started | 0/12 tasks | Updated for ServiceContext |
+| Phase 4: Billing | ⚪ Not Started | 0/15 tasks | Updated for ServiceContext |
 | Phase 5: Launch | ⚪ Not Started | 0/10 tasks | |
+
+---
+
+## ⭐ Phase 1.5 Overview (NEW)
+
+> **Added based on AI Auditor architectural review.**
+> Prevents painful refactoring by adding database fields, types, and patterns NOW.
+
+### Tasks:
+- **1.5.1.x**: Schema Updates (6 tasks) - Add roles, org fields, audit log, credit models
+- **1.5.2.x**: Type System (4 tasks) - Plans constants, permissions, ServiceContext
+- **1.5.3.x**: Infrastructure (3 tasks) - Audit helper, role middleware, JWT updates
+- **1.5.4.x**: Integration (1 optional task) - Add audit to auth endpoints
 
 ---
 
@@ -122,8 +136,8 @@
 ## 🔄 Current Task
 
 ```
-Task: 1.1.1 - Setup NextAuth.js
-File: docs/tasks/phase-1-auth.md
+Task: 1.5.1.1 - Add UserRole and OrgRole enums
+File: docs/tasks/phase-1.5-architecture.md
 ```
 
 ---
@@ -149,6 +163,10 @@ File: docs/tasks/phase-1-auth.md
 | 2026-01-12 | Defer MTProto to V2 | Legal risk |
 | 2026-01-12 | Defer Organizations to V2 | Complexity |
 | 2026-01-12 | Use npm instead of pnpm | pnpm requires sudo permissions |
+| 2026-01-13 | Add Phase 1.5 (Architecture Foundation) | AI Auditor recommendation - prevent future refactoring pain |
+| 2026-01-13 | Add 5 plan tiers (FREE, STARTER, PRO, BUSINESS, ENTERPRISE) | Business flexibility |
+| 2026-01-13 | Use ServiceContext pattern in all services | Enables audit logging, role checks, org isolation |
+| 2026-01-13 | Add org fields to User/Gateway models NOW | Prevents migration pain when adding orgs later |
 
 ---
 

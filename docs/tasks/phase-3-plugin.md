@@ -118,6 +118,8 @@ model UserPlugin {
 
 #### Types:
 ```typescript
+import { ServiceContext } from '@/shared/types/context';
+
 interface PluginDefinition {
   id: string
   slug: string
@@ -125,6 +127,10 @@ interface PluginDefinition {
   description: string
   requiredGateways: GatewayType[]
   configSchema: JSONSchema
+  
+  // For workflow integration (Phase 5+)
+  inputSchema?: JSONSchema   // What plugin accepts as input
+  outputSchema?: JSONSchema  // What plugin outputs
 }
 
 interface InstallPluginRequest {
@@ -134,6 +140,29 @@ interface InstallPluginRequest {
 
 interface UpdatePluginConfigRequest {
   config: Record<string, unknown>
+}
+
+// Plugin execution context (for workflow integration)
+interface PluginExecutionContext {
+  trigger: 'standalone' | 'workflow_step' | 'schedule' | 'event'
+  workflowId?: string
+  workflowRunId?: string
+  stepIndex?: number
+  previousStepOutput?: unknown
+  variables: Record<string, unknown>
+  ctx: ServiceContext
+}
+
+// Plugin must return structured output
+interface PluginExecutionResult {
+  success: boolean
+  output?: unknown
+  error?: string
+  metrics: {
+    durationMs: number
+    tokensUsed?: number
+    apiCalls?: number
+  }
 }
 
 // Plugin event types
@@ -161,28 +190,38 @@ type PluginEvent =
 
 #### Methods:
 ```typescript
+import { ServiceContext } from '@/shared/types/context';
+import { audit } from '@/lib/audit';
+
 class PluginService {
-  // Plugin catalog
+  // Plugin catalog (public, no context needed)
   async getAvailablePlugins(): Promise<Plugin[]>
   async getPluginBySlug(slug: string): Promise<Plugin>
   
-  // User plugins
-  async installPlugin(userId: string, data: InstallPluginRequest): Promise<UserPlugin>
-  async uninstallPlugin(userId: string, pluginId: string): Promise<void>
-  async getUserPlugins(userId: string): Promise<UserPlugin[]>
-  async updatePluginConfig(userId: string, pluginId: string, config: unknown): Promise<UserPlugin>
-  async togglePlugin(userId: string, pluginId: string, enabled: boolean): Promise<UserPlugin>
+  // User plugins (all methods receive ServiceContext)
+  async installPlugin(ctx: ServiceContext, data: InstallPluginRequest): Promise<UserPlugin>
+  async uninstallPlugin(ctx: ServiceContext, pluginId: string): Promise<void>
+  async getUserPlugins(ctx: ServiceContext): Promise<UserPlugin[]>
+  async updatePluginConfig(ctx: ServiceContext, pluginId: string, config: unknown): Promise<UserPlugin>
+  async togglePlugin(ctx: ServiceContext, pluginId: string, enabled: boolean): Promise<UserPlugin>
   
-  // Execution
+  // Execution tracking
   async recordExecution(userPluginId: string, success: boolean, error?: string): Promise<void>
+  
+  // Plan limit checks
+  private async checkPluginLimit(ctx: ServiceContext): Promise<boolean>
 }
+
+// Ownership: use ctx.userId or ctx.organizationId for isolation
+// Plan limits: check PLAN_LIMITS[ctx.userPlan].plugins before install
 ```
 
 #### Done Criteria:
+- [ ] Uses ServiceContext for all user operations
 - [ ] Can list available plugins
-- [ ] Can install/uninstall plugins
-- [ ] Can configure plugins
-- [ ] Can enable/disable plugins
+- [ ] Can install/uninstall plugins (with plan limit check)
+- [ ] Can configure and toggle plugins
+- [ ] Audit events for install/uninstall
 
 ---
 

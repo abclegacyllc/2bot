@@ -84,43 +84,36 @@ model Subscription {
 **Prerequisites:** Task 4.1.1 complete
 
 #### Deliverables:
-- [ ] src/shared/constants/plans.ts (enhance existing)
 - [ ] src/modules/billing/billing.types.ts
+- [ ] Enhance src/shared/constants/plans.ts (from Phase 1.5)
 
 #### Constants:
 ```typescript
-export const PLANS = {
-  FREE: {
-    name: 'Free',
-    price: 0,
-    stripePriceId: null,
-    limits: {
-      gateways: 1,
-      plugins: 1,
-      executionsPerDay: 100,
-      ramMb: 256,
-    },
-  },
-  PRO: {
-    name: 'Pro',
-    price: 29,
-    stripePriceId: process.env.STRIPE_PRICE_PRO!,
-    limits: {
-      gateways: 10,
-      plugins: -1, // unlimited
-      executionsPerDay: 10000,
-      ramMb: 1024,
-    },
-  },
-} as const
+// Enhance existing PLAN_LIMITS from Phase 1.5 with Stripe price IDs:
+export const STRIPE_PRICES = {
+  FREE: null,
+  STARTER: process.env.STRIPE_PRICE_STARTER!,
+  PRO: process.env.STRIPE_PRICE_PRO!,
+  BUSINESS: process.env.STRIPE_PRICE_BUSINESS!,
+  ENTERPRISE: null, // Custom pricing
+} as const;
 
-export function getPlanLimits(plan: PlanType): PlanLimits
-export function canUserDo(user: User, action: string): boolean
+export const PLAN_PRICES = {
+  FREE: 0,
+  STARTER: 9,
+  PRO: 29,
+  BUSINESS: 79,
+  ENTERPRISE: null, // Custom
+} as const;
+
+// Re-export from Phase 1.5
+export { PLAN_LIMITS, getPlanLimits, canDoAction } from '@/shared/constants/plans';
 ```
 
 #### Done Criteria:
+- [ ] Stripe price IDs configured
 - [ ] Plan definitions complete
-- [ ] Limits enforced in code
+- [ ] Integrates with Phase 1.5 plan constants
 - [ ] Type-safe plan access
 
 ---
@@ -390,14 +383,26 @@ ENTRYPOINT ["pm2-runtime", "start", "ecosystem.config.js"]
 
 #### Methods:
 ```typescript
+import { ServiceContext } from '@/shared/types/context';
+import { PLAN_LIMITS } from '@/shared/constants/plans';
+
 class WorkspaceService {
-  async startWorkspace(userId: string): Promise<WorkspaceInfo>
-  async stopWorkspace(userId: string): Promise<void>
-  async restartWorkspace(userId: string): Promise<void>
-  async getWorkspaceStatus(userId: string): Promise<WorkspaceStatus>
+  async startWorkspace(ctx: ServiceContext): Promise<WorkspaceInfo>
+  async stopWorkspace(ctx: ServiceContext): Promise<void>
+  async restartWorkspace(ctx: ServiceContext): Promise<void>
+  async getWorkspaceStatus(ctx: ServiceContext): Promise<WorkspaceStatus>
   
-  private getResourceLimits(plan: PlanType): ResourceLimits
-  private createContainer(userId: string, limits: ResourceLimits): Promise<string>
+  // Use ctx.userPlan to determine limits
+  private getResourceLimits(ctx: ServiceContext): ResourceLimits {
+    const planLimits = PLAN_LIMITS[ctx.userPlan];
+    return {
+      memory: `${planLimits.ramMb}m`,
+      cpus: '0.5', // Adjust per plan
+    };
+  }
+  
+  private createContainer(ctx: ServiceContext, limits: ResourceLimits): Promise<string>
+}
 }
 
 interface ResourceLimits {
