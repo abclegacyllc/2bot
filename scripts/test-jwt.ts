@@ -3,12 +3,13 @@ import { decodeToken, generateToken, getTokenExpiration, isTokenExpired, verifyT
 async function testJWT() {
   console.log('Testing JWT utilities...\n');
 
-  // Test payload
+  // Test payload (includes role for Phase 1.5)
   const payload = {
     userId: 'user_123',
     email: 'test@example.com',
     plan: 'FREE' as const,
-    sessionId: 'sess_456'
+    sessionId: 'sess_456',
+    role: 'MEMBER' as const,
   };
 
   // Test token generation

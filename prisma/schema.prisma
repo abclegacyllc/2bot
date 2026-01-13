@@ -15,7 +15,38 @@ datasource db {
 
 enum PlanType {
   FREE
+  STARTER     // $9/mo tier
   PRO
+  BUSINESS    // $79/mo tier
+  ENTERPRISE  // Custom pricing
+}
+
+enum UserRole {
+  SUPER_ADMIN   // Full platform control
+  ADMIN         // Platform administrator
+  DEVELOPER     // Marketplace developer
+  SUPPORT       // Customer support (future)
+  MEMBER        // Standard user (default)
+}
+
+enum OrgRole {
+  ORG_OWNER     // Organization owner
+  ORG_ADMIN     // Can manage org users/settings
+  DEPT_MANAGER  // Manages their department
+  ORG_MEMBER    // Regular org member
+}
+
+enum GatewayType {
+  TELEGRAM
+  OPENAI
+  ANTHROPIC
+  WEBHOOK
+}
+
+enum GatewayStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
 }
 
 // ===========================================
@@ -28,6 +59,22 @@ model User {
   name          String?
   emailVerified DateTime? @map("email_verified")
   image         String?
+
+  // Role System (for admin, developer, support)
+  role              UserRole  @default(MEMBER)
+  
+  // Organization Support (null = individual user)
+  organizationId    String?   @map("organization_id")
+  departmentId      String?   @map("department_id")
+  orgRole           OrgRole?  @map("org_role")
+  
+  // Security (for future 2FA, account lockout)
+  failedLoginCount  Int       @default(0) @map("failed_login_count")
+  lockedUntil       DateTime? @map("locked_until")
+  lastPasswordChange DateTime? @map("last_password_change")
+  
+  // Soft Delete Support
+  deletedAt         DateTime? @map("deleted_at")
 
   // Subscription
   plan             PlanType @default(FREE)
@@ -44,11 +91,15 @@ model User {
   // Relations
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
-  // gateways     Gateway[]     // Phase 2
-  // userPlugins  UserPlugin[]  // Phase 3
+  gateways            Gateway[]
+  creditBalance       CreditBalance?
+  // userPlugins      UserPlugin[]  // Phase 3
 
   @@index([email])
   @@index([stripeCustomerId])
+  @@index([organizationId])
+  @@index([deletedAt])
+  @@index([role])
   @@map("users")
 }
 
@@ -95,3 +146,120 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
+// ===========================================
+// Gateway Model (Phase 2: Gateway System)
+// ===========================================
+model Gateway {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  
+  // Organization Support (if owned by org, not individual user)
+  organizationId String? @map("organization_id")
+
+  name   String
+  type   GatewayType
+  status GatewayStatus @default(DISCONNECTED)
+
+  // Encrypted credentials (AES-256-GCM)
+  credentialsEnc String @map("credentials_enc") @db.Text
+  
+  // Provider-specific configuration
+  config Json @default("{}")
+
+  // Connection tracking
+  lastConnectedAt DateTime? @map("last_connected_at")
+  lastErrorAt     DateTime? @map("last_error_at")
+  lastError       String?   @map("last_error")
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // organization Organization? @relation(...) // Add when Organization model exists
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([type])
+  @@index([status])
+  @@map("gateways")
+}
+
+// ===========================================
+// Audit Log Model (Phase 1.5: Architecture)
+// ===========================================
+model AuditLog {
+  id             String   @id @default(cuid())
+  userId         String?  @map("user_id")
+  organizationId String?  @map("organization_id")
+  
+  // Action details
+  action         String   // 'gateway.create', 'plugin.install', 'user.login'
+  resource       String   // 'gateway', 'plugin', 'user'
+  resourceId     String?  @map("resource_id")
+  
+  // Additional context (no secrets!)
+  metadata       Json?
+  
+  // Request info
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  
+  // Result
+  status         String   @default("success") // 'success', 'failure'
+  
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([action])
+  @@index([resource, resourceId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ===========================================
+// Credit System Models (Phase 1.5: Architecture)
+// ===========================================
+model CreditBalance {
+  id        String   @id @default(cuid())
+  userId    String   @unique @map("user_id")
+  
+  balance   Int      @default(0)  // Current credit balance
+  lifetime  Int      @default(0)  // Total credits ever purchased
+  
+  // Auto-topup settings (JSON for flexibility)
+  settings  Json     @default("{}")
+  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions CreditTransaction[]
+
+  @@map("credit_balances")
+}
+
+model CreditTransaction {
+  id              String   @id @default(cuid())
+  creditBalanceId String   @map("credit_balance_id")
+  
+  type            String   // 'purchase', 'usage', 'refund', 'bonus', 'grant'
+  amount          Int      // Positive = credit, Negative = debit
+  balanceAfter    Int      @map("balance_after")
+  
+  description     String
+  metadata        Json?    // { stripeId?, aiProvider?, model?, itemId? }
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  creditBalance   CreditBalance @relation(fields: [creditBalanceId], references: [id], onDelete: Cascade)
+
+  @@index([creditBalanceId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("credit_transactions")
+}

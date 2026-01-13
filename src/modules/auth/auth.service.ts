@@ -123,6 +123,9 @@ class AuthService {
       email: user.email,
       plan: user.plan,
       sessionId: session.id,
+      role: user.role,
+      organizationId: user.organizationId ?? undefined,
+      orgRole: user.orgRole ?? undefined,
     };
     const token = generateToken(payload);
 
@@ -178,6 +181,9 @@ class AuthService {
       email: user.email,
       plan: user.plan,
       sessionId: session.id,
+      role: user.role,
+      organizationId: user.organizationId ?? undefined,
+      orgRole: user.orgRole ?? undefined,
     };
     const token = generateToken(payload);
 
@@ -378,8 +384,9 @@ class AuthService {
    * @param token - Reset token from email
    * @param newPassword - New password
    * @throws AuthError if token invalid, expired, or already used
+   * @returns userId of the user whose password was reset
    */
-  async resetPassword(token: string, newPassword: string): Promise<void> {
+  async resetPassword(token: string, newPassword: string): Promise<string> {
     // Check password security
     if (!isPasswordSecure(newPassword)) {
       throw new AuthError(
@@ -426,6 +433,8 @@ class AuthService {
 
     // Invalidate all existing sessions for security
     await this.revokeAllSessions(resetToken.userId);
+
+    return resetToken.userId;
   }
 }
 

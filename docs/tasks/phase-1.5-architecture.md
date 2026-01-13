@@ -11,19 +11,19 @@
 
 | ID | Task | Status | Session |
 |----|------|--------|---------|
-| 1.5.1.1 | Add UserRole and OrgRole enums | ⬜ | - |
-| 1.5.1.2 | Add role fields to User model | ⬜ | - |
-| 1.5.1.3 | Add organizationId to Gateway model | ⬜ | - |
-| 1.5.1.4 | Create AuditLog model | ⬜ | - |
-| 1.5.1.5 | Create CreditBalance + CreditTransaction models | ⬜ | - |
-| 1.5.1.6 | Run migration | ⬜ | - |
-| 1.5.2.1 | Create plans constants | ⬜ | - |
-| 1.5.2.2 | Create permissions constants | ⬜ | - |
-| 1.5.2.3 | Create ServiceContext type | ⬜ | - |
-| 1.5.2.4 | Update TokenPayload with role fields | ⬜ | - |
-| 1.5.3.1 | Create audit helper | ⬜ | - |
-| 1.5.3.2 | Create role middleware | ⬜ | - |
-| 1.5.3.3 | Update auth.service to include role in JWT | ⬜ | - |
+| 1.5.1.1 | Add UserRole and OrgRole enums | ✅ | 1 |
+| 1.5.1.2 | Add role fields to User model | ✅ | 1 |
+| 1.5.1.3 | Add organizationId to Gateway model | ✅ | 1 |
+| 1.5.1.4 | Create AuditLog model | ✅ | 1 |
+| 1.5.1.5 | Create CreditBalance + CreditTransaction models | ✅ | 1 |
+| 1.5.1.6 | Run migration | ✅ | 1 |
+| 1.5.2.1 | Create plans constants | ✅ | 1 |
+| 1.5.2.2 | Create permissions constants | ✅ | 1 |
+| 1.5.2.3 | Create ServiceContext type | ✅ | 1 |
+| 1.5.2.4 | Update TokenPayload with role fields | ✅ | 1 |
+| 1.5.3.1 | Create audit helper | ✅ | 1 |
+| 1.5.3.2 | Create role middleware | ✅ | 1 |
+| 1.5.3.3 | Update auth.service to include role in JWT | ✅ | 1 |
 | 1.5.4.1 | Add audit logging to critical auth endpoints (optional) | ⬜ | - |
 
 ---
@@ -826,30 +826,30 @@ try {
 ```
 
 #### Done Criteria:
-- [ ] Login success logged
-- [ ] Login failure logged (with email, no password)
-- [ ] Password reset request logged
-- [ ] Password reset completion logged
-- [ ] No sensitive data in logs
+- [x] Login success logged
+- [x] Login failure logged (with email, no password)
+- [x] Password reset request logged
+- [x] Password reset completion logged
+- [x] No sensitive data in logs
 
 ---
 
 ## ✅ Phase 1.5 Completion Checklist
 
-- [ ] All enums added (UserRole, OrgRole, extended PlanType)
-- [ ] User model has role, org, security, and soft delete fields
-- [ ] Gateway model has organizationId
-- [ ] AuditLog model created
-- [ ] CreditBalance + CreditTransaction models created
-- [ ] Migration applied successfully
-- [ ] plans.ts constants created
-- [ ] permissions.ts constants created
-- [ ] ServiceContext type created
-- [ ] TokenPayload updated with role fields
-- [ ] audit.ts helper created
-- [ ] role.ts middleware created
-- [ ] auth.service includes role in JWT
-- [ ] (Optional) Auth endpoints have audit logging
+- [x] All enums added (UserRole, OrgRole, extended PlanType)
+- [x] User model has role, org, security, and soft delete fields
+- [x] Gateway model has organizationId
+- [x] AuditLog model created
+- [x] CreditBalance + CreditTransaction models created
+- [x] Migration applied successfully
+- [x] plans.ts constants created
+- [x] permissions.ts constants created
+- [x] ServiceContext type created
+- [x] TokenPayload updated with role fields
+- [x] audit.ts helper created
+- [x] role.ts middleware created
+- [x] auth.service includes role in JWT
+- [x] (Optional) Auth endpoints have audit logging
 
 **When complete:** Update AI-WORKFLOW.md progress and proceed to Phase 2
 

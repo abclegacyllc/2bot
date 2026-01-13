@@ -2,6 +2,7 @@
 
 export * from "./limits";
 export * from "./plans";
+export * from "./permissions";
 
 /**
  * Supported gateway types

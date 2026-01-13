@@ -1,7 +1,7 @@
-import type { PlanType, Session, User } from "@prisma/client";
+import type { PlanType, Session, User, UserRole, OrgRole } from "@prisma/client";
 
 // Re-export Prisma types
-export type { PlanType, Session, User } from "@prisma/client";
+export type { PlanType, Session, User, UserRole, OrgRole } from "@prisma/client";
 
 /**
  * User without sensitive fields (for API responses)
@@ -24,12 +24,25 @@ export type SessionWithUser = Session & {
 
 /**
  * JWT Token Payload
+ * Extended with role fields for Phase 1.5 architecture
  */
 export interface TokenPayload {
   userId: string;
   email: string;
   plan: PlanType;
   sessionId: string;
+  
+  // Role fields (Phase 1.5)
+  role: UserRole;
+  organizationId?: string;
+  orgRole?: OrgRole;
+}
+
+/**
+ * Request context for middleware (extended token payload)
+ */
+export interface RequestContext extends TokenPayload {
+  permissions: string[];
 }
 
 /**

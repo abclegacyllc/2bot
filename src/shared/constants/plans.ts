@@ -1,97 +1,135 @@
-// Plan Definitions for V1 (Free + Pro)
-
-export type PlanType = "FREE" | "PRO";
-
-export interface PlanLimits {
-  gateways: number;
-  plugins: number;
-  messagesPerDay: number;
-  aiRequestsPerDay: number;
-  storageGb: number;
-  webhooks: number;
-}
-
-export interface Plan {
-  id: PlanType;
-  name: string;
-  description: string;
-  price: {
-    monthly: number;
-    yearly: number;
-  };
-  limits: PlanLimits;
-  features: string[];
-  isPopular?: boolean;
-}
-
 /**
- * V1 Plans - Free and Pro only
+ * Plan Limits Configuration
+ * 
+ * Defines resource limits for each subscription tier.
+ * -1 means unlimited
  */
-export const PLANS: Record<PlanType, Plan> = {
+
+export const PLAN_LIMITS = {
   FREE: {
-    id: "FREE",
-    name: "Free",
-    description: "Perfect for getting started",
-    price: {
-      monthly: 0,
-      yearly: 0,
-    },
-    limits: {
-      gateways: 1,
-      plugins: 1,
-      messagesPerDay: 100,
-      aiRequestsPerDay: 10,
-      storageGb: 1,
-      webhooks: 1,
-    },
-    features: [
-      "1 Telegram Bot",
-      "1 Plugin",
-      "100 messages/day",
-      "10 AI requests/day",
-      "Community support",
-    ],
+    gateways: 1,
+    plugins: 3,
+    executionsPerDay: 100,
+    aiTokensPerMonth: 5000,
+    ramMb: 256,
+    storageMb: 100,
+  },
+  STARTER: {
+    gateways: 3,
+    plugins: 10,
+    executionsPerDay: 1000,
+    aiTokensPerMonth: 50000,
+    ramMb: 512,
+    storageMb: 500,
   },
   PRO: {
-    id: "PRO",
-    name: "Pro",
-    description: "For power users and small teams",
-    price: {
-      monthly: 29,
-      yearly: 290,
-    },
-    limits: {
-      gateways: 5,
-      plugins: 10,
-      messagesPerDay: 10000,
-      aiRequestsPerDay: 1000,
-      storageGb: 10,
-      webhooks: 10,
-    },
-    features: [
-      "5 Telegram Bots",
-      "10 Plugins",
-      "10,000 messages/day",
-      "1,000 AI requests/day",
-      "Priority support",
-      "Analytics dashboard",
-      "Custom webhooks",
-    ],
-    isPopular: true,
+    gateways: 10,
+    plugins: -1, // unlimited
+    executionsPerDay: 10000,
+    aiTokensPerMonth: 200000,
+    ramMb: 1024,
+    storageMb: 2000,
+  },
+  BUSINESS: {
+    gateways: 25,
+    plugins: -1,
+    executionsPerDay: 50000,
+    aiTokensPerMonth: 500000,
+    ramMb: 2048,
+    storageMb: 5000,
+  },
+  ENTERPRISE: {
+    gateways: -1,
+    plugins: -1,
+    executionsPerDay: -1,
+    aiTokensPerMonth: -1,
+    ramMb: 4096,
+    storageMb: 10000,
   },
 } as const;
 
+export type PlanType = keyof typeof PLAN_LIMITS;
+export type PlanLimitKey = keyof (typeof PLAN_LIMITS)['FREE'];
+
 /**
- * Get plan by ID
+ * Get limits for a specific plan
  */
-export function getPlan(planId: PlanType): Plan {
-  return PLANS[planId];
+export function getPlanLimits(plan: PlanType) {
+  return PLAN_LIMITS[plan];
 }
 
 /**
- * Check if a plan has a specific limit
+ * Check if a user can perform an action based on their plan limits
+ * @param plan - The user's plan type
+ * @param action - The limit key to check
+ * @param currentUsage - Current usage count
+ * @returns true if action is allowed, false if limit reached
  */
-export function checkLimit(planId: PlanType, resource: keyof PlanLimits, current: number): boolean {
-  const plan = getPlan(planId);
-  return current < plan.limits[resource];
+export function canDoAction(
+  plan: PlanType,
+  action: PlanLimitKey,
+  currentUsage: number
+): boolean {
+  const limits = PLAN_LIMITS[plan];
+  const limit = limits[action];
+  if (limit === -1) return true; // unlimited
+  return currentUsage < limit;
 }
+
+/**
+ * Get remaining quota for a specific action
+ * @returns -1 for unlimited, otherwise remaining count
+ */
+export function getRemainingQuota(
+  plan: PlanType,
+  action: PlanLimitKey,
+  currentUsage: number
+): number {
+  const limits = PLAN_LIMITS[plan];
+  const limit = limits[action];
+  if (limit === -1) return -1; // unlimited
+  return Math.max(0, limit - currentUsage);
+}
+
+/**
+ * Check if a plan has unlimited access to a resource
+ */
+export function isUnlimited(plan: PlanType, action: PlanLimitKey): boolean {
+  return PLAN_LIMITS[plan][action] === -1;
+}
+
+/**
+ * Plan pricing information (for display purposes)
+ */
+export const PLAN_PRICING = {
+  FREE: {
+    price: 0,
+    interval: 'month',
+    name: 'Free',
+    description: 'For trying out the platform',
+  },
+  STARTER: {
+    price: 9,
+    interval: 'month',
+    name: 'Starter',
+    description: 'For individuals getting started',
+  },
+  PRO: {
+    price: 29,
+    interval: 'month',
+    name: 'Pro',
+    description: 'For professionals and small teams',
+  },
+  BUSINESS: {
+    price: 79,
+    interval: 'month',
+    name: 'Business',
+    description: 'For growing businesses',
+  },
+  ENTERPRISE: {
+    price: -1, // Custom pricing
+    interval: 'month',
+    name: 'Enterprise',
+    description: 'Custom solutions for large organizations',
+  },
+} as const;

@@ -6,6 +6,7 @@
  * @module server/routes/auth
  */
 
+import { auditActions } from "@/lib/audit";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { AuthError, authService } from "@/modules/auth/auth.service";
 import type { AuthResponse, ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SafeUser } from "@/modules/auth/auth.types";
@@ -54,6 +55,14 @@ authRouter.post(
     try {
       const result = await authService.register(validation.data, getSessionMeta(req));
 
+      // Audit: User registered
+      void auditActions.userRegistered(
+        result.user.id,
+        result.user.email,
+        req.ip,
+        req.headers["user-agent"]
+      );
+
       res.status(201).json({
         success: true,
         data: result,
@@ -97,6 +106,13 @@ authRouter.post(
     try {
       const result = await authService.login(validation.data, getSessionMeta(req));
 
+      // Audit: Login success
+      void auditActions.loginSuccess({
+        userId: result.user.id,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+
       res.json({
         success: true,
         data: result,
@@ -104,9 +120,23 @@ authRouter.post(
     } catch (error) {
       if (error instanceof AuthError) {
         if (error.code === "INVALID_CREDENTIALS") {
+          // Audit: Login failed
+          void auditActions.loginFailed(
+            validation.data.email,
+            req.ip,
+            req.headers["user-agent"],
+            "Invalid credentials"
+          );
           throw new UnauthorizedError("Invalid email or password");
         }
         if (error.code === "USER_INACTIVE") {
+          // Audit: Login failed - inactive account
+          void auditActions.loginFailed(
+            validation.data.email,
+            req.ip,
+            req.headers["user-agent"],
+            "Account inactive"
+          );
           throw new UnauthorizedError("Account is deactivated");
         }
       }
@@ -134,6 +164,13 @@ authRouter.post(
     if (req.sessionId) {
       await authService.logout(req.sessionId);
     }
+
+    // Audit: Logout
+    void auditActions.logout({
+      userId: req.user?.id,
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
 
     res.json({
       success: true,
@@ -195,6 +232,13 @@ authRouter.post(
     // Send password reset email if token was generated
     if (token) {
       await sendPasswordResetEmail(validation.data.email, token);
+      
+      // Audit: Password reset requested
+      void auditActions.passwordResetRequested(
+        validation.data.email,
+        req.ip,
+        req.headers["user-agent"]
+      );
     }
 
     // Always return success for security (don't reveal if email exists)
@@ -228,7 +272,10 @@ authRouter.post(
     }
 
     try {
-      await authService.resetPassword(validation.data.token, validation.data.password);
+      const userId = await authService.resetPassword(validation.data.token, validation.data.password);
+
+      // Audit: Password reset completed
+      void auditActions.passwordResetCompleted(userId, req.ip, req.headers["user-agent"]);
 
       res.json({
         success: true,

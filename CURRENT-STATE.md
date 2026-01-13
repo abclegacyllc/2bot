@@ -9,10 +9,10 @@
 | Item | Value |
 |------|-------|
 | **Last Updated** | 2026-01-13 |
-| **Last Session** | Architecture Planning - Phase 1.5 created |
-| **Current Phase** | Phase 1.5: Architecture Foundation |
-| **Next Task** | Task 1.5.1.1 - Add UserRole and OrgRole enums |
-| **Overall Progress** | 35% (35/101 tasks) |
+| **Last Session** | Phase 1.5 COMPLETE (all 14 tasks) |
+| **Current Phase** | Phase 1.5: Architecture Foundation ✅ COMPLETE |
+| **Next Task** | Task 2.1.1 - Create Gateway schema (Phase 2) |
+| **Overall Progress** | 49% (49/101 tasks) |
 
 ---
 
@@ -22,7 +22,7 @@
 |-------|--------|----------|-------|
 | Phase 0: Setup | ✅ Complete | 15/15 tasks | All tasks complete! |
 | Phase 1: Auth | ✅ Complete | 20/20 tasks | Committed to git ✓ |
-| Phase 1.5: Architecture | 🟡 In Progress | 0/14 tasks | ⭐ NEW - Architecture Foundation |
+| Phase 1.5: Architecture | ✅ Complete | 14/14 tasks | All infrastructure + audit logging done |
 | Phase 2: Gateway | ⚪ Not Started | 0/15 tasks | Updated for ServiceContext |
 | Phase 3: Plugin | ⚪ Not Started | 0/12 tasks | Updated for ServiceContext |
 | Phase 4: Billing | ⚪ Not Started | 0/15 tasks | Updated for ServiceContext |
@@ -131,13 +131,68 @@
 
 ### 🎉 Phase 0 Complete!
 
+### Phase 1: Authentication (Complete)
+- [x] **1.1.1-1.5.1** All auth tasks complete (2026-01-13)
+  - JWT utilities, password hashing, email service
+  - Auth service with register, login, logout, password reset
+  - Auth routes + middleware (requireAuth, optionalAuth, requirePlan)
+  - Auth UI pages (login, register, forgot-password, reset-password)
+  - Auth provider + protected routes
+  - Dashboard page
+
+### 🎉 Phase 1 Complete!
+
+### Phase 1.5: Architecture Foundation (In Progress)
+- [x] **1.5.1.1** Add UserRole and OrgRole enums (2026-01-13)
+  - Added UserRole: SUPER_ADMIN, ADMIN, DEVELOPER, SUPPORT, MEMBER
+  - Added OrgRole: ORG_OWNER, ORG_ADMIN, DEPT_MANAGER, ORG_MEMBER
+  - Extended PlanType: FREE, STARTER, PRO, BUSINESS, ENTERPRISE
+  - Added GatewayType and GatewayStatus enums
+- [x] **1.5.1.2** Add role fields to User model (2026-01-13)
+  - Added role, organizationId, orgRole, departmentId
+  - Added security fields: failedLoginCount, lockedUntil, lastPasswordChange
+  - Added soft delete: deletedAt
+- [x] **1.5.1.3** Add organizationId to Gateway model (2026-01-13)
+  - Created Gateway model with org support
+- [x] **1.5.1.4** Create AuditLog model (2026-01-13)
+  - Created audit_logs table for security/compliance
+- [x] **1.5.1.5** Create CreditBalance + CreditTransaction models (2026-01-13)
+  - Created credit_balances and credit_transactions tables
+- [x] **1.5.1.6** Run migration (2026-01-13)
+  - All tables created: users, sessions, password_reset_tokens, gateways, audit_logs, credit_balances, credit_transactions
+- [x] **1.5.2.1** Create plans constants (2026-01-13)
+  - Updated src/shared/constants/plans.ts with 5 tiers
+  - Added PLAN_LIMITS and PLAN_PRICING
+- [x] **1.5.2.2** Create permissions constants (2026-01-13)
+  - Created src/shared/constants/permissions.ts
+  - Defined all permission-to-role mappings
+- [x] **1.5.2.3** Create ServiceContext type (2026-01-13)
+  - Created src/shared/types/context.ts
+  - Added createServiceContext and createSystemContext
+- [x] **1.5.2.4** Update TokenPayload with role fields (2026-01-13)
+  - Added role, organizationId, orgRole to TokenPayload
+  - Updated auth.service and jwt.ts
+- [x] **1.5.3.1** Create audit helper (2026-01-13)
+  - Created src/lib/audit.ts
+  - Non-blocking audit logging with convenience functions
+- [x] **1.5.3.2** Create role middleware (2026-01-13)
+  - Created src/server/middleware/role.ts
+  - requireRole, requirePermission, requireAdmin, etc.
+- [x] **1.5.3.3** Update auth.service to include role in JWT (2026-01-13)
+  - Already done in 1.5.2.4 - JWT now includes role fields
+- [x] **1.5.4.1** Add audit logging to critical auth endpoints (2026-01-13)
+  - Added audit calls to: register, login (success + failure), logout, forgot-password, reset-password
+  - Non-blocking void calls for performance
+
+### 🎉 Phase 1.5 Complete!
+
 ---
 
 ## 🔄 Current Task
 
 ```
-Task: 1.5.1.1 - Add UserRole and OrgRole enums
-File: docs/tasks/phase-1.5-architecture.md
+Task: 2.1.1 - Create Gateway schema
+File: docs/tasks/phase-2-gateway.md
 ```
 
 ---
