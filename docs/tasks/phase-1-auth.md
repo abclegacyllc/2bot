@@ -10,26 +10,26 @@
 
 | ID | Task | Status | Session |
 |----|------|--------|---------|
-| 1.1.1 | Create User model (full schema) | ⬜ | - |
-| 1.1.2 | Create Session model | ⬜ | - |
-| 1.1.3 | Create auth types + validation schemas | ⬜ | - |
-| 1.2.1 | Create password hashing utility | ⬜ | - |
-| 1.2.2 | Create JWT utility | ⬜ | - |
-| 1.2.3 | Create auth service | ⬜ | - |
-| 1.3.1 | Create registration endpoint | ⬜ | - |
-| 1.3.2 | Create login endpoint | ⬜ | - |
-| 1.3.3 | Create logout endpoint | ⬜ | - |
-| 1.3.4 | Create /me endpoint | ⬜ | - |
-| 1.3.5 | Create auth middleware | ⬜ | - |
-| 1.4.1 | Create forgot password endpoint | ⬜ | - |
-| 1.4.2 | Create reset password endpoint | ⬜ | - |
-| 1.4.3 | Create email service (basic) | ⬜ | - |
-| 1.5.1 | Create registration page UI | ⬜ | - |
-| 1.5.2 | Create login page UI | ⬜ | - |
-| 1.5.3 | Create forgot password UI | ⬜ | - |
-| 1.5.4 | Create reset password UI | ⬜ | - |
-| 1.6.1 | Create auth context/provider | ⬜ | - |
-| 1.6.2 | Create protected route wrapper | ⬜ | - |
+| 1.1.1 | Create User model (full schema) | ✅ | 2026-01-13 |
+| 1.1.2 | Create Session model | ✅ | 2026-01-13 |
+| 1.1.3 | Create auth types + validation schemas | ✅ | 2026-01-13 |
+| 1.2.1 | Create password hashing utility | ✅ | 2026-01-13 |
+| 1.2.2 | Create JWT utility | ✅ | 2026-01-13 |
+| 1.2.3 | Create auth service | ✅ | 2026-01-13 |
+| 1.3.1 | Create registration endpoint | ✅ | 2026-01-13 |
+| 1.3.2 | Create login endpoint | ✅ | 2026-01-13 |
+| 1.3.3 | Create logout endpoint | ✅ | 2026-01-13 |
+| 1.3.4 | Create /me endpoint | ✅ | 2026-01-13 |
+| 1.3.5 | Create auth middleware | ✅ | 2026-01-13 |
+| 1.4.1 | Create forgot password endpoint | ✅ | 2026-01-13 |
+| 1.4.2 | Create reset password endpoint | ✅ | 2026-01-13 |
+| 1.4.3 | Create email service (basic) | ✅ | 2026-01-13 |
+| 1.5.1 | Create registration page UI | ✅ | 2026-01-13 |
+| 1.5.2 | Create login page UI | ✅ | 2026-01-13 |
+| 1.5.3 | Create forgot password UI | ✅ | 2026-01-13 |
+| 1.5.4 | Create reset password UI | ✅ | 2026-01-13 |
+| 1.6.1 | Create auth context/provider | ✅ | 2026-01-13 |
+| 1.6.2 | Create protected route wrapper | ✅ | 2026-01-13 |
 
 ---
 

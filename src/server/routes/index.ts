@@ -10,6 +10,7 @@ import {
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
+import { authRouter } from "./auth";
 import { healthRouter } from "./health";
 
 export const router = Router();
@@ -18,6 +19,11 @@ export const router = Router();
  * Health check routes
  */
 router.use("/health", healthRouter);
+
+/**
+ * Auth routes
+ */
+router.use("/auth", authRouter);
 
 /**
  * API info endpoint
@@ -68,7 +74,6 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 // Mount module routes here
-// router.use("/auth", authRoutes);     // Phase 1
 // router.use("/users", userRoutes);    // Phase 1
 // router.use("/gateways", gatewayRoutes); // Phase 2
 // router.use("/plugins", pluginRoutes);   // Phase 3

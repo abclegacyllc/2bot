@@ -1,8 +1,22 @@
-// Auth Module - Will be implemented in Phase 1
-// Exports: authService, authRoutes, authTypes
+/**
+ * Auth Module
+ *
+ * Exports all authentication-related components.
+ *
+ * @module modules/auth
+ */
 
 export const AUTH_MODULE = "auth" as const;
 
-// Placeholder - will export actual implementations
-// export * from "./auth.service";
-// export * from "./auth.types";
+// Service
+export { AuthError, AuthService, authService } from "./auth.service";
+export type { AuthErrorCode, SessionMeta } from "./auth.service";
+
+// Types
+export * from "./auth.types";
+
+// Validation schemas
+export * from "./auth.validation";
+
+// Placeholder - routes will be added in task 1.3.x
+// export * from "./auth.routes";
