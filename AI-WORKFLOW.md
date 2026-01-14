@@ -27,23 +27,26 @@ Read CURRENT-STATE.md first, then continue with the next task.
 ```
 /home/abcdev/projects/2bot/
 ├── CURRENT-STATE.md     ← AI READS THIS FIRST (current progress)
-├── MVP.md               ← V1 scope definition (what we're building)
 ├── AI-WORKFLOW.md       ← THIS FILE (how we work)
 ├── ROADMAP.md           ← Full reference (V1+V2+V3, don't build all of it)
 ├── docs/
-│   ├── ARCHITECTURE-RECOMMENDATIONS.md  ← AI Auditor architectural guidance
+│   ├── MVP.md                       ← V1 scope definition (what we're building)
 │   └── tasks/
-│       ├── phase-0-setup.md         ← Project setup (15 tasks)
-│       ├── phase-1-auth.md          ← Authentication (20 tasks)
-│       ├── phase-1.5-architecture.md← Architecture Foundation (14 tasks) ⭐ NEW
-│       ├── phase-2-gateway.md       ← Gateway system (15 tasks)
+│       ├── phase-0-setup.md         ← Project setup (15 tasks) ✅
+│       ├── phase-1-auth.md          ← Authentication (20 tasks) ✅
+│       ├── phase-1.5-architecture.md← Architecture Foundation (14 tasks) ✅
+│       ├── phase-2-gateway.md       ← Gateway system (16 tasks) 🔄
 │       ├── phase-3-plugin.md        ← Plugin system (12 tasks)
 │       ├── phase-4-billing.md       ← Billing + Workspace (15 tasks)
-│       └── phase-5-launch.md        ← Polish + Launch (12 tasks)
+│       ├── phase-5-launch.md        ← Polish + Launch (12 tasks)
+│       └── phase-6-support.md       ← Support System (22 tasks)
 ```
 
 > **Phase 1.5 Note:** Added based on AI Auditor architectural review.
 > Prepares database schema, types, and patterns to prevent painful refactoring later.
+
+> **Phase 6 Note:** Comprehensive support system with FAQ/KB, ticket system,
+> support button, and support dashboard. Chat support is optional.
 
 ---
 

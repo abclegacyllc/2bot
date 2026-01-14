@@ -34,6 +34,7 @@ interface User {
 // Auth context interface
 interface AuthContextType {
   user: User | null;
+  token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
@@ -197,6 +198,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const value: AuthContextType = {
     user,
+    token: getStoredToken(),
     isLoading,
     isAuthenticated: !!user,
     login,

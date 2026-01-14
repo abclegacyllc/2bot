@@ -7,8 +7,8 @@
  * @module lib/audit
  */
 
-import { prisma } from './prisma';
 import { logger } from './logger';
+import { prisma } from './prisma';
 
 const auditLogger = logger.child({ module: 'audit' });
 

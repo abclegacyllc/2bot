@@ -309,6 +309,10 @@ interface PluginStorage {
 
 ### Task 3.2.2: Create Plugin Executor
 
+> ⚠️ **V1 Scope:** Plugins run in-process because V1 only has builtin plugins (no user code).
+> **V2 TODO:** When marketplace allows user-uploaded plugins, migrate to isolated execution
+> (vm2, worker_threads, or dedicated container) to prevent crashes from affecting platform.
+
 **Session Type:** Backend
 **Estimated Time:** 30 minutes
 **Prerequisites:** Task 3.2.1 complete

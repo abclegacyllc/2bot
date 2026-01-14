@@ -8,23 +8,28 @@
 
 ## 📋 Task Overview
 
-| ID | Task | Status | Session |
-|----|------|--------|---------|
-| 4.1.1 | Create Subscription model | ⬜ | - |
-| 4.1.2 | Create billing types + constants | ⬜ | - |
-| 4.1.3 | Create Stripe service | ⬜ | - |
-| 4.1.4 | Create Stripe webhook handler | ⬜ | - |
-| 4.2.1 | Create checkout endpoint | ⬜ | - |
-| 4.2.2 | Create billing portal endpoint | ⬜ | - |
-| 4.2.3 | Create subscription status endpoint | ⬜ | - |
-| 4.3.1 | Create billing settings page | ⬜ | - |
-| 4.3.2 | Create plan selection UI | ⬜ | - |
-| 4.3.3 | Create subscription status component | ⬜ | - |
-| 4.4.1 | Create workspace Dockerfile | ⬜ | - |
-| 4.4.2 | Create workspace orchestrator | ⬜ | - |
-| 4.4.3 | Create workspace status endpoint | ⬜ | - |
-| 4.4.4 | Create resource limits by plan | ⬜ | - |
-| 4.5.1 | Create workspace status UI | ⬜ | - |
+| ID | Task | Status | Notes |
+|----|------|--------|-------|
+| **Billing Setup** ||||
+| 4.1.1 | Create Subscription model | ⬜ | |
+| 4.1.2 | Create billing types + constants | ⬜ | |
+| 4.1.3 | Create Stripe service | ⬜ | |
+| 4.1.4 | Create Stripe webhook handler | ⬜ | |
+| **Billing Endpoints** ||||
+| 4.2.1 | Create checkout endpoint | ⬜ | |
+| 4.2.2 | Create billing portal endpoint | ⬜ | |
+| 4.2.3 | Create subscription status endpoint | ⬜ | |
+| **Billing UI** ||||
+| 4.3.1 | Create billing settings page | ⬜ | |
+| 4.3.2 | Create plan selection UI | ⬜ | |
+| 4.3.3 | Create subscription status component | ⬜ | |
+| **--- CHECKPOINT: Billing Complete ---** ||||
+| **Infrastructure (Optional for MVP)** ||||
+| 4.4.1 | Create workspace Dockerfile | ⬜ | Optional |
+| 4.4.2 | Create workspace orchestrator | ⬜ | Optional |
+| 4.4.3 | Create workspace status endpoint | ⬜ | Optional |
+| 4.4.4 | Create resource limits by plan | ⬜ | Optional |
+| 4.5.1 | Create workspace status UI | ⬜ | Optional |
 
 ---
 
@@ -335,6 +340,16 @@ switch (event.type) {
 - [ ] Shows subscription status
 - [ ] Shows renewal date
 - [ ] Warning if canceling/past due
+
+---
+
+## 🎯 BILLING COMPLETE CHECKPOINT
+
+> **After Task 4.3.3, core billing is fully functional.**
+> 
+> Tasks 4.4.x (Workspace/Docker isolation) are **optional for MVP launch**.
+> These provide per-user container isolation for enhanced security and resource management,
+> but the platform works without them. Consider deferring to Phase 6+ if timeline is tight.
 
 ---
 

@@ -37,10 +37,10 @@ enum OrgRole {
 }
 
 enum GatewayType {
-  TELEGRAM
-  OPENAI
-  ANTHROPIC
-  WEBHOOK
+  TELEGRAM_BOT    // Telegram Bot API (uses botToken)
+  AI              // All AI providers (OpenAI, Anthropic, DeepSeek, Grok, Gemini, Mistral, Groq, Ollama)
+  WEBHOOK         // Generic webhooks
+  // TELEGRAM_ACCOUNT - MTProto user accounts (V2 - requires phone auth flow)
 }
 
 enum GatewayStatus {

@@ -6,13 +6,13 @@
  * @module server/middleware/role
  */
 
-import type { RequestHandler } from 'express';
-import { 
-  type Permission, 
-  hasPermission,
-  type UserRole,
-  type OrgRole,
+import {
+    hasPermission,
+    type OrgRole,
+    type Permission,
+    type UserRole,
 } from '@/shared/constants/permissions';
+import type { RequestHandler } from 'express';
 
 /**
  * Require specific user roles

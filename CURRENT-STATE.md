@@ -8,11 +8,11 @@
 
 | Item | Value |
 |------|-------|
-| **Last Updated** | 2026-01-13 |
-| **Last Session** | Phase 1.5 COMPLETE (all 14 tasks) |
-| **Current Phase** | Phase 1.5: Architecture Foundation ✅ COMPLETE |
-| **Next Task** | Task 2.1.1 - Create Gateway schema (Phase 2) |
-| **Overall Progress** | 49% (49/101 tasks) |
+| **Last Updated** | 2026-01-14 |
+| **Last Session** | Phase 2 COMPLETE! 🎉 Task 2.5.1 (Gateway Test Endpoint) done |
+| **Current Phase** | Phase 3: Plugin System |
+| **Next Task** | Task 3.1.1 - Create Plugin model |
+| **Overall Progress** | 64% (65/101 tasks) |
 
 ---
 
@@ -23,11 +23,10 @@
 | Phase 0: Setup | ✅ Complete | 15/15 tasks | All tasks complete! |
 | Phase 1: Auth | ✅ Complete | 20/20 tasks | Committed to git ✓ |
 | Phase 1.5: Architecture | ✅ Complete | 14/14 tasks | All infrastructure + audit logging done |
-| Phase 2: Gateway | ⚪ Not Started | 0/15 tasks | Updated for ServiceContext |
+| Phase 2: Gateway | ✅ Complete | 16/16 tasks | All required tasks done! 2.5.2 optional |
 | Phase 3: Plugin | ⚪ Not Started | 0/12 tasks | Updated for ServiceContext |
 | Phase 4: Billing | ⚪ Not Started | 0/15 tasks | Updated for ServiceContext |
-| Phase 5: Launch | ⚪ Not Started | 0/10 tasks | |
-
+| Phase 5: Launch | ⚪ Not Started | 0/12 tasks | |
 ---
 
 ## ⭐ Phase 1.5 Overview (NEW)
@@ -186,13 +185,103 @@
 
 ### 🎉 Phase 1.5 Complete!
 
+### Phase 2: Gateway System (In Progress)
+- [x] **2.1.1** Create Gateway model (Phase 1.5)
+  - Already done in Phase 1.5, Task 1.5.1.3
+- [x] **2.1.2** Create gateway types + validation (2026-01-14)
+  - Created src/modules/gateway/gateway.types.ts
+  - Created src/modules/gateway/gateway.validation.ts
+  - AIProvider type with 8 providers (openai, anthropic, deepseek, grok, gemini, mistral, groq, ollama)
+  - Zod schemas with discriminated union for type-safe validation
+  - Type guards for credential type checking
+- [x] **2.1.3** Create gateway service (CRUD) (2026-01-14)
+  - Created src/modules/gateway/gateway.service.ts
+  - Full CRUD with ServiceContext authorization
+  - Ownership checks (user + organization)
+  - Audit logging for create/update/delete
+  - SafeGateway response type (credentials masked)
+- [x] **2.1.4** Create gateway API endpoints (2026-01-14)
+  - Created src/server/routes/gateway.ts
+  - Endpoints: GET/POST /gateways, GET/PUT/DELETE /gateways/:id
+  - Added PATCH /gateways/:id/status for status updates
+  - All endpoints require auth, use ServiceContext
+  - Pagination support with meta response
+- [x] **2.2.1** Create credential encryption utility (2026-01-14)
+  - Created src/lib/encryption.ts (with Task 2.1.3)
+  - AES-256-GCM encryption
+  - encrypt(), decrypt(), decryptJson<T>() functions
+  - Uses ENCRYPTION_KEY env or derives from JWT_SECRET
+- [x] **2.2.2** Create gateway registry pattern (2026-01-14)
+  - Created src/modules/gateway/gateway.registry.ts
+  - GatewayProvider interface with full lifecycle methods
+  - Singleton registry with register/get/has/getAll
+  - GatewayAction metadata type for supported actions
+  - GatewayRegistryError with typed error codes
+- [x] **2.2.3** Create base gateway interface (2026-01-14)
+  - Created src/modules/gateway/providers/base.provider.ts
+  - BaseGatewayProvider abstract class with common functionality
+  - Connection state management (Map<gatewayId, ConnectionState>)
+  - Error handling wrappers (doConnect -> connect, etc.)
+  - Custom errors: GatewayNotConnectedError, UnsupportedActionError, InvalidCredentialsError
+- [x] **2.3.1** Implement Telegram Bot gateway (2026-01-14)
+  - Created src/modules/gateway/providers/telegram-bot.provider.ts
+  - Native fetch to Telegram Bot API (no external dependencies)
+  - Token validation (format regex + API verification)
+  - Actions: getMe, sendMessage, setWebhook, deleteWebhook, getWebhookInfo
+  - TelegramApiError for API error handling
+  - Bot info and credentials caching
+- [x] **2.3.2** Create Telegram webhook handler (2026-01-14)
+  - Created src/server/routes/webhook.ts
+  - POST /api/webhooks/telegram/:gatewayId - receives Telegram updates
+  - GET /api/webhooks/telegram/:gatewayId - health check endpoint
+  - Secret token verification (X-Telegram-Bot-Api-Secret-Token header)
+  - Always returns 200 to prevent Telegram retries
+  - TODO: Plugin routing in Phase 3
+- [x] **2.3.3** Implement AI gateway (2026-01-14)
+  - Created src/modules/gateway/providers/ai.provider.ts
+  - Supports 8 providers: openai, anthropic, deepseek, grok, gemini, mistral, groq, ollama
+  - Native fetch (no external SDK) for consistency
+  - Actions: chat, listModels, validateKey
+  - Provider-specific request formatting (OpenAI, Anthropic, Gemini)
+  - AIApiError for error handling
+- [x] **2.4.1** Create gateway list UI (2026-01-14)
+  - Created src/app/dashboard/gateways/page.tsx
+  - Displays all user gateways with status badges
+  - Empty state with "Add Gateway" CTA
+  - Loading skeleton, error handling
+  - Gateway type icons and info display
+- [x] **2.4.2** Create add gateway UI (2026-01-14)
+  - Created src/app/dashboard/gateways/new/page.tsx
+  - Multi-step form: select type → configure
+  - Type selector with Telegram Bot and AI options
+  - Dynamic forms based on gateway type
+  - AI provider dropdown (OpenAI, Anthropic, etc.)
+- [x] **2.4.3** Create gateway detail/config UI (2026-01-14)
+  - Created src/app/dashboard/gateways/[id]/page.tsx
+  - Gateway detail view with edit functionality
+  - Test connection button with status feedback
+  - Delete confirmation dialog
+  - Credential info display (masked)
+- [x] **2.4.4** Create gateway status component (2026-01-14)
+  - Created src/components/gateways/gateway-status.tsx
+  - GatewayStatusBadge, GatewayStatusIndicator, StatusDot
+  - Color-coded: green=CONNECTED, slate=DISCONNECTED, red=ERROR
+  - Reusable across gateway pages
+- [x] **2.5.1** Create gateway test endpoint (2026-01-14)
+  - Added POST /api/gateways/:id/test endpoint
+  - Uses provider checkHealth() method
+  - Returns success/failure with latency and error details
+  - Updates gateway status based on test result
+
+### 🎉 Phase 2 Complete!
+
 ---
 
 ## 🔄 Current Task
 
 ```
-Task: 2.1.1 - Create Gateway schema
-File: docs/tasks/phase-2-gateway.md
+Task: 3.1.1 - Create Plugin model
+File: docs/tasks/phase-3-plugin.md
 ```
 
 ---

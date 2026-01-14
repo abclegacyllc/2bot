@@ -11,7 +11,9 @@ import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
 import { authRouter } from "./auth";
+import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
+import { webhookRouter } from "./webhook";
 
 export const router = Router();
 
@@ -24,6 +26,17 @@ router.use("/health", healthRouter);
  * Auth routes
  */
 router.use("/auth", authRouter);
+
+/**
+ * Gateway routes (Phase 2)
+ */
+router.use("/gateways", gatewayRouter);
+
+/**
+ * Webhook routes (Phase 2)
+ * Note: No auth required - webhook auth is via gatewayId + optional secret
+ */
+router.use("/webhooks", webhookRouter);
 
 /**
  * API info endpoint
@@ -75,7 +88,6 @@ if (process.env.NODE_ENV !== "production") {
 
 // Mount module routes here
 // router.use("/users", userRoutes);    // Phase 1
-// router.use("/gateways", gatewayRoutes); // Phase 2
 // router.use("/plugins", pluginRoutes);   // Phase 3
 
 // 404 handler for unmatched API routes

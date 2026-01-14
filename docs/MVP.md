@@ -43,14 +43,15 @@
 
 ### Database Models (V1 Only)
 ```
-User              - Basic user account
+User              - Basic user account (with role, orgId fields)
 Session           - Auth sessions
-Gateway           - Gateway configurations (TG_BOT, AI only)
+Gateway           - Gateway configurations (TG_BOT, AI)
 Plugin            - Plugin definitions (built-in only)
 UserPlugin        - User's installed plugins
 Subscription      - Stripe subscription data
-UsageRecord       - Basic usage tracking
 AuditLog          - Security audit trail
+CreditBalance     - User credit balance (prepared for V2)
+CreditTransaction - Credit usage history (prepared for V2)
 ```
 
 ### API Endpoints (V1 Only)
@@ -170,15 +171,19 @@ That's it. Two plans. Simple.
 
 ## 📅 V1 Phases
 
-| Phase | Tasks | Sessions | Focus |
-|-------|-------|----------|-------|
-| **Phase 0** | 15 | 8-10 | Project setup, tooling, database |
-| **Phase 1** | 20 | 12-15 | Authentication system |
-| **Phase 2** | 15 | 10-12 | Gateway system (TG Bot + AI) |
-| **Phase 3** | 12 | 8-10 | Plugin system + 1 plugin |
-| **Phase 4** | 15 | 10-12 | Billing + Workspace |
-| **Phase 5** | 10 | 8-10 | Polish, testing, launch prep |
-| **TOTAL** | **87** | **56-69** | |
+| Phase | Tasks | Sessions | Focus | Status |
+|-------|-------|----------|-------|--------|
+| **Phase 0** | 15 | 8-10 | Project setup, tooling, database | ✅ Complete |
+| **Phase 1** | 20 | 12-15 | Authentication system | ✅ Complete |
+| **Phase 1.5** | 14 | 2-3 | Architecture prep (roles, audit, context) | ✅ Complete |
+| **Phase 2** | 16 | 10-12 | Gateway system (TG Bot + AI) | 🔄 In Progress |
+| **Phase 3** | 12 | 8-10 | Plugin system + 1 plugin | ⬜ Not Started |
+| **Phase 4** | 15 | 10-12 | Billing + Workspace (checkpoint) | ⬜ Not Started |
+| **Phase 5** | 12 | 8-10 | Polish, testing, launch prep | ⬜ Not Started |
+| **Phase 6** | 22 | 10-15 | Support system (optional for V1) | ⬜ Not Started |
+| **TOTAL** | **126** | **68-87** | | |
+
+> **Note:** Phase 1.5 was added for architecture preparation. Phase 6 Support is optional for MVP launch.
 
 ---
 

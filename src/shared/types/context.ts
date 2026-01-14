@@ -8,14 +8,14 @@
  * - Permission checking helpers
  */
 
-import type { PlanType } from '../constants/plans';
-import { 
-  type Permission, 
-  type UserRole, 
-  type OrgRole,
-  hasPermission, 
-  getUserPermissions 
+import {
+    type OrgRole,
+    type Permission,
+    type UserRole,
+    getUserPermissions,
+    hasPermission
 } from '../constants/permissions';
+import type { PlanType } from '../constants/plans';
 
 /**
  * Core service context interface

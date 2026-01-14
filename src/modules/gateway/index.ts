@@ -1,8 +1,31 @@
-// Gateway Module - Will be implemented in Phase 2
-// Exports: gatewayService, gatewayRoutes, gatewayTypes
+/**
+ * Gateway Module
+ *
+ * Manages Telegram Bot, AI providers, and webhook gateways
+ * with encrypted credential storage and status tracking.
+ *
+ * @module modules/gateway
+ */
 
 export const GATEWAY_MODULE = "gateway" as const;
 
-// Placeholder - will export actual implementations
-// export * from "./gateway.service";
-// export * from "./gateway.types";
+// Types
+export * from "./gateway.types";
+
+// Validation
+export * from "./gateway.validation";
+
+// Service
+export { gatewayService } from "./gateway.service";
+
+// Registry
+export {
+    GatewayRegistryError, gatewayRegistry, type GatewayAction, type GatewayProvider, type ProviderRegistrationOptions
+} from "./gateway.registry";
+
+// Providers
+export {
+    AIApiError, AIProvider, BaseGatewayProvider,
+    GatewayNotConnectedError, InvalidCredentialsError, TelegramApiError, TelegramBotProvider, UnsupportedActionError, aiProvider, telegramBotProvider
+} from "./providers";
+

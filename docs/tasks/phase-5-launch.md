@@ -274,19 +274,43 @@ Sentry.init({
 
 ---
 
-### Task 5.3.2: Create Basic Monitoring Dashboard
+### Task 5.3.2: Create Basic Admin Dashboard
 
-**Session Type:** Backend
-**Estimated Time:** 30 minutes
+**Session Type:** Full-stack
+**Estimated Time:** 60 minutes
 **Prerequisites:** Task 5.3.1 complete
 
 #### Deliverables:
+- [ ] src/app/(admin)/admin/layout.tsx
+- [ ] src/app/(admin)/admin/page.tsx - Dashboard home
+- [ ] src/app/(admin)/admin/users/page.tsx - User list
+- [ ] src/app/(admin)/admin/gateways/page.tsx - Gateway overview
 - [ ] GET /api/admin/stats (admin only)
-- [ ] Basic metrics collection
-- [ ] Health dashboard (simple)
 
-#### Metrics to Track:
+#### Access Control:
+Uses `requireAdmin` middleware (Phase 1.5). Only ADMIN/SUPER_ADMIN can access.
+
+#### Pages:
+1. **Admin Home** (`/admin`)
+   - User counts (total, active today, new this week)
+   - Subscriptions by plan (Free/Starter/Pro/Business/Enterprise)
+   - Gateway status overview (connected/errored counts)
+   - MRR display
+
+2. **Users Page** (`/admin/users`)
+   - User list with search
+   - Show: email, plan, role, last login, created date
+   - Link to user details (future)
+
+3. **Gateways Page** (`/admin/gateways`)
+   - All gateways across users
+   - Filter by status (connected/errored/disconnected)
+   - Show: user email, gateway name, type, status, last error
+
+#### API Endpoint:
 ```typescript
+GET /api/admin/stats
+// Response:
 {
   users: {
     total: number
@@ -295,13 +319,17 @@ Sentry.init({
   },
   subscriptions: {
     free: number
+    starter: number
     pro: number
+    business: number
+    enterprise: number
     mrr: number
   },
   gateways: {
     total: number
     connected: number
     errored: number
+    disconnected: number
   },
   executions: {
     today: number
@@ -311,9 +339,11 @@ Sentry.init({
 ```
 
 #### Done Criteria:
-- [ ] Admin can see stats
-- [ ] Metrics accurate
-- [ ] Updates on refresh
+- [ ] Admin routes protected by role
+- [ ] Can view all users with basic info
+- [ ] Can see gateway health overview
+- [ ] Stats accurate and update on refresh
+- [ ] Responsive layout
 
 ---
 

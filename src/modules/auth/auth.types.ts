@@ -1,7 +1,7 @@
-import type { PlanType, Session, User, UserRole, OrgRole } from "@prisma/client";
+import type { OrgRole, PlanType, Session, User, UserRole } from "@prisma/client";
 
 // Re-export Prisma types
-export type { PlanType, Session, User, UserRole, OrgRole } from "@prisma/client";
+export type { OrgRole, PlanType, Session, User, UserRole } from "@prisma/client";
 
 /**
  * User without sensitive fields (for API responses)
