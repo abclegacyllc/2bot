@@ -5,16 +5,19 @@
  *
  * Provides authentication state and methods to the application.
  * Handles token storage, auto-refresh, and session management.
+ * Updated for Phase 4: Context switching support
  */
 
 import { useRouter } from "next/navigation";
+import type {
+  ReactNode
+} from "react";
 import {
-    createContext,
-    ReactNode,
-    useCallback,
-    useContext,
-    useEffect,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
 } from "react";
 
 // User type (matches backend response)
@@ -22,7 +25,7 @@ interface User {
   id: string;
   email: string;
   name: string | null;
-  plan: "FREE" | "PRO";
+  plan: "FREE" | "PRO" | "ENTERPRISE";
   emailVerified: string | null;
   image: string | null;
   isActive: boolean;
@@ -31,12 +34,34 @@ interface User {
   updatedAt: string;
 }
 
+// Active context type (Phase 4)
+interface ActiveContext {
+  type: "personal" | "organization";
+  organizationId?: string;
+  organizationName?: string;
+  orgRole?: "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER";
+  plan: "FREE" | "PRO" | "ENTERPRISE";
+}
+
+// Available organization for switching
+interface AvailableOrg {
+  id: string;
+  name: string;
+  slug: string;
+  role: "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER";
+}
+
 // Auth context interface
 interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  // Context switching (Phase 4)
+  context: ActiveContext;
+  availableOrgs: AvailableOrg[];
+  switchContext: (type: "personal" | "organization", orgId?: string) => Promise<void>;
+  // Auth methods
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   logout: () => Promise<void>;
   register: (email: string, password: string, name?: string) => Promise<void>;
@@ -71,10 +96,60 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+// Default personal context
+const defaultContext: ActiveContext = {
+  type: "personal",
+  plan: "FREE",
+};
+
+// Helper to decode JWT payload (base64)
+function decodeTokenPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = atob(parts[1]!);
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+// Extract context from token
+function getContextFromToken(token: string | null): {
+  context: ActiveContext;
+  availableOrgs: AvailableOrg[];
+} {
+  if (!token) {
+    return { context: defaultContext, availableOrgs: [] };
+  }
+
+  const payload = decodeTokenPayload(token);
+  if (!payload) {
+    return { context: defaultContext, availableOrgs: [] };
+  }
+
+  const activeContext = payload.activeContext as ActiveContext | undefined;
+  const availableOrgs = (payload.availableOrgs || []) as AvailableOrg[];
+
+  return {
+    context: activeContext || defaultContext,
+    availableOrgs,
+  };
+}
+
 export function AuthProvider({ children }: AuthProviderProps) {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [context, setContext] = useState<ActiveContext>(defaultContext);
+  const [availableOrgs, setAvailableOrgs] = useState<AvailableOrg[]>([]);
+
+  // Update context when token changes
+  const updateContextFromToken = useCallback((token: string | null) => {
+    const { context: newContext, availableOrgs: orgs } = getContextFromToken(token);
+    setContext(newContext);
+    setAvailableOrgs(orgs);
+  }, []);
 
   // Fetch current user from API
   const fetchUser = useCallback(async (): Promise<User | null> => {
@@ -95,7 +170,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       const result = await response.json();
-      return result.data?.user || null;
+      // API returns { success: true, data: { ...user } } directly
+      return result.data || null;
     } catch {
       clearToken();
       return null;
@@ -113,6 +189,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     async function initAuth() {
       setIsLoading(true);
       try {
+        const token = getStoredToken();
+        updateContextFromToken(token);
         const userData = await fetchUser();
         setUser(userData);
       } finally {
@@ -120,7 +198,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
     }
     initAuth();
-  }, [fetchUser]);
+  }, [fetchUser, updateContextFromToken]);
 
   // Login function
   const login = useCallback(
@@ -139,13 +217,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (result.data?.token) {
         storeToken(result.data.token);
+        updateContextFromToken(result.data.token);
       }
 
       if (result.data?.user) {
         setUser(result.data.user);
       }
     },
-    []
+    [updateContextFromToken]
   );
 
   // Logout function
@@ -166,6 +245,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       clearToken();
       setUser(null);
+      setContext(defaultContext);
+      setAvailableOrgs([]);
       router.push("/login");
     }
   }, [router]);
@@ -187,13 +268,48 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (result.data?.token) {
         storeToken(result.data.token);
+        updateContextFromToken(result.data.token);
       }
 
       if (result.data?.user) {
         setUser(result.data.user);
       }
     },
-    []
+    [updateContextFromToken]
+  );
+
+  // Switch context (Phase 4)
+  const switchContext = useCallback(
+    async (type: "personal" | "organization", orgId?: string): Promise<void> => {
+      const token = getStoredToken();
+      if (!token) {
+        throw new Error("Not authenticated");
+      }
+
+      const response = await fetch("/api/auth/switch-context", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          contextType: type,
+          organizationId: orgId,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error?.message || "Failed to switch context");
+      }
+
+      if (result.data?.token) {
+        storeToken(result.data.token);
+        updateContextFromToken(result.data.token);
+      }
+    },
+    [updateContextFromToken]
   );
 
   const value: AuthContextType = {
@@ -201,6 +317,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     token: getStoredToken(),
     isLoading,
     isAuthenticated: !!user,
+    context,
+    availableOrgs,
+    switchContext,
     login,
     logout,
     register,

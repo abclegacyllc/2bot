@@ -75,8 +75,8 @@ export function verifyToken(token: string): TokenPayload | null {
       plan: decoded.plan,
       sessionId: decoded.sessionId,
       role: decoded.role ?? 'MEMBER',
-      organizationId: decoded.organizationId,
-      orgRole: decoded.orgRole,
+      activeContext: decoded.activeContext ?? { type: 'personal', plan: decoded.plan },
+      availableOrgs: decoded.availableOrgs ?? [],
     };
   } catch {
     return null;

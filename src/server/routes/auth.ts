@@ -9,8 +9,8 @@
 import { auditActions } from "@/lib/audit";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { AuthError, authService } from "@/modules/auth/auth.service";
-import type { AuthResponse, ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SafeUser } from "@/modules/auth/auth.types";
-import { forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, validateSchema } from "@/modules/auth/auth.validation";
+import type { AuthResponse, ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SafeUser, SwitchContextRequest, SwitchContextResponse } from "@/modules/auth/auth.types";
+import { forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, switchContextSchema, validateSchema } from "@/modules/auth/auth.validation";
 import { BadRequestError, ConflictError, UnauthorizedError, ValidationError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
@@ -205,6 +205,75 @@ authRouter.get(
       success: true,
       data: safeUser,
     });
+  })
+);
+
+/**
+ * POST /api/auth/switch-context
+ *
+ * Switch between personal and organization context
+ *
+ * @header {string} Authorization - Bearer token
+ * @body {string} contextType - 'personal' or 'organization'
+ * @body {string} [organizationId] - Required if contextType is 'organization'
+ *
+ * @returns {SwitchContextResponse} New token with updated context
+ *
+ * @throws {400} Validation error
+ * @throws {401} Not authenticated
+ * @throws {403} Not a member of the organization
+ */
+authRouter.post(
+  "/switch-context",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SwitchContextResponse>>) => {
+    // Validate input
+    const validation = validateSchema<SwitchContextRequest>(switchContextSchema, req.body);
+    if (!validation.success) {
+      throw new ValidationError("Invalid context switch data", validation.errors);
+    }
+
+    // These are guaranteed by requireAuth
+    const userId = req.user?.id;
+    const sessionId = req.sessionId;
+    if (!userId || !sessionId) {
+      throw new UnauthorizedError("Not authenticated");
+    }
+
+    try {
+      const result = await authService.switchContext(
+        userId,
+        sessionId,
+        validation.data
+      );
+
+      // Audit: Context switched
+      void auditActions.contextSwitched?.({
+        userId,
+        contextType: validation.data.contextType,
+        organizationId: validation.data.organizationId,
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+      });
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      if (error instanceof AuthError) {
+        if (error.code === "NOT_MEMBER") {
+          throw new UnauthorizedError("You are not a member of this organization");
+        }
+        if (error.code === "USER_NOT_FOUND" || error.code === "USER_INACTIVE") {
+          throw new UnauthorizedError(error.message);
+        }
+        if (error.code === "INVALID_REQUEST") {
+          throw new BadRequestError(error.message);
+        }
+      }
+      throw error;
+    }
   })
 );
 

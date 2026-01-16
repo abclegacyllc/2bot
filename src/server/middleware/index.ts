@@ -6,4 +6,5 @@ export { pinoHttpMiddleware, requestLogger } from "./request-logger";
 export {
     requireAdmin, requireAllPermissions, requireAnyPermission, requireDeveloper, requireOrgAdmin, requireOrgContext, requireOrgOwner, requirePermission, requireRole, requireSuperAdmin
 } from "./role";
+export { trackApiUsage, trackWriteOperations } from "./usage-tracking";
 

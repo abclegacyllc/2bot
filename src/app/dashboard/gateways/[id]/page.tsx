@@ -212,7 +212,7 @@ function GatewayDetailContent() {
 
       try {
         const response = await fetch(
-          `http://localhost:3001/api/gateways/${gatewayId}`,
+          `/api/gateways/${gatewayId}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -250,7 +250,7 @@ function GatewayDetailContent() {
 
     try {
       const response = await fetch(
-        `http://localhost:3001/api/gateways/${gatewayId}`,
+        `/api/gateways/${gatewayId}`,
         {
           method: "PUT",
           headers: {
@@ -284,7 +284,7 @@ function GatewayDetailContent() {
 
     try {
       const response = await fetch(
-        `http://localhost:3001/api/gateways/${gatewayId}/test`,
+        `/api/gateways/${gatewayId}/test`,
         {
           method: "POST",
           headers: {
@@ -319,7 +319,7 @@ function GatewayDetailContent() {
 
     try {
       const response = await fetch(
-        `http://localhost:3001/api/gateways/${gatewayId}`,
+        `/api/gateways/${gatewayId}`,
         {
           method: "DELETE",
           headers: {
@@ -418,8 +418,7 @@ function GatewayDetailContent() {
                 </span>
               </Button>
 
-              {testResult && (
-                <div
+              {testResult ? <div
                   className={`mt-3 p-3 rounded-md ${
                     testResult.success
                       ? "bg-green-950/20 border border-green-900/30"
@@ -433,8 +432,7 @@ function GatewayDetailContent() {
                   >
                     {testResult.message}
                   </p>
-                </div>
-              )}
+                </div> : null}
             </div>
           </CardContent>
         </Card>
@@ -461,37 +459,25 @@ function GatewayDetailContent() {
             </div>
 
             {/* Credential info (masked) */}
-            {gateway.credentialInfo && (
-              <div className="space-y-2">
+            {gateway.credentialInfo ? <div className="space-y-2">
                 <Label className="text-white">Credentials</Label>
                 <div className="bg-slate-900 border border-slate-800 rounded-md p-3 text-sm text-slate-400">
-                  {gateway.type === "TELEGRAM_BOT" && gateway.credentialInfo.hasBotToken && (
-                    <p>Bot Token: ••••••••••••••••</p>
-                  )}
-                  {gateway.type === "AI" && gateway.credentialInfo.provider && (
-                    <p>Provider: {gateway.credentialInfo.provider}</p>
-                  )}
-                  {gateway.type === "AI" && gateway.credentialInfo.hasApiKey && (
-                    <p>API Key: ••••••••••••••••</p>
-                  )}
+                  {gateway.type === "TELEGRAM_BOT" && gateway.credentialInfo.hasBotToken ? <p>Bot Token: ••••••••••••••••</p> : null}
+                  {gateway.type === "AI" && gateway.credentialInfo.provider ? <p>Provider: {gateway.credentialInfo.provider}</p> : null}
+                  {gateway.type === "AI" && gateway.credentialInfo.hasApiKey ? <p>API Key: ••••••••••••••••</p> : null}
                   <p className="text-xs text-slate-500 mt-1">
                     Credentials are encrypted and cannot be displayed
                   </p>
                 </div>
-              </div>
-            )}
+              </div> : null}
 
-            {saveError && (
-              <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
+            {saveError ? <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
                 <p className="text-sm text-red-400">{saveError}</p>
-              </div>
-            )}
+              </div> : null}
 
-            {saveSuccess && (
-              <div className="bg-green-950/20 border border-green-900/30 rounded-md p-3">
+            {saveSuccess ? <div className="bg-green-950/20 border border-green-900/30 rounded-md p-3">
                 <p className="text-sm text-green-400">Changes saved successfully!</p>
-              </div>
-            )}
+              </div> : null}
 
             <Button
               onClick={handleSave}
@@ -544,14 +530,12 @@ function GatewayDetailContent() {
       </div>
 
       {/* Delete confirmation dialog */}
-      {showDeleteDialog && (
-        <DeleteConfirmDialog
+      {showDeleteDialog ? <DeleteConfirmDialog
           gatewayName={gateway.name}
           onConfirm={handleDelete}
           onCancel={() => setShowDeleteDialog(false)}
           loading={deleting}
-        />
-      )}
+        /> : null}
     </div>
   );
 }

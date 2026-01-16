@@ -17,8 +17,8 @@ import { GatewayStatusBadge } from "@/components/gateways/gateway-status";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent
+  Card,
+  CardContent
 } from "@/components/ui/card";
 import type { GatewayListItem } from "@/modules/gateway/gateway.types";
 
@@ -131,9 +131,7 @@ function GatewayCard({ gateway }: { gateway: GatewayListItem }) {
                 <span>•</span>
                 <span>Last active: {formatRelativeTime(gateway.lastConnectedAt)}</span>
               </div>
-              {gateway.lastError && gateway.status === "ERROR" && (
-                <p className="text-xs text-red-400 mt-1 truncate">{gateway.lastError}</p>
-              )}
+              {gateway.lastError && gateway.status === "ERROR" ? <p className="text-xs text-red-400 mt-1 truncate">{gateway.lastError}</p> : null}
             </div>
 
             {/* Arrow */}
@@ -209,7 +207,7 @@ function GatewaysContent() {
       if (!token) return;
 
       try {
-        const response = await fetch("http://localhost:3001/api/gateways", {
+        const response = await fetch("/api/gateways", {
           headers: {
             Authorization: `Bearer ${token}`,
           },

@@ -8,9 +8,10 @@
  * @module modules/plugin/plugin-circuit
  */
 
-import {
+import type {
     CircuitBreaker,
-    CircuitOpenError,
+    CircuitOpenError} from "@/lib/circuit-breaker";
+import {
     circuitRegistry,
     type CircuitBreakerStats
 } from "@/lib/circuit-breaker";

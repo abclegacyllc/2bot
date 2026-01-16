@@ -27,10 +27,16 @@ export interface ServiceContext {
   userRole: UserRole;
   userPlan: PlanType;
 
-  // Organization context (optional - null for individual users)
+  // Active context type (Phase 4)
+  contextType: 'personal' | 'organization';
+
+  // Organization context (optional - null for personal context)
   organizationId?: string;
   orgRole?: OrgRole;
   departmentId?: string;
+
+  // Effective plan based on context (personal or org plan)
+  effectivePlan: PlanType;
 
   // Request metadata (for auditing)
   ipAddress?: string;
@@ -41,19 +47,25 @@ export interface ServiceContext {
   isAdmin(): boolean;
   isSuperAdmin(): boolean;
   isOrgContext(): boolean;
+  isPersonalContext(): boolean;
+  getOwnerId(): string | null;
   canDo(permission: Permission): boolean;
   getPermissions(): Permission[];
 }
 
 /**
- * Token payload shape (from JWT)
+ * Token payload shape (from JWT) - updated for Phase 4
  */
 export interface TokenPayloadForContext {
   userId: string;
   role: UserRole;
   plan: PlanType;
-  organizationId?: string;
-  orgRole?: OrgRole;
+  activeContext: {
+    type: 'personal' | 'organization';
+    organizationId?: string;
+    orgRole?: OrgRole;
+    plan: PlanType;
+  };
 }
 
 /**
@@ -76,8 +88,10 @@ export function createServiceContext(
     userId: tokenPayload.userId,
     userRole: tokenPayload.role,
     userPlan: tokenPayload.plan,
-    organizationId: tokenPayload.organizationId,
-    orgRole: tokenPayload.orgRole,
+    contextType: tokenPayload.activeContext.type,
+    organizationId: tokenPayload.activeContext.organizationId,
+    orgRole: tokenPayload.activeContext.orgRole,
+    effectivePlan: tokenPayload.activeContext.plan,
     ipAddress: requestMeta?.ipAddress,
     userAgent: requestMeta?.userAgent,
     requestId: requestMeta?.requestId,
@@ -91,7 +105,15 @@ export function createServiceContext(
     },
 
     isOrgContext() {
-      return !!this.organizationId;
+      return this.contextType === 'organization';
+    },
+
+    isPersonalContext() {
+      return this.contextType === 'personal';
+    },
+
+    getOwnerId() {
+      return this.isOrgContext() ? (this.organizationId ?? null) : null;
     },
 
     canDo(permission: Permission) {
@@ -115,6 +137,8 @@ export function createSystemContext(requestId?: string): ServiceContext {
     userId: 'system',
     userRole: 'SUPER_ADMIN',
     userPlan: 'ENTERPRISE',
+    contextType: 'personal',
+    effectivePlan: 'ENTERPRISE',
     requestId,
 
     isAdmin() {
@@ -127,6 +151,14 @@ export function createSystemContext(requestId?: string): ServiceContext {
 
     isOrgContext() {
       return false;
+    },
+
+    isPersonalContext() {
+      return true;
+    },
+
+    getOwnerId() {
+      return null;
     },
 
     canDo() {
@@ -240,9 +272,11 @@ export function createTenantContext(
     userId: ctx.userId,
     userRole: ctx.userRole,
     userPlan: ctx.userPlan,
+    contextType: ctx.contextType,
     organizationId: ctx.organizationId,
     orgRole: ctx.orgRole,
     departmentId: ctx.departmentId,
+    effectivePlan: ctx.effectivePlan,
     ipAddress: ctx.ipAddress,
     userAgent: ctx.userAgent,
     requestId: ctx.requestId,
@@ -251,6 +285,8 @@ export function createTenantContext(
     isAdmin: ctx.isAdmin.bind(ctx),
     isSuperAdmin: ctx.isSuperAdmin.bind(ctx),
     isOrgContext: ctx.isOrgContext.bind(ctx),
+    isPersonalContext: ctx.isPersonalContext.bind(ctx),
+    getOwnerId: ctx.getOwnerId.bind(ctx),
     canDo: ctx.canDo.bind(ctx),
     getPermissions: ctx.getPermissions.bind(ctx),
 
@@ -296,4 +332,32 @@ export function createSystemTenantContext(
     ...options,
     // Override with explicit tenantId parsing
   });
+}
+
+// ===========================================
+// Ownership Filter Helper (Phase 4)
+// ===========================================
+
+/**
+ * Ownership filter for queries
+ * Used to filter resources by owner (user or organization)
+ */
+export interface OwnershipFilter {
+  userId?: string;
+  organizationId?: string | null;
+}
+
+/**
+ * Get ownership filter based on context type
+ * 
+ * - Personal context: filter by userId and organizationId=null
+ * - Organization context: filter by organizationId only
+ * 
+ * This ensures proper data isolation between personal and org workspaces.
+ */
+export function getOwnershipFilter(ctx: ServiceContext): OwnershipFilter {
+  if (ctx.isOrgContext()) {
+    return { organizationId: ctx.organizationId };
+  }
+  return { userId: ctx.userId, organizationId: null };
 }

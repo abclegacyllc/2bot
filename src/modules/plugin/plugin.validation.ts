@@ -102,12 +102,17 @@ export const pluginConfigSchema = z.record(z.string(), z.unknown()).default({});
 
 /**
  * Install plugin request validation
+ * Accepts either pluginId (CUID) or slug for flexibility
  */
 export const installPluginSchema = z.object({
-  pluginId: z.string().cuid("Invalid plugin ID"),
+  pluginId: z.string().cuid("Invalid plugin ID").optional(),
+  slug: z.string().min(1, "Slug is required").optional(),
   config: pluginConfigSchema.optional(),
   gatewayId: z.string().cuid("Invalid gateway ID").optional(),
-});
+}).refine(
+  (data) => data.pluginId || data.slug,
+  { message: "Either pluginId or slug must be provided" }
+);
 
 /**
  * Update plugin config request validation

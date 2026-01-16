@@ -30,13 +30,33 @@ function getServiceContext(req: Request) {
     throw new BadRequestError("User not authenticated");
   }
 
+  // Use token payload if available (contains activeContext from JWT)
+  if (req.tokenPayload) {
+    return createServiceContext(
+      {
+        userId: req.tokenPayload.userId,
+        role: req.tokenPayload.role,
+        plan: req.tokenPayload.plan,
+        activeContext: req.tokenPayload.activeContext,
+      },
+      {
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+        requestId: req.headers["x-request-id"] as string | undefined,
+      }
+    );
+  }
+
+  // Fallback: create personal context from user object (legacy support)
   return createServiceContext(
     {
       userId: req.user.id,
       role: req.user.role,
       plan: req.user.plan,
-      organizationId: req.user.organizationId ?? undefined,
-      orgRole: req.user.orgRole ?? undefined,
+      activeContext: {
+        type: 'personal',
+        plan: req.user.plan,
+      },
     },
     {
       ipAddress: req.ip,

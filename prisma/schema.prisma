@@ -36,6 +36,17 @@ enum OrgRole {
   ORG_MEMBER    // Regular org member
 }
 
+enum MembershipStatus {
+  INVITED       // Pending invite
+  ACTIVE        // Full member
+  SUSPENDED     // Temporarily disabled
+}
+
+enum DatabaseType {
+  SHARED        // Uses default shared database (Free/Starter/Pro/Business)
+  DEDICATED     // Has own database instance (Enterprise)
+}
+
 enum GatewayType {
   TELEGRAM_BOT    // Telegram Bot API (uses botToken)
   AI              // All AI providers (OpenAI, Anthropic, DeepSeek, Grok, Gemini, Mistral, Groq, Ollama)
@@ -63,11 +74,6 @@ model User {
   // Role System (for admin, developer, support)
   role              UserRole  @default(MEMBER)
   
-  // Organization Support (null = individual user)
-  organizationId    String?   @map("organization_id")
-  departmentId      String?   @map("department_id")
-  orgRole           OrgRole?  @map("org_role")
-  
   // Security (for future 2FA, account lockout)
   failedLoginCount  Int       @default(0) @map("failed_login_count")
   lockedUntil       DateTime? @map("locked_until")
@@ -76,7 +82,7 @@ model User {
   // Soft Delete Support
   deletedAt         DateTime? @map("deleted_at")
 
-  // Subscription
+  // Subscription (personal workspace)
   plan             PlanType @default(FREE)
   stripeCustomerId String?  @unique @map("stripe_customer_id")
 
@@ -95,10 +101,14 @@ model User {
   creditBalance       CreditBalance?
   userPlugins         UserPlugin[]
   workflows           Workflow[]
+  memberships         Membership[]
+  invitedMemberships  Membership[] @relation("InvitedMemberships")
+  departmentMembers   DepartmentMember[]
+  resourceQuota       ResourceQuota?
+  usageHistory        UsageHistory[]
 
   @@index([email])
   @@index([stripeCustomerId])
-  @@index([organizationId])
   @@index([deletedAt])
   @@index([role])
   @@map("users")
@@ -148,6 +158,334 @@ model PasswordResetToken {
 }
 
 // ===========================================
+// Organization Model (Phase 4: Organization)
+// ===========================================
+model Organization {
+  id               String       @id @default(cuid())
+  name             String
+  slug             String       @unique
+  
+  // Billing (linked in Phase 5)
+  plan             PlanType     @default(FREE)
+  stripeCustomerId String?      @unique @map("stripe_customer_id")
+  
+  // Limits (can override plan defaults)
+  maxMembers       Int?         @map("max_members")
+  
+  // Database Isolation (Future-Ready)
+  // See Phase 1.5 for architecture details
+  databaseType     DatabaseType @default(SHARED)
+  databaseUrl      String?      @map("database_url")     // Encrypted if dedicated
+  databaseRegion   String?      @map("database_region")  // 'us-east', 'eu-west'
+  
+  // Status
+  isActive         Boolean      @default(true) @map("is_active")
+  
+  // Timestamps
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  
+  // Relations
+  memberships      Membership[]
+  departments      Department[]
+  gateways         Gateway[]
+  userPlugins      UserPlugin[]
+  workflows        Workflow[]
+  resourceQuota    ResourceQuota?
+  usageHistory     UsageHistory[]
+  alertConfig      AlertConfig?
+  alertHistory     AlertHistory[]
+  
+  @@index([slug])
+  @@index([databaseType])
+  @@index([isActive])
+  @@map("organizations")
+}
+
+// ===========================================
+// Membership Model (Phase 4: Organization)
+// User ↔ Organization relationship with role
+// ===========================================
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String           @map("user_id")
+  organizationId String           @map("organization_id")
+  
+  // Role in this organization
+  role           OrgRole          @default(ORG_MEMBER)
+  
+  // Status
+  status         MembershipStatus @default(INVITED)
+  
+  // Invite tracking
+  invitedBy      String?          @map("invited_by")
+  invitedAt      DateTime         @default(now()) @map("invited_at")
+  joinedAt       DateTime?        @map("joined_at")
+  
+  // Timestamps
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  
+  // Relations
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter        User?            @relation("InvitedMemberships", fields: [invitedBy], references: [id])
+  departmentMembers DepartmentMember[]
+  
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([status])
+  @@map("memberships")
+}
+
+// ===========================================
+// Department Model (Phase 4: Organization)
+// Organization hierarchy for resource quotas
+// ===========================================
+model Department {
+  id               String       @id @default(cuid())
+  organizationId   String       @map("organization_id")
+  name             String
+  description      String?
+  
+  // Resource Quotas (can override org defaults)
+  maxWorkflows     Int?         @map("max_workflows")
+  maxPlugins       Int?         @map("max_plugins")  
+  maxApiCalls      Int?         @map("max_api_calls")    // Per day
+  maxStorage       Int?         @map("max_storage")      // MB
+  
+  // Status
+  isActive         Boolean      @default(true) @map("is_active")
+  
+  // Timestamps
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  
+  // Relations
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members          DepartmentMember[]
+  workflows        Workflow[]
+  resourceQuota    ResourceQuota?
+  usageHistory     UsageHistory[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([isActive])
+  @@map("departments")
+}
+
+// ===========================================
+// Department Member (Phase 4: Organization)
+// User ↔ Department relationship with role
+// ===========================================
+model DepartmentMember {
+  id             String           @id @default(cuid())
+  userId         String           @map("user_id")
+  departmentId   String           @map("department_id")
+  membershipId   String           @map("membership_id")
+  
+  // Role in this department
+  role           DepartmentRole   @default(MEMBER)
+  
+  // Employee-level quotas (can override dept defaults)
+  maxWorkflows   Int?             @map("max_workflows")     // Default: 5 for employees
+  maxPlugins     Int?             @map("max_plugins")       // Default: 3 for employees
+  
+  // Timestamps
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  
+  // Relations
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department     Department       @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  membership     Membership       @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, departmentId])
+  @@index([userId])
+  @@index([departmentId])
+  @@map("department_members")
+}
+
+enum DepartmentRole {
+  MANAGER    // Can manage dept workflows, set employee limits
+  MEMBER     // Can use dept workflows, create personal workflows
+}
+
+enum PeriodType {
+  HOURLY
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+// ===========================================
+// Resource Quota (Phase 4: Organization Quotas)
+// Tracks usage and limits for orgs, depts, users
+// ===========================================
+model ResourceQuota {
+  id               String       @id @default(cuid())
+  
+  // Owner reference (exactly one of these)
+  organizationId   String?      @unique @map("organization_id")
+  departmentId     String?      @unique @map("department_id")
+  userId           String?      @unique @map("user_id")
+  
+  // Limits (null = use parent/plan default)
+  maxWorkflows     Int?         @map("max_workflows")
+  maxPlugins       Int?         @map("max_plugins")
+  maxApiCalls      Int?         @map("max_api_calls")      // Per day
+  maxStorage       Int?         @map("max_storage")        // MB
+  maxSteps         Int?         @map("max_steps")          // Per workflow
+  
+  // Current Usage (updated periodically)
+  usedWorkflows    Int          @default(0) @map("used_workflows")
+  usedPlugins      Int          @default(0) @map("used_plugins")
+  usedApiCalls     Int          @default(0) @map("used_api_calls")
+  usedStorage      Int          @default(0) @map("used_storage")
+  
+  // Reset tracking
+  apiCallsResetAt  DateTime?    @map("api_calls_reset_at")
+  
+  // Timestamps
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  
+  // Relations
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department       Department?   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([userId])
+  @@map("resource_quotas")
+}
+
+// ===========================================
+// Usage History (Phase 4: Organization Quotas)
+// Historical tracking for monitoring dashboard
+// ===========================================
+model UsageHistory {
+  id               String       @id @default(cuid())
+  
+  // Owner reference (one of these)
+  organizationId   String?      @map("organization_id")
+  departmentId     String?      @map("department_id")
+  userId           String?      @map("user_id")
+  
+  // Time bucket
+  periodStart      DateTime     @map("period_start")
+  periodType       PeriodType   @default(DAILY) @map("period_type")
+  
+  // Metrics
+  apiCalls         Int          @default(0) @map("api_calls")
+  workflowRuns     Int          @default(0) @map("workflow_runs")
+  pluginExecutions Int          @default(0) @map("plugin_executions")
+  storageUsed      Int          @default(0) @map("storage_used")    // MB at period end
+  errors           Int          @default(0)
+  
+  // Cost tracking (for enterprise)
+  estimatedCost    Decimal?     @map("estimated_cost") @db.Decimal(10, 2)
+  
+  // Timestamps
+  createdAt        DateTime     @default(now()) @map("created_at")
+  
+  // Relations
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department       Department?   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, periodStart, periodType])
+  @@unique([departmentId, periodStart, periodType])
+  @@unique([userId, periodStart, periodType])
+  @@index([periodStart])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([userId])
+  @@map("usage_history")
+}
+
+// ===========================================
+// Alert Config (Phase 4: Resource Monitoring)
+// Configuration for resource alerts per organization
+// ===========================================
+model AlertConfig {
+  id                      String   @id @default(cuid())
+  organizationId          String   @unique @map("organization_id")
+  
+  // Threshold settings
+  quotaWarningThreshold   Int      @default(80) @map("quota_warning_threshold")
+  quotaCriticalThreshold  Int      @default(95) @map("quota_critical_threshold")
+  errorRateThreshold      Int      @default(10) @map("error_rate_threshold")
+  consecutiveFailures     Int      @default(3) @map("consecutive_failures")
+  
+  // Cost thresholds (enterprise)
+  dailyCostThreshold      Int?     @map("daily_cost_threshold")
+  monthlyCostThreshold    Int?     @map("monthly_cost_threshold")
+  
+  // Notification channels (JSON)
+  channels                Json     @default("{\"email\": true}")
+  
+  // Status
+  enabled                 Boolean  @default(true)
+  
+  // Timestamps
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@map("alert_configs")
+}
+
+// ===========================================
+// Alert History (Phase 4: Resource Monitoring)
+// Historical log of alerts sent
+// ===========================================
+model AlertHistory {
+  id               String    @id @default(cuid())
+  organizationId   String    @map("organization_id")
+  
+  // Alert details
+  type             String    // AlertType enum value
+  severity         String    // AlertSeverity enum value
+  title            String
+  message          String    @db.Text
+  
+  // Resource details (optional)
+  resource         String?
+  currentValue     Int?      @map("current_value")
+  limitValue       Int?      @map("limit_value")
+  percentage       Int?
+  
+  // Metadata (JSON)
+  metadata         String?   @db.Text
+  
+  // Acknowledgement
+  acknowledged     Boolean   @default(false)
+  acknowledgedBy   String?   @map("acknowledged_by")
+  acknowledgedAt   DateTime? @map("acknowledged_at")
+  
+  // Resolution
+  resolvedAt       DateTime? @map("resolved_at")
+  
+  // Timestamps
+  createdAt        DateTime  @default(now()) @map("created_at")
+  
+  // Relations
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@index([organizationId])
+  @@index([type])
+  @@index([severity])
+  @@index([acknowledged])
+  @@index([createdAt])
+  @@map("alert_history")
+}
+
+// ===========================================
 // Gateway Model (Phase 2: Gateway System)
 // ===========================================
 model Gateway {
@@ -178,7 +516,7 @@ model Gateway {
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // organization Organization? @relation(...) // Add when Organization model exists
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workflows     Workflow[]
   workflowSteps WorkflowStep[]
 
@@ -342,7 +680,7 @@ model UserPlugin {
   // Relations
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   plugin        Plugin        @relation(fields: [pluginId], references: [id])
-  // organization Organization? @relation(...) // Add when Organization model exists
+  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   
   // Unique per user+plugin OR per organization+plugin
   @@unique([userId, pluginId, organizationId])
@@ -423,8 +761,8 @@ model Workflow {
   // Relations
   user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   gateway         Gateway?            @relation(fields: [gatewayId], references: [id])
-  // organization Organization?       @relation(...) // Add when Organization exists (Phase 4)
-  // department    Department?         @relation(...) // Add when Department exists (Phase 4)
+  organization    Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department      Department?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   steps           WorkflowStep[]
   runs            WorkflowRun[]
   

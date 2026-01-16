@@ -202,11 +202,9 @@ function TelegramBotForm({
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
+      {error ? <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
           <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
+        </div> : null}
 
       <div className="flex gap-3">
         <Button
@@ -335,8 +333,7 @@ function AIProviderForm({
           />
         </div>
 
-        {providerInfo.requiresBaseUrl && (
-          <div className="space-y-2">
+        {providerInfo.requiresBaseUrl ? <div className="space-y-2">
             <Label htmlFor="baseUrl" className="text-white">
               Base URL
             </Label>
@@ -348,8 +345,7 @@ function AIProviderForm({
               required={providerInfo.requiresBaseUrl}
               className="bg-slate-900 border-slate-800 text-white placeholder:text-slate-500"
             />
-          </div>
-        )}
+          </div> : null}
 
         <div className="space-y-2">
           <Label htmlFor="model" className="text-white">
@@ -366,11 +362,9 @@ function AIProviderForm({
         </div>
       </div>
 
-      {error && (
-        <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
+      {error ? <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
           <p className="text-sm text-red-400">{error}</p>
-        </div>
-      )}
+        </div> : null}
 
       <div className="flex gap-3">
         <Button
@@ -426,7 +420,7 @@ function AddGatewayContent() {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:3001/api/gateways", {
+      const response = await fetch("/api/gateways", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

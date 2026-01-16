@@ -101,9 +101,9 @@ export function ProtectedRoute({
 
   // Check plan requirement
   if (requiredPlan && user) {
-    const planHierarchy = { FREE: 0, PRO: 1 };
-    const userPlanLevel = planHierarchy[user.plan];
-    const requiredPlanLevel = planHierarchy[requiredPlan];
+    const planHierarchy: Record<string, number> = { FREE: 0, PRO: 1, ENTERPRISE: 2 };
+    const userPlanLevel = planHierarchy[user.plan] ?? 0;
+    const requiredPlanLevel = planHierarchy[requiredPlan] ?? 0;
 
     if (userPlanLevel < requiredPlanLevel) {
       return <AccessDenied requiredPlan={requiredPlan} />;

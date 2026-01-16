@@ -25,6 +25,7 @@ export type SessionWithUser = Session & {
 /**
  * JWT Token Payload
  * Extended with role fields for Phase 1.5 architecture
+ * Updated with active context for Phase 4 multi-org support
  */
 export interface TokenPayload {
   userId: string;
@@ -34,8 +35,32 @@ export interface TokenPayload {
   
   // Role fields (Phase 1.5)
   role: UserRole;
+  
+  // Active context (Phase 4) - which context is currently active
+  activeContext: ActiveContext;
+  
+  // Available organizations for context switcher
+  availableOrgs: AvailableOrg[];
+}
+
+/**
+ * Active context - what the user is currently operating as
+ */
+export interface ActiveContext {
+  type: "personal" | "organization";
   organizationId?: string;
   orgRole?: OrgRole;
+  plan: PlanType; // Effective plan (personal or org plan)
+}
+
+/**
+ * Organization available for switching
+ */
+export interface AvailableOrg {
+  id: string;
+  name: string;
+  slug: string;
+  role: OrgRole;
 }
 
 /**
@@ -71,6 +96,28 @@ export interface ResetPasswordRequest {
 export interface ChangePasswordRequest {
   currentPassword: string;
   newPassword: string;
+}
+
+/**
+ * Context switching request (Phase 4)
+ */
+export interface SwitchContextRequest {
+  contextType: "personal" | "organization";
+  organizationId?: string; // Required if contextType === 'organization'
+}
+
+/**
+ * Context switching response (Phase 4)
+ */
+export interface SwitchContextResponse {
+  token: string;
+  context: {
+    type: "personal" | "organization";
+    organizationId?: string;
+    organizationName?: string;
+    orgRole?: OrgRole;
+    plan: PlanType;
+  };
 }
 
 /**

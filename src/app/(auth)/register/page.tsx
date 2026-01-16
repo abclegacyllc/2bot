@@ -108,11 +108,9 @@ export default function RegisterPage() {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             {/* Global Error */}
-            {error && (
-              <div className="p-3 text-sm text-red-400 bg-red-950/50 border border-red-900 rounded-md">
+            {error ? <div className="p-3 text-sm text-red-400 bg-red-950/50 border border-red-900 rounded-md">
                 {error}
-              </div>
-            )}
+              </div> : null}
 
             {/* Name Field */}
             <FormField

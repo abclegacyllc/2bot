@@ -1,7 +1,7 @@
-# Phase 8: Theme System (V2)
+# Phase 8: Theme System & Internationalization (V2)
 
-> **Goal:** Build marketplace-ready theme system with custom themes and organization branding
-> **Estimated Sessions:** 6-8
+> **Goal:** Build marketplace-ready theme system with custom themes, organization branding, and multi-language support
+> **Estimated Sessions:** 8-10
 > **Prerequisites:** Phase 7 complete, basic theme toggle (Phase 6.2) working
 
 ---
@@ -25,6 +25,13 @@
 | **Built-in Themes** ||||
 | 8.4.1 | Create official themes | ⬜ | 5 built-in themes |
 | 8.4.2 | Seed themes to database | ⬜ | |
+| **Internationalization (i18n)** ||||
+| 8.5.1 | Setup next-intl framework | ⬜ | Middleware + config |
+| 8.5.2 | Create translation files (en, ru, es, zh) | ⬜ | JSON locale files |
+| 8.5.3 | Extract UI strings to translations | ⬜ | All hardcoded text |
+| 8.5.4 | Create language switcher component | ⬜ | In user settings |
+| 8.5.5 | Add language preference to User model | ⬜ | DB field |
+| 8.5.6 | Test RTL support (Arabic, Hebrew) | ⬜ | Optional languages |
 
 ---
 
@@ -969,6 +976,290 @@ export async function seedThemes() {
 
 ---
 
+## 🌍 Internationalization (i18n)
+
+### i18n Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     next-intl Setup                         │
+│                                                             │
+│  src/i18n/                                                  │
+│  ├── config.ts          # Supported locales, default        │
+│  ├── request.ts         # getRequestConfig                  │
+│  └── locales/                                               │
+│      ├── en.json        # English (default)                 │
+│      ├── ru.json        # Russian                           │
+│      ├── es.json        # Spanish                           │
+│      └── zh.json        # Chinese (Simplified)              │
+│                                                             │
+│  middleware.ts          # Locale detection + routing        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### URL Structure
+
+```
+/en/dashboard           # English
+/ru/dashboard           # Russian  
+/es/dashboard           # Spanish
+/zh/dashboard           # Chinese
+
+OR (preferred for SaaS):
+
+/dashboard              # Uses cookie/user preference
+```
+
+---
+
+### Task 8.5.1: Setup next-intl Framework
+
+**Session Type:** Backend + Config
+**Estimated Time:** 30 minutes
+**Prerequisites:** Task 8.4.2 complete
+
+#### Deliverables:
+- [ ] npm install next-intl
+- [ ] src/i18n/config.ts
+- [ ] src/i18n/request.ts
+- [ ] middleware.ts updates for locale
+
+#### Config:
+```typescript
+// src/i18n/config.ts
+export const locales = ['en', 'ru', 'es', 'zh'] as const;
+export type Locale = (typeof locales)[number];
+export const defaultLocale: Locale = 'en';
+
+export const localeNames: Record<Locale, string> = {
+  en: 'English',
+  ru: 'Русский',
+  es: 'Español',
+  zh: '中文',
+};
+```
+
+#### Done Criteria:
+- [ ] next-intl installed
+- [ ] Config file created
+- [ ] Middleware detecting locale
+- [ ] Basic translation working
+
+---
+
+### Task 8.5.2: Create Translation Files
+
+**Session Type:** Frontend
+**Estimated Time:** 2-3 hours
+**Prerequisites:** Task 8.5.1 complete
+
+#### Deliverables:
+- [ ] src/i18n/locales/en.json (complete)
+- [ ] src/i18n/locales/ru.json (complete)
+- [ ] src/i18n/locales/es.json (complete)
+- [ ] src/i18n/locales/zh.json (complete)
+
+#### Translation Structure:
+```json
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "loading": "Loading...",
+    "error": "An error occurred"
+  },
+  "auth": {
+    "login": "Log in",
+    "register": "Create account",
+    "logout": "Log out",
+    "forgotPassword": "Forgot password?"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "welcome": "Welcome back, {name}!"
+  },
+  "organization": {
+    "create": "Create Organization",
+    "settings": "Organization Settings",
+    "members": "Members"
+  },
+  "plugins": {
+    "available": "Available Plugins",
+    "installed": "My Plugins",
+    "install": "Install",
+    "uninstall": "Uninstall"
+  }
+}
+```
+
+#### Done Criteria:
+- [ ] All 4 locale files created
+- [ ] All UI strings extracted
+- [ ] Translations complete (can use AI for initial)
+- [ ] No hardcoded English in UI
+
+---
+
+### Task 8.5.3: Extract UI Strings to Translations
+
+**Session Type:** Frontend (Refactoring)
+**Estimated Time:** 2-3 hours
+**Prerequisites:** Task 8.5.2 complete
+
+#### Process:
+1. Search for hardcoded strings in components
+2. Replace with `useTranslations()` hook
+3. Add key to locale files
+
+#### Example:
+```tsx
+// Before
+<Button>Create Organization</Button>
+
+// After
+import { useTranslations } from 'next-intl';
+
+const t = useTranslations('organization');
+<Button>{t('create')}</Button>
+```
+
+#### Files to Update:
+- [ ] All pages in src/app/
+- [ ] All components in src/components/
+- [ ] Error messages
+- [ ] Form labels and placeholders
+- [ ] Toast messages
+
+#### Done Criteria:
+- [ ] No hardcoded strings in UI
+- [ ] All components using useTranslations
+- [ ] App works in all 4 languages
+
+---
+
+### Task 8.5.4: Create Language Switcher Component
+
+**Session Type:** Frontend
+**Estimated Time:** 30 minutes
+**Prerequisites:** Task 8.5.3 complete
+
+#### Deliverables:
+- [ ] src/components/layout/language-switcher.tsx
+- [ ] Add to user settings page
+
+#### Design:
+```tsx
+'use client';
+
+import { useLocale } from 'next-intl';
+import { useRouter, usePathname } from 'next/navigation';
+import { locales, localeNames, type Locale } from '@/i18n/config';
+
+export function LanguageSwitcher() {
+  const locale = useLocale();
+  const router = useRouter();
+  const pathname = usePathname();
+  
+  const handleChange = async (newLocale: Locale) => {
+    // Update cookie
+    document.cookie = `NEXT_LOCALE=${newLocale}; path=/; max-age=31536000`;
+    
+    // Update user preference in DB (if logged in)
+    await fetch('/api/user/preferences', {
+      method: 'PATCH',
+      body: JSON.stringify({ language: newLocale }),
+    });
+    
+    router.refresh();
+  };
+  
+  return (
+    <Select value={locale} onValueChange={handleChange}>
+      <SelectTrigger>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {locales.map((loc) => (
+          <SelectItem key={loc} value={loc}>
+            {localeNames[loc]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+```
+
+#### Done Criteria:
+- [ ] Dropdown shows all languages
+- [ ] Switching language works
+- [ ] Selection persists (cookie)
+- [ ] In user settings page
+
+---
+
+### Task 8.5.5: Add Language Preference to User Model
+
+**Session Type:** Database + Backend
+**Estimated Time:** 20 minutes
+**Prerequisites:** Task 8.5.4 complete
+
+#### Schema Update:
+```prisma
+model User {
+  // ... existing fields
+  
+  // User preferences
+  language    String   @default("en") @map("language")  // NEW
+}
+```
+
+#### Migration:
+```sql
+ALTER TABLE users ADD COLUMN language VARCHAR(5) DEFAULT 'en';
+```
+
+#### Done Criteria:
+- [ ] User.language field added
+- [ ] Migration applied
+- [ ] Login returns user language
+- [ ] Language switcher updates DB
+
+---
+
+### Task 8.5.6: Test RTL Support (Optional)
+
+**Session Type:** Frontend
+**Estimated Time:** 1 hour
+**Prerequisites:** Task 8.5.5 complete
+
+#### Add RTL Languages:
+- Arabic (ar)
+- Hebrew (he)
+
+#### Changes Needed:
+```tsx
+// layout.tsx
+<html lang={locale} dir={locale === 'ar' || locale === 'he' ? 'rtl' : 'ltr'}>
+```
+
+#### CSS Considerations:
+```css
+/* Use logical properties */
+.sidebar {
+  margin-inline-start: 1rem;  /* instead of margin-left */
+  padding-inline-end: 1rem;   /* instead of padding-right */
+}
+```
+
+#### Done Criteria:
+- [ ] RTL layout working
+- [ ] No visual glitches
+- [ ] Arabic/Hebrew translations (basic)
+
+---
+
 ## ✅ Phase 8 Completion Checklist
 
 ### Theme Models
@@ -993,11 +1284,20 @@ export async function seedThemes() {
 - [ ] Themes seeded to database
 - [ ] All themes working
 
+### Internationalization (i18n)
+- [ ] next-intl configured
+- [ ] 4 languages supported (en, ru, es, zh)
+- [ ] All UI strings translated
+- [ ] Language switcher working
+- [ ] User preference saved
+- [ ] RTL support tested (optional)
+
 ### Integration
 - [ ] Works for personal context
 - [ ] Works for organization context
 - [ ] Theme persists across sessions
 - [ ] Custom vars saved correctly
+- [ ] Language persists across sessions
 
 ---
 
@@ -1008,6 +1308,9 @@ export async function seedThemes() {
 | Theme Models | 3 | 70 min |
 | Theme Service | 3 | 85 min |
 | Theme UI | 3 | 105 min |
+| Built-in Themes | 2 | 55 min |
+| Internationalization | 6 | 280 min (~4.5 hours) |
+| **Total** | **17** | **~10 hours** |
 | Built-in Themes | 2 | 60 min |
 | **Total** | **11** | **~5-6 hours** |
 

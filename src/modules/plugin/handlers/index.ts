@@ -7,7 +7,7 @@
  * @module modules/plugin/handlers
  */
 
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 import type { PluginHandler, PluginRegistration } from "../plugin.interface";
 import { analyticsPlugin } from "./analytics";

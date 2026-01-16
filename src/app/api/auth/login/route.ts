@@ -4,7 +4,8 @@
  * Proxies login requests to the Express API server.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest} from "next/server";
+import { NextResponse } from "next/server";
 
 const API_URL = process.env.API_URL || "http://localhost:3001";
 

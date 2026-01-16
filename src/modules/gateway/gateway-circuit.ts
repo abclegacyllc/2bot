@@ -8,8 +8,9 @@
  * @module modules/gateway/gateway-circuit
  */
 
+import type {
+    CircuitBreaker} from "@/lib/circuit-breaker";
 import {
-    CircuitBreaker,
     CircuitOpenError,
     circuitRegistry,
     type CircuitBreakerStats,

@@ -11,10 +11,14 @@ import { hashPassword, isPasswordSecure, verifyPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
 import type { Session, User } from "@prisma/client";
 import type {
+    ActiveContext,
     AuthResponse,
+    AvailableOrg,
     LoginRequest,
     RegisterRequest,
     SafeUser,
+    SwitchContextRequest,
+    SwitchContextResponse,
     TokenPayload,
 } from "./auth.types";
 
@@ -49,7 +53,9 @@ export type AuthErrorCode =
   | "PASSWORD_WEAK"
   | "TOKEN_INVALID"
   | "TOKEN_EXPIRED"
-  | "TOKEN_USED";
+  | "TOKEN_USED"
+  | "INVALID_REQUEST"
+  | "NOT_MEMBER";
 
 /**
  * Convert User to SafeUser (remove sensitive fields)
@@ -117,15 +123,21 @@ class AuthService {
     // Create session
     const session = await this.createSession(user.id, meta);
 
-    // Generate token
+    // New users start with personal context, no organizations yet
+    const activeContext: ActiveContext = {
+      type: "personal",
+      plan: user.plan,
+    };
+
+    // Generate token with context (no orgs for new user)
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
       plan: user.plan,
       sessionId: session.id,
       role: user.role,
-      organizationId: user.organizationId ?? undefined,
-      orgRole: user.orgRole ?? undefined,
+      activeContext,
+      availableOrgs: [],
     };
     const token = generateToken(payload);
 
@@ -145,9 +157,23 @@ class AuthService {
    * @throws AuthError if credentials invalid or user inactive
    */
   async login(data: LoginRequest, meta?: SessionMeta): Promise<AuthResponse> {
-    // Find user by email
+    // Find user by email with memberships
     const user = await prisma.user.findUnique({
       where: { email: data.email.toLowerCase() },
+      include: {
+        memberships: {
+          where: { status: "ACTIVE" },
+          include: {
+            organization: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!user) {
@@ -175,15 +201,29 @@ class AuthService {
     // Create session
     const session = await this.createSession(user.id, meta);
 
-    // Generate token
+    // Build available organizations from memberships
+    const availableOrgs: AvailableOrg[] = user.memberships.map((m) => ({
+      id: m.organization.id,
+      name: m.organization.name,
+      slug: m.organization.slug,
+      role: m.role,
+    }));
+
+    // Default to personal context on login
+    const activeContext: ActiveContext = {
+      type: "personal",
+      plan: user.plan,
+    };
+
+    // Generate token with context
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
       plan: user.plan,
       sessionId: session.id,
       role: user.role,
-      organizationId: user.organizationId ?? undefined,
-      orgRole: user.orgRole ?? undefined,
+      activeContext,
+      availableOrgs,
     };
     const token = generateToken(payload);
 
@@ -205,6 +245,119 @@ class AuthService {
     }).catch(() => {
       // Session may already be deleted - ignore
     });
+  }
+
+  /**
+   * Switch context between personal and organization
+   *
+   * @param userId - User ID
+   * @param sessionId - Current session ID
+   * @param request - Context switch request
+   * @returns New token with updated context
+   * @throws AuthError if user not member of organization or org not found
+   */
+  async switchContext(
+    userId: string,
+    sessionId: string,
+    request: SwitchContextRequest
+  ): Promise<SwitchContextResponse> {
+    // Get user with memberships
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        memberships: {
+          where: { status: "ACTIVE" },
+          include: {
+            organization: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                plan: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new AuthError("User not found", "USER_NOT_FOUND");
+    }
+
+    if (!user.isActive) {
+      throw new AuthError("Account is deactivated", "USER_INACTIVE");
+    }
+
+    // Build available organizations
+    const availableOrgs: AvailableOrg[] = user.memberships.map((m) => ({
+      id: m.organization.id,
+      name: m.organization.name,
+      slug: m.organization.slug,
+      role: m.role,
+    }));
+
+    let activeContext: ActiveContext;
+    let organizationName: string | undefined;
+
+    if (request.contextType === "personal") {
+      // Switch to personal context
+      activeContext = {
+        type: "personal",
+        plan: user.plan,
+      };
+    } else {
+      // Switch to organization context
+      if (!request.organizationId) {
+        throw new AuthError(
+          "Organization ID required for organization context",
+          "INVALID_REQUEST"
+        );
+      }
+
+      // Find membership for the requested organization
+      const membership = user.memberships.find(
+        (m) => m.organizationId === request.organizationId
+      );
+
+      if (!membership) {
+        throw new AuthError(
+          "Not a member of this organization",
+          "NOT_MEMBER"
+        );
+      }
+
+      activeContext = {
+        type: "organization",
+        organizationId: membership.organizationId,
+        orgRole: membership.role,
+        plan: membership.organization.plan,
+      };
+      organizationName = membership.organization.name;
+    }
+
+    // Generate new token with updated context
+    const payload: TokenPayload = {
+      userId: user.id,
+      email: user.email,
+      plan: user.plan,
+      sessionId,
+      role: user.role,
+      activeContext,
+      availableOrgs,
+    };
+    const token = generateToken(payload);
+
+    return {
+      token,
+      context: {
+        type: activeContext.type,
+        organizationId: activeContext.organizationId,
+        organizationName,
+        orgRole: activeContext.orgRole,
+        plan: activeContext.plan,
+      },
+    };
   }
 
   /**

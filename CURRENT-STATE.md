@@ -8,11 +8,11 @@
 
 | Item | Value |
 |------|-------|
-| **Last Updated** | 2026-01-16 |
-| **Last Session** | S16: Tasks 3.1.6, 3.4.1, 3.4.2 (Plugin Architecture + UI Pages) |
-| **Current Phase** | Phase 3: Plugin System |
-| **Next Task** | Phase 3 Complete! Proceed to Phase 4 |
-| **Overall Progress** | 81% (84/102 tasks) |
+| **Last Updated** | 2026-01-17 |
+| **Last Session** | S21: Tasks 4.5.1-4.5.5 (Owner & Manager Controls) |
+| **Current Phase** | Phase 4: Organization System |
+| **Next Task** | Task 4.6.1 (Real-Time Usage Tracking) |
+| **Overall Progress** | 99% (105/107 tasks) |
 
 ---
 
@@ -25,7 +25,7 @@
 | Phase 1.5: Architecture | ✅ Complete | 14/14 tasks | All infrastructure + audit logging done |
 | Phase 2: Gateway | ✅ Complete | 18/18 tasks | + Fault isolation (circuit breaker) |
 | Phase 3: Plugin | ✅ Complete | 18/18 tasks | Analytics Plugin + Registration + UI Pages |
-| Phase 4: Organization | ⚪ Not Started | 0/~25 tasks | Multi-org support |
+| Phase 4: Organization | 🔄 In Progress | 21/~25 tasks | Owner & Manager Controls complete (4.5.x) |
 | Phase 5: Billing | ⚪ Not Started | 0/~12 tasks | Stripe subscriptions |
 | Phase 6: Launch | ⚪ Not Started | 0/~16 tasks | |
 ---
@@ -356,13 +356,118 @@
   - Register: 3 attempts/hour
   - Password reset: 3 requests/hour
 
+### Phase 4: Organization System (In Progress)
+- [x] **4.1.1** Create Organization + Membership models (2026-01-16)
+  - Added Organization model: name, slug, plan, maxMembers, databaseType, databaseUrl
+  - Added Membership model: userId, organizationId, role, status, invitedBy, invitedAt, joinedAt
+  - Added MembershipStatus enum (INVITED, ACTIVE, SUSPENDED)
+  - Added DatabaseType enum (SHARED, DEDICATED) for future multi-tenancy
+  - Updated User model: removed organizationId/departmentId/orgRole (now in Membership)
+- [x] **4.1.2** Create Department model (2026-01-16)
+  - Added Department model: name, description, quotas (maxWorkflows, maxPlugins, maxApiCalls, maxStorage)
+  - Added DepartmentMember model: userId, departmentId, membershipId, role, quotas
+  - Added DepartmentRole enum (MANAGER, MEMBER)
+  - Unique constraints for org-department names, user-department membership
+- [x] **4.1.3** Create organization service (2026-01-16)
+  - Created src/modules/organization/organization.service.ts
+  - CRUD: create, getById, getBySlug, update, delete
+  - User orgs: getUserOrganizations, getUserPendingInvites
+  - Members: inviteMember, acceptInvite, declineInvite, removeMember, updateMemberRole
+  - Actions: leaveOrganization, transferOwnership
+  - Helpers: checkMembership, requireMembership with role validation
+- [x] **4.1.4** Create department service (2026-01-16)
+  - Created src/modules/organization/department.service.ts
+  - CRUD: create, getById, update, delete, getOrgDepartments
+  - Members: addMember, removeMember, updateMember, getMembers
+  - Quotas: setDeptQuotas, setMemberQuotas
+  - Permission checks: org admin or department manager
+- [x] **4.1.5** Create organization API endpoints (2026-01-16)
+  - Created src/server/routes/organization.ts
+  - Org CRUD: POST/GET/PUT/DELETE /api/organizations/:id
+  - User orgs: GET /api/organizations/me, /api/organizations/me/invites
+  - Members: GET/POST/PUT/DELETE /api/organizations/:id/members/*
+  - Invites: POST /api/invites/:id/accept, /api/invites/:id/decline
+  - Departments: Full CRUD + member management
+  - Registered in src/server/routes/index.ts
+- [x] **4.2.1** Implement context switching logic (2026-01-16)
+  - Added ActiveContext, AvailableOrg types to auth.types.ts
+  - Updated TokenPayload with activeContext, availableOrgs
+  - Added switchContext() method to auth.service.ts
+  - Added POST /api/auth/switch-context endpoint
+  - Added switchContextSchema validation
+  - Added contextSwitched audit action
+- [x] **4.2.2** Update auth service for context (2026-01-16)
+  - Updated login() to fetch memberships and return availableOrgs
+  - Updated register() to set default personal context
+  - Default context is personal, can switch to organization
+- [x] **4.2.3** Update ServiceContext for dual context (2026-01-16)
+  - Added contextType, effectivePlan fields to ServiceContext
+  - Added isPersonalContext(), getOwnerId() helpers
+  - Added getOwnershipFilter() utility function
+  - Updated createServiceContext to use new token payload format
+  - Updated all route helpers to use tokenPayload from auth middleware
+  - Auth middleware now attaches tokenPayload to request
+- [x] **4.3.1** Create context switcher component (2026-01-16)
+  - Created src/components/layouts/context-switcher.tsx
+  - Dropdown showing current context (Personal or Org name)
+  - Lists available organizations with role badges
+  - Calls switchContext() from AuthProvider to switch
+  - "Create Organization" button navigates to /dashboard/organizations/new
+  - Added to dashboard header
+- [x] **4.3.2** Create organization settings page (2026-01-16)
+  - Created src/app/dashboard/settings/organization/page.tsx
+  - Edit form for org name and slug (ADMIN+)
+  - Shows plan badge and creation date
+  - Links to Members and Departments management
+  - Danger zone with delete confirmation (OWNER only)
+  - Redirects to /dashboard/settings if not in org context
+- [x] **4.3.3** Create member management UI (2026-01-16)
+  - Created src/app/dashboard/settings/organization/members/page.tsx
+  - Members table with avatar, name, email, role, status, join date
+  - Invite dialog with email and role selection (ADMIN+)
+  - Role selector for changing roles (OWNER only)
+  - Remove member button (ADMIN+, not self, not owner)
+- [x] **4.3.4** Create organization creation flow (2026-01-16)
+  - Created src/app/dashboard/organizations/new/page.tsx
+  - Form with name and slug fields
+  - Auto-generates slug from name (editable)
+  - Auto-switches context to new org after creation
+  - Redirects to dashboard
+- [x] **4.3.5** Create department management UI (2026-01-16)
+  - Created src/app/dashboard/settings/organization/departments/page.tsx
+  - Departments table with name, description, member count, created date
+  - Create/edit/delete department dialogs (ADMIN+)
+  - Warning when deleting dept with members
+- [x] **4.4.1** Create ResourceQuota model (2026-01-16)
+  - Added PeriodType enum (HOURLY, DAILY, WEEKLY, MONTHLY)
+  - Added ResourceQuota model: limits by org/dept/user, current usage tracking
+  - Added UsageHistory model: periodic snapshots for analytics
+  - Added relations to User, Organization, Department
+  - Ran prisma db push and generate successfully
+- [x] **4.4.2** Create quota enforcement service (2026-01-16)
+  - Created src/modules/quota/quota.types.ts: ResourceType enum, ResourceLimits, QuotaStatus
+  - Created PLAN_QUOTA_LIMITS constant with limits per plan
+  - Created src/modules/quota/quota.service.ts with full quota management
+  - Methods: checkQuota, canUseResource, getQuotaStatus, getEffectiveLimits
+  - Methods: incrementUsage, decrementUsage, resetDailyCounters
+  - Admin methods: setOrganizationQuotas, setDepartmentQuotas, setEmployeeQuotas
+  - QuotaExceededError custom error class
+- [x] **4.4.3** Create quota API endpoints (2026-01-16)
+  - Created src/modules/quota/quota.validation.ts with Zod schemas
+  - Created src/server/routes/quota.ts with full REST API
+  - User endpoints: GET /status, /limits, /history
+  - Org quotas: GET/PUT /organizations/:id/quotas
+  - Dept quotas: GET/PUT /departments/:id/quotas  
+  - Employee quotas: GET/PUT /departments/:id/members/:userId/quotas
+  - Registered in src/server/routes/index.ts
+
 ---
 
 ## 🔄 Current Task
 
 ```
-Task: 3.4.1 - Create Available Plugins Page
-File: docs/tasks/phase-3-plugin.md
+Task: 4.5.1 - Create Owner Dashboard (Resource Overview)
+File: docs/tasks/phase-4-organization.md
 ```
 
 ---
@@ -375,7 +480,110 @@ File: docs/tasks/phase-3-plugin.md
 
 ## ⚠️ Known Issues
 
-*None*
+### ✅ BUG-001: Missing Next.js API Proxy Routes (RESOLVED)
+
+**Status:** ✅ Fixed (2026-01-16)
+**Affects:** Plugins page, Gateways page (external access)
+**Found:** 2026-01-16
+
+**Problem:**
+Frontend pages call API endpoints in two inconsistent ways:
+1. `/api/plugins` (Next.js route) - but routes don't exist
+2. `http://localhost:3001/api/gateways` (direct backend) - breaks external access
+
+**Resolution:**
+1. Created missing Next.js API routes for plugins:
+   - `src/app/api/plugins/route.ts` - List/search plugins (GET)
+   - `src/app/api/plugins/[slug]/route.ts` - Get plugin details (GET)
+   - `src/app/api/plugins/user/plugins/route.ts` - User's installed plugins (GET)
+   - `src/app/api/plugins/user/plugins/install/route.ts` - Install plugin (POST)
+   - `src/app/api/plugins/user/plugins/[id]/route.ts` - Get/Uninstall plugin (GET/DELETE)
+   - `src/app/api/plugins/user/plugins/[id]/config/route.ts` - Update config (PUT)
+   - `src/app/api/plugins/user/plugins/[id]/toggle/route.ts` - Toggle plugin (POST)
+   - `src/app/api/plugins/user/plugins/[id]/analytics/route.ts` - Analytics data (GET)
+
+2. Created missing Next.js API routes for gateways:
+   - `src/app/api/gateways/route.ts` - List/create gateways (GET/POST)
+   - `src/app/api/gateways/[gatewayId]/route.ts` - Get/update/delete gateway (GET/PUT/DELETE)
+   - `src/app/api/gateways/[gatewayId]/test/route.ts` - Test connection (POST)
+
+3. Fixed gateways pages to use `/api/gateways` instead of `localhost:3001`:
+   - `src/app/dashboard/gateways/page.tsx` ✅
+   - `src/app/dashboard/gateways/new/page.tsx` ✅
+   - `src/app/dashboard/gateways/[id]/page.tsx` ✅
+
+**Convention Added:** See AI-WORKFLOW.md "API Calling Convention" section.
+
+---
+
+### ✅ BUG-002: Create Organization 404 Error (RESOLVED)
+
+**Status:** ✅ Fixed (2026-01-16)
+**Affects:** Context switcher "Create Organization" button
+**Found:** 2026-01-16
+
+**Problem:**
+Context switcher navigated to `/organizations/new` instead of `/dashboard/organizations/new`
+
+**Resolution:**
+Fixed `src/components/layouts/context-switcher.tsx` line 79:
+- Changed: `router.push("/organizations/new")`
+- To: `router.push("/dashboard/organizations/new")`
+
+---
+
+### ✅ BUG-003: Backend Not Loading Environment Variables (RESOLVED)
+
+**Status:** ✅ Fixed (2026-01-16)
+**Affects:** Gateway creation (ENCRYPTION_KEY/JWT_SECRET error)
+**Found:** 2026-01-16
+
+**Problem:**
+Express backend started with `tsx src/server/start.ts` without loading `.env.local` file.
+Error shown: "ENCRYPTION_KEY or JWT_SECRET must be set"
+
+**Resolution:**
+Added dotenv loading to `src/server/start.ts`:
+```typescript
+import dotenv from "dotenv";
+import path from "path";
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+```
+
+---
+
+### ✅ BUG-004: No Provider Registered for Gateway Type (RESOLVED)
+
+**Status:** ✅ Fixed (2026-01-16)
+**Affects:** Gateway test connection, any gateway operations
+**Found:** 2026-01-16
+
+**Problem:**
+Gateway providers (Telegram, AI) were defined but never registered with the registry at server startup.
+Error shown: "No provider registered for gateway type: TELEGRAM_BOT"
+
+**Resolution:**
+1. Created `src/server/init-providers.ts` to register all providers
+2. Updated `src/server/start.ts` to call `initializeGatewayProviders()` before server starts
+3. Now logs registered providers on startup: `"Registered 2 gateway providers: TELEGRAM_BOT, AI"`
+
+---
+
+### ✅ BUG-005: Plugin Install Validation Error (RESOLVED)
+
+**Status:** ✅ Fixed (2026-01-16)
+**Affects:** Plugin installation
+**Found:** 2026-01-16
+
+**Problem:**
+Frontend sent `{ slug: "channel-analytics" }` but backend expected `{ pluginId: "cuid..." }`.
+Error shown: "Invalid install data" (422)
+
+**Resolution:**
+1. Updated `installPluginSchema` in `plugin.validation.ts` to accept either `pluginId` OR `slug`
+2. Updated `InstallPluginRequest` type in `plugin.types.ts`
+3. Updated `installPlugin` service method to resolve slug to pluginId if needed
 
 ---
 

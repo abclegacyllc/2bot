@@ -7,18 +7,21 @@
  */
 
 import { authService } from "@/modules/auth/auth.service";
+import type { TokenPayload } from "@/modules/auth/auth.types";
 import { UnauthorizedError } from "@/shared/errors";
 import type { User } from "@prisma/client";
 import type { NextFunction, Request, Response } from "express";
 
 /**
- * Extend Express Request to include user
+ * Extend Express Request to include user and token payload
  */
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user?: User;
       sessionId?: string;
+      tokenPayload?: TokenPayload;
     }
   }
 }
@@ -69,9 +72,10 @@ export async function requireAuth(
     const { verifyToken } = await import("@/lib/jwt");
     const payload = verifyToken(token);
 
-    // Attach user and sessionId to request
+    // Attach user, sessionId, and token payload to request
     req.user = user;
     req.sessionId = payload?.sessionId;
+    req.tokenPayload = payload ?? undefined;
 
     next();
   } catch (error) {

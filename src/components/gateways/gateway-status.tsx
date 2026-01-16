@@ -59,12 +59,10 @@ export function GatewayStatusBadge({
         sizeClasses
       )}
     >
-      {showDot && (
-        <span
+      {showDot ? <span
           className={cn("w-1.5 h-1.5 rounded-full", config.dotClassName)}
           aria-hidden="true"
-        />
-      )}
+        /> : null}
       {config.label}
     </span>
   );
@@ -126,11 +124,9 @@ export function GatewayStatusIndicator({
       </div>
 
       {/* Error message */}
-      {status === "ERROR" && lastError && (
-        <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
+      {status === "ERROR" && lastError ? <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
           <p className="text-sm text-red-400">{lastError}</p>
-        </div>
-      )}
+        </div> : null}
     </div>
   );
 }

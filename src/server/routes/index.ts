@@ -10,10 +10,13 @@ import {
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
+import { alertRouter } from "./alerts";
 import { authRouter } from "./auth";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
+import { organizationRouter } from "./organization";
 import { pluginRouter } from "./plugin";
+import { quotaRouter } from "./quota";
 import { webhookRouter } from "./webhook";
 
 export const router = Router();
@@ -27,6 +30,12 @@ router.use("/health", healthRouter);
  * Auth routes
  */
 router.use("/auth", authRouter);
+
+/**
+ * Organization routes (Phase 4)
+ * Organizations, members, invites, departments
+ */
+router.use("/organizations", organizationRouter);
 
 /**
  * Gateway routes (Phase 2)
@@ -45,6 +54,18 @@ router.use("/webhooks", webhookRouter);
  * /api/plugins/user/* - User plugin management (auth required)
  */
 router.use("/plugins", pluginRouter);
+
+/**
+ * Quota routes (Phase 4)
+ * Resource quota status, limits, and management
+ */
+router.use("/quota", quotaRouter);
+
+/**
+ * Alert routes (Phase 4)
+ * Alert configuration, history, and acknowledgements
+ */
+router.use("/alerts", alertRouter);
 
 /**
  * API info endpoint

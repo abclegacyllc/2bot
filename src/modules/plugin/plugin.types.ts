@@ -157,9 +157,11 @@ export function toSafeUserPlugin(userPlugin: UserPluginWithPlugin): SafeUserPlug
 
 /**
  * Install plugin request
+ * Can use either pluginId or slug to identify the plugin
  */
 export interface InstallPluginRequest {
-  pluginId: string;
+  pluginId?: string;
+  slug?: string;
   config?: Record<string, unknown>;
   gatewayId?: string;
 }

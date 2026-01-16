@@ -44,11 +44,16 @@ export function requireRole(...roles: UserRole[]): RequestHandler {
  * 
  * @example
  * router.delete('/users/:id', requirePermission('admin:users:delete'), handler);
+ * 
+ * NOTE: orgRole is now determined by checking Membership model at request time.
+ * For performance, org context should be set by an earlier middleware that
+ * looks up the user's active organization membership.
  */
 export function requirePermission(permission: Permission): RequestHandler {
   return (req, res, next): void => {
     const userRole = req.user?.role as string | undefined;
-    const orgRole = req.user?.orgRole as OrgRole | undefined;
+    // orgRole should be set by organization context middleware
+    const orgRole = (req as { orgRole?: OrgRole }).orgRole;
 
     if (!userRole || !hasPermission(userRole, orgRole ?? null, permission)) {
       res.status(403).json({
@@ -74,7 +79,7 @@ export function requirePermission(permission: Permission): RequestHandler {
 export function requireAnyPermission(permissions: Permission[]): RequestHandler {
   return (req, res, next): void => {
     const userRole = req.user?.role as string | undefined;
-    const orgRole = req.user?.orgRole as OrgRole | undefined;
+    const orgRole = (req as { orgRole?: OrgRole }).orgRole;
 
     if (!userRole) {
       res.status(403).json({
@@ -113,7 +118,7 @@ export function requireAnyPermission(permissions: Permission[]): RequestHandler 
 export function requireAllPermissions(permissions: Permission[]): RequestHandler {
   return (req, res, next): void => {
     const userRole = req.user?.role as string | undefined;
-    const orgRole = req.user?.orgRole as OrgRole | undefined;
+    const orgRole = (req as { orgRole?: OrgRole }).orgRole;
 
     if (!userRole) {
       res.status(403).json({
@@ -191,20 +196,22 @@ export const requireSuperAdmin: RequestHandler = (req, res, next): void => {
 
 /**
  * Require organization context
- * User must be part of an organization to access this route
+ * User must be part of an organization to access this route.
+ * Organization context should be set by earlier middleware that reads
+ * the X-Organization-Id header and validates membership.
  * 
  * @example
  * router.use('/org', requireOrgContext, orgRouter);
  */
 export const requireOrgContext: RequestHandler = (req, res, next): void => {
-  const organizationId = req.user?.organizationId;
+  const organizationId = (req as { organizationId?: string }).organizationId;
 
   if (!organizationId) {
     res.status(403).json({
       success: false,
       error: {
         code: 'FORBIDDEN',
-        message: 'Organization membership required',
+        message: 'Organization context required. Set X-Organization-Id header.',
       },
     });
     return;
@@ -215,12 +222,13 @@ export const requireOrgContext: RequestHandler = (req, res, next): void => {
 
 /**
  * Require organization owner or admin role
+ * NOTE: orgRole must be set by organization context middleware
  * 
  * @example
  * router.delete('/org/settings', requireOrgAdmin, handler);
  */
 export const requireOrgAdmin: RequestHandler = (req, res, next): void => {
-  const orgRole = req.user?.orgRole as OrgRole | undefined;
+  const orgRole = (req as { orgRole?: OrgRole }).orgRole;
 
   if (!orgRole || !['ORG_OWNER', 'ORG_ADMIN'].includes(orgRole)) {
     res.status(403).json({
@@ -238,12 +246,13 @@ export const requireOrgAdmin: RequestHandler = (req, res, next): void => {
 
 /**
  * Require organization owner role only
+ * NOTE: orgRole must be set by organization context middleware
  * 
  * @example
  * router.delete('/org', requireOrgOwner, handler);
  */
 export const requireOrgOwner: RequestHandler = (req, res, next): void => {
-  const orgRole = req.user?.orgRole as OrgRole | undefined;
+  const orgRole = (req as { orgRole?: OrgRole }).orgRole;
 
   if (orgRole !== 'ORG_OWNER') {
     res.status(403).json({

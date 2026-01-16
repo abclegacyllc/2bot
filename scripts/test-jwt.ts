@@ -1,15 +1,21 @@
 import { decodeToken, generateToken, getTokenExpiration, isTokenExpired, verifyToken } from '../src/lib/jwt';
+import type { TokenPayload } from '../src/modules/auth/auth.types';
 
 async function testJWT() {
   console.log('Testing JWT utilities...\n');
 
-  // Test payload (includes role for Phase 1.5)
-  const payload = {
+  // Test payload (includes activeContext for Phase 4)
+  const payload: TokenPayload = {
     userId: 'user_123',
     email: 'test@example.com',
     plan: 'FREE' as const,
     sessionId: 'sess_456',
     role: 'MEMBER' as const,
+    activeContext: {
+      type: 'personal',
+      plan: 'FREE' as const,
+    },
+    availableOrgs: [],
   };
 
   // Test token generation

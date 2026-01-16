@@ -208,10 +208,26 @@ class PluginService {
     ctx: ServiceContext,
     data: InstallPluginRequest
   ): Promise<SafeUserPlugin> {
-    pluginLogger.debug({ pluginId: data.pluginId }, "Installing plugin");
+    // Resolve pluginId from slug if needed
+    let pluginId = data.pluginId;
+    if (!pluginId && data.slug) {
+      const plugin = await prisma.plugin.findUnique({
+        where: { slug: data.slug },
+      });
+      if (!plugin) {
+        throw new NotFoundError(`Plugin not found: ${data.slug}`);
+      }
+      pluginId = plugin.id;
+    }
+    
+    if (!pluginId) {
+      throw new ValidationError("Either pluginId or slug must be provided", {});
+    }
+
+    pluginLogger.debug({ pluginId }, "Installing plugin");
 
     // Get the plugin
-    const plugin = await this.getPluginById(data.pluginId);
+    const plugin = await this.getPluginById(pluginId);
 
     if (!plugin.isActive) {
       throw new ValidationError("Plugin is not available for installation", {});
@@ -235,7 +251,7 @@ class PluginService {
     const existing = await prisma.userPlugin.findFirst({
       where: {
         userId: ctx.userId,
-        pluginId: data.pluginId,
+        pluginId: pluginId,
         organizationId: ctx.organizationId ?? null,
       },
     });
@@ -282,7 +298,7 @@ class PluginService {
     const userPlugin = await prisma.userPlugin.create({
       data: {
         userId: ctx.userId,
-        pluginId: data.pluginId,
+        pluginId: pluginId,
         organizationId: ctx.organizationId ?? null,
         config: (data.config ?? {}) as object,
         gatewayId: data.gatewayId ?? null,

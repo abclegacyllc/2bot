@@ -166,6 +166,22 @@ export const auditActions = {
     resourceId: ctx.userId,
   }),
 
+  /**
+   * Log context switch (Phase 4)
+   */
+  contextSwitched: (ctx: AuditContext & {
+    contextType: string;
+    organizationId?: string;
+  }) => audit(ctx, {
+    action: 'user.context.switch',
+    resource: 'user',
+    resourceId: ctx.userId,
+    metadata: {
+      contextType: ctx.contextType,
+      organizationId: ctx.organizationId,
+    },
+  }),
+
   // ==========================================
   // Gateway Events
   // ==========================================

@@ -36,8 +36,8 @@ Read CURRENT-STATE.md first, then continue with the next task.
 │   │   ├── phase-1-auth.md          ← Authentication (20 tasks) ✅
 │   │   ├── phase-1.5-architecture.md← Architecture Foundation (14 tasks) ✅
 │   │   ├── phase-2-gateway.md       ← Gateway system (18 tasks) ✅
-│   │   ├── phase-3-plugin.md        ← Plugin system (12 tasks) 🔄
-│   │   ├── phase-4-organization.md  ← Organization + Context (10 tasks)
+│   │   ├── phase-3-plugin.md        ← Plugin system (18 tasks) ✅
+│   │   ├── phase-4-organization.md  ← Organization + Context (25 tasks) 🔄
 │   │   ├── phase-5-billing.md       ← Billing + Stripe (12 tasks)
 │   │   ├── phase-6-launch.md        ← Polish + Launch (16 tasks)
 │   │   └── phase-7-support.md       ← Support System (22 tasks)
@@ -238,6 +238,67 @@ Before completing ANY task, verify:
 8. ❌ Skip error handling
 9. ❌ Use deprecated APIs
 10. ❌ Leave TODO comments without tracking
+11. ❌ Call backend directly from frontend (use Next.js API routes)
+
+---
+
+## 🌐 API Calling Convention
+
+**IMPORTANT:** Frontend pages MUST follow this pattern for API calls.
+
+```
+Browser → Next.js (port 3000) → Express Backend (port 3001)
+              ↓
+         /api/* routes
+         (proxy to backend)
+```
+
+### Rules:
+1. **Frontend components** must call `/api/*` routes (Next.js API)
+2. **Never** call `localhost:3001` or hardcoded backend URLs from frontend
+3. **Next.js API routes** (`src/app/api/`) proxy requests to Express backend
+4. **Express backend** (port 3001) is internal only, not exposed to browser
+
+### Why?
+- Users access your app via `yourdomain.com` (port 3000)
+- Backend runs on `localhost:3001` (internal)
+- Without proxy, external users can't reach the backend
+
+### Example - Correct ✅:
+```tsx
+// In frontend component
+const response = await fetch("/api/plugins", {
+  headers: { Authorization: `Bearer ${token}` },
+});
+```
+
+### Example - Wrong ❌:
+```tsx
+// NEVER do this in frontend
+const response = await fetch("http://localhost:3001/api/plugins", { ... });
+```
+
+### Next.js API Route Template:
+```typescript
+// src/app/api/plugins/route.ts
+import { NextRequest, NextResponse } from "next/server";
+
+const API_URL = process.env.API_URL || "http://localhost:3001";
+
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get("authorization");
+  
+  const response = await fetch(`${API_URL}/api/plugins`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(authHeader && { Authorization: authHeader }),
+    },
+  });
+  
+  const data = await response.json();
+  return NextResponse.json(data, { status: response.status });
+}
+```
 
 ---
 

@@ -84,6 +84,28 @@ export const verifyEmailSchema = z.object({
   token: z.string().min(1, "Token is required"),
 });
 
+/**
+ * Context switching request validation (Phase 4)
+ */
+export const switchContextSchema = z
+  .object({
+    contextType: z.enum(["personal", "organization"]),
+    organizationId: z.string().uuid("Invalid organization ID").optional(),
+  })
+  .refine(
+    (data) => {
+      // organizationId is required when contextType is 'organization'
+      if (data.contextType === "organization" && !data.organizationId) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Organization ID is required when switching to organization context",
+      path: ["organizationId"],
+    }
+  );
+
 // ===========================================
 // Inferred Types from Schemas
 // ===========================================
@@ -95,6 +117,7 @@ export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
+export type SwitchContextInput = z.infer<typeof switchContextSchema>;
 
 // ===========================================
 // Validation Helper
