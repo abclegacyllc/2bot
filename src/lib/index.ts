@@ -4,4 +4,6 @@ export * from "./jwt";
 export * from "./logger";
 export * from "./password";
 export * from "./prisma";
+export * from "./redis";
 export * from "./utils";
+

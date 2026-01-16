@@ -1,4 +1,4 @@
-# Phase 6: Support System
+# Phase 7: Support System
 
 > **Goal:** Build comprehensive customer support system with FAQ, tickets, chat, and support dashboard
 > **Estimated Sessions:** 12-15
@@ -10,43 +10,87 @@
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
+| **Deferred Infrastructure** ||||
+| 7.0.1 | Create gateway health check worker | ⬜ | Deferred from Phase 2 (2.5.2) |
 | **Knowledge Base** ||||
-| 6.1.1 | Create KBArticle model | ⬜ | |
-| 6.1.2 | Create KB service + API | ⬜ | |
-| 6.1.3 | Create KB article list UI (user) | ⬜ | |
-| 6.1.4 | Create KB article view UI (user) | ⬜ | |
+| 7.1.1 | Create KBArticle model | ⬜ | |
+| 7.1.2 | Create KB service + API | ⬜ | |
+| 7.1.3 | Create KB article list UI (user) | ⬜ | |
+| 7.1.4 | Create KB article view UI (user) | ⬜ | |
 | **Ticket System** ||||
-| 6.2.1 | Create SupportTicket + TicketMessage models | ⬜ | |
-| 6.2.2 | Create ticket service + API | ⬜ | |
-| 6.2.3 | Create context capture utility | ⬜ | |
-| 6.2.4 | Create ticket submission UI | ⬜ | |
-| 6.2.5 | Create user ticket list/detail UI | ⬜ | |
+| 7.2.1 | Create SupportTicket + TicketMessage models | ⬜ | |
+| 7.2.2 | Create ticket service + API | ⬜ | |
+| 7.2.3 | Create context capture utility | ⬜ | |
+| 7.2.4 | Create ticket submission UI | ⬜ | |
+| 7.2.5 | Create user ticket list/detail UI | ⬜ | |
 | **Support Button** ||||
-| 6.3.1 | Create QuickIssue model + seed data | ⬜ | |
-| 6.3.2 | Create support button component | ⬜ | |
-| 6.3.3 | Create support modal (tabbed) | ⬜ | |
+| 7.3.1 | Create QuickIssue model + seed data | ⬜ | |
+| 7.3.2 | Create support button component | ⬜ | |
+| 7.3.3 | Create support modal (tabbed) | ⬜ | |
 | **Support Dashboard** ||||
-| 6.4.1 | Create support dashboard layout | ⬜ | |
-| 6.4.2 | Create ticket queue page | ⬜ | |
-| 6.4.3 | Create ticket detail + reply UI | ⬜ | |
-| 6.4.4 | Create user lookup page | ⬜ | |
-| 6.4.5 | Create KB editor page | ⬜ | |
+| 7.4.1 | Create support dashboard layout | ⬜ | |
+| 7.4.2 | Create ticket queue page | ⬜ | |
+| 7.4.3 | Create ticket detail + reply UI | ⬜ | |
+| 7.4.4 | Create user lookup page | ⬜ | |
+| 7.4.5 | Create KB editor page | ⬜ | |
 | **--- CHECKPOINT: Core Support Complete ---** ||||
 | **Chat Support (Optional for MVP)** ||||
-| 6.5.1 | Create ChatSession + ChatMessage models | ⬜ | Optional |
-| 6.5.2 | Create AI chat service | ⬜ | Optional |
-| 6.5.3 | Create chat UI (user side) | ⬜ | Optional |
-| 6.5.4 | Create chat queue (support side) | ⬜ | Optional |
-| 6.5.5 | Implement human handoff flow | ⬜ | Optional |
+| 7.5.1 | Create ChatSession + ChatMessage models | ⬜ | Optional |
+| 7.5.2 | Create AI chat service | ⬜ | Optional |
+| 7.5.3 | Create chat UI (user side) | ⬜ | Optional |
+| 7.5.4 | Create chat queue (support side) | ⬜ | Optional |
+| 7.5.5 | Implement human handoff flow | ⬜ | Optional |
 | **Future Enhancements** ||||
-| 6.6.1 | Create ScheduledCall model | ⬜ | Future |
-| 6.6.2 | Create call scheduling UI | ⬜ | Future |
+| 7.6.1 | Create ScheduledCall model | ⬜ | Future |
+| 7.6.2 | Create call scheduling UI | ⬜ | Future |
 
 ---
 
 ## 📝 Detailed Tasks
 
-### Task 6.1.1: Create KBArticle Model
+### Task 7.0.1: Create Gateway Health Check Worker
+
+> **Deferred from Phase 2 (Task 2.5.2)**
+
+**Session Type:** Backend
+**Estimated Time:** 30 minutes
+**Prerequisites:** Phase 2 complete (gateway system working)
+
+#### Context Files:
+- src/modules/gateway/gateway.service.ts
+- src/modules/gateway/gateway.registry.ts
+- src/modules/gateway/providers/*.ts
+
+#### Deliverables:
+- [ ] src/workers/gateway-health.worker.ts
+- [ ] BullMQ job for periodic gateway validation
+
+#### Implementation:
+```typescript
+// Run every 5 minutes per gateway
+const gatewayHealthQueue = new Queue('gateway-health');
+
+// Worker validates credentials and updates status
+async function checkGatewayHealth(gatewayId: string) {
+  const gateway = await gatewayService.findById(gatewayId);
+  try {
+    await gatewayRegistry.get(gateway.type).validate(gateway);
+    await gatewayService.updateStatus(gatewayId, 'CONNECTED');
+  } catch (error) {
+    await gatewayService.updateStatus(gatewayId, 'ERROR', error.message);
+    // Future: Send notification to user
+  }
+}
+```
+
+#### Done Criteria:
+- [ ] Worker validates gateway credentials periodically
+- [ ] Updates gateway status on failure
+- [ ] (Future) Send notification to user
+
+---
+
+### Task 7.1.1: Create KBArticle Model
 
 **Session Type:** Database
 **Estimated Time:** 20 minutes
@@ -58,7 +102,7 @@
 #### Schema:
 ```prisma
 // ===========================================
-// Knowledge Base Article (Phase 6: Support)
+// Knowledge Base Article (Phase 7: Support)
 // ===========================================
 model KBArticle {
   id            String    @id @default(cuid())
@@ -102,11 +146,11 @@ model KBArticle {
 
 ---
 
-### Task 6.1.2: Create KB Service + API
+### Task 7.1.2: Create KB Service + API
 
 **Session Type:** Backend
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 6.1.1 complete
+**Prerequisites:** Task 7.1.1 complete
 
 #### Deliverables:
 - [ ] src/modules/support/kb.service.ts
@@ -161,11 +205,11 @@ POST /api/support/kb/articles/:id/unpublish // Unpublish
 
 ---
 
-### Task 6.1.3: Create KB Article List UI (User)
+### Task 7.1.3: Create KB Article List UI (User)
 
 **Session Type:** Frontend
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 6.1.2 complete
+**Prerequisites:** Task 7.1.2 complete
 
 #### Deliverables:
 - [ ] src/app/(public)/help/page.tsx
@@ -205,11 +249,11 @@ POST /api/support/kb/articles/:id/unpublish // Unpublish
 
 ---
 
-### Task 6.1.4: Create KB Article View UI (User)
+### Task 7.1.4: Create KB Article View UI (User)
 
 **Session Type:** Frontend
 **Estimated Time:** 25 minutes
-**Prerequisites:** Task 6.1.3 complete
+**Prerequisites:** Task 7.1.3 complete
 
 #### Deliverables:
 - [ ] src/app/(public)/help/[slug]/page.tsx
@@ -256,16 +300,16 @@ POST /api/support/kb/articles/:id/unpublish // Unpublish
 
 ---
 
-### Task 6.2.1: Create SupportTicket + TicketMessage Models
+### Task 7.2.1: Create SupportTicket + TicketMessage Models
 
 **Session Type:** Database
 **Estimated Time:** 25 minutes
-**Prerequisites:** Task 6.1.4 complete
+**Prerequisites:** Task 7.1.4 complete
 
 #### Schema:
 ```prisma
 // ===========================================
-// Support Ticket (Phase 6: Support)
+// Support Ticket (Phase 7: Support)
 // ===========================================
 model SupportTicket {
   id            String    @id @default(cuid())
@@ -362,11 +406,11 @@ kbArticles       KBArticle[]     @relation("KBArticleAuthor")
 
 ---
 
-### Task 6.2.2: Create Ticket Service + API
+### Task 7.2.2: Create Ticket Service + API
 
 **Session Type:** Backend
 **Estimated Time:** 35 minutes
-**Prerequisites:** Task 6.2.1 complete
+**Prerequisites:** Task 7.2.1 complete
 
 #### Deliverables:
 - [ ] src/modules/support/ticket.service.ts
@@ -429,11 +473,11 @@ POST /api/support/tickets/:id/link-article // Link KB article
 
 ---
 
-### Task 6.2.3: Create Context Capture Utility
+### Task 7.2.3: Create Context Capture Utility
 
 **Session Type:** Frontend
 **Estimated Time:** 25 minutes
-**Prerequisites:** Task 6.2.2 complete
+**Prerequisites:** Task 7.2.2 complete
 
 #### Deliverables:
 - [ ] src/lib/capture-context.ts
@@ -517,11 +561,11 @@ export function useTicketContext() {
 
 ---
 
-### Task 6.2.4: Create Ticket Submission UI
+### Task 7.2.4: Create Ticket Submission UI
 
 **Session Type:** Frontend
 **Estimated Time:** 35 minutes
-**Prerequisites:** Task 6.2.3 complete
+**Prerequisites:** Task 7.2.3 complete
 
 #### Deliverables:
 - [ ] src/components/support/ticket-form.tsx
@@ -578,11 +622,11 @@ export function useTicketContext() {
 
 ---
 
-### Task 6.2.5: Create User Ticket List/Detail UI
+### Task 7.2.5: Create User Ticket List/Detail UI
 
 **Session Type:** Frontend
 **Estimated Time:** 35 minutes
-**Prerequisites:** Task 6.2.4 complete
+**Prerequisites:** Task 7.2.4 complete
 
 #### Deliverables:
 - [ ] src/app/(dashboard)/support/page.tsx (user's tickets list)
@@ -634,16 +678,16 @@ export function useTicketContext() {
 
 ---
 
-### Task 6.3.1: Create QuickIssue Model + Seed Data
+### Task 7.3.1: Create QuickIssue Model + Seed Data
 
 **Session Type:** Database
 **Estimated Time:** 20 minutes
-**Prerequisites:** Task 6.2.5 complete
+**Prerequisites:** Task 7.2.5 complete
 
 #### Schema:
 ```prisma
 // ===========================================
-// Quick Issue Templates (Phase 6: Support)
+// Quick Issue Templates (Phase 7: Support)
 // ===========================================
 model QuickIssue {
   id            String    @id @default(cuid())
@@ -736,11 +780,11 @@ const quickIssues = [
 
 ---
 
-### Task 6.3.2: Create Support Button Component
+### Task 7.3.2: Create Support Button Component
 
 **Session Type:** Frontend
 **Estimated Time:** 20 minutes
-**Prerequisites:** Task 6.3.1 complete
+**Prerequisites:** Task 7.3.1 complete
 
 #### Deliverables:
 - [ ] src/components/support/support-button.tsx
@@ -802,11 +846,11 @@ export default function DashboardLayout({ children }) {
 
 ---
 
-### Task 6.3.3: Create Support Modal (Tabbed)
+### Task 7.3.3: Create Support Modal (Tabbed)
 
 **Session Type:** Frontend
 **Estimated Time:** 45 minutes
-**Prerequisites:** Task 6.3.2 complete
+**Prerequisites:** Task 7.3.2 complete
 
 #### Deliverables:
 - [ ] src/components/support/support-modal.tsx
@@ -883,32 +927,32 @@ export function SupportModal({ open, onOpenChange }) {
 #### Ticket Tab:
 ```tsx
 // Quick issue buttons
-// Ticket form (from Task 6.2.4)
+// Ticket form (from Task 7.2.4)
 // Recent tickets list (collapsible)
 ```
 
 #### Chat Tab (Placeholder):
 ```tsx
 // "Coming soon" message
-// Or basic AI chat interface (Phase 6.5)
+// Or basic AI chat interface (Phase 7.5)
 ```
 
 #### Done Criteria:
 - [ ] Tabs switch smoothly
 - [ ] FAQ tab shows articles + search
 - [ ] Ticket tab has form
-- [ ] Chat tab shows placeholder (or AI chat if Phase 6.5 done)
+- [ ] Chat tab shows placeholder (or AI chat if Phase 7.5 done)
 - [ ] Call tab disabled/coming soon
 - [ ] Mobile responsive
 - [ ] Closes on successful ticket submit
 
 ---
 
-### Task 6.4.1: Create Support Dashboard Layout
+### Task 7.4.1: Create Support Dashboard Layout
 
 **Session Type:** Frontend
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 6.3.3 complete
+**Prerequisites:** Task 7.3.3 complete
 
 #### Deliverables:
 - [ ] src/app/(support)/layout.tsx
@@ -964,7 +1008,7 @@ interface SupportStats {
 📚 Knowledge Base
    ├─ All Articles
    └─ New Article
-💬 Chats (Phase 6.5)
+💬 Chats (Phase 7.5)
 📞 Calls (Future)
 ⚙️ Settings
 ```
@@ -977,11 +1021,11 @@ interface SupportStats {
 
 ---
 
-### Task 6.4.2: Create Ticket Queue Page
+### Task 7.4.2: Create Ticket Queue Page
 
 **Session Type:** Frontend
 **Estimated Time:** 40 minutes
-**Prerequisites:** Task 6.4.1 complete
+**Prerequisites:** Task 7.4.1 complete
 
 #### Deliverables:
 - [ ] src/app/(support)/support-dashboard/tickets/page.tsx
@@ -1025,11 +1069,11 @@ interface SupportStats {
 
 ---
 
-### Task 6.4.3: Create Ticket Detail + Reply UI
+### Task 7.4.3: Create Ticket Detail + Reply UI
 
 **Session Type:** Frontend
 **Estimated Time:** 45 minutes
-**Prerequisites:** Task 6.4.2 complete
+**Prerequisites:** Task 7.4.2 complete
 
 #### Deliverables:
 - [ ] src/app/(support)/support-dashboard/tickets/[id]/page.tsx
@@ -1097,11 +1141,11 @@ interface SupportStats {
 
 ---
 
-### Task 6.4.4: Create User Lookup Page
+### Task 7.4.4: Create User Lookup Page
 
 **Session Type:** Frontend
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 6.4.3 complete
+**Prerequisites:** Task 7.4.3 complete
 
 #### Deliverables:
 - [ ] src/app/(support)/support-dashboard/users/page.tsx
@@ -1158,11 +1202,11 @@ interface SupportStats {
 
 ---
 
-### Task 6.4.5: Create KB Editor Page
+### Task 7.4.5: Create KB Editor Page
 
 **Session Type:** Frontend
 **Estimated Time:** 40 minutes
-**Prerequisites:** Task 6.4.4 complete
+**Prerequisites:** Task 7.4.4 complete
 
 #### Deliverables:
 - [ ] src/app/(support)/support-dashboard/kb/page.tsx (list)
@@ -1229,7 +1273,7 @@ interface SupportStats {
 
 ## 🎯 CORE SUPPORT COMPLETE CHECKPOINT
 
-> **After Task 6.4.5, core support system is fully functional:**
+> **After Task 7.4.5, core support system is fully functional:**
 > - ✅ Knowledge Base with articles
 > - ✅ Ticket system with user + support views
 > - ✅ Support button modal (FAQ + Tickets tabs)
@@ -1240,17 +1284,17 @@ interface SupportStats {
 
 ---
 
-### Task 6.5.1: Create ChatSession + ChatMessage Models (Optional)
+### Task 7.5.1: Create ChatSession + ChatMessage Models (Optional)
 
 **Session Type:** Database
 **Estimated Time:** 20 minutes
-**Prerequisites:** Task 6.4.5 complete
+**Prerequisites:** Task 7.4.5 complete
 **Priority:** Optional
 
 #### Schema:
 ```prisma
 // ===========================================
-// Chat Support Models (Phase 6: Support - Optional)
+// Chat Support Models (Phase 7: Support - Optional)
 // ===========================================
 model ChatSession {
   id            String    @id @default(cuid())
@@ -1316,11 +1360,11 @@ model ChatMessage {
 
 ---
 
-### Task 6.5.2: Create AI Chat Service (Optional)
+### Task 7.5.2: Create AI Chat Service (Optional)
 
 **Session Type:** Backend
 **Estimated Time:** 35 minutes
-**Prerequisites:** Task 6.5.1 complete
+**Prerequisites:** Task 7.5.1 complete
 **Priority:** Optional
 
 #### Deliverables:
@@ -1378,11 +1422,11 @@ If you cannot help or the user is frustrated, offer to connect them with human s
 
 ---
 
-### Task 6.5.3: Create Chat UI (User Side) (Optional)
+### Task 7.5.3: Create Chat UI (User Side) (Optional)
 
 **Session Type:** Frontend
 **Estimated Time:** 35 minutes
-**Prerequisites:** Task 6.5.2 complete
+**Prerequisites:** Task 7.5.2 complete
 **Priority:** Optional
 
 #### Deliverables:
@@ -1419,11 +1463,11 @@ If you cannot help or the user is frustrated, offer to connect them with human s
 
 ---
 
-### Task 6.5.4: Create Chat Queue (Support Side) (Optional)
+### Task 7.5.4: Create Chat Queue (Support Side) (Optional)
 
 **Session Type:** Frontend
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 6.5.3 complete
+**Prerequisites:** Task 7.5.3 complete
 **Priority:** Optional
 
 #### Deliverables:
@@ -1439,11 +1483,11 @@ If you cannot help or the user is frustrated, offer to connect them with human s
 
 ---
 
-### Task 6.5.5: Implement Human Handoff Flow (Optional)
+### Task 7.5.5: Implement Human Handoff Flow (Optional)
 
 **Session Type:** Full-stack
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 6.5.4 complete
+**Prerequisites:** Task 7.5.4 complete
 **Priority:** Optional
 
 #### Features:
@@ -1463,17 +1507,17 @@ If you cannot help or the user is frustrated, offer to connect them with human s
 
 ---
 
-### Task 6.6.1: Create ScheduledCall Model (Future)
+### Task 7.6.1: Create ScheduledCall Model (Future)
 
 **Session Type:** Database
 **Estimated Time:** 15 minutes
-**Prerequisites:** Phase 6.5 complete
+**Prerequisites:** Phase 7.5 complete
 **Priority:** Future
 
 #### Schema:
 ```prisma
 // ===========================================
-// Scheduled Calls (Phase 6: Support - Future)
+// Scheduled Calls (Phase 7: Support - Future)
 // ===========================================
 model ScheduledCall {
   id            String    @id @default(cuid())
@@ -1507,11 +1551,11 @@ model ScheduledCall {
 
 ---
 
-### Task 6.6.2: Create Call Scheduling UI (Future)
+### Task 7.6.2: Create Call Scheduling UI (Future)
 
 **Session Type:** Frontend
 **Estimated Time:** 40 minutes
-**Prerequisites:** Task 6.6.1 complete
+**Prerequisites:** Task 7.6.1 complete
 **Priority:** Future
 
 #### Features:
@@ -1529,7 +1573,7 @@ model ScheduledCall {
 
 ---
 
-## ✅ Phase 6 Completion Checklist
+## ✅ Phase 7 Completion Checklist
 
 ### Core Support (Required)
 - [ ] KB articles model + API

@@ -1,0 +1,445 @@
+/**
+ * Analytics Storage Service
+ *
+ * Handles persistent storage of analytics data in Redis.
+ * Provides methods for tracking events and retrieving statistics.
+ *
+ * @module modules/plugin/handlers/analytics/analytics.storage
+ */
+
+import { logger } from "@/lib/logger";
+import { redis } from "@/lib/redis";
+
+import {
+    ANALYTICS_KEYS,
+    DEFAULT_ANALYTICS_CONFIG,
+    type AnalyticsConfig,
+    type AnalyticsData,
+    type AnalyticsEvent,
+    type AnalyticsSummary,
+    type ChatStats,
+    type DailyStats,
+    type HourlyStats,
+    type UserStats,
+} from "./analytics.types";
+
+const analyticsLogger = logger.child({ module: "analytics" });
+
+// ===========================================
+// Date Helpers
+// ===========================================
+
+/**
+ * Get date string in YYYY-MM-DD format
+ */
+function getDateString(date: Date = new Date()): string {
+  return date.toISOString().split("T")[0]!;
+}
+
+/**
+ * Get hour string in YYYY-MM-DD-HH format
+ */
+function getHourString(date: Date = new Date()): string {
+  const dateStr = getDateString(date);
+  const hour = date.getUTCHours().toString().padStart(2, "0");
+  return `${dateStr}-${hour}`;
+}
+
+/**
+ * Get dates for the last N days
+ */
+function getLastNDays(n: number): string[] {
+  const dates: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    dates.push(getDateString(d));
+  }
+  return dates;
+}
+
+/**
+ * Get hours for the last N hours
+ */
+function getLastNHours(n: number): string[] {
+  const hours: string[] = [];
+  const now = new Date();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now);
+    d.setHours(d.getHours() - i);
+    hours.push(getHourString(d));
+  }
+  return hours;
+}
+
+// ===========================================
+// Analytics Storage Class
+// ===========================================
+
+/**
+ * Analytics Storage Service
+ */
+export class AnalyticsStorage {
+  private readonly userPluginId: string;
+  private readonly config: AnalyticsConfig;
+
+  constructor(userPluginId: string, config?: Partial<AnalyticsConfig>) {
+    this.userPluginId = userPluginId;
+    this.config = { ...DEFAULT_ANALYTICS_CONFIG, ...config };
+  }
+
+  // ===========================================
+  // Event Tracking
+  // ===========================================
+
+  /**
+   * Track an analytics event
+   */
+  async trackEvent(event: AnalyticsEvent): Promise<void> {
+    const pipeline = redis.pipeline();
+    const date = getDateString(event.timestamp);
+    const hour = getHourString(event.timestamp);
+
+    try {
+      // Update main stats
+      const statsKey = ANALYTICS_KEYS.stats(this.userPluginId);
+      const isReceived = event.type === "message.received" || event.type === "callback.received";
+      const isSent = event.type === "message.sent";
+
+      if (isReceived) {
+        pipeline.hincrby(statsKey, "totalMessagesReceived", 1);
+      }
+      if (isSent) {
+        pipeline.hincrby(statsKey, "totalMessagesSent", 1);
+      }
+      pipeline.hset(statsKey, "lastActivityAt", event.timestamp.toISOString());
+      pipeline.hsetnx(statsKey, "firstActivityAt", event.timestamp.toISOString());
+      pipeline.hset(statsKey, "updatedAt", new Date().toISOString());
+
+      // Update daily stats
+      const dailyKey = ANALYTICS_KEYS.daily(this.userPluginId, date);
+      const ttlDays = this.config.retentionDays * 24 * 60 * 60; // seconds
+
+      if (isReceived) {
+        pipeline.hincrby(dailyKey, "messagesReceived", 1);
+      }
+      if (isSent) {
+        pipeline.hincrby(dailyKey, "messagesSent", 1);
+      }
+      pipeline.expire(dailyKey, ttlDays);
+
+      // Track unique user for the day
+      if (event.userId && isReceived) {
+        const dailyUsersKey = ANALYTICS_KEYS.dailyUsers(this.userPluginId, date);
+        pipeline.sadd(dailyUsersKey, event.userId.toString());
+        pipeline.expire(dailyUsersKey, ttlDays);
+      }
+
+      // Update hourly stats (if enabled)
+      if (this.config.enableHourlyStats && isReceived) {
+        const hourlyKey = ANALYTICS_KEYS.hourly(this.userPluginId, hour);
+        pipeline.hincrby(hourlyKey, "messages", 1);
+        pipeline.expire(hourlyKey, 48 * 60 * 60); // Keep 48 hours
+      }
+
+      // Track user stats
+      if (this.config.trackUsers && event.userId && isReceived) {
+        await this.trackUserInternal(pipeline, event);
+      }
+
+      // Track chat stats
+      if (this.config.trackChats && isReceived) {
+        await this.trackChatInternal(pipeline, event);
+      }
+
+      await pipeline.exec();
+
+      analyticsLogger.debug(
+        { userPluginId: this.userPluginId, eventType: event.type },
+        "Analytics event tracked"
+      );
+    } catch (error) {
+      analyticsLogger.error(
+        { err: error, userPluginId: this.userPluginId },
+        "Failed to track analytics event"
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Track user stats (internal, adds to pipeline)
+   */
+  private async trackUserInternal(
+    pipeline: ReturnType<typeof redis.pipeline>,
+    event: AnalyticsEvent
+  ): Promise<void> {
+    if (!event.userId) return;
+
+    const usersKey = ANALYTICS_KEYS.users(this.userPluginId);
+    const userDetailKey = ANALYTICS_KEYS.userDetail(this.userPluginId, event.userId);
+    const statsKey = ANALYTICS_KEYS.stats(this.userPluginId);
+
+    // Increment user message count in sorted set
+    pipeline.zincrby(usersKey, 1, event.userId.toString());
+
+    // Check if this is a new user
+    const exists = await redis.exists(userDetailKey);
+    if (!exists) {
+      // New user - increment total unique users
+      pipeline.hincrby(statsKey, "totalUniqueUsers", 1);
+    }
+
+    // Update user details
+    pipeline.hset(userDetailKey, {
+      telegramUserId: event.userId.toString(),
+      username: event.username || "",
+      firstName: event.firstName || "",
+      lastName: event.lastName || "",
+      lastSeenAt: event.timestamp.toISOString(),
+    });
+    pipeline.hsetnx(userDetailKey, "firstSeenAt", event.timestamp.toISOString());
+    pipeline.hincrby(userDetailKey, "messageCount", 1);
+  }
+
+  /**
+   * Track chat stats (internal, adds to pipeline)
+   */
+  private async trackChatInternal(
+    pipeline: ReturnType<typeof redis.pipeline>,
+    event: AnalyticsEvent
+  ): Promise<void> {
+    const chatsKey = ANALYTICS_KEYS.chats(this.userPluginId);
+    const chatDetailKey = ANALYTICS_KEYS.chatDetail(this.userPluginId, event.chatId);
+    const statsKey = ANALYTICS_KEYS.stats(this.userPluginId);
+
+    // Increment chat message count in sorted set
+    pipeline.zincrby(chatsKey, 1, event.chatId.toString());
+
+    // Check if this is a new chat
+    const exists = await redis.exists(chatDetailKey);
+    if (!exists) {
+      // New chat - increment total unique chats
+      pipeline.hincrby(statsKey, "totalUniqueChats", 1);
+    }
+
+    // Update chat details
+    pipeline.hset(chatDetailKey, {
+      chatId: event.chatId.toString(),
+      chatType: event.chatType,
+      chatTitle: event.chatTitle || "",
+      lastMessageAt: event.timestamp.toISOString(),
+    });
+    pipeline.hsetnx(chatDetailKey, "firstMessageAt", event.timestamp.toISOString());
+    pipeline.hincrby(chatDetailKey, "messageCount", 1);
+  }
+
+  // ===========================================
+  // Statistics Retrieval
+  // ===========================================
+
+  /**
+   * Get main analytics data
+   */
+  async getStats(): Promise<AnalyticsData> {
+    const statsKey = ANALYTICS_KEYS.stats(this.userPluginId);
+    const data = await redis.hgetall(statsKey);
+
+    return {
+      totalMessagesReceived: parseInt(data["totalMessagesReceived"] || "0", 10),
+      totalMessagesSent: parseInt(data["totalMessagesSent"] || "0", 10),
+      totalUniqueUsers: parseInt(data["totalUniqueUsers"] || "0", 10),
+      totalUniqueChats: parseInt(data["totalUniqueChats"] || "0", 10),
+      firstActivityAt: data["firstActivityAt"] ? new Date(data["firstActivityAt"]) : null,
+      lastActivityAt: data["lastActivityAt"] ? new Date(data["lastActivityAt"]) : null,
+      updatedAt: data["updatedAt"] ? new Date(data["updatedAt"]) : new Date(),
+    };
+  }
+
+  /**
+   * Get daily stats for the last N days
+   */
+  async getDailyStats(days: number = 7): Promise<DailyStats[]> {
+    const dates = getLastNDays(days);
+    const stats: DailyStats[] = [];
+
+    for (const date of dates) {
+      const dailyKey = ANALYTICS_KEYS.daily(this.userPluginId, date);
+      const dailyUsersKey = ANALYTICS_KEYS.dailyUsers(this.userPluginId, date);
+
+      const [data, userCount] = await Promise.all([
+        redis.hgetall(dailyKey),
+        redis.scard(dailyUsersKey),
+      ]);
+
+      stats.push({
+        date,
+        messagesReceived: parseInt(data["messagesReceived"] || "0", 10),
+        messagesSent: parseInt(data["messagesSent"] || "0", 10),
+        uniqueUsers: userCount,
+        userIds: [], // Not returned for performance, use getDailyUsers if needed
+      });
+    }
+
+    return stats;
+  }
+
+  /**
+   * Get hourly stats for the last N hours
+   */
+  async getHourlyStats(hours: number = 24): Promise<HourlyStats[]> {
+    const hourStrings = getLastNHours(hours);
+    const stats: HourlyStats[] = [];
+
+    for (const hour of hourStrings) {
+      const hourlyKey = ANALYTICS_KEYS.hourly(this.userPluginId, hour);
+      const data = await redis.hgetall(hourlyKey);
+
+      stats.push({
+        hour,
+        messages: parseInt(data["messages"] || "0", 10),
+      });
+    }
+
+    return stats;
+  }
+
+  /**
+   * Get top users by message count
+   */
+  async getTopUsers(limit: number = 10): Promise<UserStats[]> {
+    const usersKey = ANALYTICS_KEYS.users(this.userPluginId);
+    const topUserIds = await redis.zrevrange(usersKey, 0, limit - 1, "WITHSCORES");
+
+    const users: UserStats[] = [];
+    for (let i = 0; i < topUserIds.length; i += 2) {
+      const telegramUserId = parseInt(topUserIds[i]!, 10);
+      const messageCount = parseInt(topUserIds[i + 1]!, 10);
+
+      const userDetailKey = ANALYTICS_KEYS.userDetail(this.userPluginId, telegramUserId);
+      const details = await redis.hgetall(userDetailKey);
+
+      users.push({
+        telegramUserId,
+        username: details["username"] || undefined,
+        firstName: details["firstName"] || "Unknown",
+        lastName: details["lastName"] || undefined,
+        messageCount,
+        firstSeenAt: details["firstSeenAt"] ? new Date(details["firstSeenAt"]) : new Date(),
+        lastSeenAt: details["lastSeenAt"] ? new Date(details["lastSeenAt"]) : new Date(),
+      });
+    }
+
+    return users;
+  }
+
+  /**
+   * Get top chats by message count
+   */
+  async getTopChats(limit: number = 10): Promise<ChatStats[]> {
+    const chatsKey = ANALYTICS_KEYS.chats(this.userPluginId);
+    const topChatIds = await redis.zrevrange(chatsKey, 0, limit - 1, "WITHSCORES");
+
+    const chats: ChatStats[] = [];
+    for (let i = 0; i < topChatIds.length; i += 2) {
+      const chatId = parseInt(topChatIds[i]!, 10);
+      const messageCount = parseInt(topChatIds[i + 1]!, 10);
+
+      const chatDetailKey = ANALYTICS_KEYS.chatDetail(this.userPluginId, chatId);
+      const details = await redis.hgetall(chatDetailKey);
+
+      chats.push({
+        chatId,
+        chatType: (details["chatType"] as ChatStats["chatType"]) || "private",
+        chatTitle: details["chatTitle"] || undefined,
+        messageCount,
+        firstMessageAt: details["firstMessageAt"] ? new Date(details["firstMessageAt"]) : new Date(),
+        lastMessageAt: details["lastMessageAt"] ? new Date(details["lastMessageAt"]) : new Date(),
+      });
+    }
+
+    return chats;
+  }
+
+  /**
+   * Get full analytics summary (for API/UI)
+   */
+  async getSummary(): Promise<AnalyticsSummary> {
+    const [stats, dailyStats, hourlyStats, topUsers, topChats] = await Promise.all([
+      this.getStats(),
+      this.getDailyStats(7),
+      this.config.enableHourlyStats ? this.getHourlyStats(24) : Promise.resolve([]),
+      this.getTopUsers(this.config.topUsersLimit),
+      this.getTopChats(this.config.topChatsLimit),
+    ]);
+
+    // Calculate today's stats
+    const today = getDateString();
+    const todayStats = dailyStats.find((d) => d.date === today);
+
+    return {
+      userPluginId: this.userPluginId,
+      totals: {
+        messagesReceived: stats.totalMessagesReceived,
+        messagesSent: stats.totalMessagesSent,
+        uniqueUsers: stats.totalUniqueUsers,
+        uniqueChats: stats.totalUniqueChats,
+      },
+      today: {
+        messages: (todayStats?.messagesReceived || 0) + (todayStats?.messagesSent || 0),
+        uniqueUsers: todayStats?.uniqueUsers || 0,
+      },
+      dailyStats,
+      hourlyStats,
+      topUsers: topUsers.map((u) => ({
+        telegramUserId: u.telegramUserId,
+        username: u.username,
+        firstName: u.firstName,
+        messageCount: u.messageCount,
+      })),
+      topChats: topChats.map((c) => ({
+        chatId: c.chatId,
+        chatType: c.chatType,
+        chatTitle: c.chatTitle,
+        messageCount: c.messageCount,
+      })),
+    };
+  }
+
+  // ===========================================
+  // Cleanup
+  // ===========================================
+
+  /**
+   * Delete all analytics data for this plugin installation
+   */
+  async deleteAll(): Promise<void> {
+    const pattern = `analytics:${this.userPluginId}:*`;
+    let cursor = "0";
+
+    do {
+      const [newCursor, keys] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+      cursor = newCursor;
+
+      if (keys.length > 0) {
+        await redis.del(...keys);
+      }
+    } while (cursor !== "0");
+
+    analyticsLogger.info(
+      { userPluginId: this.userPluginId },
+      "Analytics data deleted"
+    );
+  }
+}
+
+/**
+ * Create analytics storage instance for a user plugin
+ */
+export function createAnalyticsStorage(
+  userPluginId: string,
+  config?: Partial<AnalyticsConfig>
+): AnalyticsStorage {
+  return new AnalyticsStorage(userPluginId, config);
+}

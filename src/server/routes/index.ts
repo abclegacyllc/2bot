@@ -13,6 +13,7 @@ import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
 import { authRouter } from "./auth";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
+import { pluginRouter } from "./plugin";
 import { webhookRouter } from "./webhook";
 
 export const router = Router();
@@ -37,6 +38,13 @@ router.use("/gateways", gatewayRouter);
  * Note: No auth required - webhook auth is via gatewayId + optional secret
  */
 router.use("/webhooks", webhookRouter);
+
+/**
+ * Plugin routes (Phase 3)
+ * /api/plugins - Public catalog
+ * /api/plugins/user/* - User plugin management (auth required)
+ */
+router.use("/plugins", pluginRouter);
 
 /**
  * API info endpoint
@@ -88,7 +96,6 @@ if (process.env.NODE_ENV !== "production") {
 
 // Mount module routes here
 // router.use("/users", userRoutes);    // Phase 1
-// router.use("/plugins", pluginRoutes);   // Phase 3
 
 // 404 handler for unmatched API routes
 router.use(notFoundHandler);

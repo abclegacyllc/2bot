@@ -4,6 +4,7 @@ import express, { type Express } from "express";
 import helmet from "helmet";
 import { corsOptions } from "./middleware/cors";
 import { errorHandler } from "./middleware/error-handler";
+import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { pinoHttpMiddleware } from "./middleware/request-logger";
 import { router } from "./routes";
 
@@ -25,6 +26,9 @@ export function createApp(): Express {
 
   // Request logging with Pino
   app.use(pinoHttpMiddleware);
+
+  // Rate limiting (apply early to protect all routes)
+  app.use(rateLimitMiddleware());
 
   // API routes
   app.use("/api", router);

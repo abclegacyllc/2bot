@@ -9,6 +9,12 @@
 
 import { logger } from "@/lib/logger";
 import type { GatewayType } from "@prisma/client";
+import {
+    CircuitOpenError,
+    executeWithCircuit,
+    GatewayUnavailableError,
+    removeGatewayCircuit,
+} from "../gateway-circuit";
 import type { GatewayAction, GatewayProvider } from "../gateway.registry";
 import { gatewayService } from "../gateway.service";
 
@@ -125,6 +131,9 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
       // Remove from tracked connections
       this.connections.delete(gatewayId);
 
+      // Remove circuit breaker for this gateway
+      removeGatewayCircuit(gatewayId, this.type);
+
       // Update gateway status
       await gatewayService.updateStatus(gatewayId, "DISCONNECTED");
 
@@ -163,7 +172,7 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
 
   /**
    * Execute a gateway action
-   * Wraps doExecute with logging and error handling
+   * Wraps doExecute with circuit breaker, logging, and error handling
    */
   async execute<TParams = unknown, TResult = unknown>(
     gatewayId: string,
@@ -180,7 +189,10 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
     }
 
     try {
-      const result = await this.doExecute<TParams, TResult>(gatewayId, action, params);
+      // Execute action through circuit breaker
+      const result = await executeWithCircuit(gatewayId, this.type, async () => {
+        return this.doExecute<TParams, TResult>(gatewayId, action, params);
+      });
 
       // Update last activity
       connection.lastActivity = new Date();
@@ -188,6 +200,15 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
       this.log.debug({ gatewayId, action }, "Action executed successfully");
       return result;
     } catch (error) {
+      // Convert circuit open error to gateway unavailable error
+      if (error instanceof CircuitOpenError) {
+        this.log.warn(
+          { gatewayId, action, retryAfterMs: error.retryAfterMs },
+          "Circuit breaker is OPEN - gateway temporarily unavailable"
+        );
+        throw new GatewayUnavailableError(this.type, error.retryAfterMs, gatewayId);
+      }
+
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       this.log.error({ gatewayId, action, error: errorMessage }, "Action execution failed");
       throw error;

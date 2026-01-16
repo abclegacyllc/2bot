@@ -1,7 +1,9 @@
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, UserRole } from "@prisma/client";
 import { hash } from "bcrypt";
 import { Pool } from "pg";
+
+import { getAllBuiltinPluginSeedData } from "../src/modules/plugin/handlers";
 
 const pool = new Pool({
   connectionString: "postgresql://postgres:postgres@localhost:5432/twobot?schema=public",
@@ -16,6 +18,8 @@ async function main() {
   console.log("🌱 Starting database seed...");
 
   // Clean existing data (for development only)
+  await prisma.userPlugin.deleteMany();
+  await prisma.plugin.deleteMany();
   await prisma.session.deleteMany();
   await prisma.user.deleteMany();
 
@@ -43,14 +47,37 @@ async function main() {
       passwordHash: adminPassword,
       name: "Admin User",
       plan: "PRO",
+      role: UserRole.ADMIN,
     },
   });
 
   // eslint-disable-next-line no-console
   console.log("✅ Created admin user:", adminUser.email);
 
+  // ===========================================
+  // Seed Built-in Plugins (from handler definitions)
+  // ===========================================
+  
   // eslint-disable-next-line no-console
-  console.log("🎉 Database seeded successfully!");
+  console.log("\n📦 Seeding plugins...");
+
+  const pluginSeeds = getAllBuiltinPluginSeedData();
+
+  for (const seedData of pluginSeeds) {
+    const plugin = await prisma.plugin.upsert({
+      where: { slug: seedData.slug },
+      update: seedData,
+      create: seedData,
+    });
+    // eslint-disable-next-line no-console
+    console.log(`✅ Seeded plugin: ${plugin.name}`);
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(`\n📦 Total plugins seeded: ${pluginSeeds.length}`);
+
+  // eslint-disable-next-line no-console
+  console.log("\n🎉 Database seeded successfully!");
   // eslint-disable-next-line no-console
   console.log("📝 Test credentials: test@example.com / test1234");
   // eslint-disable-next-line no-console

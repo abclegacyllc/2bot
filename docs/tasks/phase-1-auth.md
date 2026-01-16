@@ -295,15 +295,40 @@ class AuthService {
 **Prerequisites:** Task 1.3.1 complete
 
 #### Deliverables:
-- [ ] POST /api/auth/login endpoint
-- [ ] Input validation
-- [ ] Rate limiting
-- [ ] Returns user + token
+- [x] POST /api/auth/login endpoint
+- [x] Input validation
+- [x] **Auth-specific rate limits** (see below)
+- [x] Returns user + token
+
+#### Add Auth Rate Limits to rate-limits.ts:
+```typescript
+import { addEndpointRateLimit } from '@/shared/constants/rate-limits';
+
+// Register auth endpoint rate limits (brute force protection)
+addEndpointRateLimit('POST:/api/auth/login', {
+  points: 5,           // 5 attempts
+  duration: 60,        // per minute
+  blockDuration: 300,  // block for 5 minutes if exceeded
+});
+
+addEndpointRateLimit('POST:/api/auth/register', {
+  points: 3,           // 3 attempts
+  duration: 3600,      // per hour
+  blockDuration: 3600,
+});
+
+addEndpointRateLimit('POST:/api/auth/forgot-password', {
+  points: 3,           // 3 attempts
+  duration: 3600,      // per hour
+  blockDuration: 3600,
+});
+```
 
 #### Done Criteria:
 - [ ] Can login via curl
 - [ ] Rejects wrong password (401)
 - [ ] Creates session in DB
+- [ ] **Login limited to 5 attempts/min per IP**
 
 ---
 

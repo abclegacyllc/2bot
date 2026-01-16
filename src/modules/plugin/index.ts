@@ -1,8 +1,19 @@
-// Plugin Module - Will be implemented in Phase 3
-// Exports: pluginService, pluginRoutes, pluginTypes
+/**
+ * Plugin Module
+ *
+ * Manages plugin definitions, user plugin installations,
+ * and plugin execution.
+ *
+ * @module modules/plugin
+ */
 
 export const PLUGIN_MODULE = "plugin" as const;
 
-// Placeholder - will export actual implementations
-// export * from "./plugin.service";
-// export * from "./plugin.types";
+// Types
+export * from "./plugin.types";
+
+// Validation
+export * from "./plugin.validation";
+
+// Service
+export { pluginService } from "./plugin.service";

@@ -31,22 +31,32 @@ Read CURRENT-STATE.md first, then continue with the next task.
 ├── ROADMAP.md           ← Full reference (V1+V2+V3, don't build all of it)
 ├── docs/
 │   ├── MVP.md                       ← V1 scope definition (what we're building)
-│   └── tasks/
-│       ├── phase-0-setup.md         ← Project setup (15 tasks) ✅
-│       ├── phase-1-auth.md          ← Authentication (20 tasks) ✅
-│       ├── phase-1.5-architecture.md← Architecture Foundation (14 tasks) ✅
-│       ├── phase-2-gateway.md       ← Gateway system (16 tasks) 🔄
-│       ├── phase-3-plugin.md        ← Plugin system (12 tasks)
-│       ├── phase-4-billing.md       ← Billing + Workspace (15 tasks)
-│       ├── phase-5-launch.md        ← Polish + Launch (12 tasks)
-│       └── phase-6-support.md       ← Support System (22 tasks)
+│   ├── tasks/                       ← V1 MVP phases
+│   │   ├── phase-0-setup.md         ← Project setup (15 tasks) ✅
+│   │   ├── phase-1-auth.md          ← Authentication (20 tasks) ✅
+│   │   ├── phase-1.5-architecture.md← Architecture Foundation (14 tasks) ✅
+│   │   ├── phase-2-gateway.md       ← Gateway system (18 tasks) ✅
+│   │   ├── phase-3-plugin.md        ← Plugin system (12 tasks) 🔄
+│   │   ├── phase-4-organization.md  ← Organization + Context (10 tasks)
+│   │   ├── phase-5-billing.md       ← Billing + Stripe (12 tasks)
+│   │   ├── phase-6-launch.md        ← Polish + Launch (16 tasks)
+│   │   └── phase-7-support.md       ← Support System (22 tasks)
+│   └── tasks-v2/                    ← V2 Post-MVP phases
+│       ├── phase-8-theme.md         ← Theme System (11 tasks)
+│       ├── phase-9-widget.md        ← Widget System (17 tasks)
+│       ├── phase-10-workflow.md     ← Workflow Builder (19 tasks)
+│       ├── phase-11-developer.md    ← Developer Dashboard (17 tasks)
+│       ├── phase-12-marketplace.md  ← Marketplace (24 tasks)
+│       └── phase-13-docker-workspace.md ← Docker Workspace Isolation (9 tasks)
 ```
 
 > **Phase 1.5 Note:** Added based on AI Auditor architectural review.
 > Prepares database schema, types, and patterns to prevent painful refactoring later.
 
-> **Phase 6 Note:** Comprehensive support system with FAQ/KB, ticket system,
+> **Phase 7 Note:** Comprehensive support system with FAQ/KB, ticket system,
 > support button, and support dashboard. Chat support is optional.
+
+> **V2 Phases:** Post-MVP features. Only build after Phase 7 complete and platform is live.
 
 ---
 
@@ -298,11 +308,12 @@ Building only these features (see MVP.md for details):
 | 1 Analytics plugin | Plugin marketplace |
 | Basic dashboard | Widgets, themes |
 | Stripe subscriptions | Credit system |
-| User workspaces | Organizations |
+| Organizations (basic) | Full departments |
 | 2 plans (Free + Pro) | 5 plan tiers |
 
-**Total: ~87 tasks across 6 phases**
-**Estimated: 56-69 AI sessions**
+**V1 Total: 142 tasks across 8 phases (Phase 0-7)**
+**V2 Total: 87 tasks across 5 phases (Phase 8-12)**
+**Estimated V1: 70-95 AI sessions**
 
 ---
 

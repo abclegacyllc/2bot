@@ -1,9 +1,9 @@
 import { loggers } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { isRedisReady } from "@/lib/redis";
 import { APP_CONFIG } from "@/shared/constants";
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
-import Redis from "ioredis";
 import { asyncHandler } from "../middleware/error-handler";
 
 const healthLogger = loggers.server;
@@ -88,20 +88,14 @@ healthRouter.get(
       healthLogger.error({ err }, "Database health check failed");
     }
 
-    // Check Redis connection
-    const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+    // Check Redis connection using shared client
     const redisStart = Date.now();
-    let redis: Redis | null = null;
 
     try {
-      redis = new Redis(redisUrl, {
-        maxRetriesPerRequest: 1,
-        connectTimeout: 3000,
-        lazyConnect: true,
-      });
-
-      await redis.connect();
-      await redis.ping();
+      const isReady = await isRedisReady();
+      if (!isReady) {
+        throw new Error('Redis not ready');
+      }
       checks.redis.latency = Date.now() - redisStart;
     } catch (err) {
       checks.redis.status = "error";
@@ -110,12 +104,6 @@ healthRouter.get(
         overallStatus = "degraded";
       }
       healthLogger.error({ err }, "Redis health check failed");
-    } finally {
-      if (redis) {
-        await redis.quit().catch(() => {
-          // Ignore quit errors
-        });
-      }
     }
 
     const statusCode = overallStatus === "ok" ? 200 : overallStatus === "degraded" ? 200 : 503;

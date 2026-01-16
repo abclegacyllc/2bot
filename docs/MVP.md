@@ -176,14 +176,15 @@ That's it. Two plans. Simple.
 | **Phase 0** | 15 | 8-10 | Project setup, tooling, database | ✅ Complete |
 | **Phase 1** | 20 | 12-15 | Authentication system | ✅ Complete |
 | **Phase 1.5** | 14 | 2-3 | Architecture prep (roles, audit, context) | ✅ Complete |
-| **Phase 2** | 16 | 10-12 | Gateway system (TG Bot + AI) | 🔄 In Progress |
-| **Phase 3** | 12 | 8-10 | Plugin system + 1 plugin | ⬜ Not Started |
-| **Phase 4** | 15 | 10-12 | Billing + Workspace (checkpoint) | ⬜ Not Started |
-| **Phase 5** | 12 | 8-10 | Polish, testing, launch prep | ⬜ Not Started |
-| **Phase 6** | 22 | 10-15 | Support system (optional for V1) | ⬜ Not Started |
-| **TOTAL** | **126** | **68-87** | | |
+| **Phase 2** | 16 | 10-12 | Gateway system (TG Bot + AI) | ✅ Complete |
+| **Phase 3** | 15 | 8-10 | Plugin system + 1 plugin | 🔄 In Progress |
+| **Phase 4** | 10 | 6-8 | Organization + context switching | ⬜ Not Started |
+| **Phase 5** | 12 | 6-8 | Billing + Stripe | ⬜ Not Started |
+| **Phase 6** | 15 | 8-10 | Polish, testing, launch prep | ⬜ Not Started |
+| **Phase 7** | 25 | 10-15 | Support system (optional for V1) | ⬜ Not Started |
+| **TOTAL** | **142** | **70-95** | | |
 
-> **Note:** Phase 1.5 was added for architecture preparation. Phase 6 Support is optional for MVP launch.
+> **Note:** Phase 4 focuses on organization system with context switching and membership model. Workspace isolation is optional for MVP.
 
 ---
 

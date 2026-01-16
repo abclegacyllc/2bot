@@ -5,6 +5,8 @@
  * -1 means unlimited
  */
 
+import type { IsolationLevel } from '../types/context';
+
 export const PLAN_LIMITS = {
   FREE: {
     gateways: 1,
@@ -13,6 +15,10 @@ export const PLAN_LIMITS = {
     aiTokensPerMonth: 5000,
     ramMb: 256,
     storageMb: 100,
+    // Database isolation
+    isolationLevel: 'SHARED' as IsolationLevel,
+    dedicatedDb: false,
+    canUpgradeToIsolated: false,
   },
   STARTER: {
     gateways: 3,
@@ -21,6 +27,10 @@ export const PLAN_LIMITS = {
     aiTokensPerMonth: 50000,
     ramMb: 512,
     storageMb: 500,
+    // Database isolation
+    isolationLevel: 'SHARED' as IsolationLevel,
+    dedicatedDb: false,
+    canUpgradeToIsolated: false,
   },
   PRO: {
     gateways: 10,
@@ -29,6 +39,10 @@ export const PLAN_LIMITS = {
     aiTokensPerMonth: 200000,
     ramMb: 1024,
     storageMb: 2000,
+    // Database isolation
+    isolationLevel: 'SHARED' as IsolationLevel,
+    dedicatedDb: false,
+    canUpgradeToIsolated: true, // Optional add-on
   },
   BUSINESS: {
     gateways: 25,
@@ -37,6 +51,10 @@ export const PLAN_LIMITS = {
     aiTokensPerMonth: 500000,
     ramMb: 2048,
     storageMb: 5000,
+    // Database isolation
+    isolationLevel: 'SHARED' as IsolationLevel,
+    dedicatedDb: false,
+    canUpgradeToIsolated: true, // Optional add-on
   },
   ENTERPRISE: {
     gateways: -1,
@@ -45,11 +63,21 @@ export const PLAN_LIMITS = {
     aiTokensPerMonth: -1,
     ramMb: 4096,
     storageMb: 10000,
+    // Database isolation (always dedicated)
+    isolationLevel: 'DEDICATED' as IsolationLevel,
+    dedicatedDb: true,
+    canUpgradeToIsolated: true,
+    customRegion: true, // Can choose database region
   },
 } as const;
 
 export type PlanType = keyof typeof PLAN_LIMITS;
-export type PlanLimitKey = keyof (typeof PLAN_LIMITS)['FREE'];
+
+// Numeric limit keys (for quota checking)
+export type PlanLimitKey = 'gateways' | 'plugins' | 'executionsPerDay' | 'aiTokensPerMonth' | 'ramMb' | 'storageMb';
+
+// All keys including non-numeric ones
+export type PlanConfigKey = keyof (typeof PLAN_LIMITS)['FREE'];
 
 /**
  * Get limits for a specific plan
@@ -96,6 +124,39 @@ export function getRemainingQuota(
  */
 export function isUnlimited(plan: PlanType, action: PlanLimitKey): boolean {
   return PLAN_LIMITS[plan][action] === -1;
+}
+
+// ===========================================
+// Database Isolation Helpers
+// ===========================================
+
+/**
+ * Get isolation level for a plan
+ */
+export function getPlanIsolationLevel(plan: PlanType): IsolationLevel {
+  return PLAN_LIMITS[plan].isolationLevel;
+}
+
+/**
+ * Check if plan has dedicated database by default
+ */
+export function hasDedicatedDb(plan: PlanType): boolean {
+  return PLAN_LIMITS[plan].dedicatedDb;
+}
+
+/**
+ * Check if plan can upgrade to isolated database
+ */
+export function canUpgradeToIsolated(plan: PlanType): boolean {
+  return PLAN_LIMITS[plan].canUpgradeToIsolated ?? false;
+}
+
+/**
+ * Check if plan supports custom database region selection
+ */
+export function canChooseRegion(plan: PlanType): boolean {
+  const limits = PLAN_LIMITS[plan];
+  return 'customRegion' in limits && limits.customRegion === true;
 }
 
 /**

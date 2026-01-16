@@ -93,7 +93,8 @@ model User {
   passwordResetTokens PasswordResetToken[]
   gateways            Gateway[]
   creditBalance       CreditBalance?
-  // userPlugins      UserPlugin[]  // Phase 3
+  userPlugins         UserPlugin[]
+  workflows           Workflow[]
 
   @@index([email])
   @@index([stripeCustomerId])
@@ -178,6 +179,8 @@ model Gateway {
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   // organization Organization? @relation(...) // Add when Organization model exists
+  workflows     Workflow[]
+  workflowSteps WorkflowStep[]
 
   @@index([userId])
   @@index([organizationId])
@@ -262,4 +265,276 @@ model CreditTransaction {
   @@index([type])
   @@index([createdAt])
   @@map("credit_transactions")
+}
+
+// ===========================================
+// Plugin Models (Phase 3: Plugin System)
+// ===========================================
+
+// Plugin definitions (system-defined for V1)
+model Plugin {
+  id            String        @id @default(cuid())
+  slug          String        @unique  // "analytics", "welcome", "auto-reply"
+  name          String
+  description   String        @db.Text
+  version       String        @default("1.0.0")
+  
+  // Requirements - which gateway types this plugin needs
+  requiredGateways GatewayType[]
+  
+  // Configuration schema (JSON Schema format for validation)
+  configSchema  Json          @default("{}")
+  
+  // Metadata for UI
+  icon          String?       // Icon name or URL
+  category      String        @default("general")  // "general", "analytics", "messaging", "automation"
+  tags          String[]      @default([])         // Discovery tags: "sport", "blog", "ecommerce"
+  isBuiltin     Boolean       @default(true)       // Built-in vs marketplace (V2)
+  
+  // Input/Output schemas for workflow integration (Phase 5+)
+  inputSchema   Json?         @map("input_schema")   // What plugin accepts
+  outputSchema  Json?         @map("output_schema")  // What plugin outputs
+  
+  // Status
+  isActive      Boolean       @default(true)  @map("is_active")
+  
+  // Timestamps
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  
+  // Relations
+  userPlugins   UserPlugin[]
+  workflowSteps WorkflowStep[]
+  
+  @@index([slug])
+  @@index([isActive])
+  @@index([category])
+  @@map("plugins")
+}
+
+// User/Organization installed plugins
+model UserPlugin {
+  id            String        @id @default(cuid())
+  userId        String        @map("user_id")
+  pluginId      String        @map("plugin_id")
+  
+  // Organization Support (same pattern as Gateway)
+  organizationId String?      @map("organization_id")
+  
+  // User's configuration for this plugin (validated against Plugin.configSchema)
+  config        Json          @default("{}")
+  
+  // Gateway binding - which gateway this plugin uses (if any)
+  gatewayId     String?       @map("gateway_id")
+  
+  // Status
+  isEnabled     Boolean       @default(true) @map("is_enabled")
+  
+  // Execution stats
+  executionCount Int          @default(0) @map("execution_count")
+  lastExecutedAt DateTime?    @map("last_executed_at")
+  lastError      String?      @map("last_error")
+  
+  // Timestamps
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  
+  // Relations
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plugin        Plugin        @relation(fields: [pluginId], references: [id])
+  // organization Organization? @relation(...) // Add when Organization model exists
+  
+  // Unique per user+plugin OR per organization+plugin
+  @@unique([userId, pluginId, organizationId])
+  @@index([userId])
+  @@index([pluginId])
+  @@index([organizationId])
+  @@index([isEnabled])
+  @@map("user_plugins")
+}
+
+// ===========================================
+// WORKFLOW MODELS (V2 Foundation - Phase 3)
+// ===========================================
+
+// Trigger types for workflows
+enum WorkflowTriggerType {
+  TELEGRAM_MESSAGE    // On new Telegram message
+  TELEGRAM_CALLBACK   // On callback button press
+  SCHEDULE            // Cron-based trigger
+  WEBHOOK             // External HTTP trigger
+  MANUAL              // User-triggered
+}
+
+// Workflow status
+enum WorkflowStatus {
+  DRAFT               // Being edited
+  ACTIVE              // Running
+  PAUSED              // Temporarily disabled
+  ARCHIVED            // Soft deleted
+}
+
+// Workflow scope (determines visibility and access)
+enum WorkflowScope {
+  USER                // Personal workspace OR employee personal in org
+  DEPARTMENT          // Shared within department (org only)
+  ORGANIZATION        // Company-wide automation (org only)
+}
+
+// Workflow definition (user-created automation chain)
+model Workflow {
+  id              String              @id @default(cuid())
+  userId          String              @map("user_id")
+  organizationId  String?             @map("organization_id")
+  departmentId    String?             @map("department_id")  // For DEPARTMENT scope
+  
+  // Scope determines visibility and access
+  // - USER scope: If organizationId=NULL, personal workspace workflow
+  //               If organizationId!=NULL, employee personal workflow in org
+  // - DEPARTMENT: Requires departmentId, shared within department  
+  // - ORGANIZATION: Shared across entire organization
+  scope           WorkflowScope       @default(USER)
+  
+  // Basic info
+  name            String
+  description     String?
+  slug            String              // User-friendly URL slug
+  
+  // Trigger configuration
+  triggerType     WorkflowTriggerType
+  triggerConfig   Json                @default("{}")  // Type-specific settings
+  
+  // Bound gateway (for telegram/ai triggers)
+  gatewayId       String?             @map("gateway_id")
+  
+  // Status
+  status          WorkflowStatus      @default(DRAFT)
+  isEnabled       Boolean             @default(false) @map("is_enabled")
+  
+  // Execution stats
+  executionCount  Int                 @default(0) @map("execution_count")
+  lastExecutedAt  DateTime?           @map("last_executed_at")
+  lastError       String?             @map("last_error")
+  
+  // Timestamps
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  
+  // Relations
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gateway         Gateway?            @relation(fields: [gatewayId], references: [id])
+  // organization Organization?       @relation(...) // Add when Organization exists (Phase 4)
+  // department    Department?         @relation(...) // Add when Department exists (Phase 4)
+  steps           WorkflowStep[]
+  runs            WorkflowRun[]
+  
+  @@unique([userId, organizationId, slug])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([scope])
+  @@index([status])
+  @@index([isEnabled])
+  @@map("workflows")
+}
+
+// Individual step in a workflow chain
+model WorkflowStep {
+  id              String    @id @default(cuid())
+  workflowId      String    @map("workflow_id")
+  
+  // Step position
+  order           Int       // Execution order (0, 1, 2...)
+  name            String?   // Optional label
+  
+  // Plugin to execute
+  pluginId        String    @map("plugin_id")
+  
+  // Step configuration
+  // How to map trigger/previous step data to this plugin's input
+  inputMapping    Json      @default("{}")  // { "text": "{{trigger.message.text}}" }
+  
+  // Static config for the plugin
+  config          Json      @default("{}")
+  
+  // Gateway override (use specific gateway instead of workflow default)
+  gatewayId       String?   @map("gateway_id")
+  
+  // Conditional execution (optional)
+  condition       Json?     // { "if": "{{prev.sentiment}} == 'negative'" }
+  
+  // Error handling
+  onError         String    @default("stop")  // "stop", "continue", "retry"
+  maxRetries      Int       @default(0)       @map("max_retries")
+  
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  workflow        Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  plugin          Plugin    @relation(fields: [pluginId], references: [id])
+  gateway         Gateway?  @relation(fields: [gatewayId], references: [id])
+  
+  @@unique([workflowId, order])
+  @@index([workflowId])
+  @@index([pluginId])
+  @@map("workflow_steps")
+}
+
+// Workflow execution history
+model WorkflowRun {
+  id              String    @id @default(cuid())
+  workflowId      String    @map("workflow_id")
+  
+  // Trigger info
+  triggeredBy     String    // "telegram_message", "schedule", "manual", etc.
+  triggerData     Json?     @map("trigger_data")  // Original trigger payload
+  
+  // Execution status
+  status          String    @default("running")  // running, completed, failed, cancelled
+  
+  // Results
+  output          Json?     // Final output
+  error           String?   // Error message if failed
+  failedStepOrder Int?      @map("failed_step_order")  // Which step failed
+  
+  // Performance
+  startedAt       DateTime  @default(now()) @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+  durationMs      Int?      @map("duration_ms")
+  
+  // Relations
+  workflow        Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepRuns        WorkflowStepRun[]
+  
+  @@index([workflowId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("workflow_runs")
+}
+
+// Individual step execution in a run
+model WorkflowStepRun {
+  id              String      @id @default(cuid())
+  runId           String      @map("run_id")
+  stepOrder       Int         @map("step_order")
+  
+  // Execution
+  status          String      @default("pending")  // pending, running, completed, failed, skipped
+  input           Json?       // Actual input after mapping
+  output          Json?       // Plugin output
+  error           String?
+  
+  // Performance
+  startedAt       DateTime?   @map("started_at")
+  completedAt     DateTime?   @map("completed_at")
+  durationMs      Int?        @map("duration_ms")
+  
+  // Relations
+  run             WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  
+  @@unique([runId, stepOrder])
+  @@index([runId])
+  @@map("workflow_step_runs")
 }

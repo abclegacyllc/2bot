@@ -29,3 +29,8 @@ export {
     GatewayNotConnectedError, InvalidCredentialsError, TelegramApiError, TelegramBotProvider, UnsupportedActionError, aiProvider, telegramBotProvider
 } from "./providers";
 
+// Circuit Breaker
+export {
+    CircuitOpenError, GatewayUnavailableError, executeWithCircuit, getAllGatewayCircuitStats, getGatewayCircuitStats, isGatewayCircuitAvailable,
+    withCircuitBreaker
+} from "./gateway-circuit";

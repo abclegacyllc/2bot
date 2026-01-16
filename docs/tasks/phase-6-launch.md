@@ -1,8 +1,8 @@
-# Phase 5: Polish & Launch
+# Phase 6: Polish & Launch
 
 > **Goal:** Final polish, testing, and launch preparation
 > **Estimated Sessions:** 8-10
-> **Prerequisites:** Phase 4 complete
+> **Prerequisites:** Phase 5 complete
 
 ---
 
@@ -10,24 +10,33 @@
 
 | ID | Task | Status | Session |
 |----|------|--------|---------|
-| 5.1.1 | Create landing page | ⬜ | - |
-| 5.1.2 | Create dashboard home | ⬜ | - |
-| 5.1.3 | Create settings page (profile) | ⬜ | - |
-| 5.2.1 | Add loading states everywhere | ⬜ | - |
-| 5.2.2 | Add error boundaries | ⬜ | - |
-| 5.2.3 | Add toast notifications | ⬜ | - |
-| 5.3.1 | Setup Sentry error tracking | ⬜ | - |
-| 5.3.2 | Create basic monitoring dashboard | ⬜ | - |
-| 5.4.1 | Create Terms of Service page | ⬜ | - |
-| 5.4.2 | Create Privacy Policy page | ⬜ | - |
-| 5.5.1 | End-to-end smoke test | ⬜ | - |
-| 5.5.2 | Production deployment prep | ⬜ | - |
+| **Pages** ||||
+| 6.1.1 | Create landing page | ⬜ | - |
+| 6.1.2 | Create dashboard home | ⬜ | - |
+| 6.1.3 | Create settings page (profile) | ⬜ | - |
+| **Theme System** ||||
+| 6.2.1 | Install and configure next-themes | ⬜ | - |
+| 6.2.2 | Create theme toggle component | ⬜ | - |
+| 6.2.3 | Add theme persistence | ⬜ | - |
+| **UX Polish** ||||
+| 6.3.1 | Add loading states everywhere | ⬜ | - |
+| 6.3.2 | Add error boundaries | ⬜ | - |
+| 6.3.3 | Add toast notifications | ⬜ | - |
+| **Monitoring** ||||
+| 6.4.1 | Setup Sentry error tracking | ⬜ | - |
+| 6.4.2 | Create basic monitoring dashboard | ⬜ | - |
+| **Legal** ||||
+| 6.5.1 | Create Terms of Service page | ⬜ | - |
+| 6.5.2 | Create Privacy Policy page | ⬜ | - |
+| **Launch Prep** ||||
+| 6.6.1 | End-to-end smoke test | ⬜ | - |
+| 6.6.2 | Production deployment prep | ⬜ | - |
 
 ---
 
 ## 📝 Detailed Tasks
 
-### Task 5.1.1: Create Landing Page
+### Task 6.1.1: Create Landing Page
 
 **Session Type:** Frontend
 **Estimated Time:** 45 minutes
@@ -71,11 +80,11 @@
 
 ---
 
-### Task 5.1.2: Create Dashboard Home
+### Task 6.1.2: Create Dashboard Home
 
 **Session Type:** Frontend
 **Estimated Time:** 35 minutes
-**Prerequisites:** Task 5.1.1 complete
+**Prerequisites:** Task 6.1.1 complete
 
 #### Deliverables:
 - [ ] src/app/(dashboard)/dashboard/page.tsx
@@ -106,11 +115,11 @@
 
 ---
 
-### Task 5.1.3: Create Settings Page (Profile)
+### Task 6.1.3: Create Settings Page (Profile)
 
 **Session Type:** Frontend
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 5.1.2 complete
+**Prerequisites:** Task 6.1.2 complete
 
 #### Deliverables:
 - [ ] src/app/(dashboard)/settings/page.tsx
@@ -143,11 +152,196 @@
 
 ---
 
-### Task 5.2.1: Add Loading States Everywhere
+## 🎨 Theme System Tasks
+
+### Task 6.2.1: Install and Configure next-themes
+
+**Session Type:** Frontend
+**Estimated Time:** 20 minutes
+**Prerequisites:** Task 6.1.3 complete
+
+#### Deliverables:
+- [ ] Install next-themes package
+- [ ] Create ThemeProvider wrapper
+- [ ] Update root layout
+
+#### Implementation:
+```bash
+npm install next-themes
+```
+
+```typescript
+// src/components/providers/theme-provider.tsx
+"use client";
+
+import { ThemeProvider as NextThemesProvider } from "next-themes";
+import { type ThemeProviderProps } from "next-themes";
+
+export function ThemeProvider({ children, ...props }: ThemeProviderProps) {
+  return (
+    <NextThemesProvider
+      attribute="class"
+      defaultTheme="dark"
+      enableSystem
+      disableTransitionOnChange
+      {...props}
+    >
+      {children}
+    </NextThemesProvider>
+  );
+}
+```
+
+```typescript
+// Update src/app/layout.tsx
+import { ThemeProvider } from "@/components/providers/theme-provider";
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+#### Done Criteria:
+- [ ] next-themes installed
+- [ ] ThemeProvider wrapping app
+- [ ] No hydration errors
+- [ ] Dark mode works by default
+
+---
+
+### Task 6.2.2: Create Theme Toggle Component
+
+**Session Type:** Frontend
+**Estimated Time:** 20 minutes
+**Prerequisites:** Task 6.2.1 complete
+
+#### Deliverables:
+- [ ] src/components/ui/theme-toggle.tsx
+- [ ] Add to dashboard header
+
+#### Implementation:
+```typescript
+// src/components/ui/theme-toggle.tsx
+"use client";
+
+import { Moon, Sun, Monitor } from "lucide-react";
+import { useTheme } from "next-themes";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+export function ThemeToggle() {
+  const { setTheme, theme } = useTheme();
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon">
+          <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+          <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+          <span className="sr-only">Toggle theme</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => setTheme("light")}>
+          <Sun className="mr-2 h-4 w-4" />
+          Light
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme("dark")}>
+          <Moon className="mr-2 h-4 w-4" />
+          Dark
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setTheme("system")}>
+          <Monitor className="mr-2 h-4 w-4" />
+          System
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+```
+
+#### Done Criteria:
+- [ ] Toggle component created
+- [ ] Shows current theme icon
+- [ ] Can switch between light/dark/system
+- [ ] Added to dashboard header
+
+---
+
+### Task 6.2.3: Add Theme Persistence
+
+**Session Type:** Frontend
+**Estimated Time:** 15 minutes
+**Prerequisites:** Task 6.2.2 complete
+
+#### Deliverables:
+- [ ] Theme persists in localStorage
+- [ ] No flash on page load
+- [ ] System preference respected
+
+#### Verification:
+```
+1. Set theme to light
+2. Refresh page → should stay light
+3. Set theme to system
+4. Change OS preference → should follow
+5. Set theme to dark
+6. Open in incognito → should be dark (default)
+```
+
+#### Future Enhancement (V2 Marketplace):
+```typescript
+// Theme schema for custom themes
+interface CustomTheme {
+  id: string;
+  name: string;
+  colors: {
+    primary: string;
+    secondary: string;
+    background: string;
+    foreground: string;
+    // ... all CSS variables
+  };
+}
+
+// Theme loader for marketplace themes
+function applyCustomTheme(theme: CustomTheme) {
+  const root = document.documentElement;
+  Object.entries(theme.colors).forEach(([key, value]) => {
+    root.style.setProperty(`--${key}`, value);
+  });
+  localStorage.setItem('custom-theme', JSON.stringify(theme));
+}
+```
+
+#### Done Criteria:
+- [ ] Theme persists across sessions
+- [ ] No flash of wrong theme
+- [ ] System preference works
+- [ ] Ready for future custom themes
+
+---
+
+## ✨ UX Polish Tasks
+
+### Task 6.3.1: Add Loading States Everywhere
 
 **Session Type:** Frontend
 **Estimated Time:** 30 minutes
-**Prerequisites:** Task 5.1.3 complete
+**Prerequisites:** Task 6.1.3 complete
 
 #### Deliverables:
 - [ ] Loading skeletons for all pages
@@ -170,11 +364,11 @@
 
 ---
 
-### Task 5.2.2: Add Error Boundaries
+### Task 6.3.2: Add Error Boundaries
 
 **Session Type:** Frontend
 **Estimated Time:** 25 minutes
-**Prerequisites:** Task 5.2.1 complete
+**Prerequisites:** Task 6.3.1 complete
 
 #### Deliverables:
 - [ ] src/components/error-boundary.tsx
@@ -210,11 +404,11 @@ export default function Error({ error, reset }) {
 
 ---
 
-### Task 5.2.3: Add Toast Notifications
+### Task 6.3.3: Add Toast Notifications
 
 **Session Type:** Frontend
 **Estimated Time:** 20 minutes
-**Prerequisites:** Task 5.2.2 complete
+**Prerequisites:** Task 6.3.2 complete
 
 #### Deliverables:
 - [ ] Toast provider setup (shadcn/ui)
@@ -243,11 +437,13 @@ toast.info('Checking connection...')
 
 ---
 
-### Task 5.3.1: Setup Sentry Error Tracking
+## 📊 Monitoring Tasks
+
+### Task 6.4.1: Setup Sentry Error Tracking
 
 **Session Type:** Config
 **Estimated Time:** 25 minutes
-**Prerequisites:** Task 5.2.3 complete
+**Prerequisites:** Task 6.3.3 complete
 
 #### Deliverables:
 - [ ] Sentry SDK installed
@@ -274,11 +470,11 @@ Sentry.init({
 
 ---
 
-### Task 5.3.2: Create Basic Admin Dashboard
+### Task 6.4.2: Create Basic Admin Dashboard
 
 **Session Type:** Full-stack
 **Estimated Time:** 60 minutes
-**Prerequisites:** Task 5.3.1 complete
+**Prerequisites:** Task 6.4.1 complete
 
 #### Deliverables:
 - [ ] src/app/(admin)/admin/layout.tsx
@@ -347,7 +543,9 @@ GET /api/admin/stats
 
 ---
 
-### Task 5.4.1: Create Terms of Service Page
+## 📜 Legal Tasks
+
+### Task 6.5.1: Create Terms of Service Page
 
 **Session Type:** Frontend
 **Estimated Time:** 20 minutes
@@ -378,11 +576,11 @@ GET /api/admin/stats
 
 ---
 
-### Task 5.4.2: Create Privacy Policy Page
+### Task 6.5.2: Create Privacy Policy Page
 
 **Session Type:** Frontend
 **Estimated Time:** 20 minutes
-**Prerequisites:** Task 5.4.1 complete
+**Prerequisites:** Task 6.5.1 complete
 
 #### Deliverables:
 - [ ] src/app/privacy/page.tsx
@@ -409,7 +607,9 @@ GET /api/admin/stats
 
 ---
 
-### Task 5.5.1: End-to-End Smoke Test
+## 🚀 Launch Prep Tasks
+
+### Task 6.6.1: End-to-End Smoke Test
 
 **Session Type:** Testing
 **Estimated Time:** 45 minutes
@@ -463,11 +663,11 @@ General:
 
 ---
 
-### Task 5.5.2: Production Deployment Prep
+### Task 6.5.2: Production Deployment Prep
 
 **Session Type:** DevOps
 **Estimated Time:** 45 minutes
-**Prerequisites:** Task 5.5.1 complete
+**Prerequisites:** Task 6.5.1 complete
 
 #### Checklist:
 ```
@@ -514,7 +714,7 @@ Documentation:
 
 ---
 
-## ✅ Phase 5 Completion Checklist
+## ✅ Phase 6 Completion Checklist
 
 - [ ] Landing page live
 - [ ] Dashboard complete
@@ -531,7 +731,7 @@ Documentation:
 
 ## 🚀 LAUNCH!
 
-When Phase 5 is complete:
+When Phase 6 is complete:
 
 1. **Soft Launch**
    - Share with 10-20 beta users

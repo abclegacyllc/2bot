@@ -26,6 +26,9 @@
 | 2.4.4 | Create gateway status component | ✅ Done | - |
 | 2.5.1 | Create gateway test endpoint | ✅ Done | - |
 | 2.5.2 | Create gateway health check worker | ⬜ (Optional) | Defer to Phase 6 |
+| **Fault Isolation** ||||
+| 2.6.1 | Create circuit breaker library | ✅ | S13 |
+| 2.6.2 | Add circuit breaker to gateway services | ✅ | S13 |
 
 ---
 
@@ -663,8 +666,316 @@ async function checkGatewayHealth(gatewayId: string) {
 
 ---
 
+## 🛡️ Fault Isolation (Tasks 2.6.x)
+
+Circuit breakers prevent cascade failures when external APIs (Telegram, OpenAI) are down.
+
+### Task 2.6.1: Create Circuit Breaker Library
+
+**Session Type:** Backend
+**Estimated Time:** 1.5 hours
+**Prerequisites:** None
+
+> **Why:** When external services are down, repeated failures can:
+> - Exhaust connection pools
+> - Slow down the entire application  
+> - Waste API rate limits on failing requests
+>
+> Circuit breaker "trips open" after failures, immediately rejecting requests for a timeout period.
+
+#### Deliverables:
+- [ ] src/lib/circuit-breaker.ts
+
+#### Implementation:
+```typescript
+// src/lib/circuit-breaker.ts
+
+export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+export interface CircuitBreakerConfig {
+  name: string;                    // For logging/metrics
+  failureThreshold: number;        // Failures before opening (default: 5)
+  resetTimeoutMs: number;          // Time before trying again (default: 30000)
+  monitorWindowMs: number;         // Window to count failures (default: 60000)
+  halfOpenMaxAttempts: number;     // Test requests in HALF_OPEN (default: 3)
+}
+
+export interface CircuitBreakerStats {
+  state: CircuitState;
+  failures: number;
+  successes: number;
+  lastFailure?: Date;
+  lastStateChange: Date;
+}
+
+export class CircuitBreaker<T> {
+  private state: CircuitState = "CLOSED";
+  private failures: number = 0;
+  private successes: number = 0;
+  private lastFailure?: Date;
+  private lastStateChange: Date = new Date();
+  private halfOpenAttempts: number = 0;
+  
+  constructor(
+    private readonly config: CircuitBreakerConfig,
+    private readonly fn: () => Promise<T>
+  ) {}
+  
+  async execute(): Promise<T> {
+    // Check if circuit should reset from OPEN to HALF_OPEN
+    if (this.state === "OPEN") {
+      if (this.shouldAttemptReset()) {
+        this.transitionTo("HALF_OPEN");
+      } else {
+        throw new CircuitOpenError(this.config.name, this.getRemainingTimeout());
+      }
+    }
+    
+    try {
+      const result = await this.fn();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+  
+  private onSuccess(): void {
+    if (this.state === "HALF_OPEN") {
+      this.successes++;
+      if (this.successes >= this.config.halfOpenMaxAttempts) {
+        this.transitionTo("CLOSED");
+        this.reset();
+      }
+    } else {
+      this.failures = 0;
+    }
+  }
+  
+  private onFailure(): void {
+    this.failures++;
+    this.lastFailure = new Date();
+    
+    if (this.state === "HALF_OPEN") {
+      this.transitionTo("OPEN");
+    } else if (this.failures >= this.config.failureThreshold) {
+      this.transitionTo("OPEN");
+    }
+  }
+  
+  private transitionTo(newState: CircuitState): void {
+    console.log(`[CircuitBreaker:${this.config.name}] ${this.state} → ${newState}`);
+    this.state = newState;
+    this.lastStateChange = new Date();
+    
+    if (newState === "HALF_OPEN") {
+      this.halfOpenAttempts = 0;
+      this.successes = 0;
+    }
+  }
+  
+  private shouldAttemptReset(): boolean {
+    const elapsed = Date.now() - this.lastStateChange.getTime();
+    return elapsed >= this.config.resetTimeoutMs;
+  }
+  
+  private getRemainingTimeout(): number {
+    const elapsed = Date.now() - this.lastStateChange.getTime();
+    return Math.max(0, this.config.resetTimeoutMs - elapsed);
+  }
+  
+  private reset(): void {
+    this.failures = 0;
+    this.successes = 0;
+    this.halfOpenAttempts = 0;
+  }
+  
+  getStats(): CircuitBreakerStats {
+    return {
+      state: this.state,
+      failures: this.failures,
+      successes: this.successes,
+      lastFailure: this.lastFailure,
+      lastStateChange: this.lastStateChange,
+    };
+  }
+  
+  isAvailable(): boolean {
+    if (this.state === "CLOSED") return true;
+    if (this.state === "HALF_OPEN") return true;
+    return this.shouldAttemptReset();
+  }
+}
+
+export class CircuitOpenError extends Error {
+  constructor(
+    public readonly circuitName: string,
+    public readonly retryAfterMs: number
+  ) {
+    super(`Circuit ${circuitName} is OPEN. Retry after ${retryAfterMs}ms`);
+    this.name = "CircuitOpenError";
+  }
+}
+
+// Factory for creating circuit breakers with default config
+export function createCircuitBreaker<T>(
+  name: string,
+  fn: () => Promise<T>,
+  overrides?: Partial<Omit<CircuitBreakerConfig, "name">>
+): CircuitBreaker<T> {
+  return new CircuitBreaker<T>(
+    {
+      name,
+      failureThreshold: overrides?.failureThreshold ?? 5,
+      resetTimeoutMs: overrides?.resetTimeoutMs ?? 30000,
+      monitorWindowMs: overrides?.monitorWindowMs ?? 60000,
+      halfOpenMaxAttempts: overrides?.halfOpenMaxAttempts ?? 3,
+    },
+    fn
+  );
+}
+```
+
+#### Done Criteria:
+- [x] CircuitBreaker class implemented
+- [x] All three states working (CLOSED → OPEN → HALF_OPEN)
+- [x] Error thrown when circuit is OPEN
+- [x] Auto-reset after timeout
+- [x] Stats accessible for monitoring
+
+---
+
+### Task 2.6.2: Add Circuit Breaker to Gateway Services
+
+**Session Type:** Backend
+**Estimated Time:** 1.5 hours
+**Prerequisites:** Task 2.6.1 complete
+
+> **Why:** Telegram and AI gateways call external APIs. If Telegram is down, we shouldn't 
+> keep trying (and queueing) thousands of failing requests.
+
+#### Deliverables:
+- [ ] Circuit breaker wrapper for Telegram gateway
+- [ ] Circuit breaker wrapper for AI gateway
+- [ ] Per-gateway circuit isolation
+
+#### Implementation Strategy:
+
+```typescript
+// src/modules/gateway/gateway-circuit.ts
+
+import { CircuitBreaker, createCircuitBreaker, CircuitOpenError } from "@/lib/circuit-breaker";
+
+// Store circuit breakers per gateway instance (by gatewayId)
+const gatewayCircuits = new Map<string, CircuitBreaker<unknown>>();
+
+export function getGatewayCircuit(gatewayId: string): CircuitBreaker<unknown> | undefined {
+  return gatewayCircuits.get(gatewayId);
+}
+
+export async function executeWithCircuit<T>(
+  gatewayId: string,
+  gatewayType: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  // Get or create circuit for this gateway
+  let circuit = gatewayCircuits.get(gatewayId);
+  
+  if (!circuit) {
+    circuit = createCircuitBreaker(
+      `gateway:${gatewayType}:${gatewayId.slice(-6)}`,
+      operation as () => Promise<unknown>,
+      {
+        failureThreshold: gatewayType === "TELEGRAM" ? 3 : 5, // Telegram is critical
+        resetTimeoutMs: 30000,
+      }
+    );
+    gatewayCircuits.set(gatewayId, circuit);
+  }
+  
+  return circuit.execute() as Promise<T>;
+}
+
+export function getCircuitStats(gatewayId: string) {
+  return gatewayCircuits.get(gatewayId)?.getStats();
+}
+
+export function isGatewayAvailable(gatewayId: string): boolean {
+  const circuit = gatewayCircuits.get(gatewayId);
+  return circuit?.isAvailable() ?? true;
+}
+```
+
+#### Telegram Gateway Integration:
+```typescript
+// src/modules/gateway/telegram/telegram.service.ts (updated)
+
+import { executeWithCircuit, CircuitOpenError } from "../gateway-circuit";
+
+export async function sendTelegramMessage(
+  gatewayId: string,
+  chatId: string,
+  text: string
+): Promise<TelegramResponse> {
+  try {
+    return await executeWithCircuit(gatewayId, "TELEGRAM", async () => {
+      const gateway = await getGatewayById(gatewayId);
+      const bot = new Telegraf(gateway.credentials.botToken);
+      return bot.telegram.sendMessage(chatId, text);
+    });
+  } catch (error) {
+    if (error instanceof CircuitOpenError) {
+      console.warn(`Telegram circuit open for gateway ${gatewayId}`);
+      // Could queue for later retry here
+      throw new GatewayUnavailableError("TELEGRAM", error.retryAfterMs);
+    }
+    throw error;
+  }
+}
+```
+
+#### AI Gateway Integration:
+```typescript
+// src/modules/gateway/ai/ai.service.ts (updated)
+
+import { executeWithCircuit, CircuitOpenError } from "../gateway-circuit";
+
+export async function callAI(
+  gatewayId: string,
+  messages: Message[]
+): Promise<AIResponse> {
+  try {
+    return await executeWithCircuit(gatewayId, "AI", async () => {
+      const gateway = await getGatewayById(gatewayId);
+      // ... existing OpenAI call
+    });
+  } catch (error) {
+    if (error instanceof CircuitOpenError) {
+      // AI calls can usually fail gracefully
+      return {
+        success: false,
+        error: "AI service temporarily unavailable",
+        retryAfter: error.retryAfterMs,
+      };
+    }
+    throw error;
+  }
+}
+```
+
+#### Done Criteria:
+- [x] Circuit breaker wraps Telegram API calls
+- [x] Circuit breaker wraps AI API calls
+- [x] Per-gateway isolation (one bad gateway doesn't affect others)
+- [x] Graceful error handling for open circuits
+- [x] Circuit stats accessible for monitoring
+
+---
+
 ## ✅ Phase 2 Completion Checklist
 
+### Gateway Core
 - [ ] Gateway CRUD working
 - [ ] Telegram Bot gateway implemented
 - [ ] AI gateway implemented
@@ -674,7 +985,53 @@ async function checkGatewayHealth(gatewayId: string) {
 - [ ] Webhook receiving messages
 - [ ] Status tracking working
 
+### Fault Isolation
+- [x] Circuit breaker library created (src/lib/circuit-breaker.ts)
+- [x] Circuit breaker on Telegram gateway
+- [x] Circuit breaker on AI gateway
+- [x] Per-gateway circuit isolation
+- [x] Graceful error handling when circuit open
+
 **When complete:** Update CURRENT-STATE.md and proceed to Phase 3
+
+---
+
+## 📌 Architecture Notes
+
+### Future: DataClient Migration
+
+> **Current Implementation:** Direct Prisma calls with manual tenant filtering
+> **Future Migration:** Use DataClient abstraction from Phase 1.5.5
+
+When Phase 1.5.5 (Data Access Layer) is implemented, GatewayService can be migrated:
+
+```typescript
+// CURRENT (direct Prisma):
+async findByUser(ctx: ServiceContext): Promise<Gateway[]> {
+  const where = ctx.organizationId
+    ? { organizationId: ctx.organizationId }
+    : { userId: ctx.userId, organizationId: null };
+  
+  return prisma.gateway.findMany({ where });
+}
+
+// FUTURE (DataClient - automatic tenant filtering):
+async findByUser(ctx: ServiceContext): Promise<Gateway[]> {
+  const db = getDataClient(ctx);
+  return db.gateway.findMany(); // Filter auto-applied!
+}
+```
+
+**Benefits:**
+- Automatic tenant isolation (can't accidentally leak data)
+- Future database routing for enterprise customers
+- Cleaner service code
+
+**Migration Path:**
+1. Implement Phase 1.5.5 DataClient
+2. Update GatewayService to use DataClient
+3. Remove manual WHERE clause building
+4. Tests continue to pass
 
 ---
 

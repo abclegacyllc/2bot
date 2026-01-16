@@ -24,6 +24,8 @@
 | 0.4.2 | Create error handling system | ✅ | 2026-01-12 |
 | 0.4.3 | Setup logging (Pino) | ✅ | 2026-01-12 |
 | 0.4.4 | Create health check endpoints | ✅ | 2026-01-12 |
+| 0.4.5 | Create shared Redis client | ✅ | 2026-01-15 |
+| 0.4.6 | Implement rate limiting middleware | ✅ | 2026-01-15 |
 | 0.5.1 | Verify full setup works | ✅ | 2026-01-12 |
 
 ---
@@ -469,6 +471,346 @@ class RateLimitError extends AppError
 
 ---
 
+### Task 0.4.5: Create Shared Redis Client
+
+**Session Type:** Backend
+**Estimated Time:** 15-20 minutes
+**Prerequisites:** Task 0.2.1 complete (Docker Compose with Redis)
+
+#### Why Now:
+Redis is used by multiple features (rate limiting, sessions, caching, queues).
+A shared client ensures consistent connection management and configuration.
+
+#### Deliverables:
+- [ ] src/lib/redis.ts - Shared Redis client singleton
+- [ ] Connection error handling with reconnection
+- [ ] Graceful shutdown support
+- [ ] Export from src/lib/index.ts
+
+#### Files to Create:
+
+**src/lib/redis.ts:**
+```typescript
+import Redis from 'ioredis';
+import { loggers } from './logger';
+
+const redisLogger = loggers.server;
+
+// Redis connection configuration
+const REDIS_CONFIG = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: parseInt(process.env.REDIS_PORT || '6379'),
+  password: process.env.REDIS_PASSWORD || undefined,
+  db: parseInt(process.env.REDIS_DB || '0'),
+  maxRetriesPerRequest: 3,
+  retryStrategy(times: number) {
+    const delay = Math.min(times * 50, 2000);
+    return delay;
+  },
+};
+
+// Create singleton Redis client
+export const redis = new Redis(REDIS_CONFIG);
+
+// Connection event handlers
+redis.on('connect', () => {
+  redisLogger.info('Redis client connected');
+});
+
+redis.on('ready', () => {
+  redisLogger.info('Redis client ready');
+});
+
+redis.on('error', (err) => {
+  redisLogger.error({ err }, 'Redis client error');
+});
+
+redis.on('close', () => {
+  redisLogger.warn('Redis connection closed');
+});
+
+redis.on('reconnecting', () => {
+  redisLogger.info('Redis client reconnecting...');
+});
+
+/**
+ * Gracefully close Redis connection
+ * Call this during application shutdown
+ */
+export async function closeRedis(): Promise<void> {
+  redisLogger.info('Closing Redis connection...');
+  await redis.quit();
+  redisLogger.info('Redis connection closed');
+}
+
+/**
+ * Check if Redis is connected and ready
+ */
+export async function isRedisReady(): Promise<boolean> {
+  try {
+    const result = await redis.ping();
+    return result === 'PONG';
+  } catch {
+    return false;
+  }
+}
+```
+
+#### Update src/lib/index.ts:
+```typescript
+export { redis, closeRedis, isRedisReady } from './redis';
+```
+
+#### Update health.ts to use shared client:
+```typescript
+// Before: import Redis from 'ioredis'; (inline creation)
+// After:
+import { redis, isRedisReady } from '@/lib/redis';
+
+// In checkRedis():
+const isReady = await isRedisReady();
+if (!isReady) throw new Error('Redis not ready');
+```
+
+#### Done Criteria:
+- [ ] Redis client is singleton (one connection)
+- [ ] Logs connection events
+- [ ] Reconnects automatically on failure
+- [ ] Health check uses shared client
+- [ ] No inline Redis creation elsewhere
+
+---
+
+### Task 0.4.6: Implement Rate Limiting Middleware
+
+**Session Type:** Backend
+**Estimated Time:** 25-30 minutes
+**Prerequisites:** Task 0.4.5 complete (shared Redis client)
+
+#### Why Now:
+Rate limiting is **foundational security infrastructure** that must exist before ANY public API endpoint.
+Without it, a single IP can DoS the entire platform.
+
+#### Deliverables:
+- [ ] src/server/middleware/rate-limit.ts
+- [ ] src/shared/constants/rate-limits.ts
+- [ ] Redis-based sliding window implementation
+- [ ] Per-IP rate limiting (general protection)
+- [ ] Standard rate limit headers
+- [ ] Extensible for per-endpoint overrides (Phase 1+)
+
+#### Dependencies:
+```bash
+pnpm add rate-limiter-flexible
+```
+
+#### Files to Create:
+
+**src/shared/constants/rate-limits.ts:**
+```typescript
+/**
+ * Rate limit configurations
+ * Phase 0: Per-IP general protection only
+ * Phase 1: Auth endpoint overrides added
+ * Phase 1+: Per-User limits added after auth exists
+ */
+
+export interface RateLimitConfig {
+  points: number;      // Number of requests allowed
+  duration: number;    // Time window in seconds
+  blockDuration?: number; // Block duration after limit exceeded (seconds)
+}
+
+// General API rate limits (per IP)
+// Phase 1 will add auth endpoint overrides here
+export const IP_RATE_LIMITS: Record<string, RateLimitConfig> = {
+  // Default for all endpoints
+  default: {
+    points: 100,       // 100 requests
+    duration: 60,      // per minute
+    blockDuration: 60, // block for 1 minute if exceeded
+  },
+  
+  // Health endpoints (allow more - for monitoring)
+  'GET:/api/health': {
+    points: 300,
+    duration: 60,
+  },
+  'GET:/api/health/ready': {
+    points: 300,
+    duration: 60,
+  },
+  'GET:/api/health/live': {
+    points: 300,
+    duration: 60,
+  },
+};
+
+/**
+ * Helper to add endpoint-specific rate limits
+ * Used by Phase 1+ to add auth endpoint limits
+ */
+export function addEndpointRateLimit(endpoint: string, config: RateLimitConfig): void {
+  IP_RATE_LIMITS[endpoint] = config;
+}
+```
+
+**src/server/middleware/rate-limit.ts:**
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
+import { redis } from '@/shared/lib/redis';
+import { IP_RATE_LIMITS, RateLimitConfig } from '@/shared/constants/rate-limits';
+import { RateLimitError } from '@/server/errors';
+import { logger } from '@/shared/lib/logger';
+
+// Store rate limiters by endpoint key
+const limiters = new Map<string, RateLimiterRedis>();
+
+/**
+ * Get or create a rate limiter for the given config
+ */
+function getLimiter(key: string, config: RateLimitConfig): RateLimiterRedis {
+  if (!limiters.has(key)) {
+    limiters.set(key, new RateLimiterRedis({
+      storeClient: redis,
+      keyPrefix: `ratelimit:${key}`,
+      points: config.points,
+      duration: config.duration,
+      blockDuration: config.blockDuration,
+    }));
+  }
+  return limiters.get(key)!;
+}
+
+/**
+ * Get client IP from request (handles proxies)
+ */
+function getClientIP(req: Request): string {
+  // Trust X-Forwarded-For if behind proxy (Cloudflare, nginx, etc.)
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const ips = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
+    return ips.trim();
+  }
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
+
+/**
+ * Set standard rate limit headers
+ */
+function setRateLimitHeaders(res: Response, result: RateLimiterRes, config: RateLimitConfig): void {
+  res.setHeader('X-RateLimit-Limit', config.points);
+  res.setHeader('X-RateLimit-Remaining', Math.max(0, result.remainingPoints));
+  res.setHeader('X-RateLimit-Reset', Math.ceil(Date.now() / 1000 + result.msBeforeNext / 1000));
+}
+
+/**
+ * Rate limiting middleware
+ * Applies per-IP rate limits based on endpoint configuration
+ */
+export function rateLimitMiddleware() {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const clientIP = getClientIP(req);
+    const endpointKey = `${req.method}:${req.path}`;
+    
+    // Get config for this endpoint, or use default
+    const config = IP_RATE_LIMITS[endpointKey] || IP_RATE_LIMITS.default;
+    const limiterKey = IP_RATE_LIMITS[endpointKey] ? endpointKey : 'default';
+    
+    try {
+      const limiter = getLimiter(limiterKey, config);
+      const result = await limiter.consume(clientIP);
+      
+      setRateLimitHeaders(res, result, config);
+      next();
+    } catch (error) {
+      if (error instanceof RateLimiterRes) {
+        // Rate limit exceeded
+        const retryAfter = Math.ceil(error.msBeforeNext / 1000);
+        
+        res.setHeader('Retry-After', retryAfter);
+        res.setHeader('X-RateLimit-Limit', config.points);
+        res.setHeader('X-RateLimit-Remaining', 0);
+        res.setHeader('X-RateLimit-Reset', Math.ceil(Date.now() / 1000 + retryAfter));
+        
+        logger.warn({
+          type: 'rate_limit_exceeded',
+          ip: clientIP,
+          endpoint: endpointKey,
+          retryAfter,
+        });
+        
+        next(new RateLimitError(
+          `Too many requests. Try again in ${retryAfter} seconds.`,
+          retryAfter
+        ));
+      } else {
+        // Redis error - fail open (allow request but log)
+        logger.error({ err: error, msg: 'Rate limiter error, failing open' });
+        next();
+      }
+    }
+  };
+}
+
+/**
+ * Create a custom rate limiter for specific use cases
+ * (e.g., per-user limiting after auth)
+ */
+export function createRateLimiter(config: RateLimitConfig & { keyPrefix: string }): RateLimiterRedis {
+  return new RateLimiterRedis({
+    storeClient: redis,
+    keyPrefix: config.keyPrefix,
+    points: config.points,
+    duration: config.duration,
+    blockDuration: config.blockDuration,
+  });
+}
+```
+
+#### Update RateLimitError in errors.ts:
+```typescript
+export class RateLimitError extends AppError {
+  public retryAfter: number;
+  
+  constructor(message: string = 'Too many requests', retryAfter: number = 60) {
+    super(message, 429);
+    this.retryAfter = retryAfter;
+  }
+}
+```
+
+#### Usage in Express app (src/server/index.ts):
+```typescript
+import { rateLimitMiddleware } from './middleware/rate-limit';
+
+// Apply rate limiting early in middleware chain
+app.use(rateLimitMiddleware());
+```
+
+#### Done Criteria:
+- [ ] Rate limiter uses Redis (not in-memory)
+- [ ] Per-IP limiting works (default 100/min)
+- [ ] Health endpoints allow higher limits (300/min)
+- [ ] X-RateLimit-* headers returned on all responses
+- [ ] Retry-After header on 429 responses
+- [ ] Fails open if Redis unavailable (logs error)
+- [ ] Blocked IPs logged for monitoring
+
+#### Testing:
+```bash
+# Test default rate limit (use non-health endpoint when available)
+for i in {1..110}; do curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/api/test; done
+
+# Should see 200s then 429s after 100 requests
+
+# Check headers
+curl -v http://localhost:3000/api/health 2>&1 | grep -i ratelimit
+```
+
+---
+
 ### Task 0.5.1: Verify Full Setup
 
 **Session Type:** Verification
@@ -512,6 +854,8 @@ pnpm build
 - [ ] Folder structure created
 - [ ] Error handling system
 - [ ] Logging configured
+- [ ] **Shared Redis client** ← NEW
+- [ ] **Rate limiting middleware** ← NEW
 - [ ] Health endpoints working
 - [ ] All tests pass
 
