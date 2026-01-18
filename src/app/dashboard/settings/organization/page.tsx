@@ -14,29 +14,29 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
+    Form,
+    FormControl,
+    FormDescription,
+    FormField,
+    FormItem,
+    FormLabel,
+    FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -361,6 +361,42 @@ function OrganizationSettingsContent() {
               <Link href="/dashboard/settings/organization/departments">
                 <Button variant="outline" className="w-full border-slate-700 text-slate-300 hover:bg-slate-800">
                   Manage Departments
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-800 bg-slate-900/50">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                📊 Resources
+              </CardTitle>
+              <CardDescription className="text-slate-400">
+                Manage department quotas and resource limits
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link href="/dashboard/settings/organization/resources">
+                <Button variant="outline" className="w-full border-slate-700 text-slate-300 hover:bg-slate-800">
+                  Manage Resources
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-800 bg-slate-900/50">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                📈 Monitoring
+              </CardTitle>
+              <CardDescription className="text-slate-400">
+                View organization activity and usage metrics
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link href="/dashboard/settings/organization/monitoring">
+                <Button variant="outline" className="w-full border-slate-700 text-slate-300 hover:bg-slate-800">
+                  View Monitoring
                 </Button>
               </Link>
             </CardContent>

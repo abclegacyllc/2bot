@@ -194,3 +194,94 @@ export const PLAN_PRICING = {
     description: 'Custom solutions for large organizations',
   },
 } as const;
+
+// ===========================================
+// Stripe Price IDs (Phase 5: Billing)
+// ===========================================
+
+/**
+ * Map of plans to Stripe Price IDs
+ * Set these in your .env file:
+ * - STRIPE_PRICE_STARTER
+ * - STRIPE_PRICE_PRO
+ * - STRIPE_PRICE_BUSINESS
+ */
+export const STRIPE_PRICES: Record<PlanType, string | null> = {
+  FREE: null, // No Stripe subscription for free tier
+  STARTER: process.env.STRIPE_PRICE_STARTER ?? null,
+  PRO: process.env.STRIPE_PRICE_PRO ?? null,
+  BUSINESS: process.env.STRIPE_PRICE_BUSINESS ?? null,
+  ENTERPRISE: null, // Custom pricing - handled manually
+};
+
+/**
+ * Plan prices in USD (for display and validation)
+ */
+export const PLAN_PRICES: Record<PlanType, number | null> = {
+  FREE: 0,
+  STARTER: 9,
+  PRO: 29,
+  BUSINESS: 79,
+  ENTERPRISE: null, // Custom pricing
+};
+
+// ===========================================
+// Plan Upgrade Logic
+// ===========================================
+
+/**
+ * Plan hierarchy order (lowest to highest)
+ */
+const PLAN_ORDER: PlanType[] = ['FREE', 'STARTER', 'PRO', 'BUSINESS', 'ENTERPRISE'];
+
+/**
+ * Get the Stripe Price ID for a plan
+ */
+export function getPriceId(plan: PlanType): string | null {
+  return STRIPE_PRICES[plan];
+}
+
+/**
+ * Check if upgrade from currentPlan to targetPlan is valid
+ */
+export function canUpgradeTo(currentPlan: PlanType, targetPlan: PlanType): boolean {
+  return PLAN_ORDER.indexOf(targetPlan) > PLAN_ORDER.indexOf(currentPlan);
+}
+
+/**
+ * Check if downgrade from currentPlan to targetPlan is valid
+ */
+export function canDowngradeTo(currentPlan: PlanType, targetPlan: PlanType): boolean {
+  return PLAN_ORDER.indexOf(targetPlan) < PLAN_ORDER.indexOf(currentPlan);
+}
+
+/**
+ * Compare two plans
+ * @returns negative if planA < planB, 0 if equal, positive if planA > planB
+ */
+export function comparePlans(planA: PlanType, planB: PlanType): number {
+  return PLAN_ORDER.indexOf(planA) - PLAN_ORDER.indexOf(planB);
+}
+
+/**
+ * Get available upgrade options for a plan
+ */
+export function getUpgradeOptions(currentPlan: PlanType): PlanType[] {
+  const currentIndex = PLAN_ORDER.indexOf(currentPlan);
+  // Enterprise is contact sales only
+  return PLAN_ORDER.slice(currentIndex + 1).filter(plan => plan !== 'ENTERPRISE');
+}
+
+/**
+ * Check if a plan is a paid plan
+ */
+export function isPaidPlan(plan: PlanType): boolean {
+  return plan !== 'FREE';
+}
+
+/**
+ * Check if a plan has a Stripe price (can be purchased via Stripe)
+ */
+export function hasStripePrice(plan: PlanType): boolean {
+  return STRIPE_PRICES[plan] !== null;
+}

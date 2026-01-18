@@ -248,9 +248,9 @@ function DeptQuotaContent() {
           <p className="mt-4 text-lg font-medium">Error Loading Department</p>
           <p className="mt-2 text-sm text-muted-foreground">{error}</p>
           <Button asChild variant="outline" className="mt-4">
-            <Link href="/dashboard/admin/resources">
+            <Link href="/dashboard/settings/organization/resources">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Dashboard
+              Back to Resources
             </Link>
           </Button>
         </CardContent>
@@ -263,7 +263,7 @@ function DeptQuotaContent() {
       {/* Header */}
       <div className="flex items-center gap-4">
         <Button asChild variant="ghost" size="icon">
-          <Link href="/dashboard/admin/resources">
+          <Link href="/dashboard/settings/organization/resources">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
@@ -392,7 +392,7 @@ function DeptQuotaContent() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => router.push("/dashboard/admin/resources")}
+                  onClick={() => router.push("/dashboard/settings/organization/resources")}
                 >
                   Cancel
                 </Button>

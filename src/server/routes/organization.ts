@@ -144,6 +144,62 @@ organizationRouter.post(
   })
 );
 
+// ===========================================
+// User Organizations (must be before /:id routes!)
+// ===========================================
+
+/**
+ * GET /api/organizations/me
+ *
+ * Get current user's organizations
+ *
+ * @returns {OrgWithRole[]} User's organizations with their roles
+ */
+organizationRouter.get(
+  "/me",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<OrgWithRole[]>>) => {
+    if (!req.user) {
+      throw new BadRequestError("User not authenticated");
+    }
+
+    const orgs = await organizationService.getUserOrganizations(req.user.id);
+
+    res.json({
+      success: true,
+      data: orgs,
+    });
+  })
+);
+
+/**
+ * GET /api/organizations/me/invites
+ *
+ * Get current user's pending invites
+ *
+ * @returns {PendingInvite[]} Pending organization invitations
+ */
+organizationRouter.get(
+  "/me/invites",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<PendingInvite[]>>) => {
+    if (!req.user) {
+      throw new BadRequestError("User not authenticated");
+    }
+
+    const invites = await organizationService.getUserPendingInvites(req.user.id);
+
+    res.json({
+      success: true,
+      data: invites,
+    });
+  })
+);
+
+// ===========================================
+// Organization by ID routes
+// ===========================================
+
 /**
  * GET /api/organizations/:id
  *
@@ -223,58 +279,6 @@ organizationRouter.delete(
     res.json({
       success: true,
       data: null,
-    });
-  })
-);
-
-// ===========================================
-// User Organizations (mounted at /api/organizations/me)
-// ===========================================
-
-/**
- * GET /api/organizations/me
- *
- * Get current user's organizations
- *
- * @returns {OrgWithRole[]} User's organizations with their roles
- */
-organizationRouter.get(
-  "/me",
-  requireAuth,
-  asyncHandler(async (req: Request, res: Response<ApiResponse<OrgWithRole[]>>) => {
-    if (!req.user) {
-      throw new BadRequestError("User not authenticated");
-    }
-
-    const orgs = await organizationService.getUserOrganizations(req.user.id);
-
-    res.json({
-      success: true,
-      data: orgs,
-    });
-  })
-);
-
-/**
- * GET /api/organizations/me/invites
- *
- * Get current user's pending invites
- *
- * @returns {PendingInvite[]} Pending organization invitations
- */
-organizationRouter.get(
-  "/me/invites",
-  requireAuth,
-  asyncHandler(async (req: Request, res: Response<ApiResponse<PendingInvite[]>>) => {
-    if (!req.user) {
-      throw new BadRequestError("User not authenticated");
-    }
-
-    const invites = await organizationService.getUserPendingInvites(req.user.id);
-
-    res.json({
-      success: true,
-      data: invites,
     });
   })
 );

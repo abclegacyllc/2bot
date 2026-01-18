@@ -12,6 +12,7 @@ import type { Gateway, GatewayStatus, GatewayType } from "@prisma/client";
 import { auditActions, type AuditContext } from "@/lib/audit";
 import { decryptJson, encrypt } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
+import { enforceGatewayLimit } from "@/lib/plan-limits";
 import { prisma } from "@/lib/prisma";
 import { ForbiddenError, NotFoundError } from "@/shared/errors";
 import type { ServiceContext } from "@/shared/types/context";
@@ -58,6 +59,9 @@ class GatewayService {
    */
   async create(ctx: ServiceContext, data: CreateGatewayRequest): Promise<SafeGateway> {
     gatewayLogger.debug({ type: data.type, name: data.name }, "Creating gateway");
+
+    // Check plan limits before creating
+    await enforceGatewayLimit(ctx);
 
     // Encrypt credentials
     const credentialsEnc = encrypt(data.credentials);

@@ -28,25 +28,17 @@ interface UserPlugin {
   pluginId: string;
   pluginSlug: string;
   pluginName: string;
-  enabled: boolean;
+  pluginDescription: string;
+  pluginIcon: string | null;
+  pluginCategory: string;
+  isEnabled: boolean;
   config: Record<string, unknown>;
   gatewayId: string | null;
   executionCount: number;
   lastExecutedAt: string | null;
   lastError: string | null;
   createdAt: string;
-  plugin: {
-    id: string;
-    slug: string;
-    name: string;
-    description: string;
-    version: string;
-    icon: string | null;
-    category: string;
-    tags: string[];
-    configSchema: ConfigSchema;
-    isBuiltin: boolean;
-  };
+  updatedAt: string;
 }
 
 interface ConfigSchema {
@@ -99,7 +91,8 @@ interface ConfigModalProps {
 
 function ConfigModal({ plugin, onClose, onSave, isSaving }: ConfigModalProps) {
   const [config, setConfig] = useState<Record<string, unknown>>(plugin.config);
-  const schema = plugin.plugin.configSchema;
+  // Config schema would need to be fetched from the plugin details endpoint if needed
+  const schema: ConfigSchema = { properties: {} };
 
   const handleChange = (key: string, value: unknown) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -178,7 +171,7 @@ function ConfigModal({ plugin, onClose, onSave, isSaving }: ConfigModalProps) {
       <div className="bg-slate-900 border border-slate-800 rounded-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-6 border-b border-slate-800">
           <h2 className="text-xl font-semibold text-white">
-            Configure {plugin.plugin.name}
+            Configure {plugin.pluginName}
           </h2>
           <p className="text-sm text-slate-400 mt-1">
             Update plugin settings
@@ -236,35 +229,30 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating }: 
     <Card className="border-slate-800 bg-slate-900/50">
       <CardHeader className="pb-3">
         <div className="flex items-start gap-4">
-          <PluginIcon icon={plugin.plugin.icon} name={plugin.plugin.name} />
+          <PluginIcon icon={plugin.pluginIcon} name={plugin.pluginName} />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle className="text-white text-lg">{plugin.plugin.name}</CardTitle>
-              {plugin.plugin.isBuiltin ? (
-                <span className="px-2 py-0.5 rounded text-xs bg-blue-900/50 text-blue-300">
-                  Built-in
-                </span>
-              ) : null}
+              <CardTitle className="text-white text-lg">{plugin.pluginName}</CardTitle>
             </div>
             <CardDescription className="text-slate-400 mt-1">
-              {plugin.plugin.description}
+              {plugin.pluginDescription}
             </CardDescription>
           </div>
           {/* Enable/Disable Toggle */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">
-              {plugin.enabled ? "Enabled" : "Disabled"}
+              {plugin.isEnabled ? "Enabled" : "Disabled"}
             </span>
             <button
-              onClick={() => onToggle(plugin.id, !plugin.enabled)}
+              onClick={() => onToggle(plugin.id, !plugin.isEnabled)}
               disabled={isUpdating}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                plugin.enabled ? "bg-emerald-600" : "bg-slate-700"
+                plugin.isEnabled ? "bg-emerald-600" : "bg-slate-700"
               } ${isUpdating ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
             >
               <span
                 className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  plugin.enabled ? "translate-x-6" : "translate-x-1"
+                  plugin.isEnabled ? "translate-x-6" : "translate-x-1"
                 }`}
               />
             </button>
@@ -296,19 +284,12 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating }: 
           </div>
         ) : null}
 
-        {/* Tags */}
-        {plugin.plugin.tags.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {plugin.plugin.tags.map((tag) => (
-              <span
-                key={tag}
-                className="px-2 py-0.5 rounded-full text-xs bg-slate-800 text-slate-400"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        ) : null}
+        {/* Category badge */}
+        <div className="flex flex-wrap gap-1.5">
+          <span className="px-2 py-0.5 rounded-full text-xs bg-slate-800 text-slate-400">
+            {plugin.pluginCategory}
+          </span>
+        </div>
 
         {/* Action buttons */}
         <div className="flex gap-2 pt-2">
@@ -332,9 +313,9 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating }: 
           </Button>
         </div>
 
-        {/* Version and install date */}
+        {/* Install date */}
         <div className="flex items-center justify-between text-xs text-slate-500">
-          <span>v{plugin.plugin.version}</span>
+          <span>{plugin.pluginCategory}</span>
           <span>Installed {new Date(plugin.createdAt).toLocaleDateString()}</span>
         </div>
       </CardContent>
@@ -549,7 +530,7 @@ function MyPluginsContent() {
           <div className="text-center text-sm text-slate-500">
             {plugins.length} plugin{plugins.length !== 1 ? "s" : ""} installed
             {" • "}
-            {plugins.filter((p) => p.enabled).length} enabled
+            {plugins.filter((p) => p.isEnabled).length} enabled
           </div>
         ) : null}
       </div>

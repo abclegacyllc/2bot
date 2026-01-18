@@ -8,11 +8,11 @@
 
 | Item | Value |
 |------|-------|
-| **Last Updated** | 2026-01-17 |
-| **Last Session** | S21: Tasks 4.5.1-4.5.5 (Owner & Manager Controls) |
-| **Current Phase** | Phase 4: Organization System |
-| **Next Task** | Task 4.6.1 (Real-Time Usage Tracking) |
-| **Overall Progress** | 99% (105/107 tasks) |
+| **Last Updated** | 2026-01-18 |
+| **Last Session** | S25: Tasks 5.4.1-5.4.2 (Plan Limits) |
+| **Current Phase** | Phase 5: Billing System |
+| **Next Task** | Phase 6 (Launch Preparation) |
+| **Overall Progress** | 100% Phase 4, 100% Phase 5 (12/12 tasks) |
 
 ---
 
@@ -25,8 +25,8 @@
 | Phase 1.5: Architecture | ✅ Complete | 14/14 tasks | All infrastructure + audit logging done |
 | Phase 2: Gateway | ✅ Complete | 18/18 tasks | + Fault isolation (circuit breaker) |
 | Phase 3: Plugin | ✅ Complete | 18/18 tasks | Analytics Plugin + Registration + UI Pages |
-| Phase 4: Organization | 🔄 In Progress | 21/~25 tasks | Owner & Manager Controls complete (4.5.x) |
-| Phase 5: Billing | ⚪ Not Started | 0/~12 tasks | Stripe subscriptions |
+| Phase 4: Organization | ✅ Complete | 25/25 tasks | All org features complete |
+| Phase 5: Billing | ✅ Complete | 12/12 tasks | All billing + limits done |
 | Phase 6: Launch | ⚪ Not Started | 0/~16 tasks | |
 ---
 
@@ -356,7 +356,7 @@
   - Register: 3 attempts/hour
   - Password reset: 3 requests/hour
 
-### Phase 4: Organization System (In Progress)
+### Phase 4: Organization System (Complete)
 - [x] **4.1.1** Create Organization + Membership models (2026-01-16)
   - Added Organization model: name, slug, plan, maxMembers, databaseType, databaseUrl
   - Added Membership model: userId, organizationId, role, status, invitedBy, invitedAt, joinedAt
@@ -461,13 +461,88 @@
   - Employee quotas: GET/PUT /departments/:id/members/:userId/quotas
   - Registered in src/server/routes/index.ts
 
+### Phase 5: Billing System (In Progress)
+- [x] **5.1.1** Create Subscription model (2026-01-18)
+  - Added Subscription model to Prisma schema
+  - Fields: userId (optional), organizationId (optional), Stripe fields, plan, period dates
+  - Added subscription relation to User and Organization models
+  - Ran prisma db push and generate successfully
+- [x] **5.1.2** Create billing types + enhance plans.ts (2026-01-18)
+  - Created src/modules/billing/billing.types.ts
+  - Types: SubscriptionInfo, CheckoutRequest/Response, PortalResponse, StripeStatus
+  - Added STRIPE_PRICES and PLAN_PRICES constants to plans.ts
+  - Added helper functions: getPriceId, canUpgradeTo, canDowngradeTo, comparePlans
+  - Updated .env.example with Stripe price ID placeholders
+- [x] **5.1.3** Create Stripe service (2026-01-18)
+  - Created src/modules/billing/stripe.service.ts
+  - Installed Stripe SDK (v20.2.0)
+  - Methods: getOrCreateCustomer (context-aware for user vs org)
+  - Methods: createCheckoutSession, createPortalSession, getSubscriptionInfo
+  - Methods: cancelSubscription, resumeSubscription
+  - Updated billing module index.ts exports
+- [x] **5.1.4** Create Stripe webhook handler (2026-01-18)
+  - Created src/server/routes/stripe-webhook.ts
+  - Registered webhook route with raw body parser in app.ts (before express.json)
+  - Event handlers: checkout.session.completed, subscription.created/updated/deleted
+  - Event handlers: invoice.payment_succeeded, invoice.payment_failed
+  - Updates User/Org plan on subscription changes
+  - **BUG FIX**: Made Stripe initialization conditional to prevent server crash when keys not set
+- [x] **5.2.1** Create checkout endpoint (2026-01-18)
+  - Created src/server/routes/billing.ts
+  - POST /api/billing/checkout - Creates Stripe checkout session
+  - Validates upgrade path with canUpgradeTo()
+  - Context-aware (user vs org billing)
+  - Permission check for org billing (ORG_OWNER/ORG_ADMIN only)
+- [x] **5.2.2** Create billing portal endpoint (2026-01-18)
+  - POST /api/billing/portal - Returns Stripe portal URL
+  - Permission check for org billing
+- [x] **5.2.3** Create subscription status endpoint (2026-01-18)
+  - GET /api/billing/subscription - Returns current subscription info
+  - Also added POST /api/billing/cancel and /resume endpoints
+  - Registered billing routes in src/server/routes/index.ts
+- [x] **5.3.1** Create Billing Settings Page (2026-01-18)
+  - Created src/app/dashboard/settings/billing/page.tsx
+  - Shows current plan with status badge (Active, Past Due, Canceling, Free)
+  - Shows plan limits with usage progress bars (gateways, plugins, executions, RAM)
+  - Upgrade button for free users, Manage Subscription for paid users
+  - Permission check: Only ORG_OWNER/ORG_ADMIN can see org billing
+  - Alerts for past due payments and subscription cancellation notices
+  - Added src/components/ui/alert.tsx component
+  - Installed SWR package for data fetching
+- [x] **5.3.2** Create Plan Selection UI (2026-01-18)
+  - Created src/app/dashboard/settings/billing/upgrade/page.tsx
+  - Created src/components/billing/plan-card.tsx reusable component
+  - Shows STARTER ($9), PRO ($29, most popular), BUSINESS ($79) plans
+  - Highlights current plan, Popular badge on PRO
+  - Click triggers Stripe checkout redirect
+  - Enterprise contact info for custom needs
+- [x] **5.3.3** Create Subscription Status Component (2026-01-18)
+  - Created src/components/billing/subscription-badge.tsx
+  - Components: SubscriptionBadge, SubscriptionStatusDot, SubscriptionAlert, UpgradeBanner
+  - Plan icons and colors for FREE/STARTER/PRO/BUSINESS/ENTERPRISE
+  - Status indicators: active (green), past_due (yellow), canceled (red)
+  - Created src/components/billing/index.ts with exports
+- [x] **5.4.1** Create Resource Limits by Plan (2026-01-18)
+  - Created src/lib/plan-limits.ts with limit check utilities
+  - Functions: checkGatewayLimit, checkPluginLimit, checkExecutionLimit
+  - Functions: enforceGatewayLimit, enforcePluginLimit (throw PlanLimitError)
+  - PlanLimitError class with resource, current, max, upgradeUrl
+  - getResourceUsage helper for billing UI
+  - Added export to src/lib/index.ts
+- [x] **5.4.2** Create Limit Check Middleware (2026-01-18)
+  - Added enforceGatewayLimit to gateway.service.ts create method
+  - Updated plugin.service.ts to use enforcePluginLimit from plan-limits
+  - Removed old PluginLimitError class (now using PlanLimitError)
+  - Added PlanLimitError handling to error-handler.ts middleware
+  - Returns structured error with details: { resource, current, max, upgradeUrl }
+
 ---
 
 ## 🔄 Current Task
 
 ```
-Task: 4.5.1 - Create Owner Dashboard (Resource Overview)
-File: docs/tasks/phase-4-organization.md
+Phase 5 COMPLETE! Next: Phase 6 - Launch Preparation
+File: docs/tasks/phase-6-launch.md
 ```
 
 ---
@@ -584,6 +659,23 @@ Error shown: "Invalid install data" (422)
 1. Updated `installPluginSchema` in `plugin.validation.ts` to accept either `pluginId` OR `slug`
 2. Updated `InstallPluginRequest` type in `plugin.types.ts`
 3. Updated `installPlugin` service method to resolve slug to pluginId if needed
+
+---
+
+### ✅ BUG-006: Installed Plugins Not Showing (RESOLVED)
+
+**Status:** ✅ Fixed (2026-01-16)
+**Affects:** Plugins page - shows "Install" even when plugin is installed
+**Found:** 2026-01-16
+
+**Problem:**
+Frontend expected `up.plugin.slug` and `up.enabled` but API returns `up.pluginSlug` and `up.isEnabled` (SafeUserPlugin format).
+Error: `Cannot read properties of undefined (reading 'slug')`
+
+**Resolution:**
+Fixed `src/app/dashboard/plugins/page.tsx` line 210:
+- Changed: `up.plugin.slug` → `up.pluginSlug`
+- Changed: `up.enabled` → `up.isEnabled`
 
 ---
 

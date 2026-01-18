@@ -11,8 +11,8 @@ import type { GatewayType, Plugin, Prisma, UserPlugin } from "@prisma/client";
 
 import { auditActions, type AuditContext } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { enforcePluginLimit } from "@/lib/plan-limits";
 import { prisma } from "@/lib/prisma";
-import { PLAN_LIMITS } from "@/shared/constants/plans";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/shared/errors";
 import type { ServiceContext } from "@/shared/types/context";
 
@@ -47,15 +47,6 @@ function toAuditContext(ctx: ServiceContext): AuditContext {
 class PluginOwnershipError extends ForbiddenError {
   constructor() {
     super("You don't have access to this plugin installation");
-  }
-}
-
-/**
- * Plugin limit error
- */
-class PluginLimitError extends ForbiddenError {
-  constructor(plan: string, limit: number) {
-    super(`Plugin limit reached for ${plan} plan (max ${limit} plugins)`);
   }
 }
 
@@ -234,7 +225,7 @@ class PluginService {
     }
 
     // Check plan limits
-    await this.checkPluginLimit(ctx);
+    await enforcePluginLimit(ctx);
 
     // Validate config against plugin schema
     if (data.config) {
@@ -518,28 +509,6 @@ class PluginService {
     // Check user ownership (and ensure not org-owned)
     if (userPlugin.userId !== ctx.userId || userPlugin.organizationId !== null) {
       throw new PluginOwnershipError();
-    }
-  }
-
-  /**
-   * Check if user can install more plugins based on their plan
-   */
-  private async checkPluginLimit(ctx: ServiceContext): Promise<void> {
-    const limits = PLAN_LIMITS[ctx.userPlan];
-    const pluginLimit = limits.plugins;
-
-    // Unlimited
-    if (pluginLimit === -1) {
-      return;
-    }
-
-    // Count current installations
-    const count = await prisma.userPlugin.count({
-      where: this.buildUserPluginWhere(ctx),
-    });
-
-    if (count >= pluginLimit) {
-      throw new PluginLimitError(ctx.userPlan, pluginLimit);
     }
   }
 }

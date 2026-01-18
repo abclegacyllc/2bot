@@ -12,6 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
 import { alertRouter } from "./alerts";
 import { authRouter } from "./auth";
+import { billingRouter } from "./billing";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
 import { organizationRouter } from "./organization";
@@ -66,6 +67,12 @@ router.use("/quota", quotaRouter);
  * Alert configuration, history, and acknowledgements
  */
 router.use("/alerts", alertRouter);
+
+/**
+ * Billing routes (Phase 5)
+ * Checkout, portal, subscription status
+ */
+router.use("/billing", billingRouter);
 
 /**
  * API info endpoint

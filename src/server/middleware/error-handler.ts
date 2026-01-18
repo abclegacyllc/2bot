@@ -1,4 +1,5 @@
 import { loggers } from "@/lib/logger";
+import { PlanLimitError } from "@/lib/plan-limits";
 import { AppError, RateLimitError, ValidationError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import type { ErrorRequestHandler, NextFunction, Request, Response } from "express";
@@ -74,6 +75,25 @@ export const errorHandler: ErrorRequestHandler = (
         code: err.code,
         message: err.message,
         ...(err.retryAfter && { retryAfter: err.retryAfter }),
+        ...(!isProduction && { stack: err.stack }),
+      },
+    });
+    return;
+  }
+
+  // Handle plan limit errors with upgrade info
+  if (err instanceof PlanLimitError) {
+    res.status(403).json({
+      success: false,
+      error: {
+        code: "PLAN_LIMIT_ERROR",
+        message: err.message,
+        details: {
+          resource: err.resource,
+          current: err.current,
+          max: err.max,
+          upgradeUrl: err.upgradeUrl,
+        },
         ...(!isProduction && { stack: err.stack }),
       },
     });

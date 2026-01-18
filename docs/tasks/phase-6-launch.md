@@ -663,11 +663,11 @@ General:
 
 ---
 
-### Task 6.5.2: Production Deployment Prep
+### Task 6.6.2: Production Deployment Prep
 
 **Session Type:** DevOps
 **Estimated Time:** 45 minutes
-**Prerequisites:** Task 6.5.1 complete
+**Prerequisites:** Task 6.6.1 complete
 
 #### Checklist:
 ```

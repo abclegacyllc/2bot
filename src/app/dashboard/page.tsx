@@ -127,34 +127,99 @@ function DashboardContent() {
         </Card>
 
         {/* Quick Access Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <Link href="/dashboard/gateways">
-            <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer">
+            <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer h-full">
               <CardHeader>
-                <CardTitle className="text-white">🤖 Telegram Bots</CardTitle>
+                <CardTitle className="text-white">🤖 Gateways</CardTitle>
                 <CardDescription className="text-slate-400">
-                  Manage your connected bots
+                  Manage connected bots & AI providers
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-slate-400 text-sm">Click to view and manage your Telegram gateways</p>
+                <p className="text-slate-400 text-sm">Telegram bots and AI integrations</p>
               </CardContent>
             </Card>
           </Link>
 
           <Link href="/dashboard/plugins">
-            <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer">
+            <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer h-full">
               <CardHeader>
-                <CardTitle className="text-white">🔌 Plugins</CardTitle>
+                <CardTitle className="text-white">🛒 Plugin Store</CardTitle>
                 <CardDescription className="text-slate-400">
                   Browse available plugins
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-slate-400 text-sm">Click to browse and install plugins</p>
+                <p className="text-slate-400 text-sm">Discover and install new plugins</p>
               </CardContent>
             </Card>
           </Link>
+
+          <Link href="/dashboard/my-plugins">
+            <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer h-full">
+              <CardHeader>
+                <CardTitle className="text-white">🔌 My Plugins</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Installed plugins
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-slate-400 text-sm">Configure and manage your plugins</p>
+              </CardContent>
+            </Card>
+          </Link>
+
+          <Link href="/dashboard/settings">
+            <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer h-full">
+              <CardHeader>
+                <CardTitle className="text-white">⚙️ Settings</CardTitle>
+                <CardDescription className="text-slate-400">
+                  Account & workspace settings
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-slate-400 text-sm">
+                  {context.type === "organization" 
+                    ? "Organization settings and members" 
+                    : "Personal account settings"}
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+
+          {/* Organization-specific cards */}
+          {context.type === "organization" && (
+            <>
+              <Link href="/dashboard/settings/organization/resources">
+                <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer h-full">
+                  <CardHeader>
+                    <CardTitle className="text-white">📊 Resources</CardTitle>
+                    <CardDescription className="text-slate-400">
+                      Department quotas & limits
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-slate-400 text-sm">Manage resource allocation</p>
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Link href="/dashboard/settings/organization/monitoring">
+                <Card className="border-slate-800 bg-slate-900/50 hover:bg-slate-800/50 transition-colors cursor-pointer h-full">
+                  <CardHeader>
+                    <CardTitle className="text-white">📈 Monitoring</CardTitle>
+                    <CardDescription className="text-slate-400">
+                      Usage and activity
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-slate-400 text-sm">Track organization metrics</p>
+                  </CardContent>
+                </Card>
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </div>

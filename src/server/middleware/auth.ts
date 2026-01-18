@@ -6,6 +6,7 @@
  * @module server/middleware/auth
  */
 
+import { verifyToken } from "@/lib/jwt";
 import { authService } from "@/modules/auth/auth.service";
 import type { TokenPayload } from "@/modules/auth/auth.types";
 import { UnauthorizedError } from "@/shared/errors";
@@ -69,7 +70,6 @@ export async function requireAuth(
     }
 
     // Extract sessionId from token for logout purposes
-    const { verifyToken } = await import("@/lib/jwt");
     const payload = verifyToken(token);
 
     // Attach user, sessionId, and token payload to request

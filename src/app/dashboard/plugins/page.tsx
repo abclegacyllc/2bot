@@ -207,10 +207,11 @@ function PluginsContent() {
       const result = await response.json();
       const installed = new Map<string, InstalledPlugin>();
       for (const up of result.data || []) {
-        installed.set(up.plugin.slug, {
+        // API returns SafeUserPlugin with pluginSlug, not plugin.slug
+        installed.set(up.pluginSlug, {
           id: up.id,
           pluginId: up.pluginId,
-          enabled: up.enabled,
+          enabled: up.isEnabled,
         });
       }
       setInstalledPlugins(installed);

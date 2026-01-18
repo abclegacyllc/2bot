@@ -7,6 +7,7 @@ import { errorHandler } from "./middleware/error-handler";
 import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { pinoHttpMiddleware } from "./middleware/request-logger";
 import { router } from "./routes";
+import stripeWebhookRouter from "./routes/stripe-webhook";
 
 const serverLogger = loggers.server;
 
@@ -19,6 +20,14 @@ export function createApp(): Express {
   // Security middleware
   app.use(helmet());
   app.use(cors(corsOptions));
+
+  // Stripe webhook needs raw body for signature verification
+  // Must be registered BEFORE express.json()
+  app.use(
+    "/api/webhooks/stripe",
+    express.raw({ type: "application/json" }),
+    stripeWebhookRouter
+  );
 
   // Body parsing
   app.use(express.json({ limit: "10mb" }));

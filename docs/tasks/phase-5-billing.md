@@ -11,21 +11,21 @@
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
 | **Billing Setup** ||||
-| 5.1.1 | Create Subscription model | ⬜ | User + Org support |
-| 5.1.2 | Create billing types + constants | ⬜ | Stripe price IDs |
-| 5.1.3 | Create Stripe service | ⬜ | |
-| 5.1.4 | Create Stripe webhook handler | ⬜ | |
+| 5.1.1 | Create Subscription model | ✅ | User + Org support |
+| 5.1.2 | Create billing types + constants | ✅ | Stripe price IDs |
+| 5.1.3 | Create Stripe service | ✅ | Conditional init for safety |
+| 5.1.4 | Create Stripe webhook handler | ✅ | With null guard |
 | **Billing Endpoints** ||||
-| 5.2.1 | Create checkout endpoint | ⬜ | |
-| 5.2.2 | Create billing portal endpoint | ⬜ | |
-| 5.2.3 | Create subscription status endpoint | ⬜ | |
+| 5.2.1 | Create checkout endpoint | ✅ | Backend + Next.js proxy |
+| 5.2.2 | Create billing portal endpoint | ✅ | Backend + Next.js proxy |
+| 5.2.3 | Create subscription status endpoint | ✅ | Backend + Next.js proxy |
 | **Billing UI** ||||
-| 5.3.1 | Create billing settings page | ⬜ | |
-| 5.3.2 | Create plan selection UI | ⬜ | |
-| 5.3.3 | Create subscription status component | ⬜ | |
+| 5.3.1 | Create billing settings page | ✅ | SWR + Alert component |
+| 5.3.2 | Create plan selection UI | ✅ | Plan cards + upgrade flow |
+| 5.3.3 | Create subscription status component | ✅ | Badge + alerts |
 | **Workspace Limits (Optional)** ||||
-| 5.4.1 | Create resource limits by plan | ⬜ | Optional |
-| 5.4.2 | Create limit check middleware | ⬜ | Optional |
+| 5.4.1 | Create resource limits by plan | ✅ | plan-limits.ts + error handling |
+| 5.4.2 | Create limit check middleware | ✅ | Gateway + Plugin services |
 
 ---
 

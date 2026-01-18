@@ -1,8 +1,10 @@
-// Billing Module - Will be implemented in Phase 4
-// Exports: billingService, billingRoutes, billingTypes
+// Billing Module - Phase 5: Billing System
+// Exports: billingTypes, stripeService
 
 export const BILLING_MODULE = "billing" as const;
 
-// Placeholder - will export actual implementations
-// export * from "./billing.service";
-// export * from "./billing.types";
+// Types
+export * from "./billing.types";
+
+// Service
+export { stripeService } from "./stripe.service";

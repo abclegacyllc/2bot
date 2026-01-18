@@ -6,6 +6,7 @@
  * User login form with client-side validation and API integration.
  */
 
+import { useAuth } from "@/components/providers/auth-provider";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -30,6 +31,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,32 +49,13 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: data.email,
-          password: data.password,
-          rememberMe: data.rememberMe,
-        }),
-      });
+      // Use auth context login which updates user state
+      await login(data.email, data.password, data.rememberMe);
 
-      const result = await response.json();
-
-      if (!response.ok) {
-        setError(result.error?.message || "Login failed. Please check your credentials.");
-        return;
-      }
-
-      // Store token (will be handled by auth context in Task 1.6.1)
-      if (result.data?.token) {
-        localStorage.setItem("token", result.data.token);
-      }
-
-      // Redirect to dashboard
+      // Redirect to dashboard after successful login
       router.push("/dashboard");
-    } catch {
-      setError("Network error. Please check your connection and try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Please check your credentials.");
     } finally {
       setIsLoading(false);
     }

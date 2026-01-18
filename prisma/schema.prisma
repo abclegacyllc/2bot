@@ -106,6 +106,7 @@ model User {
   departmentMembers   DepartmentMember[]
   resourceQuota       ResourceQuota?
   usageHistory        UsageHistory[]
+  subscription        Subscription?
 
   @@index([email])
   @@index([stripeCustomerId])
@@ -158,6 +159,43 @@ model PasswordResetToken {
 }
 
 // ===========================================
+// Subscription Model (Phase 5: Billing)
+// Stripe subscription for User OR Organization
+// ===========================================
+model Subscription {
+  id                   String    @id @default(cuid())
+  
+  // Owner reference (exactly one of these)
+  userId               String?   @unique @map("user_id")
+  organizationId       String?   @unique @map("organization_id")
+  
+  // Stripe fields
+  stripeSubscriptionId String?   @unique @map("stripe_subscription_id")
+  stripePriceId        String?   @map("stripe_price_id")
+  stripeStatus         String?   @map("stripe_status") // 'active', 'past_due', 'canceled', etc.
+  
+  // Plan info
+  plan                 PlanType  @default(FREE)
+  
+  // Billing period
+  currentPeriodStart   DateTime? @map("current_period_start")
+  currentPeriodEnd     DateTime? @map("current_period_end")
+  cancelAtPeriodEnd    Boolean   @default(false) @map("cancel_at_period_end")
+  
+  // Timestamps
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  user                 User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization         Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@index([stripeSubscriptionId])
+  @@index([stripeStatus])
+  @@map("subscriptions")
+}
+
+// ===========================================
 // Organization Model (Phase 4: Organization)
 // ===========================================
 model Organization {
@@ -195,6 +233,7 @@ model Organization {
   usageHistory     UsageHistory[]
   alertConfig      AlertConfig?
   alertHistory     AlertHistory[]
+  subscription     Subscription?
   
   @@index([slug])
   @@index([databaseType])

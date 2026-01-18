@@ -90,7 +90,7 @@ export const verifyEmailSchema = z.object({
 export const switchContextSchema = z
   .object({
     contextType: z.enum(["personal", "organization"]),
-    organizationId: z.string().uuid("Invalid organization ID").optional(),
+    organizationId: z.string().cuid("Invalid organization ID").optional(),
   })
   .refine(
     (data) => {
