@@ -167,10 +167,10 @@ export function AlertSettings() {
 
   if (loading) {
     return (
-      <Card className="border-slate-800 bg-slate-900/50">
+      <Card className="border-border bg-card/50">
         <CardContent className="p-8 text-center">
           <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto" />
-          <p className="text-slate-400 mt-4">Loading alert settings...</p>
+          <p className="text-muted-foreground mt-4">Loading alert settings...</p>
         </CardContent>
       </Card>
     );
@@ -179,10 +179,10 @@ export function AlertSettings() {
   return (
     <div className="space-y-6">
       {/* Settings Form */}
-      <Card className="border-slate-800 bg-slate-900/50">
+      <Card className="border-border bg-card/50">
         <CardHeader>
-          <CardTitle className="text-white">Alert Configuration</CardTitle>
-          <CardDescription className="text-slate-400">
+          <CardTitle className="text-foreground">Alert Configuration</CardTitle>
+          <CardDescription className="text-muted-foreground">
             Configure when and how you receive alerts
           </CardDescription>
         </CardHeader>
@@ -203,7 +203,7 @@ export function AlertSettings() {
                 checked={formData.enabled ?? config?.enabled ?? true}
                 onCheckedChange={(checked) => handleChange("enabled", checked)}
               />
-              <Label htmlFor="enabled" className="text-slate-300">
+              <Label htmlFor="enabled" className="text-foreground">
                 Enable alerts for this organization
               </Label>
             </div>
@@ -211,7 +211,7 @@ export function AlertSettings() {
             {/* Threshold Settings */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="quotaWarningThreshold" className="text-slate-300">
+                <Label htmlFor="quotaWarningThreshold" className="text-foreground">
                   Warning Threshold (%)
                 </Label>
                 <Input
@@ -223,15 +223,15 @@ export function AlertSettings() {
                   onChange={(e) =>
                     handleChange("quotaWarningThreshold", parseInt(e.target.value))
                   }
-                  className="bg-slate-800 border-slate-700 text-white"
+                  className="bg-muted border-border text-foreground"
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Alert when usage reaches this percentage
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="quotaCriticalThreshold" className="text-slate-300">
+                <Label htmlFor="quotaCriticalThreshold" className="text-foreground">
                   Critical Threshold (%)
                 </Label>
                 <Input
@@ -243,15 +243,15 @@ export function AlertSettings() {
                   onChange={(e) =>
                     handleChange("quotaCriticalThreshold", parseInt(e.target.value))
                   }
-                  className="bg-slate-800 border-slate-700 text-white"
+                  className="bg-muted border-border text-foreground"
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Critical alert when usage reaches this percentage
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="errorRateThreshold" className="text-slate-300">
+                <Label htmlFor="errorRateThreshold" className="text-foreground">
                   Error Rate Threshold (per hour)
                 </Label>
                 <Input
@@ -262,15 +262,15 @@ export function AlertSettings() {
                   onChange={(e) =>
                     handleChange("errorRateThreshold", parseInt(e.target.value))
                   }
-                  className="bg-slate-800 border-slate-700 text-white"
+                  className="bg-muted border-border text-foreground"
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Alert when errors per hour exceed this number
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="consecutiveFailures" className="text-slate-300">
+                <Label htmlFor="consecutiveFailures" className="text-foreground">
                   Consecutive Failures
                 </Label>
                 <Input
@@ -281,9 +281,9 @@ export function AlertSettings() {
                   onChange={(e) =>
                     handleChange("consecutiveFailures", parseInt(e.target.value))
                   }
-                  className="bg-slate-800 border-slate-700 text-white"
+                  className="bg-muted border-border text-foreground"
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Alert after this many consecutive workflow failures
                 </p>
               </div>
@@ -291,7 +291,7 @@ export function AlertSettings() {
 
             {/* Notification Channels */}
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-white">Notification Channels</h3>
+              <h3 className="text-lg font-semibold text-foreground">Notification Channels</h3>
 
               <div className="flex items-center space-x-2">
                 <Checkbox
@@ -299,13 +299,13 @@ export function AlertSettings() {
                   checked={formData.channels?.email ?? config?.channels.email ?? true}
                   onCheckedChange={(checked) => handleChannelChange("email", checked)}
                 />
-                <Label htmlFor="emailEnabled" className="text-slate-300">
+                <Label htmlFor="emailEnabled" className="text-foreground">
                   Email notifications
                 </Label>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="telegram" className="text-slate-300">
+                <Label htmlFor="telegram" className="text-foreground">
                   Telegram Chat ID (optional)
                 </Label>
                 <Input
@@ -314,15 +314,15 @@ export function AlertSettings() {
                   placeholder="e.g., -1001234567890"
                   value={formData.channels?.telegram ?? config?.channels.telegram ?? ""}
                   onChange={(e) => handleChannelChange("telegram", e.target.value || undefined)}
-                  className="bg-slate-800 border-slate-700 text-white"
+                  className="bg-muted border-border text-foreground"
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Receive alerts via Telegram bot
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="webhook" className="text-slate-300">
+                <Label htmlFor="webhook" className="text-foreground">
                   Webhook URL (optional)
                 </Label>
                 <Input
@@ -331,9 +331,9 @@ export function AlertSettings() {
                   placeholder="https://example.com/webhook"
                   value={formData.channels?.webhook ?? config?.channels.webhook ?? ""}
                   onChange={(e) => handleChannelChange("webhook", e.target.value || undefined)}
-                  className="bg-slate-800 border-slate-700 text-white"
+                  className="bg-muted border-border text-foreground"
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Send alerts to a custom webhook endpoint
                 </p>
               </div>
@@ -350,16 +350,16 @@ export function AlertSettings() {
       </Card>
 
       {/* Alert History */}
-      <Card className="border-slate-800 bg-slate-900/50">
+      <Card className="border-border bg-card/50">
         <CardHeader>
-          <CardTitle className="text-white">Recent Alerts</CardTitle>
-          <CardDescription className="text-slate-400">
+          <CardTitle className="text-foreground">Recent Alerts</CardTitle>
+          <CardDescription className="text-muted-foreground">
             Last 10 alerts for this organization
           </CardDescription>
         </CardHeader>
         <CardContent>
           {history.length === 0 ? (
-            <p className="text-slate-500 text-center py-4">No alerts yet</p>
+            <p className="text-muted-foreground text-center py-4">No alerts yet</p>
           ) : (
             <div className="space-y-3">
               {history.map((alert) => (
@@ -370,14 +370,14 @@ export function AlertSettings() {
                       ? "border-red-800 bg-red-900/20"
                       : alert.severity === "warning"
                       ? "border-yellow-800 bg-yellow-900/20"
-                      : "border-slate-700 bg-slate-800/50"
+                      : "border-border bg-muted/50"
                   }`}
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <h4 className="font-semibold text-white">{alert.title}</h4>
-                      <p className="text-sm text-slate-400 mt-1">{alert.message}</p>
-                      <p className="text-xs text-slate-500 mt-2">
+                      <h4 className="font-semibold text-foreground">{alert.title}</h4>
+                      <p className="text-sm text-muted-foreground mt-1">{alert.message}</p>
+                      <p className="text-xs text-muted-foreground mt-2">
                         {new Date(alert.createdAt).toLocaleString()}
                       </p>
                     </div>
@@ -386,7 +386,7 @@ export function AlertSettings() {
                         variant="outline"
                         size="sm"
                         onClick={() => acknowledgeAlert(alert.id)}
-                        className="border-slate-600"
+                        className="border-border"
                       >
                         Acknowledge
                       </Button>

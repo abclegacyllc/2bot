@@ -97,10 +97,10 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+    <Card className="border-border bg-card/50 backdrop-blur">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl text-white">Create an account</CardTitle>
-        <CardDescription className="text-slate-400">
+        <CardTitle className="text-2xl text-foreground">Create an account</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Enter your details below to create your account
         </CardDescription>
       </CardHeader>
@@ -118,11 +118,11 @@ export default function RegisterPage() {
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">Name (optional)</FormLabel>
+                  <FormLabel className="text-foreground">Name (optional)</FormLabel>
                   <FormControl>
                     <Input
                       placeholder="John Doe"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -137,12 +137,12 @@ export default function RegisterPage() {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">Email</FormLabel>
+                  <FormLabel className="text-foreground">Email</FormLabel>
                   <FormControl>
                     <Input
                       type="email"
                       placeholder="you@example.com"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -157,12 +157,12 @@ export default function RegisterPage() {
               name="password"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">Password</FormLabel>
+                  <FormLabel className="text-foreground">Password</FormLabel>
                   <FormControl>
                     <Input
                       type="password"
                       placeholder="••••••••"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -177,12 +177,12 @@ export default function RegisterPage() {
               name="confirmPassword"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">Confirm Password</FormLabel>
+                  <FormLabel className="text-foreground">Confirm Password</FormLabel>
                   <FormControl>
                     <Input
                       type="password"
                       placeholder="••••••••"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -199,11 +199,22 @@ export default function RegisterPage() {
             >
               {isLoading ? "Creating account..." : "Create account"}
             </Button>
+            <p className="text-xs text-muted-foreground text-center mt-4">
+              By creating an account, you agree to our{" "}
+              <Link href="/terms" className="text-purple-400 hover:text-purple-300 underline">
+                Terms of Service
+              </Link>{" "}
+              and{" "}
+              <Link href="/privacy" className="text-purple-400 hover:text-purple-300 underline">
+                Privacy Policy
+              </Link>
+              .
+            </p>
           </form>
         </Form>
       </CardContent>
       <CardFooter className="flex flex-col space-y-4">
-        <div className="text-sm text-slate-400 text-center">
+        <div className="text-sm text-muted-foreground text-center">
           Already have an account?{" "}
           <Link href="/login" className="text-purple-400 hover:text-purple-300 underline">
             Sign in

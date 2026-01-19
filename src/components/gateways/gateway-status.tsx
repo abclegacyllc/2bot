@@ -24,8 +24,8 @@ const STATUS_CONFIG: Record<
   },
   DISCONNECTED: {
     label: "Disconnected",
-    className: "bg-slate-500/10 text-slate-400 border-slate-500/20",
-    dotClassName: "bg-slate-500",
+    className: "bg-muted-foreground/10 text-muted-foreground border-border/20",
+    dotClassName: "bg-muted-foreground",
   },
   ERROR: {
     label: "Error",
@@ -119,7 +119,7 @@ export function GatewayStatusIndicator({
           <p className={cn("font-medium", config.className.split(" ")[1])}>
             {config.label}
           </p>
-          <p className="text-xs text-slate-500">{formatTime(lastConnectedAt)}</p>
+          <p className="text-xs text-muted-foreground">{formatTime(lastConnectedAt)}</p>
         </div>
       </div>
 

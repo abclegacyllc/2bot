@@ -62,10 +62,10 @@ export default function LoginPage() {
   }
 
   return (
-    <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+    <Card className="border-border bg-card/50 backdrop-blur">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl text-white">Welcome back</CardTitle>
-        <CardDescription className="text-slate-400">
+        <CardTitle className="text-2xl text-foreground">Welcome back</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Sign in to your account to continue
         </CardDescription>
       </CardHeader>
@@ -83,12 +83,12 @@ export default function LoginPage() {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">Email</FormLabel>
+                  <FormLabel className="text-foreground">Email</FormLabel>
                   <FormControl>
                     <Input
                       type="email"
                       placeholder="you@example.com"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -104,7 +104,7 @@ export default function LoginPage() {
               render={({ field }) => (
                 <FormItem>
                   <div className="flex items-center justify-between">
-                    <FormLabel className="text-slate-300">Password</FormLabel>
+                    <FormLabel className="text-foreground">Password</FormLabel>
                     <Link
                       href="/forgot-password"
                       className="text-sm text-purple-400 hover:text-purple-300"
@@ -116,7 +116,7 @@ export default function LoginPage() {
                     <Input
                       type="password"
                       placeholder="••••••••"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -135,10 +135,10 @@ export default function LoginPage() {
                     <Checkbox
                       checked={field.value}
                       onCheckedChange={field.onChange}
-                      className="border-slate-600 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
+                      className="border-border data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
                     />
                   </FormControl>
-                  <FormLabel className="text-sm text-slate-400 font-normal cursor-pointer">
+                  <FormLabel className="text-sm text-muted-foreground font-normal cursor-pointer">
                     Remember me for 30 days
                   </FormLabel>
                 </FormItem>
@@ -157,7 +157,7 @@ export default function LoginPage() {
         </Form>
       </CardContent>
       <CardFooter className="flex flex-col space-y-4">
-        <div className="text-sm text-slate-400 text-center">
+        <div className="text-sm text-muted-foreground text-center">
           Don&apos;t have an account?{" "}
           <Link href="/register" className="text-purple-400 hover:text-purple-300 underline">
             Create one

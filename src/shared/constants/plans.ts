@@ -200,18 +200,32 @@ export const PLAN_PRICING = {
 // ===========================================
 
 /**
- * Map of plans to Stripe Price IDs
+ * Get Stripe Price IDs dynamically at runtime
+ * This allows env vars to be loaded after module import
  * Set these in your .env file:
  * - STRIPE_PRICE_STARTER
  * - STRIPE_PRICE_PRO
  * - STRIPE_PRICE_BUSINESS
  */
+function getStripePrices(): Record<PlanType, string | null> {
+  return {
+    FREE: null, // No Stripe subscription for free tier
+    STARTER: process.env.STRIPE_PRICE_STARTER ?? null,
+    PRO: process.env.STRIPE_PRICE_PRO ?? null,
+    BUSINESS: process.env.STRIPE_PRICE_BUSINESS ?? null,
+    ENTERPRISE: null, // Custom pricing - handled manually
+  };
+}
+
+/**
+ * @deprecated Use getPriceId() instead for runtime evaluation
+ */
 export const STRIPE_PRICES: Record<PlanType, string | null> = {
-  FREE: null, // No Stripe subscription for free tier
-  STARTER: process.env.STRIPE_PRICE_STARTER ?? null,
-  PRO: process.env.STRIPE_PRICE_PRO ?? null,
-  BUSINESS: process.env.STRIPE_PRICE_BUSINESS ?? null,
-  ENTERPRISE: null, // Custom pricing - handled manually
+  FREE: null,
+  STARTER: null, // Will be null at import time - use getPriceId() instead
+  PRO: null,
+  BUSINESS: null,
+  ENTERPRISE: null,
 };
 
 /**
@@ -236,9 +250,10 @@ const PLAN_ORDER: PlanType[] = ['FREE', 'STARTER', 'PRO', 'BUSINESS', 'ENTERPRIS
 
 /**
  * Get the Stripe Price ID for a plan
+ * Evaluates at runtime to pick up env vars loaded by dotenv
  */
 export function getPriceId(plan: PlanType): string | null {
-  return STRIPE_PRICES[plan];
+  return getStripePrices()[plan];
 }
 
 /**
@@ -248,6 +263,13 @@ export function canUpgradeTo(currentPlan: PlanType, targetPlan: PlanType): boole
   return PLAN_ORDER.indexOf(targetPlan) > PLAN_ORDER.indexOf(currentPlan);
 }
 
+/**
+ * Check if a plan has a Stripe price (can be purchased via Stripe)
+ * Evaluates at runtime to pick up env vars loaded by dotenv
+ */
+export function hasStripePrice(plan: PlanType): boolean {
+  return getStripePrices()[plan] !== null;
+}
 /**
  * Check if downgrade from currentPlan to targetPlan is valid
  */
@@ -277,11 +299,4 @@ export function getUpgradeOptions(currentPlan: PlanType): PlanType[] {
  */
 export function isPaidPlan(plan: PlanType): boolean {
   return plan !== 'FREE';
-}
-
-/**
- * Check if a plan has a Stripe price (can be purchased via Stripe)
- */
-export function hasStripePrice(plan: PlanType): boolean {
-  return STRIPE_PRICES[plan] !== null;
 }

@@ -52,14 +52,14 @@ function BarChart({ data, maxValue, color, formatValue = (v) => v.toString() }: 
     <div className="space-y-2">
       {data.map((item, i) => (
         <div key={i} className="flex items-center gap-2">
-          <span className="text-xs text-slate-500 w-16 truncate">{item.label}</span>
-          <div className="flex-1 h-6 bg-slate-800 rounded overflow-hidden">
+          <span className="text-xs text-muted-foreground w-16 truncate">{item.label}</span>
+          <div className="flex-1 h-6 bg-muted rounded overflow-hidden">
             <div
               className={`h-full ${color} transition-all duration-300`}
               style={{ width: `${Math.min(100, (item.value / effectiveMax) * 100)}%` }}
             />
           </div>
-          <span className="text-xs text-slate-400 w-16 text-right">{formatValue(item.value)}</span>
+          <span className="text-xs text-muted-foreground w-16 text-right">{formatValue(item.value)}</span>
         </div>
       ))}
     </div>
@@ -89,19 +89,19 @@ function LineChart({ data, labels, color, height = 200 }: LineChartProps) {
   return (
     <div className="relative" style={{ height }}>
       {/* Y-axis labels */}
-      <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-xs text-slate-500">
+      <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-xs text-muted-foreground">
         <span>{maxValue.toLocaleString()}</span>
         <span>{Math.round(maxValue / 2).toLocaleString()}</span>
         <span>0</span>
       </div>
       
       {/* Chart area */}
-      <div className="ml-14 relative h-full border-l border-b border-slate-700">
+      <div className="ml-14 relative h-full border-l border-b border-border">
         {/* Grid lines */}
         <div className="absolute inset-0">
-          <div className="absolute w-full h-px bg-slate-800 top-1/4" />
-          <div className="absolute w-full h-px bg-slate-800 top-1/2" />
-          <div className="absolute w-full h-px bg-slate-800 top-3/4" />
+          <div className="absolute w-full h-px bg-muted top-1/4" />
+          <div className="absolute w-full h-px bg-muted top-1/2" />
+          <div className="absolute w-full h-px bg-muted top-3/4" />
         </div>
         
         {/* Data points and lines */}
@@ -131,7 +131,7 @@ function LineChart({ data, labels, color, height = 200 }: LineChartProps) {
         </svg>
         
         {/* X-axis labels */}
-        <div className="absolute -bottom-6 left-0 right-0 flex justify-between text-xs text-slate-500">
+        <div className="absolute -bottom-6 left-0 right-0 flex justify-between text-xs text-muted-foreground">
           {labels.length <= 12 ? (
             labels.map((label, i) => (
               <span key={i} className="truncate">{label}</span>
@@ -187,9 +187,9 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
   return (
     <div className="space-y-6">
       {/* API Calls Chart */}
-      <Card className="border-slate-800 bg-slate-900/50">
+      <Card className="border-border bg-card/50">
         <CardHeader>
-          <CardTitle className="text-white">API Calls</CardTitle>
+          <CardTitle className="text-foreground">API Calls</CardTitle>
         </CardHeader>
         <CardContent className="pb-8">
           {data.length > 1 ? (
@@ -211,9 +211,9 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
 
       {/* Workflow & Plugin Charts - Side by side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="border-slate-800 bg-slate-900/50">
+        <Card className="border-border bg-card/50">
           <CardHeader>
-            <CardTitle className="text-white">Workflow Runs</CardTitle>
+            <CardTitle className="text-foreground">Workflow Runs</CardTitle>
           </CardHeader>
           <CardContent className="pb-8">
             {data.length > 1 ? (
@@ -224,16 +224,16 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
                 height={150}
               />
             ) : (
-              <div className="text-center text-slate-400 py-8">
+              <div className="text-center text-muted-foreground py-8">
                 Insufficient data for chart
               </div>
             )}
           </CardContent>
         </Card>
 
-        <Card className="border-slate-800 bg-slate-900/50">
+        <Card className="border-border bg-card/50">
           <CardHeader>
-            <CardTitle className="text-white">Plugin Executions</CardTitle>
+            <CardTitle className="text-foreground">Plugin Executions</CardTitle>
           </CardHeader>
           <CardContent className="pb-8">
             {data.length > 1 ? (
@@ -244,7 +244,7 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
                 height={150}
               />
             ) : (
-              <div className="text-center text-slate-400 py-8">
+              <div className="text-center text-muted-foreground py-8">
                 Insufficient data for chart
               </div>
             )}
@@ -253,9 +253,9 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
       </div>
 
       {/* Error Rate Chart */}
-      <Card className="border-slate-800 bg-slate-900/50">
+      <Card className="border-border bg-card/50">
         <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
+          <CardTitle className="text-foreground flex items-center gap-2">
             Error Rate
             {errorData.some((e) => e > 0) && (
               <span className="text-xs bg-red-500/20 text-red-400 px-2 py-1 rounded">
@@ -273,7 +273,7 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
               height={150}
             />
           ) : (
-            <div className="text-center text-slate-400 py-8">
+            <div className="text-center text-muted-foreground py-8">
               {errorData.some((e) => e > 0) 
                 ? `${errorData.reduce((a, b) => a + b, 0)} errors in period`
                 : "No errors recorded"}
@@ -283,32 +283,32 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
       </Card>
 
       {/* Summary Table */}
-      <Card className="border-slate-800 bg-slate-900/50">
+      <Card className="border-border bg-card/50">
         <CardHeader>
-          <CardTitle className="text-white">Period Summary</CardTitle>
+          <CardTitle className="text-foreground">Period Summary</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="text-left py-2 text-slate-400">Period</th>
-                  <th className="text-right py-2 text-slate-400">API Calls</th>
-                  <th className="text-right py-2 text-slate-400">Workflows</th>
-                  <th className="text-right py-2 text-slate-400">Plugins</th>
-                  <th className="text-right py-2 text-slate-400">Storage (MB)</th>
-                  <th className="text-right py-2 text-slate-400">Errors</th>
+                <tr className="border-b border-border">
+                  <th className="text-left py-2 text-muted-foreground">Period</th>
+                  <th className="text-right py-2 text-muted-foreground">API Calls</th>
+                  <th className="text-right py-2 text-muted-foreground">Workflows</th>
+                  <th className="text-right py-2 text-muted-foreground">Plugins</th>
+                  <th className="text-right py-2 text-muted-foreground">Storage (MB)</th>
+                  <th className="text-right py-2 text-muted-foreground">Errors</th>
                 </tr>
               </thead>
               <tbody>
                 {data.slice(-10).reverse().map((row, i) => (
-                  <tr key={i} className="border-b border-slate-800">
-                    <td className="py-2 text-slate-300">{formatLabel(row.periodStart)}</td>
-                    <td className="py-2 text-right text-slate-300">{row.apiCalls.toLocaleString()}</td>
-                    <td className="py-2 text-right text-slate-300">{row.workflowRuns.toLocaleString()}</td>
-                    <td className="py-2 text-right text-slate-300">{row.pluginExecutions.toLocaleString()}</td>
-                    <td className="py-2 text-right text-slate-300">{row.storageUsed}</td>
-                    <td className={`py-2 text-right ${row.errors > 0 ? 'text-red-400' : 'text-slate-300'}`}>
+                  <tr key={i} className="border-b border-border">
+                    <td className="py-2 text-foreground">{formatLabel(row.periodStart)}</td>
+                    <td className="py-2 text-right text-foreground">{row.apiCalls.toLocaleString()}</td>
+                    <td className="py-2 text-right text-foreground">{row.workflowRuns.toLocaleString()}</td>
+                    <td className="py-2 text-right text-foreground">{row.pluginExecutions.toLocaleString()}</td>
+                    <td className="py-2 text-right text-foreground">{row.storageUsed}</td>
+                    <td className={`py-2 text-right ${row.errors > 0 ? 'text-red-400' : 'text-foreground'}`}>
                       {row.errors}
                     </td>
                   </tr>
@@ -316,20 +316,20 @@ export function UsageCharts({ data, period }: UsageChartsProps) {
               </tbody>
               <tfoot>
                 <tr className="font-semibold">
-                  <td className="py-2 text-slate-300">Total</td>
-                  <td className="py-2 text-right text-slate-300">
+                  <td className="py-2 text-foreground">Total</td>
+                  <td className="py-2 text-right text-foreground">
                     {data.reduce((sum, d) => sum + d.apiCalls, 0).toLocaleString()}
                   </td>
-                  <td className="py-2 text-right text-slate-300">
+                  <td className="py-2 text-right text-foreground">
                     {data.reduce((sum, d) => sum + d.workflowRuns, 0).toLocaleString()}
                   </td>
-                  <td className="py-2 text-right text-slate-300">
+                  <td className="py-2 text-right text-foreground">
                     {data.reduce((sum, d) => sum + d.pluginExecutions, 0).toLocaleString()}
                   </td>
-                  <td className="py-2 text-right text-slate-300">
+                  <td className="py-2 text-right text-foreground">
                     {data[data.length - 1]?.storageUsed ?? 0}
                   </td>
-                  <td className={`py-2 text-right ${data.reduce((sum, d) => sum + d.errors, 0) > 0 ? 'text-red-400' : 'text-slate-300'}`}>
+                  <td className={`py-2 text-right ${data.reduce((sum, d) => sum + d.errors, 0) > 0 ? 'text-red-400' : 'text-foreground'}`}>
                     {data.reduce((sum, d) => sum + d.errors, 0)}
                   </td>
                 </tr>

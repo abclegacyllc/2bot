@@ -9,10 +9,10 @@
 | Item | Value |
 |------|-------|
 | **Last Updated** | 2026-01-18 |
-| **Last Session** | S25: Tasks 5.4.1-5.4.2 (Plan Limits) |
-| **Current Phase** | Phase 5: Billing System |
-| **Next Task** | Phase 6 (Launch Preparation) |
-| **Overall Progress** | 100% Phase 4, 100% Phase 5 (12/12 tasks) |
+| **Last Session** | S27: Tasks 6.5.1-6.5.2 (Legal Pages) |
+| **Current Phase** | Phase 6: Launch Preparation |
+| **Next Task** | Task 6.6.1 (End-to-End Smoke Test) |
+| **Overall Progress** | 100% Phase 5, 87.5% Phase 6 (14/16 tasks) |
 
 ---
 
@@ -27,7 +27,7 @@
 | Phase 3: Plugin | ✅ Complete | 18/18 tasks | Analytics Plugin + Registration + UI Pages |
 | Phase 4: Organization | ✅ Complete | 25/25 tasks | All org features complete |
 | Phase 5: Billing | ✅ Complete | 12/12 tasks | All billing + limits done |
-| Phase 6: Launch | ⚪ Not Started | 0/~16 tasks | |
+| Phase 6: Launch | 🔄 In Progress | 14/16 tasks | Pages, Theme, UX, Monitoring, Legal done |
 ---
 
 ## ⭐ Phase 1.5 Overview (NEW)
@@ -536,12 +536,59 @@
   - Added PlanLimitError handling to error-handler.ts middleware
   - Returns structured error with details: { resource, current, max, upgradeUrl }
 
+### Phase 6: Launch Preparation
+- [x] **6.1.1** Create landing page (2026-01-18)
+  - Created src/app/page.tsx with hero, features, pricing sections
+- [x] **6.1.2** Create dashboard home (2026-01-18)
+  - Overview cards, quick actions, recent activity
+- [x] **6.1.3** Create settings page (2026-01-18)
+  - Profile update and password change forms
+- [x] **6.2.1** Install and configure next-themes (2026-01-18)
+  - Installed next-themes package
+  - Created ThemeProvider component
+- [x] **6.2.2** Create theme toggle component (2026-01-18)
+  - Created ThemeToggle with dropdown menu
+- [x] **6.2.3** Add theme persistence (2026-01-18)
+  - Theme persists via localStorage
+- [x] **6.3.1** Add loading states everywhere (2026-01-19)
+  - Created skeleton components and LoadingButton
+  - Added loading.tsx files to all dashboard routes
+- [x] **6.3.2** Add error boundaries (2026-01-19)
+  - Created ErrorBoundary class component
+  - Added error.tsx files to all dashboard routes
+  - Created global-error.tsx
+- [x] **6.3.3** Add toast notifications (2026-01-19)
+  - Installed sonner library
+  - Created Toaster component with dark theme
+  - Updated settings page to use toasts
+- [x] **6.4.1** Setup Sentry error tracking (2026-01-19)
+  - Installed @sentry/nextjs
+  - Created client, server, edge config files
+  - Created utility helpers in src/lib/sentry.ts
+  - Updated next.config.ts with withSentryConfig
+- [x] **6.4.2** Create basic admin dashboard (2026-01-19)
+  - Created admin layout with role guard
+  - Created admin overview page with stats cards
+  - Created admin users page with search/pagination
+  - Created admin gateways page with filters
+  - Created Express admin routes (/api/admin/*)
+  - Created Next.js API proxy routes
+  - Added admin link to dashboard sidebar for admins
+- [x] **6.5.1** Create Terms of Service page (2026-01-18)
+  - Created src/app/terms/page.tsx with comprehensive ToS content
+  - 10 sections: Acceptance, Description, Responsibilities, Prohibited Uses, etc.
+  - Linked from footer and registration page
+- [x] **6.5.2** Create Privacy Policy page (2026-01-18)
+  - Created src/app/privacy/page.tsx with comprehensive privacy content
+  - 12 sections: Data collection, Usage, Sharing, Security, Rights, etc.
+  - Linked from footer and registration page
+
 ---
 
 ## 🔄 Current Task
 
 ```
-Phase 5 COMPLETE! Next: Phase 6 - Launch Preparation
+Phase 6 IN PROGRESS! Next: Task 6.6.1 - End-to-End Smoke Test
 File: docs/tasks/phase-6-launch.md
 ```
 

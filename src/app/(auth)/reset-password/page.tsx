@@ -40,10 +40,10 @@ type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>;
 // Loading fallback component
 function LoadingCard() {
   return (
-    <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+    <Card className="border-border bg-card/50 backdrop-blur">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl text-white">Loading...</CardTitle>
-        <CardDescription className="text-slate-400">
+        <CardTitle className="text-2xl text-foreground">Loading...</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Please wait while we verify your reset link
         </CardDescription>
       </CardHeader>
@@ -117,11 +117,11 @@ function ResetPasswordForm() {
   // Success state
   if (isSuccess) {
     return (
-      <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+      <Card className="border-border bg-card/50 backdrop-blur">
         <CardHeader className="space-y-1">
           <div className="text-4xl text-center mb-4">✅</div>
-          <CardTitle className="text-2xl text-white text-center">Password reset!</CardTitle>
-          <CardDescription className="text-slate-400 text-center">
+          <CardTitle className="text-2xl text-foreground text-center">Password reset!</CardTitle>
+          <CardDescription className="text-muted-foreground text-center">
             Your password has been successfully reset.
           </CardDescription>
         </CardHeader>
@@ -139,11 +139,11 @@ function ResetPasswordForm() {
   // Invalid token state (no token in URL)
   if (!token && error) {
     return (
-      <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+      <Card className="border-border bg-card/50 backdrop-blur">
         <CardHeader className="space-y-1">
           <div className="text-4xl text-center mb-4">⚠️</div>
-          <CardTitle className="text-2xl text-white text-center">Invalid link</CardTitle>
-          <CardDescription className="text-slate-400 text-center">
+          <CardTitle className="text-2xl text-foreground text-center">Invalid link</CardTitle>
+          <CardDescription className="text-muted-foreground text-center">
             {error}
           </CardDescription>
         </CardHeader>
@@ -167,10 +167,10 @@ function ResetPasswordForm() {
   }
 
   return (
-    <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+    <Card className="border-border bg-card/50 backdrop-blur">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl text-white">Reset your password</CardTitle>
-        <CardDescription className="text-slate-400">
+        <CardTitle className="text-2xl text-foreground">Reset your password</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Enter your new password below
         </CardDescription>
       </CardHeader>
@@ -188,12 +188,12 @@ function ResetPasswordForm() {
               name="password"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">New Password</FormLabel>
+                  <FormLabel className="text-foreground">New Password</FormLabel>
                   <FormControl>
                     <Input
                       type="password"
                       placeholder="••••••••"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -208,12 +208,12 @@ function ResetPasswordForm() {
               name="confirmPassword"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">Confirm Password</FormLabel>
+                  <FormLabel className="text-foreground">Confirm Password</FormLabel>
                   <FormControl>
                     <Input
                       type="password"
                       placeholder="••••••••"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>
@@ -223,7 +223,7 @@ function ResetPasswordForm() {
             />
 
             {/* Password Requirements */}
-            <div className="text-xs text-slate-500 space-y-1">
+            <div className="text-xs text-muted-foreground space-y-1">
               <p>Password must:</p>
               <ul className="list-disc list-inside space-y-0.5 ml-2">
                 <li>Be at least 8 characters long</li>

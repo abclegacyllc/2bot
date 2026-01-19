@@ -8,26 +8,28 @@
 import { prisma } from '@/lib/prisma';
 import type { PlanType } from '@/shared/constants/plans';
 import {
-    STRIPE_PRICES,
     getPlanLimits,
+    getPriceId,
     hasStripePrice,
 } from '@/shared/constants/plans';
 import type { ServiceContext } from '@/shared/types/context';
 import Stripe from 'stripe';
 import type { StripeStatus, SubscriptionInfo } from './billing.types';
 
-// Initialize Stripe client conditionally
-// Will be null if STRIPE_SECRET_KEY is not configured
-const stripe = process.env.STRIPE_SECRET_KEY
-  ? new Stripe(process.env.STRIPE_SECRET_KEY)
-  : null;
+// Lazy-initialized Stripe client
+// Will be created on first use after env vars are loaded
+let stripe: Stripe | null = null;
 
 /**
  * Helper to get Stripe client or throw if not configured
+ * Lazy initialization ensures env vars are loaded by dotenv first
  */
 function getStripe(): Stripe {
   if (!stripe) {
-    throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY in environment variables.');
+    if (!process.env.STRIPE_SECRET_KEY) {
+      throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY in environment variables.');
+    }
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
   }
   return stripe;
 }
@@ -132,7 +134,7 @@ class StripeService {
       throw new Error(`Plan ${plan} cannot be purchased via Stripe checkout`);
     }
 
-    const priceId = STRIPE_PRICES[plan];
+    const priceId = getPriceId(plan);
     if (!priceId) {
       throw new Error(`Stripe price ID not configured for plan ${plan}`);
     }

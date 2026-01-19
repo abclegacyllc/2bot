@@ -47,7 +47,7 @@ const planIcons: Record<string, React.ElementType> = {
 };
 
 const planColors: Record<string, string> = {
-  FREE: "bg-slate-500",
+  FREE: "bg-muted-foreground",
   STARTER: "bg-blue-500",
   PRO: "bg-purple-500",
   BUSINESS: "bg-amber-500",
@@ -58,7 +58,7 @@ const statusColors: Record<string, string> = {
   active: "bg-green-500",
   past_due: "bg-yellow-500",
   canceled: "bg-red-500",
-  none: "bg-slate-500",
+  none: "bg-muted-foreground",
 };
 
 /**
@@ -87,7 +87,7 @@ export function SubscriptionBadge({
   return (
     <Badge
       className={cn(
-        "text-white flex items-center gap-1",
+        "text-foreground flex items-center gap-1",
         bgColor,
         className
       )}
@@ -233,7 +233,7 @@ export function UpgradeBanner({ className }: { className?: string }) {
     >
       <div className="flex items-center gap-2 text-sm">
         <Zap className="h-4 w-4 text-purple-400" />
-        <span className="text-slate-300">
+        <span className="text-foreground">
           Unlock more features with a paid plan
         </span>
       </div>

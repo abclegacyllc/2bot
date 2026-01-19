@@ -66,21 +66,21 @@ export default function ForgotPasswordPage() {
   // Success state
   if (isSubmitted) {
     return (
-      <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+      <Card className="border-border bg-card/50 backdrop-blur">
         <CardHeader className="space-y-1">
           <div className="text-4xl text-center mb-4">📧</div>
-          <CardTitle className="text-2xl text-white text-center">Check your email</CardTitle>
-          <CardDescription className="text-slate-400 text-center">
+          <CardTitle className="text-2xl text-foreground text-center">Check your email</CardTitle>
+          <CardDescription className="text-muted-foreground text-center">
             If an account exists with that email, we&apos;ve sent you a password reset link.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-slate-400 text-center">
+          <p className="text-sm text-muted-foreground text-center">
             Didn&apos;t receive the email? Check your spam folder or try again.
           </p>
           <Button
             variant="outline"
-            className="w-full border-slate-700 text-slate-300 hover:bg-slate-800"
+            className="w-full border-border text-foreground hover:bg-muted"
             onClick={() => {
               setIsSubmitted(false);
               form.reset();
@@ -102,10 +102,10 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <Card className="border-slate-800 bg-slate-900/50 backdrop-blur">
+    <Card className="border-border bg-card/50 backdrop-blur">
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl text-white">Forgot password?</CardTitle>
-        <CardDescription className="text-slate-400">
+        <CardTitle className="text-2xl text-foreground">Forgot password?</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Enter your email and we&apos;ll send you a reset link
         </CardDescription>
       </CardHeader>
@@ -123,12 +123,12 @@ export default function ForgotPasswordPage() {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-slate-300">Email</FormLabel>
+                  <FormLabel className="text-foreground">Email</FormLabel>
                   <FormControl>
                     <Input
                       type="email"
                       placeholder="you@example.com"
-                      className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
                       {...field}
                     />
                   </FormControl>

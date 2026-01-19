@@ -60,27 +60,27 @@ export function PlanCard({
   return (
     <Card
       className={cn(
-        "relative border-slate-800 bg-slate-900/50 transition-all duration-200",
+        "relative border-border bg-card/50 transition-all duration-200",
         plan.popular &&
           "border-purple-500 shadow-lg shadow-purple-500/20 scale-105 z-10",
-        current && "bg-slate-800/50",
+        current && "bg-muted/50",
         className
       )}
     >
       {plan.popular && (
         <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-          <Badge className="bg-purple-600 text-white">Most Popular</Badge>
+          <Badge className="bg-purple-600 text-foreground">Most Popular</Badge>
         </div>
       )}
 
       <CardHeader className="text-center pt-8">
-        <CardTitle className="text-white text-xl">{plan.name}</CardTitle>
-        <CardDescription className="text-slate-400">
+        <CardTitle className="text-foreground text-xl">{plan.name}</CardTitle>
+        <CardDescription className="text-muted-foreground">
           {plan.description}
         </CardDescription>
         <div className="mt-4">
-          <span className="text-4xl font-bold text-white">${plan.price}</span>
-          <span className="text-slate-400">/month</span>
+          <span className="text-4xl font-bold text-foreground">${plan.price}</span>
+          <span className="text-muted-foreground">/month</span>
         </div>
       </CardHeader>
 
@@ -91,7 +91,7 @@ export function PlanCard({
               key={index}
               className={cn(
                 "flex items-center gap-3 text-sm",
-                feature.included ? "text-slate-300" : "text-slate-500"
+                feature.included ? "text-foreground" : "text-muted-foreground"
               )}
             >
               <Check
@@ -101,7 +101,7 @@ export function PlanCard({
                     ? plan.popular
                       ? "text-purple-400"
                       : "text-green-500"
-                    : "text-slate-600"
+                    : "text-muted-foreground"
                 )}
               />
               {feature.text}
@@ -117,8 +117,8 @@ export function PlanCard({
             plan.popular
               ? "bg-purple-600 hover:bg-purple-700"
               : current
-                ? "bg-slate-700 cursor-not-allowed"
-                : "bg-slate-800 hover:bg-slate-700"
+                ? "bg-muted cursor-not-allowed"
+                : "bg-muted hover:bg-muted"
           )}
           variant={current ? "outline" : "default"}
           disabled={current || loading || disabled}

@@ -30,10 +30,10 @@ interface ProtectedRouteProps {
  */
 function LoadingSpinner() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950">
+    <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="flex flex-col items-center space-y-4">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500" />
-        <p className="text-slate-400 text-sm">Loading...</p>
+        <p className="text-muted-foreground text-sm">Loading...</p>
       </div>
     </div>
   );
@@ -46,16 +46,16 @@ function AccessDenied({ requiredPlan }: { requiredPlan: string }) {
   const router = useRouter();
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950">
+    <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="text-center space-y-4">
         <div className="text-6xl">🔒</div>
-        <h1 className="text-2xl font-bold text-white">Access Denied</h1>
-        <p className="text-slate-400">
+        <h1 className="text-2xl font-bold text-foreground">Access Denied</h1>
+        <p className="text-muted-foreground">
           This page requires a {requiredPlan} plan.
         </p>
         <button
           onClick={() => router.push("/pricing")}
-          className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md transition-colors"
+          className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-foreground rounded-md transition-colors"
         >
           Upgrade Plan
         </button>

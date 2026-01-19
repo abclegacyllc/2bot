@@ -46,6 +46,7 @@ export class AuthError extends Error {
 export type AuthErrorCode =
   | "USER_EXISTS"
   | "INVALID_CREDENTIALS"
+  | "INVALID_PASSWORD"
   | "USER_NOT_FOUND"
   | "USER_INACTIVE"
   | "SESSION_INVALID"
@@ -588,6 +589,72 @@ class AuthService {
     await this.revokeAllSessions(resetToken.userId);
 
     return resetToken.userId;
+  }
+
+  /**
+   * Update user profile
+   * @param userId - User ID
+   * @param data - Profile data to update
+   * @returns Updated user (safe version)
+   */
+  async updateProfile(
+    userId: string,
+    data: { name?: string }
+  ): Promise<SafeUser> {
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        name: data.name,
+        updatedAt: new Date(),
+      },
+    });
+
+    return toSafeUser(user);
+  }
+
+  /**
+   * Change user password
+   * @param userId - User ID
+   * @param currentPassword - Current password for verification
+   * @param newPassword - New password to set
+   */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string
+  ): Promise<void> {
+    // Get user with password hash
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new AuthError("User not found", "USER_NOT_FOUND");
+    }
+
+    // Verify current password
+    const isValid = await verifyPassword(currentPassword, user.passwordHash);
+    if (!isValid) {
+      throw new AuthError("Current password is incorrect", "INVALID_PASSWORD");
+    }
+
+    // Check new password security
+    if (!isPasswordSecure(newPassword)) {
+      throw new AuthError(
+        "Password must be at least 8 characters with uppercase, lowercase, and number",
+        "PASSWORD_WEAK"
+      );
+    }
+
+    // Hash and update password
+    const passwordHash = await hashPassword(newPassword);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash, updatedAt: new Date() },
+    });
+
+    // Optionally revoke all other sessions (user stays logged in on current device)
+    // await this.revokeAllSessions(userId);
   }
 }
 

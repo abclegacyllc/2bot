@@ -10,14 +10,14 @@
 
 import { useRouter } from "next/navigation";
 import type {
-  ReactNode
+    ReactNode
 } from "react";
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useState,
 } from "react";
 
 // User type (matches backend response)
@@ -25,6 +25,7 @@ interface User {
   id: string;
   email: string;
   name: string | null;
+  role: "MEMBER" | "OWNER" | "DEVELOPER" | "SUPPORT" | "ADMIN" | "SUPER_ADMIN";
   plan: "FREE" | "PRO" | "ENTERPRISE";
   emailVerified: string | null;
   image: string | null;

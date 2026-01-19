@@ -10,6 +10,7 @@ import {
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
+import { adminRouter } from "./admin";
 import { alertRouter } from "./alerts";
 import { authRouter } from "./auth";
 import { billingRouter } from "./billing";
@@ -73,6 +74,12 @@ router.use("/alerts", alertRouter);
  * Checkout, portal, subscription status
  */
 router.use("/billing", billingRouter);
+
+/**
+ * Admin routes (Phase 6)
+ * Platform administration and monitoring
+ */
+router.use("/admin", adminRouter);
 
 /**
  * API info endpoint
