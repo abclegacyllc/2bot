@@ -183,9 +183,10 @@ function BillingContent() {
       fetcher
     );
 
+  // Using URL-based routes (Phase 6.7) - /api/user/quota for personal quota
   const { data: quotaData, isLoading: quotaLoading } =
     useSWR<{ success: boolean; data: QuotaStatus }>(
-      token ? "/api/quota/status" : null,
+      token ? "/api/user/quota" : null,
       fetcher
     );
 
@@ -387,7 +388,7 @@ function BillingContent() {
               </div>
 
               <div className="flex gap-3">
-                {subscription?.plan === "FREE" ? (
+                {(!subscription?.plan || subscription.plan === "FREE") ? (
                   <Link href="/dashboard/settings/billing/upgrade">
                     <Button className="bg-purple-600 hover:bg-purple-700">
                       <Zap className="mr-2 h-4 w-4" />

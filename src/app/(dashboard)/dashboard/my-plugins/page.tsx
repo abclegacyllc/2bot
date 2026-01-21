@@ -337,9 +337,10 @@ function MyPluginsContent() {
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   // Fetch user's installed plugins
+  // Using URL-based routes (Phase 6.7) - /api/user/plugins for personal plugins
   const fetchPlugins = useCallback(async () => {
     try {
-      const response = await fetch("/api/plugins/user/plugins", {
+      const response = await fetch("/api/user/plugins", {
         headers: { Authorization: `Bearer ${token}` },
       })
 

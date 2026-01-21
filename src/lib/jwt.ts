@@ -68,15 +68,14 @@ export function verifyToken(token: string): TokenPayload | null {
       audience: JWT_AUDIENCE,
     }) as DecodedToken;
 
-    // Return only the payload fields we care about
+    // Phase 6.7: Simplified token - only user identity fields
+    // Context is determined by URL, not token
     return {
       userId: decoded.userId,
       email: decoded.email,
       plan: decoded.plan,
       sessionId: decoded.sessionId,
       role: decoded.role ?? 'MEMBER',
-      activeContext: decoded.activeContext ?? { type: 'personal', plan: decoded.plan },
-      availableOrgs: decoded.availableOrgs ?? [],
     };
   } catch {
     return null;

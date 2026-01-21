@@ -106,8 +106,9 @@ function OrganizationSettingsContent() {
 
       try {
         setIsLoading(true);
+        // Using URL-based routes (Phase 6.7) - /api/orgs/:orgId for org resources
         const response = await fetch(
-          `/api/organizations/${context.organizationId}`,
+          `/api/orgs/${context.organizationId}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -147,7 +148,7 @@ function OrganizationSettingsContent() {
       setError(null);
 
       const response = await fetch(
-        `/api/organizations/${context.organizationId}`,
+        `/api/orgs/${context.organizationId}`,
         {
           method: "PUT",
           headers: {
@@ -180,7 +181,7 @@ function OrganizationSettingsContent() {
       setError(null);
 
       const response = await fetch(
-        `/api/organizations/${context.organizationId}`,
+        `/api/orgs/${context.organizationId}`,
         {
           method: "DELETE",
           headers: {

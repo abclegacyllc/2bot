@@ -17,8 +17,8 @@ import { GatewayStatusBadge } from "@/components/gateways/gateway-status";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent
+    Card,
+    CardContent
 } from "@/components/ui/card";
 import type { GatewayListItem } from "@/modules/gateway/gateway.types";
 
@@ -207,7 +207,8 @@ function GatewaysContent() {
       if (!token) return;
 
       try {
-        const response = await fetch("/api/gateways", {
+        // Using URL-based routes (Phase 6.7) - /api/user/gateways for personal gateways
+        const response = await fetch("/api/user/gateways", {
           headers: {
             Authorization: `Bearer ${token}`,
           },

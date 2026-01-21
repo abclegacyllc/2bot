@@ -314,14 +314,15 @@ function DashboardContent() {
 
       try {
         // Fetch gateways, plugins, and quota status in parallel
+        // Using URL-based routes (Phase 6.7) - /api/user/* for personal resources
         const [gatewaysRes, pluginsRes, quotaRes] = await Promise.all([
-          fetch("/api/gateways", {
+          fetch("/api/user/gateways", {
             headers: { Authorization: `Bearer ${token}` },
           }),
-          fetch("/api/plugins/user/plugins", {
+          fetch("/api/user/plugins", {
             headers: { Authorization: `Bearer ${token}` },
           }),
-          fetch("/api/quota/status", {
+          fetch("/api/user/quota", {
             headers: { Authorization: `Bearer ${token}` },
           }),
         ]);

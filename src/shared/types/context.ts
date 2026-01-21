@@ -54,13 +54,15 @@ export interface ServiceContext {
 }
 
 /**
- * Token payload shape (from JWT) - updated for Phase 4
+ * Token payload shape for context creation
+ * Phase 6.7: Simplified - activeContext is optional (derived from URL)
  */
 export interface TokenPayloadForContext {
   userId: string;
   role: UserRole;
   plan: PlanType;
-  activeContext: {
+  // Phase 6.7: activeContext is now optional - context derived from URL
+  activeContext?: {
     type: 'personal' | 'organization';
     organizationId?: string;
     orgRole?: OrgRole;
@@ -78,20 +80,40 @@ export interface RequestMetadata {
 }
 
 /**
+ * Context options for Phase 6.7 URL-based routing
+ * When activeContext is not in token, these can be provided separately
+ */
+export interface ContextOptions {
+  contextType?: 'personal' | 'organization';
+  organizationId?: string;
+  orgRole?: OrgRole;
+  effectivePlan?: PlanType;
+}
+
+/**
  * Create a ServiceContext from token payload and request metadata
+ * Phase 6.7: Supports both token-based context (legacy) and URL-based context (new)
  */
 export function createServiceContext(
   tokenPayload: TokenPayloadForContext,
-  requestMeta?: RequestMetadata
+  requestMeta?: RequestMetadata,
+  contextOptions?: ContextOptions
 ): ServiceContext {
+  // Phase 6.7: Use contextOptions if provided, otherwise fall back to activeContext in token
+  const activeContext = tokenPayload.activeContext;
+  const contextType = contextOptions?.contextType ?? activeContext?.type ?? 'personal';
+  const organizationId = contextOptions?.organizationId ?? activeContext?.organizationId;
+  const orgRole = contextOptions?.orgRole ?? activeContext?.orgRole;
+  const effectivePlan = contextOptions?.effectivePlan ?? activeContext?.plan ?? tokenPayload.plan;
+
   const ctx: ServiceContext = {
     userId: tokenPayload.userId,
     userRole: tokenPayload.role,
     userPlan: tokenPayload.plan,
-    contextType: tokenPayload.activeContext.type,
-    organizationId: tokenPayload.activeContext.organizationId,
-    orgRole: tokenPayload.activeContext.orgRole,
-    effectivePlan: tokenPayload.activeContext.plan,
+    contextType,
+    organizationId,
+    orgRole,
+    effectivePlan,
     ipAddress: requestMeta?.ipAddress,
     userAgent: requestMeta?.userAgent,
     requestId: requestMeta?.requestId,

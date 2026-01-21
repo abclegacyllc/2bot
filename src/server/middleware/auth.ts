@@ -2,6 +2,12 @@
  * Auth Middleware
  *
  * Middleware for authenticating and authorizing requests.
+ * 
+ * Phase 6.7: Simplified authentication
+ * - Token only contains user identity (userId, email, plan, role, sessionId)
+ * - Context (personal vs org) is determined by URL path, not token
+ * - /api/user/* routes → personal resources
+ * - /api/orgs/:orgId/* routes → org resources (membership checked by org-auth middleware)
  *
  * @module server/middleware/auth
  */

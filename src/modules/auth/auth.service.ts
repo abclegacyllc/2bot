@@ -2,6 +2,7 @@
  * Auth Service
  *
  * Handles user authentication, registration, and session management.
+ * Phase 6.7: Simplified tokens - context determined by URL, not token.
  *
  * @module modules/auth/auth.service
  */
@@ -9,11 +10,9 @@
 import { generateToken, verifyToken } from "@/lib/jwt";
 import { hashPassword, isPasswordSecure, verifyPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
-import type { Session, User } from "@prisma/client";
+import type { OrgRole, Session, User } from "@prisma/client";
 import type {
-    ActiveContext,
     AuthResponse,
-    AvailableOrg,
     LoginRequest,
     RegisterRequest,
     SafeUser,
@@ -124,21 +123,13 @@ class AuthService {
     // Create session
     const session = await this.createSession(user.id, meta);
 
-    // New users start with personal context, no organizations yet
-    const activeContext: ActiveContext = {
-      type: "personal",
-      plan: user.plan,
-    };
-
-    // Generate token with context (no orgs for new user)
+    // Phase 6.7: Simplified token - no context, orgs fetched via API
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
       plan: user.plan,
       sessionId: session.id,
       role: user.role,
-      activeContext,
-      availableOrgs: [],
     };
     const token = generateToken(payload);
 
@@ -202,29 +193,14 @@ class AuthService {
     // Create session
     const session = await this.createSession(user.id, meta);
 
-    // Build available organizations from memberships
-    const availableOrgs: AvailableOrg[] = user.memberships.map((m) => ({
-      id: m.organization.id,
-      name: m.organization.name,
-      slug: m.organization.slug,
-      role: m.role,
-    }));
-
-    // Default to personal context on login
-    const activeContext: ActiveContext = {
-      type: "personal",
-      plan: user.plan,
-    };
-
-    // Generate token with context
+    // Phase 6.7: Simplified token - context determined by URL
+    // Organizations are fetched via /api/user/organizations
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
       plan: user.plan,
       sessionId: session.id,
       role: user.role,
-      activeContext,
-      availableOrgs,
     };
     const token = generateToken(payload);
 
@@ -251,11 +227,14 @@ class AuthService {
   /**
    * Switch context between personal and organization
    *
+   * @deprecated Phase 6.7: Context switching is now UI-only via navigation.
+   * This method is kept for backward compatibility but returns the same token.
+   * Frontend should navigate to /dashboard (personal) or /dashboard/organizations/:orgId (org).
+   *
    * @param userId - User ID
    * @param sessionId - Current session ID
    * @param request - Context switch request
-   * @returns New token with updated context
-   * @throws AuthError if user not member of organization or org not found
+   * @returns Same token (no context in token anymore)
    */
   async switchContext(
     userId: string,
@@ -290,33 +269,13 @@ class AuthService {
       throw new AuthError("Account is deactivated", "USER_INACTIVE");
     }
 
-    // Build available organizations
-    const availableOrgs: AvailableOrg[] = user.memberships.map((m) => ({
-      id: m.organization.id,
-      name: m.organization.name,
-      slug: m.organization.slug,
-      role: m.role,
-    }));
-
-    let activeContext: ActiveContext;
+    let contextPlan = user.plan;
     let organizationName: string | undefined;
+    let orgRole: OrgRole | undefined;
+    let organizationId: string | undefined;
 
-    if (request.contextType === "personal") {
-      // Switch to personal context
-      activeContext = {
-        type: "personal",
-        plan: user.plan,
-      };
-    } else {
-      // Switch to organization context
-      if (!request.organizationId) {
-        throw new AuthError(
-          "Organization ID required for organization context",
-          "INVALID_REQUEST"
-        );
-      }
-
-      // Find membership for the requested organization
+    if (request.contextType === "organization" && request.organizationId) {
+      // Validate user is member of the organization
       const membership = user.memberships.find(
         (m) => m.organizationId === request.organizationId
       );
@@ -328,35 +287,32 @@ class AuthService {
         );
       }
 
-      activeContext = {
-        type: "organization",
-        organizationId: membership.organizationId,
-        orgRole: membership.role,
-        plan: membership.organization.plan,
-      };
+      organizationId = membership.organizationId;
       organizationName = membership.organization.name;
+      orgRole = membership.role;
+      contextPlan = membership.organization.plan;
     }
 
-    // Generate new token with updated context
+    // Phase 6.7: Token no longer contains context
+    // Generate same simplified token
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
       plan: user.plan,
       sessionId,
       role: user.role,
-      activeContext,
-      availableOrgs,
     };
     const token = generateToken(payload);
 
+    // Return context info for backward compatibility
     return {
       token,
       context: {
-        type: activeContext.type,
-        organizationId: activeContext.organizationId,
+        type: request.contextType,
+        organizationId,
         organizationName,
-        orgRole: activeContext.orgRole,
-        plan: activeContext.plan,
+        orgRole,
+        plan: contextPlan,
       },
     };
   }

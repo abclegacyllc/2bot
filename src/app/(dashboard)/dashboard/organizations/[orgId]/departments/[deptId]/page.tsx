@@ -124,8 +124,9 @@ export default function DepartmentDetailPage() {
     setError(null);
 
     try {
+      // Using URL-based routes (Phase 6.7) - /api/orgs/:orgId/departments/:deptId for org departments
       // Fetch department info
-      const deptRes = await fetch(`/api/departments/${deptId}`, {
+      const deptRes = await fetch(`/api/orgs/${orgId}/departments/${deptId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -143,7 +144,7 @@ export default function DepartmentDetailPage() {
       setDepartment(deptData.data);
 
       // Fetch department quota status
-      const quotaRes = await fetch(`/api/departments/${deptId}/quotas`, {
+      const quotaRes = await fetch(`/api/orgs/${orgId}/departments/${deptId}/quotas`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -186,7 +187,7 @@ export default function DepartmentDetailPage() {
       }
 
       // Fetch department members
-      const membersRes = await fetch(`/api/departments/${deptId}/members`, {
+      const membersRes = await fetch(`/api/orgs/${orgId}/departments/${deptId}/members`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -241,7 +242,7 @@ export default function DepartmentDetailPage() {
     setPausingEmployee(userId);
     try {
       const res = await fetch(
-        `/api/departments/${deptId}/members/${userId}/emergency-stop`,
+        `/api/orgs/${orgId}/departments/${deptId}/members/${userId}/emergency-stop`,
         {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },

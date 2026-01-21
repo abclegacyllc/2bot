@@ -125,8 +125,9 @@ function OwnerDashboardContent() {
     setError(null);
 
     try {
+      // Using URL-based routes (Phase 6.7) - /api/orgs/:orgId for org resources
       // Fetch organization info
-      const orgRes = await fetch(`/api/organizations/${context.organizationId}`, {
+      const orgRes = await fetch(`/api/orgs/${context.organizationId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -137,8 +138,8 @@ function OwnerDashboardContent() {
       const orgData = await orgRes.json();
       setOrg(orgData.data);
 
-      // Fetch quota status
-      const quotaRes = await fetch("/api/quota/status", {
+      // Fetch quota status - using /api/user/quota for personal context
+      const quotaRes = await fetch("/api/user/quota", {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -149,7 +150,7 @@ function OwnerDashboardContent() {
 
       // Fetch departments with usage
       const deptRes = await fetch(
-        `/api/organizations/${context.organizationId}/departments`,
+        `/api/orgs/${context.organizationId}/departments`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -237,7 +238,7 @@ function OwnerDashboardContent() {
 
     setIsEmergencyStopping(true);
     try {
-      const res = await fetch(`/api/organizations/${org.id}/emergency-stop`, {
+      const res = await fetch(`/api/orgs/${org.id}/emergency-stop`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -261,7 +262,7 @@ function OwnerDashboardContent() {
 
     setStoppingDeptId(deptId);
     try {
-      const res = await fetch(`/api/departments/${deptId}/emergency-stop`, {
+      const res = await fetch(`/api/orgs/${context.organizationId}/departments/${deptId}/emergency-stop`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
       });

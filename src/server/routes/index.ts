@@ -17,8 +17,10 @@ import { billingRouter } from "./billing";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
 import { organizationRouter } from "./organization";
+import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
 import { quotaRouter } from "./quota";
+import { userRouter } from "./user";
 import { webhookRouter } from "./webhook";
 
 export const router = Router();
@@ -34,8 +36,23 @@ router.use("/health", healthRouter);
 router.use("/auth", authRouter);
 
 /**
- * Organization routes (Phase 4)
+ * User routes (Phase 6.7) - Personal resources
+ * /api/user/* for authenticated user's personal resources
+ * Follows GitHub API pattern where /user/* = personal, /orgs/:id/* = organization
+ */
+router.use("/user", userRouter);
+
+/**
+ * Organization routes (Phase 6.7) - Org resources by ID
+ * /api/orgs/:orgId/* for organization-specific resources
+ * Uses plural "orgs" to match GitHub API convention
+ */
+router.use("/orgs", orgsRouter);
+
+/**
+ * Organization routes (Phase 4) - Legacy
  * Organizations, members, invites, departments
+ * Note: Consider migrating to /api/orgs/:orgId/* pattern
  */
 router.use("/organizations", organizationRouter);
 

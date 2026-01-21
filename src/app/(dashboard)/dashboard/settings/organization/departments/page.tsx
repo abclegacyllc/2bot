@@ -130,8 +130,9 @@ function DepartmentsContent() {
 
     try {
       setIsLoading(true);
+      // Using URL-based routes (Phase 6.7) - /api/orgs/:orgId/departments for org departments
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/departments`,
+        `/api/orgs/${context.organizationId}/departments`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -169,7 +170,7 @@ function DepartmentsContent() {
       setError(null);
 
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/departments`,
+        `/api/orgs/${context.organizationId}/departments`,
         {
           method: "POST",
           headers: {
@@ -207,7 +208,7 @@ function DepartmentsContent() {
       setError(null);
 
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/departments/${selectedDepartment.id}`,
+        `/api/orgs/${context.organizationId}/departments/${selectedDepartment.id}`,
         {
           method: "PUT",
           headers: {
@@ -246,7 +247,7 @@ function DepartmentsContent() {
       setError(null);
 
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/departments/${selectedDepartment.id}`,
+        `/api/orgs/${context.organizationId}/departments/${selectedDepartment.id}`,
         {
           method: "DELETE",
           headers: {

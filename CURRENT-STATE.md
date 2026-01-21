@@ -8,11 +8,11 @@
 
 | Item | Value |
 |------|-------|
-| **Last Updated** | 2026-01-18 |
-| **Last Session** | S27: Tasks 6.5.1-6.5.2 (Legal Pages) |
-| **Current Phase** | Phase 6: Launch Preparation |
-| **Next Task** | Task 6.6.1 (End-to-End Smoke Test) |
-| **Overall Progress** | 100% Phase 5, 87.5% Phase 6 (14/16 tasks) |
+| **Last Updated** | 2026-01-21 |
+| **Last Session** | S33: Phase 6.7 Enterprise Prep |
+| **Current Phase** | Phase 6.7: Architecture Alignment (ALL COMPLETE!) |
+| **Next Task** | Phase 7/8 or Production Deployment |
+| **Overall Progress** | Phase 6.7 Complete (16/16 tasks) |
 
 ---
 
@@ -27,10 +27,131 @@
 | Phase 3: Plugin | ✅ Complete | 18/18 tasks | Analytics Plugin + Registration + UI Pages |
 | Phase 4: Organization | ✅ Complete | 25/25 tasks | All org features complete |
 | Phase 5: Billing | ✅ Complete | 12/12 tasks | All billing + limits done |
-| Phase 6: Launch | 🔄 In Progress | 14/16 tasks | Pages, Theme, UX, Monitoring, Legal done |
+| Phase 6: Launch | ✅ Complete | 16/16 tasks | Production deployed to www.2bot.org ✓ |
+| Phase 6.7: Architecture | ✅ Complete | 16/16 tasks | URL-based APIs + Enterprise Subdomain Ready |
 ---
 
-## ⭐ Phase 1.5 Overview (NEW)
+## ⭐ Phase 6.7: Architecture Alignment (Current)
+
+> **Goal:** Align API architecture with ROADMAP URL-based design pattern (GitHub-style)
+> **Why:** Current token-based context causes team confusion, debugging difficulty, and security audit complexity
+
+### Session 1 Complete (2026-01-20):
+- [x] **6.7.1.1** Create `/api/user/*` backend routes
+  - Created `src/server/routes/user.ts` with personal resource routes
+  - Routes: GET /api/user/gateways, /api/user/plugins, /api/user/quota, /api/user/organizations
+- [x] **6.7.1.2** Create `/api/orgs/*` backend routes
+  - Created `src/server/routes/orgs.ts` with org resource routes
+  - Created `src/server/middleware/org-auth.ts` for membership validation
+  - Routes: GET /api/orgs/:orgId/gateways, /plugins, /quota, /departments, /members
+- [x] **6.7.1.3** Department router separation
+  - Department routes now accessible via `/api/orgs/:orgId/departments/:deptId`
+  - Legacy routes remain for backward compatibility
+- [x] **6.7.1.4** Deprecate context-based endpoints
+  - Created `src/server/middleware/deprecation.ts` with logging + headers
+  - Applied deprecation to: GET /api/gateways, /api/quota/status, /api/plugins/user/plugins, /api/organizations/me
+  - Deprecation warnings: logs usage + sets HTTP headers (Deprecation, Link, Sunset)
+
+### Session 2 Complete (2026-01-20):
+- [x] **6.7.2.1** Update dashboard to `/api/user/*` URLs
+  - Updated `dashboard/page.tsx` → fetches `/api/user/gateways`, `/api/user/plugins`, `/api/user/quota`
+  - Updated `gateways/page.tsx` → fetches `/api/user/gateways`
+  - Updated `plugins/page.tsx` → fetches `/api/user/plugins`
+  - Updated `my-plugins/page.tsx` → fetches `/api/user/plugins`
+  - Updated `settings/billing/page.tsx` → fetches `/api/user/quota`
+- [x] **6.7.2.2** Update org pages to `/api/orgs/*` URLs
+  - Updated `organizations/[orgId]/page.tsx` → fetches `/api/orgs/:orgId`
+  - Updated `organizations/[orgId]/departments/page.tsx` → fetches `/api/orgs/:orgId/departments`
+  - Updated `organizations/[orgId]/departments/[deptId]/page.tsx` → fetches `/api/orgs/:orgId/departments/:deptId/*`
+  - Updated `settings/organization/page.tsx` → fetches `/api/orgs/:orgId`
+  - Updated `settings/organization/departments/page.tsx` → fetches `/api/orgs/:orgId/departments`
+  - Updated `settings/organization/members/page.tsx` → fetches `/api/orgs/:orgId/members`
+  - Updated `settings/organization/resources/page.tsx` → fetches `/api/orgs/:orgId/*`
+  - Updated employee quotas page → fetches `/api/orgs/:orgId/departments/:deptId/members/:memberId/quotas`
+- [x] **6.7.2.3** Update Next.js proxy routes
+  - Created `/api/user/gateways`, `/api/user/plugins`, `/api/user/quota`, `/api/user/organizations` routes
+  - Created `/api/orgs/[orgId]/route.ts` for org CRUD
+  - Created `/api/orgs/[orgId]/gateways`, `/plugins`, `/quota`, `/members` routes
+  - Created `/api/orgs/[orgId]/departments` and nested department routes
+  - Created `/api/orgs/[orgId]/emergency-stop` route
+- [x] **6.7.2.4** Keep context switcher for UI only
+  - Updated `auth-provider.tsx` `switchContext` to navigate instead of token refresh
+  - Context switching now changes local state + navigates to correct URL
+  - No more API calls on context switch
+
+### Session 3 Complete (2026-01-20):
+- [x] **6.7.3.1** Simplify JWT token payload
+  - Updated `src/modules/auth/auth.types.ts` - removed `activeContext` and `availableOrgs` from TokenPayload
+  - Updated `src/lib/jwt.ts` - simplified verifyToken return value
+  - Updated `src/modules/auth/auth.service.ts` - login/register now generate simplified tokens
+  - Token now only contains: userId, email, plan, sessionId, role
+  - Context determined by URL, not token
+- [x] **6.7.3.2** Update auth middleware
+  - Updated `src/server/middleware/auth.ts` - added Phase 6.7 documentation
+  - Updated `src/server/middleware/usage-tracking.ts` - derives context from URL path
+  - Updated `src/shared/types/context.ts` - createServiceContext now accepts ContextOptions
+  - Updated all route file helpers (admin, alerts, billing, gateway, organization, plugin, quota)
+  - All routes now use URL-based context instead of token-based
+- [x] **6.7.3.3** Update frontend auth provider
+  - Updated `src/components/providers/auth-provider.tsx`
+  - Removed getContextFromToken and updateContextFromToken functions
+  - Added fetchAvailableOrgs() to fetch from /api/user/organizations API
+  - Login/register now set default personal context, then fetch orgs
+  - No more context parsing from JWT token
+
+### Session 4 Complete (2026-01-21):
+- [x] **6.7.4.1** Update API documentation
+  - Updated `ROADMAP.md` API Structure section with new URL-based context documentation
+  - Documented `/api/user/*` (personal resources) and `/api/orgs/:orgId/*` (organization resources)
+  - Added deprecation table with sunset dates (2026-07-01)
+  - Added authorization rules table
+- [x] **6.7.4.2** Architecture alignment smoke test
+  - Created `scripts/smoke-test-6.7.sh` - comprehensive smoke test script
+  - Verified routes are registered (`userRouter`, `orgsRouter` in routes/index.ts)
+  - Verified deprecation middleware applied to legacy routes
+  - TypeScript compiles successfully (exit code 0)
+- [x] **6.7.4.3** Production deployment re-verification
+  - Backend routes verified: user.ts, orgs.ts, org-auth.ts middleware
+  - Nginx config verified: proxying to ports 3000 (Next.js) and 3001 (Express)
+  - All code changes verified through TypeScript compilation
+  - Ready for production deployment
+
+### Session 5 Complete (2026-01-21):
+- [x] **6.7.5.1** Configure CORS for subdomains
+  - Updated `src/server/middleware/cors.ts` with all enterprise subdomains
+  - Added development ports (:3002-:3006) for local testing
+  - Added production subdomains (dash, api, admin, support, docs, dev)
+  - Added `CORS_ORIGINS` environment variable for runtime configuration
+  - CORS headers now expose deprecation headers
+- [x] **6.7.5.2** Add environment-based URL configuration
+  - Created `src/shared/config/urls.ts` - centralized URL configuration
+  - Supports both single-domain and enterprise subdomain modes
+  - Helper functions: `apiUrl()`, `serviceUrl()`, `isEnterpriseMode()`
+  - Subdomain port mapping documented
+- [x] **6.7.5.3** Remove `/api` prefix from Express routes
+  - Updated `src/server/app.ts` with configurable `API_PREFIX`
+  - Single-domain: `API_PREFIX="/api"` (default, backward compatible)
+  - Enterprise: `API_PREFIX=""` (routes at root on api.2bot.org)
+  - Stripe webhook path also uses configurable prefix
+- [x] **6.7.5.4** Update docker-compose for subdomain deploy
+  - Created `docker-compose.enterprise.yml` with all services
+  - Created `nginx/2bot.enterprise.conf` for subdomain reverse proxy
+  - Services: web, dashboard, api, admin (support, docs, dev placeholders)
+  - Each service has correct environment variables
+
+### 🎉 Phase 6.7 FULLY Complete!
+All 16 tasks complete. Ready for enterprise subdomain deployment:
+- Personal resources: `/api/user/*`
+- Organization resources: `/api/orgs/:orgId/*`
+- JWT tokens simplified
+- CORS configured for all subdomains
+- API_PREFIX configurable (empty for subdomain mode)
+- docker-compose.enterprise.yml ready
+- nginx/2bot.enterprise.conf ready
+
+---
+
+## ⭐ Phase 1.5 Overview
 
 > **Added based on AI Auditor architectural review.**
 > Prevents painful refactoring by adding database fields, types, and patterns NOW.
@@ -582,14 +703,31 @@
   - Created src/app/privacy/page.tsx with comprehensive privacy content
   - 12 sections: Data collection, Usage, Sharing, Security, Rights, etc.
   - Linked from footer and registration page
+- [x] **6.6.1** End-to-end smoke test (2026-01-20)
+  - Tested all auth flows (register, login, logout, password reset)
+  - Tested gateway creation and status
+  - Tested plugin installation and configuration
+  - Tested billing page and plan limits
+  - All major features verified working
+- [x] **6.6.2** Production deployment prep (2026-01-20)
+  - Deployed to https://www.2bot.org
+  - Configured .env.production with all secrets
+  - Created twobot database and ran migrations
+  - Configured Nginx with Cloudflare SSL
+  - Fixed CORS for production domains (2bot.org, www.2bot.org)
+  - Fixed billing button display for FREE users
+  - Compiled TypeScript backend for production (tsx → node)
+  - Updated seed passwords to stronger values
+
+### 🎉 Phase 6 Complete!
 
 ---
 
 ## 🔄 Current Task
 
 ```
-Phase 6 IN PROGRESS! Next: Task 6.6.1 - End-to-End Smoke Test
-File: docs/tasks/phase-6-launch.md
+Phase 6 COMPLETE! Production live at https://www.2bot.org
+Next: Phase 7 (Support System) or new features
 ```
 
 ---

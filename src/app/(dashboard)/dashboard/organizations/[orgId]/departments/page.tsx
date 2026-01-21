@@ -56,7 +56,8 @@ export default function OrganizationDepartmentsPage() {
     setError(null);
 
     try {
-      const res = await fetch(`/api/organizations/${orgId}/departments`, {
+      // Using URL-based routes (Phase 6.7) - /api/orgs/:orgId/departments for org departments
+      const res = await fetch(`/api/orgs/${orgId}/departments`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 

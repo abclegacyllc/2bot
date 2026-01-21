@@ -37,45 +37,28 @@ const checkoutSchema = z.object({
 
 /**
  * Helper to create ServiceContext from Express request
+ * Phase 6.7: Token no longer contains activeContext - defaults to personal context
+ * This route is deprecated - use /api/user/billing or /api/orgs/:orgId/billing
  */
 function getServiceContext(req: Request) {
   if (!req.user) {
     throw new BadRequestError('User not authenticated');
   }
 
-  // Use token payload if available (contains activeContext from JWT)
-  if (req.tokenPayload) {
-    return createServiceContext(
-      {
-        userId: req.tokenPayload.userId,
-        role: req.tokenPayload.role,
-        plan: req.tokenPayload.plan,
-        activeContext: req.tokenPayload.activeContext,
-      },
-      {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-        requestId: req.headers['x-request-id'] as string | undefined,
-      }
-    );
-  }
-
-  // Fallback: create personal context from user object
+  // Phase 6.7: Token simplified - context determined by URL, not token
   return createServiceContext(
     {
-      userId: req.user.id,
-      role: req.user.role,
-      plan: req.user.plan,
-      activeContext: {
-        type: 'personal',
-        plan: req.user.plan,
-      },
+      userId: req.tokenPayload?.userId ?? req.user.id,
+      role: req.tokenPayload?.role ?? req.user.role,
+      plan: req.tokenPayload?.plan ?? req.user.plan,
     },
     {
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
       requestId: req.headers['x-request-id'] as string | undefined,
-    }
+    },
+    // Default to personal context for legacy routes
+    { contextType: 'personal', effectivePlan: req.user.plan }
   );
 }
 

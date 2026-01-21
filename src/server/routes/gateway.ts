@@ -3,6 +3,10 @@
  *
  * REST API endpoints for gateway management (CRUD operations)
  *
+ * Note: The context-based GET /api/gateways endpoint is deprecated.
+ * Use /api/user/gateways for personal gateways or
+ * /api/orgs/:orgId/gateways for organization gateways.
+ *
  * @module server/routes/gateway
  */
 
@@ -18,51 +22,36 @@ import { createServiceContext } from "@/shared/types/context";
 import type { GatewayStatus } from "@prisma/client";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
+import { deprecated } from "../middleware/deprecation";
 import { asyncHandler } from "../middleware/error-handler";
 
 export const gatewayRouter = Router();
 
 /**
  * Helper to create ServiceContext from Express request
+ * Phase 6.7: Context is now determined by URL, not token
+ * This route is deprecated - use /api/user/gateways or /api/orgs/:orgId/gateways
  */
 function getServiceContext(req: Request) {
   if (!req.user) {
     throw new BadRequestError("User not authenticated");
   }
 
-  // Use token payload if available (contains activeContext from JWT)
-  if (req.tokenPayload) {
-    return createServiceContext(
-      {
-        userId: req.tokenPayload.userId,
-        role: req.tokenPayload.role,
-        plan: req.tokenPayload.plan,
-        activeContext: req.tokenPayload.activeContext,
-      },
-      {
-        ipAddress: req.ip,
-        userAgent: req.headers["user-agent"],
-        requestId: req.headers["x-request-id"] as string | undefined,
-      }
-    );
-  }
-
-  // Fallback: create personal context from user object (legacy support)
+  // Phase 6.7: Token no longer contains activeContext
+  // For legacy routes, default to personal context
   return createServiceContext(
     {
-      userId: req.user.id,
-      role: req.user.role,
-      plan: req.user.plan,
-      activeContext: {
-        type: 'personal',
-        plan: req.user.plan,
-      },
+      userId: req.tokenPayload?.userId ?? req.user.id,
+      role: req.tokenPayload?.role ?? req.user.role,
+      plan: req.tokenPayload?.plan ?? req.user.plan,
     },
     {
       ipAddress: req.ip,
       userAgent: req.headers["user-agent"],
       requestId: req.headers["x-request-id"] as string | undefined,
-    }
+    },
+    // Default to personal context for legacy routes
+    { contextType: 'personal', effectivePlan: req.user.plan }
   );
 }
 
@@ -97,6 +86,8 @@ function getPathParam(req: Request, name: string): string {
  *
  * List all gateways for the current user/organization
  *
+ * @deprecated Use /api/user/gateways for personal or /api/orgs/:orgId/gateways for organization
+ *
  * @query {string} [type] - Filter by gateway type (TELEGRAM_BOT, AI, WEBHOOK)
  * @query {string} [status] - Filter by status (CONNECTED, DISCONNECTED, ERROR)
  * @query {number} [page] - Page number (default 1)
@@ -107,6 +98,9 @@ function getPathParam(req: Request, name: string): string {
 gatewayRouter.get(
   "/",
   requireAuth,
+  deprecated("/api/user/gateways or /api/orgs/:orgId/gateways", {
+    message: "Use URL-based routes: /api/user/gateways for personal, /api/orgs/:orgId/gateways for organization",
+  }),
   asyncHandler(async (req: Request, res: Response<PaginatedResponse<GatewayListItem>>) => {
     const ctx = getServiceContext(req);
 

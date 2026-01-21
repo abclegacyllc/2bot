@@ -24,37 +24,37 @@ export type SessionWithUser = Session & {
 
 /**
  * JWT Token Payload
- * Extended with role fields for Phase 1.5 architecture
- * Updated with active context for Phase 4 multi-org support
+ * Simplified for Phase 6.7 architecture - context determined by URL, not token
  */
 export interface TokenPayload {
   userId: string;
   email: string;
-  plan: PlanType;
+  plan: PlanType;      // User's personal plan
   sessionId: string;
   
-  // Role fields (Phase 1.5)
+  // Role fields (Phase 1.5) - platform role
   role: UserRole;
   
-  // Active context (Phase 4) - which context is currently active
-  activeContext: ActiveContext;
-  
-  // Available organizations for context switcher
-  availableOrgs: AvailableOrg[];
+  // Phase 6.7: activeContext and availableOrgs REMOVED
+  // - Context is determined by URL (/api/user/* vs /api/orgs/:orgId/*)
+  // - Organizations are fetched via /api/user/organizations
 }
 
 /**
  * Active context - what the user is currently operating as
+ * Phase 6.7: Now UI-only, not stored in token
  */
 export interface ActiveContext {
   type: "personal" | "organization";
   organizationId?: string;
+  organizationName?: string;
   orgRole?: OrgRole;
   plan: PlanType; // Effective plan (personal or org plan)
 }
 
 /**
  * Organization available for switching
+ * Phase 6.7: Now fetched from API, not stored in token
  */
 export interface AvailableOrg {
   id: string;

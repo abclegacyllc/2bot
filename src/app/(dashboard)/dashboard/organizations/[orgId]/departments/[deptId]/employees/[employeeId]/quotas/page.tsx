@@ -131,8 +131,9 @@ export default function EmployeeQuotaPage() {
     setError(null);
 
     try {
+      // Using URL-based routes (Phase 6.7) - /api/orgs/:orgId/departments/:deptId for org departments
       // Fetch department info
-      const deptRes = await fetch(`/api/departments/${deptId}`, {
+      const deptRes = await fetch(`/api/orgs/${orgId}/departments/${deptId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -144,7 +145,7 @@ export default function EmployeeQuotaPage() {
       setDepartment(deptData.data);
 
       // Fetch department quotas/limits
-      const deptQuotaRes = await fetch(`/api/departments/${deptId}/quotas`, {
+      const deptQuotaRes = await fetch(`/api/orgs/${orgId}/departments/${deptId}/quotas`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -158,7 +159,7 @@ export default function EmployeeQuotaPage() {
       }
 
       // Fetch department members to get employee info
-      const membersRes = await fetch(`/api/departments/${deptId}/members`, {
+      const membersRes = await fetch(`/api/orgs/${orgId}/departments/${deptId}/members`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -274,7 +275,7 @@ export default function EmployeeQuotaPage() {
       };
 
       const res = await fetch(
-        `/api/departments/${deptId}/members/${employeeId}/quotas`,
+        `/api/orgs/${orgId}/departments/${deptId}/members/${employeeId}/quotas`,
         {
           method: "PUT",
           headers: {

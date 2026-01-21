@@ -194,9 +194,10 @@ function PluginsContent() {
   }, [token, searchQuery, selectedCategory]);
 
   // Fetch user's installed plugins
+  // Using URL-based routes (Phase 6.7) - /api/user/plugins for personal plugins
   const fetchInstalledPlugins = useCallback(async () => {
     try {
-      const response = await fetch("/api/plugins/user/plugins", {
+      const response = await fetch("/api/user/plugins", {
         headers: { Authorization: `Bearer ${token}` },
       })
 

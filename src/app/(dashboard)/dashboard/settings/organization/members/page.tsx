@@ -131,8 +131,9 @@ function MembersContent() {
 
     try {
       setIsLoading(true);
+      // Using URL-based routes (Phase 6.7) - /api/orgs/:orgId/members for org members
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/members`,
+        `/api/orgs/${context.organizationId}/members`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -171,7 +172,7 @@ function MembersContent() {
       setError(null);
 
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/members`,
+        `/api/orgs/${context.organizationId}/members`,
         {
           method: "POST",
           headers: {
@@ -203,7 +204,7 @@ function MembersContent() {
     try {
       setError(null);
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/members/${memberId}`,
+        `/api/orgs/${context.organizationId}/members/${memberId}`,
         {
           method: "PUT",
           headers: {
@@ -233,7 +234,7 @@ function MembersContent() {
     try {
       setError(null);
       const response = await fetch(
-        `/api/organizations/${context.organizationId}/members/${memberId}`,
+        `/api/orgs/${context.organizationId}/members/${memberId}`,
         {
           method: "DELETE",
           headers: {

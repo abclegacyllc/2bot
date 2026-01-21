@@ -3,9 +3,12 @@
  *
  * REST API endpoints for resource quota management.
  *
+ * Note: Context-based routes (/api/quota/status) are deprecated.
+ * Use URL-based routes: /api/user/quota or /api/orgs/:orgId/quota
+ *
  * Endpoints:
- * - GET  /api/quota/status         - Get current quota status
- * - GET  /api/quota/limits         - Get effective limits
+ * - GET  /api/quota/status         - Get current quota status (DEPRECATED)
+ * - GET  /api/quota/limits         - Get effective limits (DEPRECATED)
  * - GET  /api/quota/history        - Get usage history
  * - PUT  /api/organizations/:id/quotas       - Set org quotas (Owner)
  * - GET  /api/departments/:id/quotas         - Get dept quotas
@@ -26,12 +29,15 @@ import type { ApiResponse } from '@/shared/types';
 import { createServiceContext } from '@/shared/types/context';
 
 import { requireAuth } from '../middleware/auth';
+import { deprecated } from '../middleware/deprecation';
 import { asyncHandler } from '../middleware/error-handler';
 
 export const quotaRouter = Router();
 
 /**
  * Helper to create ServiceContext from Express request
+ * Phase 6.7: Token no longer contains activeContext - defaults to personal context
+ * This route is deprecated - use /api/user/quota or /api/orgs/:orgId/quota
  */
 function getServiceContext(req: Request) {
   if (!req.user) {
@@ -45,37 +51,20 @@ function getServiceContext(req: Request) {
     ? req.headers['x-request-id'][0]
     : req.headers['x-request-id'];
 
-  if (req.tokenPayload) {
-    return createServiceContext(
-      {
-        userId: req.tokenPayload.userId,
-        role: req.tokenPayload.role,
-        plan: req.tokenPayload.plan,
-        activeContext: req.tokenPayload.activeContext,
-      },
-      {
-        ipAddress: req.ip,
-        userAgent,
-        requestId,
-      }
-    );
-  }
-
+  // Phase 6.7: Token simplified - context determined by URL, not token
   return createServiceContext(
     {
-      userId: req.user.id,
-      role: req.user.role,
-      plan: req.user.plan,
-      activeContext: {
-        type: 'personal',
-        plan: req.user.plan,
-      },
+      userId: req.tokenPayload?.userId ?? req.user.id,
+      role: req.tokenPayload?.role ?? req.user.role,
+      plan: req.tokenPayload?.plan ?? req.user.plan,
     },
     {
       ipAddress: req.ip,
       userAgent,
       requestId,
-    }
+    },
+    // Default to personal context for legacy routes
+    { contextType: 'personal', effectivePlan: req.user.plan }
   );
 }
 
@@ -114,10 +103,15 @@ function getPathParam(req: Request, name: string): string {
 /**
  * GET /api/quota/status
  * Get current quota status for the active context
+ *
+ * @deprecated Use /api/user/quota for personal or /api/orgs/:orgId/quota for organization
  */
 quotaRouter.get(
   '/status',
   requireAuth,
+  deprecated('/api/user/quota or /api/orgs/:orgId/quota', {
+    message: 'Use URL-based routes: /api/user/quota for personal, /api/orgs/:orgId/quota for organization',
+  }),
   asyncHandler(async (req: Request, res: Response) => {
     const ctx = getServiceContext(req);
     const status = await quotaService.getQuotaStatus(ctx);
@@ -134,10 +128,15 @@ quotaRouter.get(
 /**
  * GET /api/quota/limits
  * Get effective limits for the active context
+ *
+ * @deprecated Use /api/user/quota or /api/orgs/:orgId/quota for quota info including limits
  */
 quotaRouter.get(
   '/limits',
   requireAuth,
+  deprecated('/api/user/quota or /api/orgs/:orgId/quota', {
+    message: 'Use URL-based quota routes which include limits in the response',
+  }),
   asyncHandler(async (req: Request, res: Response) => {
     const ctx = getServiceContext(req);
     const limits = await quotaService.getEffectiveLimits(ctx);

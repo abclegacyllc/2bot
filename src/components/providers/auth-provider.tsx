@@ -5,7 +5,11 @@
  *
  * Provides authentication state and methods to the application.
  * Handles token storage, auto-refresh, and session management.
- * Updated for Phase 4: Context switching support
+ * 
+ * Phase 6.7: Simplified authentication
+ * - Token only contains user identity (no context/orgs)
+ * - Context is UI-only, determined by URL navigation
+ * - Organizations fetched via /api/user/organizations
  */
 
 import { useRouter } from "next/navigation";
@@ -115,27 +119,12 @@ function decodeTokenPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-// Extract context from token
-function getContextFromToken(token: string | null): {
-  context: ActiveContext;
-  availableOrgs: AvailableOrg[];
-} {
-  if (!token) {
-    return { context: defaultContext, availableOrgs: [] };
-  }
-
+// Phase 6.7: Extract user plan from token (context no longer in token)
+function getUserPlanFromToken(token: string | null): "FREE" | "PRO" | "ENTERPRISE" {
+  if (!token) return "FREE";
   const payload = decodeTokenPayload(token);
-  if (!payload) {
-    return { context: defaultContext, availableOrgs: [] };
-  }
-
-  const activeContext = payload.activeContext as ActiveContext | undefined;
-  const availableOrgs = (payload.availableOrgs || []) as AvailableOrg[];
-
-  return {
-    context: activeContext || defaultContext,
-    availableOrgs,
-  };
+  if (!payload) return "FREE";
+  return (payload.plan as "FREE" | "PRO" | "ENTERPRISE") || "FREE";
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
@@ -145,11 +134,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [context, setContext] = useState<ActiveContext>(defaultContext);
   const [availableOrgs, setAvailableOrgs] = useState<AvailableOrg[]>([]);
 
-  // Update context when token changes
-  const updateContextFromToken = useCallback((token: string | null) => {
-    const { context: newContext, availableOrgs: orgs } = getContextFromToken(token);
-    setContext(newContext);
-    setAvailableOrgs(orgs);
+  // Phase 6.7: Fetch available organizations from API
+  const fetchAvailableOrgs = useCallback(async (): Promise<AvailableOrg[]> => {
+    const token = getStoredToken();
+    if (!token) return [];
+
+    try {
+      const response = await fetch("/api/user/organizations", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const result = await response.json();
+      return result.data || [];
+    } catch {
+      return [];
+    }
   }, []);
 
   // Fetch current user from API
@@ -183,7 +188,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const refreshUser = useCallback(async (): Promise<void> => {
     const userData = await fetchUser();
     setUser(userData);
-  }, [fetchUser]);
+    // Also refresh available orgs
+    const orgs = await fetchAvailableOrgs();
+    setAvailableOrgs(orgs);
+  }, [fetchUser, fetchAvailableOrgs]);
 
   // Initialize auth state on mount
   useEffect(() => {
@@ -191,15 +199,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setIsLoading(true);
       try {
         const token = getStoredToken();
-        updateContextFromToken(token);
+        // Phase 6.7: Set default context with user's plan from token
+        const userPlan = getUserPlanFromToken(token);
+        setContext({ type: "personal", plan: userPlan });
+        
         const userData = await fetchUser();
         setUser(userData);
+        
+        // Fetch available orgs from API (not from token)
+        if (userData) {
+          const orgs = await fetchAvailableOrgs();
+          setAvailableOrgs(orgs);
+        }
       } finally {
         setIsLoading(false);
       }
     }
     initAuth();
-  }, [fetchUser, updateContextFromToken]);
+  }, [fetchUser, fetchAvailableOrgs]);
 
   // Login function
   const login = useCallback(
@@ -218,14 +235,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (result.data?.token) {
         storeToken(result.data.token);
-        updateContextFromToken(result.data.token);
+        // Phase 6.7: Set default personal context with user's plan
+        const userPlan = getUserPlanFromToken(result.data.token);
+        setContext({ type: "personal", plan: userPlan });
       }
 
       if (result.data?.user) {
         setUser(result.data.user);
+        // Fetch available orgs from API after login
+        const orgs = await fetchAvailableOrgs();
+        setAvailableOrgs(orgs);
       }
     },
-    [updateContextFromToken]
+    [fetchAvailableOrgs]
   );
 
   // Logout function
@@ -269,17 +291,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (result.data?.token) {
         storeToken(result.data.token);
-        updateContextFromToken(result.data.token);
+        // Phase 6.7: Set default personal context with user's plan
+        const userPlan = getUserPlanFromToken(result.data.token);
+        setContext({ type: "personal", plan: userPlan });
       }
 
       if (result.data?.user) {
         setUser(result.data.user);
+        // New users don't have orgs yet, but fetch anyway for consistency
+        setAvailableOrgs([]);
       }
     },
-    [updateContextFromToken]
+    []
   );
 
-  // Switch context (Phase 4)
+  // Switch context (Phase 6.7 - UI-only navigation)
+  // Context switching is now handled via URL navigation instead of token switching.
+  // Personal resources: /dashboard/* uses /api/user/*
+  // Organization resources: /dashboard/organizations/:orgId/* uses /api/orgs/:orgId/*
   const switchContext = useCallback(
     async (type: "personal" | "organization", orgId?: string): Promise<void> => {
       const token = getStoredToken();
@@ -287,30 +316,37 @@ export function AuthProvider({ children }: AuthProviderProps) {
         throw new Error("Not authenticated");
       }
 
-      const response = await fetch("/api/auth/switch-context", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          contextType: type,
-          organizationId: orgId,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error?.message || "Failed to switch context");
-      }
-
-      if (result.data?.token) {
-        storeToken(result.data.token);
-        updateContextFromToken(result.data.token);
+      // Phase 6.7: UI-only context switching via navigation
+      // No need to fetch new token - just update local state and navigate
+      if (type === "personal") {
+        // Update local context to personal
+        setContext({
+          type: "personal",
+          plan: user?.plan || "FREE",
+        });
+        // Navigate to personal dashboard
+        router.push("/dashboard");
+      } else if (type === "organization" && orgId) {
+        // Find the org in available orgs
+        const org = availableOrgs.find((o) => o.id === orgId);
+        if (!org) {
+          throw new Error("Organization not found");
+        }
+        // Update local context to organization
+        setContext({
+          type: "organization",
+          organizationId: org.id,
+          organizationName: org.name,
+          orgRole: org.role,
+          plan: "FREE", // Default, will be refreshed from org endpoint
+        });
+        // Navigate to organization dashboard
+        router.push(`/dashboard/organizations/${orgId}`);
+      } else {
+        throw new Error("Invalid context switch parameters");
       }
     },
-    [updateContextFromToken]
+    [router, user?.plan, availableOrgs]
   );
 
   const value: AuthContextType = {
