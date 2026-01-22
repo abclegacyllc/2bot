@@ -286,7 +286,7 @@ function OrganizationSettingsContent() {
                         />
                       </FormControl>
                       <FormDescription className="text-muted-foreground">
-                        Used in URLs: 2bot.io/org/{field.value || "slug"}
+                        Used in URLs: 2bot.org/org/{field.value || "slug"}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

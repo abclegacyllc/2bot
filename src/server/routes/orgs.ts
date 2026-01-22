@@ -245,3 +245,120 @@ orgsRouter.get(
     });
   })
 );
+
+// ===========================================
+// Usage Routes
+// ===========================================
+
+/**
+ * GET /api/orgs/:orgId/usage
+ *
+ * Get comprehensive organization usage data for dashboard
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @returns {Object} Organization usage data with departments and members
+ */
+orgsRouter.get(
+  "/:orgId/usage",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    // Get organization details
+    const org = await organizationService.getById(ctx, orgId);
+    
+    // Get quota status
+    const quotaStatus = await quotaService.getQuotaStatus(ctx);
+    
+    // Get all gateways
+    const gateways = await gatewayService.findByUser(ctx);
+    
+    // Get departments
+    const departments = await departmentService.getOrgDepartments(ctx, orgId);
+    
+    // Get members
+    const members = await organizationService.getMembers(ctx, orgId);
+
+    // Calculate reset date (first of next month)
+    const now = new Date();
+    const resetsAt = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    // Build department usage data
+    const deptUsage = departments.map((dept) => ({
+      id: dept.id,
+      name: dept.name,
+      executions: {
+        current: 0, // Would be fetched from quota allocation service
+        allocated: null as number | null,
+      },
+      members: dept.memberCount || 0,
+    }));
+
+    // Build member usage data
+    const memberUsage = members.map((member) => ({
+      id: member.user.id,
+      name: member.user.name || member.user.email,
+      email: member.user.email,
+      avatarUrl: member.user.image,
+      role: member.role,
+      departmentName: undefined, // Would need to look up department
+      executions: {
+        current: 0, // Would be fetched from execution tracker
+        allocated: null as number | null,
+      },
+    }));
+
+    // Build daily history (mock for now - would use usage tracker)
+    const dailyHistory: Array<{ date: string; executions: number }> = [];
+    for (let i = 13; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0] || '';
+      dailyHistory.push({
+        date: dateStr,
+        executions: Math.floor(Math.random() * 5000),
+      });
+    }
+
+    const usage = {
+      organization: {
+        id: org.id,
+        name: org.name,
+        plan: {
+          name: org.plan || 'Business',
+          type: org.plan || 'BUSINESS',
+        },
+      },
+      executions: {
+        current: quotaStatus.apiCalls?.used || 0,
+        limit: quotaStatus.apiCalls?.limit ?? null,
+        resetsAt: resetsAt.toISOString(),
+      },
+      gateways: {
+        current: gateways.length,
+        limit: quotaStatus.gateways?.limit ?? null,
+      },
+      plugins: {
+        current: quotaStatus.plugins?.used || 0,
+        limit: quotaStatus.plugins?.limit ?? null,
+      },
+      workflows: {
+        current: quotaStatus.workflows?.used || 0,
+        limit: quotaStatus.workflows?.limit ?? null,
+      },
+      teamMembers: {
+        current: members.length,
+        limit: null, // Would need to get from plan limits
+      },
+      departments: deptUsage,
+      members: memberUsage,
+      dailyHistory,
+    };
+
+    res.json({
+      success: true,
+      data: usage,
+    });
+  })
+);

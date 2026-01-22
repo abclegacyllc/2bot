@@ -121,17 +121,22 @@ export async function checkPluginLimit(ctx: ServiceContext): Promise<LimitCheckR
 
 /**
  * Check daily execution limit for current context
- * Note: Execution tracking model will be implemented later
- * For now, this returns a stub that always allows executions
+ * Note: Uses executionsPerMonth from plan limits (converted to approximate daily)
+ * For more precise tracking, use the quota service
  */
 export async function checkExecutionLimit(ctx: ServiceContext): Promise<LimitCheckResult> {
   const limits = getPlanLimits(ctx.effectivePlan);
-  const max = limits.executionsPerDay;
-
+  
+  // executionsPerMonth - convert to approximate daily (null = unlimited)
+  const monthlyLimit = limits.executionsPerMonth;
+  
   // Unlimited check
-  if (isUnlimited(max)) {
+  if (monthlyLimit === null || monthlyLimit === -1) {
     return { allowed: true, current: 0, max: -1, remaining: -1 };
   }
+  
+  // Approximate daily limit (monthly / 30)
+  const max = Math.ceil(monthlyLimit / 30);
 
   // TODO: Implement actual execution tracking when PluginExecution model is added
   // For now, return a stub that assumes no executions today

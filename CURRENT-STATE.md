@@ -8,11 +8,11 @@
 
 | Item | Value |
 |------|-------|
-| **Last Updated** | 2026-01-21 |
-| **Last Session** | S33: Phase 6.7 Enterprise Prep |
-| **Current Phase** | Phase 6.7: Architecture Alignment (ALL COMPLETE!) |
-| **Next Task** | Phase 7/8 or Production Deployment |
-| **Overall Progress** | Phase 6.7 Complete (16/16 tasks) |
+| **Last Updated** | 2026-01-22 |
+| **Last Session** | S38: Phase 6.8 Plan Architecture Session 6 (COMPLETE) |
+| **Current Phase** | Phase 6.8: Plan Architecture Redesign ✅ |
+| **Next Task** | Next phase (TBD) |
+| **Overall Progress** | Phase 6.8: 24/24 tasks (ALL PARTS COMPLETE) |
 
 ---
 
@@ -29,9 +29,198 @@
 | Phase 5: Billing | ✅ Complete | 12/12 tasks | All billing + limits done |
 | Phase 6: Launch | ✅ Complete | 16/16 tasks | Production deployed to www.2bot.org ✓ |
 | Phase 6.7: Architecture | ✅ Complete | 16/16 tasks | URL-based APIs + Enterprise Subdomain Ready |
+| Phase 6.8: Plan Arch | ✅ Complete | 24/24 tasks | All parts complete (A-F) |
 ---
 
-## ⭐ Phase 6.7: Architecture Alignment (Current)
+## ⭐ Phase 6.8: Plan Architecture Redesign (Current)
+
+> **Goal:** Implement proper User Plan vs Organization Plan separation with dual execution modes
+> **Why:** Current plan system has inconsistencies (missing STARTER in some places, conflicting limits)
+
+### Session 1 Complete (2026-01-21):
+- [x] **6.8.1** Fix planHierarchy in protected-route
+  - Updated to include all 5 plans: FREE, STARTER, PRO, BUSINESS, ENTERPRISE
+  - Updated ProtectedRouteProps type to allow all plans
+- [x] **6.8.2** Fix admin users page plan filter
+  - Added STARTER to PlanBadge variants (green color)
+  - Added STARTER to plan filter dropdown
+- [x] **6.8.3** Create plan type constants and helpers
+  - Added explicit `PlanType` and `ExecutionMode` types
+  - Added `ALL_PLAN_TYPES`, `SERVERLESS_PLANS`, `WORKSPACE_PLANS`, `PAID_PLAN_TYPES` arrays
+  - Added `PLAN_ORDER` record for hierarchy comparison
+  - Added `getExecutionMode()`, `isHigherPlan()`, `isAtLeastPlan()` helpers
+- [x] **6.8.4** Update PLAN_LIMITS structure
+  - New `PlanLimits` interface with `executionMode`, `workspace`, `executionsPerMonth`
+  - Updated all 5 plans with proper limits
+  - FREE/STARTER: SERVERLESS mode with execution limits
+  - PRO/BUSINESS/ENTERPRISE: WORKSPACE mode with RAM/CPU/storage resources
+- [x] **6.8.5** Unify PLAN_QUOTA_LIMITS with PLAN_LIMITS
+  - Removed duplicate `PLAN_QUOTA_LIMITS` from quota.types.ts
+  - Created `getPlanQuotaLimits()` adapter function in quota.service.ts
+  - Single source of truth in `src/shared/constants/plans.ts`
+
+### Files Modified This Session:
+- `src/components/auth/protected-route.tsx` - All 5 plans in hierarchy
+- `src/app/(admin)/admin/users/page.tsx` - STARTER in filter and badge
+- `src/shared/constants/plans.ts` - Complete rewrite with new structure
+- `src/modules/quota/quota.types.ts` - Removed PLAN_QUOTA_LIMITS
+- `src/modules/quota/quota.service.ts` - Uses adapter function
+- `src/lib/plan-limits.ts` - Updated for new structure
+- `src/modules/billing/billing.types.ts` - Updated SubscriptionInfo interface
+- `src/modules/billing/stripe.service.ts` - Updated limits return format
+- `src/shared/types/index.ts` - Updated exports
+
+### Session 2 Complete (2026-01-21):
+- [x] **6.8.6** Create WORKSPACE_ADDONS constant
+  - Created `src/shared/constants/workspace-addons.ts`
+  - Defined 5 add-on tiers: MICRO ($3), SMALL ($5), MEDIUM ($10), LARGE ($20), XLARGE ($40)
+  - Added helper functions: `calculateTotalWorkspace()`, `hasWorkspaceEnabled()`, `calculateAddonsPrice()`
+- [x] **6.8.7** Add ExecutionMode enum to schema
+  - Added `ExecutionMode` enum: SERVERLESS, WORKSPACE
+  - Created baseline migration `20260121000000_baseline`
+- [x] **6.8.8** Add workspace fields to User model
+  - Added `executionMode` field with SERVERLESS default
+  - Added `workspaceAddons` String[] for add-on tier names
+  - Added computed fields: `workspaceRamMb`, `workspaceCpuCores`, `workspaceStorageMb`
+
+### Files Modified Session 2:
+- `src/shared/constants/workspace-addons.ts` - NEW: Workspace add-on definitions
+- `src/shared/constants/index.ts` - Added workspace-addons export
+- `prisma/schema.prisma` - ExecutionMode enum + User workspace fields
+- `prisma/migrations/20260121000000_baseline/` - Baseline migration
+
+### Next Session (Part C: Org Plan Separation):
+- [x] **6.8.9** Add OrgPlan enum to schema
+- [x] **6.8.10** Create ORG_PLAN_LIMITS constant
+- [x] **6.8.11** Migrate Organization.plan to OrgPlan
+
+### Session 3 Complete (2026-01-21):
+- [x] **6.8.9** Add OrgPlan enum to schema
+  - Added `OrgPlan` enum: ORG_STARTER, ORG_GROWTH, ORG_PRO, ORG_BUSINESS, ORG_ENTERPRISE
+- [x] **6.8.10** Create ORG_PLAN_LIMITS constant
+  - Created `src/shared/constants/org-plans.ts` with comprehensive org limits
+  - 5 tiers from $49/mo to custom enterprise pricing
+  - Includes seats, pool resources, features (SSO, branding, etc.)
+  - Added helper functions: `isHigherOrgPlan()`, `isAtLeastOrgPlan()`, `getOrgPlanLimits()`
+- [x] **6.8.11** Migrate Organization.plan to OrgPlan
+  - Changed Organization.plan from `PlanType` to `OrgPlan`
+  - Added `maxSeats`, `usedSeats`, pool resource fields
+  - Updated SafeOrganization interface
+- [x] **6.8.12** Update organization service for OrgPlan
+  - Added org plan helper methods: `canAddGateway()`, `canAddWorkflow()`, `canAddSeat()`
+  - Added `hasFeature()` and `getRemainingAiTokens()` methods
+  - Updated auth types to support `PlanType | OrgPlan` union
+  - Fixed Stripe webhook to map PlanType to OrgPlan for orgs
+
+### Files Modified Session 3:
+- `prisma/schema.prisma` - OrgPlan enum + Organization model updates
+- `src/shared/constants/org-plans.ts` - NEW: Org plan limits and helpers
+- `src/shared/constants/index.ts` - Added org-plans export
+- `src/modules/organization/organization.types.ts` - Updated for OrgPlan
+- `src/modules/organization/organization.service.ts` - Added org plan helpers
+- `src/modules/organization/organization.validation.ts` - Removed maxMembers
+- `src/modules/auth/auth.types.ts` - Support PlanType | OrgPlan union
+- `src/modules/auth/auth.service.ts` - Updated contextPlan type
+- `src/server/routes/stripe-webhook.ts` - Map to OrgPlan for orgs
+
+### Next Session (Part D: Quota Management):
+- [x] **6.8.13** Add DeptAllocation and MemberAllocation schemas
+- [x] **6.8.14** Create QuotaAllocationService
+- [x] **6.8.15** Create quota enforcement middleware
+- [x] **6.8.16** Build admin quota management UI
+
+### Session 4 Complete (2026-01-21):
+- [x] **6.8.13** Add DeptAllocation and MemberAllocation schemas
+  - Added `DeptAllocation` model for department-level quota distribution
+  - Added `MemberAllocation` model for member-level quota limits
+- [x] **6.8.14** Create QuotaAllocationService
+  - Created `src/modules/quota/quota-allocation.service.ts`
+  - Created `src/modules/quota/quota-allocation.types.ts`
+  - Implements hierarchical quota distribution (Org → Dept → Member)
+- [x] **6.8.15** Create quota enforcement middleware
+  - Created `src/modules/quota/quota-enforcement.service.ts`
+  - Enforces limits at execution time with warning levels
+- [x] **6.8.16** Build admin quota management UI
+  - Created `src/components/organization/dept-allocation-form.tsx`
+  - Created `src/components/organization/dept-allocation-table.tsx`
+  - Created `src/components/organization/dept-quota-modal.tsx`
+  - Created `src/app/(dashboard)/dashboard/organizations/[orgId]/quotas/page.tsx`
+
+### Session 5 Complete (2026-01-21):
+- [x] **6.8.17** Create ExecutionTracker service
+  - Created `src/modules/quota/execution-tracker.service.ts`
+  - Created `src/modules/quota/execution-tracker.types.ts`
+  - Tracks workflow/API executions against plan limits with Redis
+- [x] **6.8.18** Create usage warning components
+  - Created `src/components/quota/usage-progress-bar.tsx` - Color-coded progress bar
+  - Created `src/components/quota/usage-warning-banner.tsx` - Warning banners at 80%, 95%, 100%
+  - Created `src/components/quota/resource-usage-card.tsx` - Card with icon, usage, reset date
+- [x] **6.8.19** Create upgrade prompt components
+  - Created `src/components/quota/upgrade-prompt.tsx` - Contextual upgrade suggestions
+  - Created `src/components/quota/plan-comparison-mini.tsx` - Side-by-side comparison
+- [x] **6.8.20** Create limit reached modal
+  - Created `src/components/quota/limit-reached-modal.tsx` - Blocked state with upgrade options
+- [x] **6.8.21** Create user usage dashboard
+  - Created `src/app/(dashboard)/dashboard/usage/page.tsx`
+  - Created `src/app/(dashboard)/dashboard/usage/client.tsx`
+  - Created `src/components/quota/usage-overview.tsx`
+  - Created `src/components/quota/usage-history-chart.tsx`
+  - Created `src/server/routes/usage.ts` - Backend route
+- [x] **6.8.22** Create org usage dashboard
+  - Created `src/app/(dashboard)/dashboard/organizations/[orgId]/usage/page.tsx`
+  - Created `src/app/(dashboard)/dashboard/organizations/[orgId]/usage/client.tsx`
+  - Created `src/components/organization/org-usage-overview.tsx`
+  - Created `src/components/organization/dept-usage-breakdown.tsx`
+  - Created `src/components/organization/member-usage-table.tsx`
+  - Added `/api/orgs/:orgId/usage` endpoint to orgs router
+
+### Session 6 Complete (2026-01-22):
+- [x] **6.8.23** Add plan architecture tests
+  - Created `src/shared/constants/__tests__/plans.test.ts` (51 tests)
+  - Created `src/shared/constants/__tests__/org-plans.test.ts` (45 tests)
+  - Created `src/modules/quota/__tests__/quota-allocation.test.ts` (34 tests)
+  - All 130 tests passing, >80% coverage on plan constants
+  - Installed Vitest testing framework with coverage support
+- [x] **6.8.24** Update CURRENT-STATE.md
+  - Documented complete Plan Architecture section
+  - All 24 tasks in Phase 6.8 complete
+
+---
+
+## 📚 Plan Architecture
+
+### User Plans (Individual)
+- **FREE, STARTER**: Serverless mode with execution limits (500/5K per month)
+- **PRO, BUSINESS, ENTERPRISE**: Workspace mode with unlimited executions and resource allocations
+
+### Organization Plans (Teams)
+- All org plans use **WORKSPACE** execution mode
+- **Shared resource pools**: gateways, plugins, workflows, AI tokens
+- **Quota allocation hierarchy**: Org → Department → Member
+
+### Dual Execution Modes
+
+| Mode | Plans | Limit Type | Best For |
+|------|-------|------------|----------|
+| **SERVERLESS** | FREE, STARTER | Execution count (500/5K per month) | Beginners, low volume |
+| **WORKSPACE** | PRO, BUSINESS, ENTERPRISE | Resources (RAM/CPU/Storage) | Developers, high volume |
+
+### Key Files
+- `src/shared/constants/plans.ts` - User plan limits (PlanType, PLAN_LIMITS)
+- `src/shared/constants/org-plans.ts` - Organization plan limits (OrgPlanType, ORG_PLAN_LIMITS)
+- `src/shared/constants/workspace-addons.ts` - Add-on tiers for serverless → workspace upgrade
+- `src/modules/quota/quota-allocation.service.ts` - Hierarchical quota management (886 lines)
+- `src/modules/quota/quota-enforcement.service.ts` - Limit enforcement with warning levels
+- `src/modules/quota/execution-tracker.service.ts` - Redis-backed execution tracking
+
+### Test Coverage
+- `src/shared/constants/__tests__/plans.test.ts` - 51 tests (81% coverage)
+- `src/shared/constants/__tests__/org-plans.test.ts` - 45 tests (100% coverage)
+- `src/modules/quota/__tests__/quota-allocation.test.ts` - 34 tests
+
+---
+
+## ⭐ Phase 6.7: Architecture Alignment (COMPLETE)
 
 > **Goal:** Align API architecture with ROADMAP URL-based design pattern (GitHub-style)
 > **Why:** Current token-based context causes team confusion, debugging difficulty, and security audit complexity

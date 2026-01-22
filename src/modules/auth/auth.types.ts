@@ -1,7 +1,7 @@
-import type { OrgRole, PlanType, Session, User, UserRole } from "@prisma/client";
+import type { OrgPlan, OrgRole, PlanType, Session, User, UserRole } from "@prisma/client";
 
 // Re-export Prisma types
-export type { OrgRole, PlanType, Session, User, UserRole } from "@prisma/client";
+export type { OrgPlan, OrgRole, PlanType, Session, User, UserRole } from "@prisma/client";
 
 /**
  * User without sensitive fields (for API responses)
@@ -116,7 +116,7 @@ export interface SwitchContextResponse {
     organizationId?: string;
     organizationName?: string;
     orgRole?: OrgRole;
-    plan: PlanType;
+    plan: PlanType | OrgPlan; // User plan (personal) or Org plan (organization)
   };
 }
 

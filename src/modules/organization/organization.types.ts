@@ -10,13 +10,14 @@ import type {
     Membership,
     MembershipStatus,
     Organization,
+    OrgPlan,
     OrgRole,
     PlanType,
 } from "@prisma/client";
 
 // Re-export Prisma types
 export type {
-    Membership, MembershipStatus, Organization, OrgRole, PlanType
+    Membership, MembershipStatus, Organization, OrgPlan, OrgRole, PlanType
 } from "@prisma/client";
 
 // ===========================================
@@ -40,7 +41,7 @@ export interface OrgWithRole {
   name: string;
   slug: string;
   role: OrgRole;
-  plan: PlanType;
+  plan: OrgPlan;
   memberCount: number;
   isActive: boolean;
   createdAt: Date;
@@ -53,8 +54,12 @@ export interface SafeOrganization {
   id: string;
   name: string;
   slug: string;
-  plan: PlanType;
-  maxMembers: number | null;
+  plan: OrgPlan;
+  maxSeats: number;
+  usedSeats: number;
+  poolRamMb: number;
+  poolCpuCores: number;
+  poolStorageMb: number;
   memberCount: number;
   isActive: boolean;
   createdAt: Date;
@@ -72,7 +77,11 @@ export function toSafeOrganization(
     name: org.name,
     slug: org.slug,
     plan: org.plan,
-    maxMembers: org.maxMembers,
+    maxSeats: org.maxSeats,
+    usedSeats: org.usedSeats,
+    poolRamMb: org.poolRamMb,
+    poolCpuCores: org.poolCpuCores,
+    poolStorageMb: org.poolStorageMb,
     memberCount: org._count.memberships,
     isActive: org.isActive,
     createdAt: org.createdAt,
@@ -139,7 +148,7 @@ export interface CreateOrgRequest {
 export interface UpdateOrgRequest {
   name?: string;
   slug?: string;
-  maxMembers?: number | null;
+  // Note: maxSeats can only be increased by upgrading plan or purchasing extra seats
 }
 
 /**

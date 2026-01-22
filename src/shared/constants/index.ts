@@ -5,6 +5,8 @@ export * from "./limits";
 export * from "./permissions";
 export * from "./plans";
 export * from "./rate-limits";
+export * from "./workspace-addons";
+export * from "./org-plans";
 
 /**
  * Supported gateway types
@@ -23,8 +25,8 @@ export const APP_CONFIG = {
   apiVersion: "v1",
   defaultPageSize: 20,
   maxPageSize: 100,
-  supportEmail: "support@2bot.dev",
-  docsUrl: "https://docs.2bot.dev",
+  supportEmail: "support@2bot.org",
+  docsUrl: "https://docs.2bot.org",
 } as const;
 
 /**

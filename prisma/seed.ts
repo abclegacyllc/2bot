@@ -24,8 +24,8 @@ async function main() {
   await prisma.user.deleteMany();
 
   // Hash default passwords
-  const testPassword = await hash("test1234", SALT_ROUNDS);
-  const adminPassword = await hash("admin1234", SALT_ROUNDS);
+  const testPassword = await hash("12345678test", SALT_ROUNDS);
+  const adminPassword = await hash("12345678admin", SALT_ROUNDS);
 
   // Create test user
   const testUser = await prisma.user.create({
@@ -43,7 +43,7 @@ async function main() {
   // Create admin user
   const adminUser = await prisma.user.create({
     data: {
-      email: "admin@2bot.dev",
+      email: "admin@2bot.org",
       passwordHash: adminPassword,
       name: "Admin User",
       plan: "PRO",
@@ -79,9 +79,9 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log("\n🎉 Database seeded successfully!");
   // eslint-disable-next-line no-console
-  console.log("📝 Test credentials: test@example.com / test1234");
+  console.log("📝 Test credentials: test@example.com / 12345678test");
   // eslint-disable-next-line no-console
-  console.log("📝 Admin credentials: admin@2bot.dev / admin1234");
+  console.log("📝 Admin credentials: admin@2bot.org / 12345678admin");
 }
 
 main()

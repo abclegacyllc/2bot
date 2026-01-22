@@ -13,10 +13,33 @@ import Stripe from 'stripe';
 
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
+import type { OrgPlanType } from '@/shared/constants/org-plans';
 import type { PlanType } from '@/shared/constants/plans';
 import { STRIPE_PRICES } from '@/shared/constants/plans';
 
 const webhookLogger = logger.child({ module: 'stripe-webhook' });
+
+/**
+ * Map a plan string to OrgPlan enum value
+ * Stripe metadata may contain PlanType or OrgPlanType strings
+ */
+function toOrgPlan(plan: string | undefined): OrgPlanType {
+  // If it's already an org plan, return it
+  if (plan?.startsWith('ORG_')) {
+    return plan as OrgPlanType;
+  }
+  
+  // Map user plans to corresponding org plans
+  const mapping: Record<string, OrgPlanType> = {
+    'FREE': 'ORG_STARTER',
+    'STARTER': 'ORG_STARTER',
+    'PRO': 'ORG_PRO',
+    'BUSINESS': 'ORG_BUSINESS',
+    'ENTERPRISE': 'ORG_ENTERPRISE',
+  };
+  
+  return mapping[plan ?? ''] ?? 'ORG_STARTER';
+}
 
 // Initialize Stripe client conditionally
 const stripe = process.env.STRIPE_SECRET_KEY
@@ -173,6 +196,8 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session): Promise
 
   if (organizationId) {
     // Update org subscription + org.plan
+    // Map PlanType to OrgPlan for organizations
+    const orgPlan = toOrgPlan(plan);
     await prisma.$transaction([
       prisma.subscription.upsert({
         where: { organizationId },
@@ -184,10 +209,10 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session): Promise
       }),
       prisma.organization.update({
         where: { id: organizationId },
-        data: { plan: plan as PlanType },
+        data: { plan: orgPlan },
       }),
     ]);
-    webhookLogger.info({ organizationId, plan }, 'Updated organization subscription');
+    webhookLogger.info({ organizationId, plan: orgPlan }, 'Updated organization subscription');
   } else if (userId) {
     // Update user subscription + user.plan
     await prisma.$transaction([
@@ -269,12 +294,13 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
 
   // Also update user/org plan field
   if (dbSubscription.organizationId) {
+    const orgPlan = toOrgPlan(plan);
     await prisma.organization.update({
       where: { id: dbSubscription.organizationId },
-      data: { plan },
+      data: { plan: orgPlan },
     });
     webhookLogger.info(
-      { organizationId: dbSubscription.organizationId, plan },
+      { organizationId: dbSubscription.organizationId, plan: orgPlan },
       'Updated organization plan'
     );
   } else if (dbSubscription.userId) {
@@ -327,11 +353,11 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Pro
   if (dbSubscription.organizationId) {
     await prisma.organization.update({
       where: { id: dbSubscription.organizationId },
-      data: { plan: 'FREE' },
+      data: { plan: 'ORG_STARTER' },
     });
     webhookLogger.info(
       { organizationId: dbSubscription.organizationId },
-      'Reset organization to FREE plan'
+      'Reset organization to ORG_STARTER plan'
     );
   } else if (dbSubscription.userId) {
     await prisma.user.update({

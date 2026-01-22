@@ -4,18 +4,14 @@ import type { TokenPayload } from '../src/modules/auth/auth.types';
 async function testJWT() {
   console.log('Testing JWT utilities...\n');
 
-  // Test payload (includes activeContext for Phase 4)
+  // Test payload - Phase 6.7: Simplified token (no activeContext/availableOrgs)
+  // Context is now determined by URL, not token
   const payload: TokenPayload = {
     userId: 'user_123',
     email: 'test@example.com',
     plan: 'FREE' as const,
     sessionId: 'sess_456',
     role: 'MEMBER' as const,
-    activeContext: {
-      type: 'personal',
-      plan: 'FREE' as const,
-    },
-    availableOrgs: [],
   };
 
   // Test token generation

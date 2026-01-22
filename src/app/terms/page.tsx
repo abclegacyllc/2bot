@@ -226,19 +226,10 @@ export default function TermsOfServicePage() {
                 <li>
                   <strong className="text-foreground">Email:</strong>{" "}
                   <a
-                    href="mailto:legal@2bot.ai"
+                    href="mailto:support@2bot.org"
                     className="text-purple-400 hover:text-purple-300"
                   >
-                    legal@2bot.ai
-                  </a>
-                </li>
-                <li>
-                  <strong className="text-foreground">Support:</strong>{" "}
-                  <a
-                    href="mailto:support@2bot.ai"
-                    className="text-purple-400 hover:text-purple-300"
-                  >
-                    support@2bot.ai
+                    support@2bot.org
                   </a>
                 </li>
               </ul>

@@ -22,7 +22,7 @@ interface ProtectedRouteProps {
   /**
    * Required plan for access (optional)
    */
-  requiredPlan?: "FREE" | "PRO";
+  requiredPlan?: "FREE" | "STARTER" | "PRO" | "BUSINESS" | "ENTERPRISE";
 }
 
 /**
@@ -101,7 +101,13 @@ export function ProtectedRoute({
 
   // Check plan requirement
   if (requiredPlan && user) {
-    const planHierarchy: Record<string, number> = { FREE: 0, PRO: 1, ENTERPRISE: 2 };
+    const planHierarchy: Record<string, number> = { 
+      FREE: 0, 
+      STARTER: 1, 
+      PRO: 2, 
+      BUSINESS: 3, 
+      ENTERPRISE: 4 
+    };
     const userPlanLevel = planHierarchy[user.plan] ?? 0;
     const requiredPlanLevel = planHierarchy[requiredPlan] ?? 0;
 
@@ -122,7 +128,7 @@ export function ProtectedRoute({
  */
 export function withProtectedRoute<P extends object>(
   WrappedComponent: React.ComponentType<P>,
-  options?: { redirectTo?: string; requiredPlan?: "FREE" | "PRO" }
+  options?: { redirectTo?: string; requiredPlan?: "FREE" | "STARTER" | "PRO" | "BUSINESS" | "ENTERPRISE" }
 ) {
   return function ProtectedComponent(props: P) {
     return (

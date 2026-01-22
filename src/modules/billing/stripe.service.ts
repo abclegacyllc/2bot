@@ -220,10 +220,9 @@ class StripeService {
       limits: {
         gateways: limits.gateways,
         plugins: limits.plugins,
-        executionsPerDay: limits.executionsPerDay,
+        executionsPerMonth: limits.executionsPerMonth,
         aiTokensPerMonth: limits.aiTokensPerMonth,
-        ramMb: limits.ramMb,
-        storageMb: limits.storageMb,
+        workspace: limits.workspace,
       },
     };
   }

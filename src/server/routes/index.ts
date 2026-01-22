@@ -20,6 +20,7 @@ import { organizationRouter } from "./organization";
 import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
 import { quotaRouter } from "./quota";
+import { usageRouter } from "./usage";
 import { userRouter } from "./user";
 import { webhookRouter } from "./webhook";
 
@@ -79,6 +80,12 @@ router.use("/plugins", pluginRouter);
  * Resource quota status, limits, and management
  */
 router.use("/quota", quotaRouter);
+
+/**
+ * Usage routes (Phase 6.8)
+ * Dashboard usage data and history
+ */
+router.use("/usage", usageRouter);
 
 /**
  * Alert routes (Phase 4)

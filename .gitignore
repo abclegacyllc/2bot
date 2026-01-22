@@ -32,6 +32,12 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.production.example
+
+# SSL certificates (NEVER commit)
+/ssl/
+*.key
+nginx/ssl/
 
 # vercel
 .vercel

@@ -740,6 +740,51 @@ class UsageTrackerServiceImpl {
       periodType: 'DAILY',
     };
   }
+
+  /**
+   * Get daily execution count for a specific date
+   * Used for usage history charts
+   */
+  async getDailyCount(userId: string, dateStr: string): Promise<number> {
+    try {
+      // Try to get from database first
+      const periodStart = new Date(dateStr);
+      periodStart.setHours(0, 0, 0, 0);
+
+      const record = await prisma.usageHistory.findUnique({
+        where: {
+          userId_periodStart_periodType: {
+            userId,
+            periodStart,
+            periodType: 'DAILY',
+          },
+        },
+      });
+
+      if (record) {
+        // Return sum of API calls, workflow runs, plugin executions
+        return (record.apiCalls || 0) + (record.workflowRuns || 0) + (record.pluginExecutions || 0);
+      }
+
+      // If no record, try Redis for current day
+      const today = new Date().toISOString().split('T')[0];
+      if (dateStr === today) {
+        const key = `user:${userId}`;
+        const [apiCalls, workflowRuns, pluginExecutions] = await Promise.all([
+          redis.get(`${REDIS_KEYS.API_CALLS}:${key}:${dateStr}`),
+          redis.get(`${REDIS_KEYS.WORKFLOW_RUNS}:${key}:${dateStr}`),
+          redis.get(`${REDIS_KEYS.PLUGIN_EXECUTIONS}:${key}:${dateStr}`),
+        ]);
+
+        return parseInt(apiCalls || '0') + parseInt(workflowRuns || '0') + parseInt(pluginExecutions || '0');
+      }
+
+      return 0;
+    } catch (err) {
+      log.error({ err, userId, dateStr }, 'Failed to get daily count');
+      return 0;
+    }
+  }
 }
 
 // Export singleton instance

@@ -216,10 +216,10 @@ export default function PrivacyPolicyPage() {
               <p className="text-muted-foreground leading-relaxed">
                 To exercise these rights, please contact us at{" "}
                 <a
-                  href="mailto:privacy@2bot.ai"
+                  href="mailto:support@2bot.org"
                   className="text-purple-400 hover:text-purple-300"
                 >
-                  privacy@2bot.ai
+                  support@2bot.org
                 </a>
                 .
               </p>
@@ -374,30 +374,12 @@ export default function PrivacyPolicyPage() {
               </p>
               <ul className="list-none text-muted-foreground space-y-2">
                 <li>
-                  <strong className="text-foreground">Privacy Inquiries:</strong>{" "}
+                  <strong className="text-foreground">Email:</strong>{" "}
                   <a
-                    href="mailto:privacy@2bot.ai"
+                    href="mailto:support@2bot.org"
                     className="text-purple-400 hover:text-purple-300"
                   >
-                    privacy@2bot.ai
-                  </a>
-                </li>
-                <li>
-                  <strong className="text-foreground">General Support:</strong>{" "}
-                  <a
-                    href="mailto:support@2bot.ai"
-                    className="text-purple-400 hover:text-purple-300"
-                  >
-                    support@2bot.ai
-                  </a>
-                </li>
-                <li>
-                  <strong className="text-foreground">Data Protection Officer:</strong>{" "}
-                  <a
-                    href="mailto:dpo@2bot.ai"
-                    className="text-purple-400 hover:text-purple-300"
-                  >
-                    dpo@2bot.ai
+                    support@2bot.org
                   </a>
                 </li>
               </ul>

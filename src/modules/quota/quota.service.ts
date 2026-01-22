@@ -13,11 +13,10 @@
 
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
-import type { PlanType } from '@/shared/constants/plans';
+import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
 import { AppError } from '@/shared/errors';
 import type { ServiceContext } from '@/shared/types/context';
 import {
-    PLAN_QUOTA_LIMITS,
     ResourceType,
     type PeriodType,
     type QuotaCheckResult,
@@ -30,6 +29,28 @@ import {
 } from './quota.types';
 
 const log = logger.child({ module: 'quota' });
+
+// ===========================================
+// Plan Limits Adapter
+// ===========================================
+
+/**
+ * Convert PLAN_LIMITS to ResourceLimits format for quota checking
+ * Single source of truth - all values come from plans.ts
+ */
+function getPlanQuotaLimits(plan: PlanType): ResourceLimits {
+  const limits = PLAN_LIMITS[plan];
+  return {
+    maxWorkflows: limits.workflows === -1 ? -1 : limits.workflows,
+    maxPlugins: limits.plugins === -1 ? -1 : limits.plugins,
+    maxApiCalls: limits.executionsPerMonth,  // null = unlimited → -1
+    maxStorage: limits.workspace?.storageMb ?? 0,
+    maxSteps: limits.workflowSteps,
+    maxGateways: limits.gateways === -1 ? -1 : limits.gateways,
+    maxDepartments: limits.maxDepartments === -1 ? -1 : limits.maxDepartments,
+    maxMembers: limits.maxMembers === -1 ? -1 : limits.maxMembers,
+  };
+}
 
 // ===========================================
 // Custom Errors
@@ -157,7 +178,7 @@ class QuotaServiceImpl {
    */
   async getEffectiveLimits(ctx: ServiceContext): Promise<ResourceLimits> {
     const plan = ctx.effectivePlan ?? ctx.userPlan;
-    const planLimits = PLAN_QUOTA_LIMITS[plan as PlanType] ?? PLAN_QUOTA_LIMITS.FREE;
+    const planLimits = getPlanQuotaLimits(plan as PlanType);
 
     // Start with plan defaults
     let limits: ResourceLimits = { ...planLimits };
@@ -554,10 +575,10 @@ class QuotaServiceImpl {
     });
 
     if (!org) {
-      return PLAN_QUOTA_LIMITS.FREE;
+      return getPlanQuotaLimits('FREE');
     }
 
-    const planLimits = PLAN_QUOTA_LIMITS[org.plan as PlanType] ?? PLAN_QUOTA_LIMITS.FREE;
+    const planLimits = getPlanQuotaLimits(org.plan as PlanType);
 
     if (org.resourceQuota) {
       return this.mergeQuotas(planLimits, org.resourceQuota);
@@ -576,7 +597,7 @@ class QuotaServiceImpl {
     });
 
     if (!dept) {
-      return PLAN_QUOTA_LIMITS.FREE;
+      return getPlanQuotaLimits('FREE');
     }
 
     // Start with org limits

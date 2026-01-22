@@ -13,14 +13,17 @@ RUN apk add --no-cache libc6-compat python3 make g++
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma/
 
-# Install dependencies
+# Install all dependencies (including dev for build)
 RUN npm ci
 
 # Generate Prisma client
 RUN npx prisma generate
 
-# Copy source code
+# Copy source code and config
 COPY . .
+
+# Build TypeScript to JavaScript
+RUN npm run build:server
 
 # Production stage
 FROM node:20-alpine AS runner
@@ -32,12 +35,11 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 expressjs
 
-# Copy necessary files
+# Copy only production dependencies and compiled code
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/dist ./dist
 
 # Set correct permissions
 RUN chown -R expressjs:nodejs /app
@@ -50,5 +52,5 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
 
-# Start Express server
-CMD ["npx", "tsx", "src/server/start.ts"]
+# Start compiled Express server (no tsx = 2-3x less RAM!)
+CMD ["node", "dist/server/start.js"]

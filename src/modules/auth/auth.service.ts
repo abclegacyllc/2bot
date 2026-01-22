@@ -10,7 +10,7 @@
 import { generateToken, verifyToken } from "@/lib/jwt";
 import { hashPassword, isPasswordSecure, verifyPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
-import type { OrgRole, Session, User } from "@prisma/client";
+import type { OrgPlan, OrgRole, PlanType, Session, User } from "@prisma/client";
 import type {
     AuthResponse,
     LoginRequest,
@@ -269,7 +269,7 @@ class AuthService {
       throw new AuthError("Account is deactivated", "USER_INACTIVE");
     }
 
-    let contextPlan = user.plan;
+    let contextPlan: PlanType | OrgPlan = user.plan;
     let organizationName: string | undefined;
     let orgRole: OrgRole | undefined;
     let organizationId: string | undefined;

@@ -72,7 +72,7 @@ export const createOrgSchema = z.object({
 export const updateOrgSchema = z.object({
   name: orgNameSchema.optional(),
   slug: orgSlugSchema.optional(),
-  maxMembers: z.number().int().min(1).max(10000).nullable().optional(),
+  // Note: maxSeats is managed by plan/billing, not direct update
 });
 
 /**

@@ -299,7 +299,7 @@ function UpgradeContent() {
               For enterprise needs with custom limits, dedicated infrastructure,
               or special requirements, please{" "}
               <a
-                href="mailto:enterprise@2bot.ai"
+                href="mailto:support@2bot.org"
                 className="text-purple-400 hover:text-purple-300 underline"
               >
                 contact our sales team

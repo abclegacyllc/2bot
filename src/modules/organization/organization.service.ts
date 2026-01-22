@@ -6,11 +6,18 @@
  * @module modules/organization/organization.service
  */
 
-import type { MembershipStatus, OrgRole } from "@prisma/client";
+import type { MembershipStatus, OrgPlan, OrgRole } from "@prisma/client";
 
 import { audit, type AuditContext } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import {
+  getOrgPlanLimits,
+  isAtLeastOrgPlan,
+  isOrgLimitExceeded,
+  ORG_PLAN_LIMITS,
+  type OrgPlanType,
+} from "@/shared/constants/org-plans";
 import {
     ConflictError,
     ForbiddenError,
@@ -200,7 +207,6 @@ class OrganizationService {
       data: {
         name: data.name,
         slug: data.slug,
-        maxMembers: data.maxMembers,
       },
       include: {
         _count: { select: { memberships: true } },
@@ -357,12 +363,12 @@ class OrganizationService {
       throw new NotFoundError("Organization not found");
     }
 
-    // Check member limit
-    // Use org's maxMembers if set, otherwise allow unlimited
-    const maxMembers = org.maxMembers;
-    if (maxMembers !== null && maxMembers !== -1 && org._count.memberships >= maxMembers) {
+    // Check seat limit
+    // Use org's maxSeats (from plan or purchased extras)
+    const maxSeats = org.maxSeats;
+    if (maxSeats !== -1 && org._count.memberships >= maxSeats) {
       throw new ForbiddenError(
-        `Member limit reached (${maxMembers}). Contact admin to increase limit.`
+        `Seat limit reached (${maxSeats}). Upgrade your plan or purchase additional seats.`
       );
     }
 
@@ -886,6 +892,131 @@ class OrganizationService {
     }
 
     return membership;
+  }
+
+  // ===========================================
+  // Org Plan Helper Methods
+  // ===========================================
+
+  /**
+   * Get org plan limits for an organization
+   */
+  getOrgPlanLimits(plan: OrgPlan) {
+    return getOrgPlanLimits(plan as OrgPlanType);
+  }
+
+  /**
+   * Check if org has at least the required plan
+   */
+  hasAtLeastPlan(orgPlan: OrgPlan, requiredPlan: OrgPlan): boolean {
+    return isAtLeastOrgPlan(orgPlan as OrgPlanType, requiredPlan as OrgPlanType);
+  }
+
+  /**
+   * Check if org can add more gateways
+   */
+  async canAddGateway(orgId: string): Promise<{ allowed: boolean; current: number; limit: number }> {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      include: { _count: { select: { gateways: true } } },
+    });
+
+    if (!org) throw new NotFoundError("Organization not found");
+
+    const limits = this.getOrgPlanLimits(org.plan);
+    const current = org._count.gateways;
+    const limit = limits.sharedGateways;
+
+    return {
+      allowed: !isOrgLimitExceeded(current, limit),
+      current,
+      limit,
+    };
+  }
+
+  /**
+   * Check if org can add more workflows
+   */
+  async canAddWorkflow(orgId: string): Promise<{ allowed: boolean; current: number; limit: number }> {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      include: { _count: { select: { workflows: true } } },
+    });
+
+    if (!org) throw new NotFoundError("Organization not found");
+
+    const limits = this.getOrgPlanLimits(org.plan);
+    const current = org._count.workflows;
+    const limit = limits.sharedWorkflows;
+
+    return {
+      allowed: !isOrgLimitExceeded(current, limit),
+      current,
+      limit,
+    };
+  }
+
+  /**
+   * Check if org can add more seats (members)
+   */
+  async canAddSeat(orgId: string): Promise<{ allowed: boolean; current: number; limit: number }> {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      include: { _count: { select: { memberships: true } } },
+    });
+
+    if (!org) throw new NotFoundError("Organization not found");
+
+    const current = org._count.memberships;
+    const limit = org.maxSeats;
+
+    return {
+      allowed: limit === -1 || current < limit,
+      current,
+      limit,
+    };
+  }
+
+  /**
+   * Check if org has a specific feature enabled
+   */
+  async hasFeature(
+    orgId: string, 
+    feature: 'sso' | 'customBranding' | 'prioritySupport' | 'auditLogs' | 'apiAccess' | 'dedicatedDatabase'
+  ): Promise<boolean> {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { plan: true },
+    });
+
+    if (!org) throw new NotFoundError("Organization not found");
+
+    const limits = this.getOrgPlanLimits(org.plan);
+    return limits.features[feature];
+  }
+
+  /**
+   * Get remaining AI tokens for this billing period
+   * Note: AI token tracking will be implemented in Phase 6.8+ with ExecutionTracker
+   */
+  async getRemainingAiTokens(orgId: string): Promise<{ remaining: number; limit: number; used: number }> {
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { plan: true },
+    });
+
+    if (!org) throw new NotFoundError("Organization not found");
+
+    const limits = this.getOrgPlanLimits(org.plan);
+    const limit = limits.sharedAiTokensPerMonth;
+    // TODO: Implement actual AI token tracking in ExecutionTracker (Task 6.8.17)
+    const used = 0;
+
+    return {
+      remaining: limit === -1 ? -1 : Math.max(0, limit - used),
+      limit,
+      used,
+    };
   }
 }
 

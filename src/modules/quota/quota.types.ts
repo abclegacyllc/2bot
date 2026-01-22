@@ -6,7 +6,6 @@
  * @module modules/quota/quota.types
  */
 
-import type { PlanType } from '@/shared/constants/plans';
 
 // ===========================================
 // Resource Types
@@ -69,62 +68,8 @@ export interface QuotaStatus {
 // Plan Defaults
 // ===========================================
 
-/**
- * Default resource limits by plan
- * -1 means unlimited
- */
-export const PLAN_QUOTA_LIMITS: Record<PlanType, ResourceLimits> = {
-  FREE: {
-    maxWorkflows: 5,
-    maxPlugins: 3,
-    maxApiCalls: 1000,
-    maxStorage: 100,
-    maxSteps: 5,
-    maxGateways: 1,
-    maxDepartments: 1,
-    maxMembers: 3,
-  },
-  STARTER: {
-    maxWorkflows: 15,
-    maxPlugins: 10,
-    maxApiCalls: 5000,
-    maxStorage: 500,
-    maxSteps: 10,
-    maxGateways: 3,
-    maxDepartments: 3,
-    maxMembers: 5,
-  },
-  PRO: {
-    maxWorkflows: 50,
-    maxPlugins: 25,
-    maxApiCalls: 50000,
-    maxStorage: 1000,
-    maxSteps: 15,
-    maxGateways: 10,
-    maxDepartments: 5,
-    maxMembers: 10,
-  },
-  BUSINESS: {
-    maxWorkflows: 200,
-    maxPlugins: 100,
-    maxApiCalls: 200000,
-    maxStorage: 5000,
-    maxSteps: 25,
-    maxGateways: 25,
-    maxDepartments: 20,
-    maxMembers: 50,
-  },
-  ENTERPRISE: {
-    maxWorkflows: -1, // unlimited
-    maxPlugins: -1,
-    maxApiCalls: 500000,
-    maxStorage: 10000,
-    maxSteps: 30,
-    maxGateways: -1,
-    maxDepartments: -1,
-    maxMembers: -1,
-  },
-};
+// NOTE: Plan limits are now defined in @/shared/constants/plans.ts
+// Use getPlanQuotaLimits() from quota.service.ts for ResourceLimits format
 
 // ===========================================
 // Quota Owner Types

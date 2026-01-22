@@ -4,7 +4,7 @@
  * Type definitions for the billing module
  */
 
-import type { PlanType } from '@/shared/constants/plans';
+import type { PlanType, WorkspaceResources } from '@/shared/constants/plans';
 
 // ===========================================
 // Stripe Status Types
@@ -32,10 +32,9 @@ export interface SubscriptionInfo {
   limits: {
     gateways: number;
     plugins: number;
-    executionsPerDay: number;
+    executionsPerMonth: number | null;  // null = unlimited
     aiTokensPerMonth: number;
-    ramMb: number;
-    storageMb: number;
+    workspace: WorkspaceResources | null;  // null = not included
   };
 }
 

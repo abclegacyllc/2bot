@@ -60,6 +60,26 @@ enum GatewayStatus {
   ERROR
 }
 
+enum ExecutionMode {
+  SERVERLESS    // Traditional serverless execution with per-execution limits
+  WORKSPACE     // Docker-based workspace with persistent resources
+}
+
+enum OrgPlan {
+  ORG_STARTER     // $49/mo - 5 seats, 5 gateways
+  ORG_GROWTH      // $99/mo - 15 seats, 15 gateways
+  ORG_PRO         // $199/mo - 40 seats, 50 gateways
+  ORG_BUSINESS    // $399/mo - 100 seats, 150 gateways
+  ORG_ENTERPRISE  // Custom - unlimited
+}
+
+enum AllocationMode {
+  UNLIMITED     // Use from pool freely (no limit set)
+  SOFT_CAP      // Warning at limit, can request more
+  HARD_CAP      // Blocked at limit
+  RESERVED      // Guaranteed allocation, others can't use
+}
+
 // ===========================================
 // User Model (Phase 1: Authentication)
 // ===========================================
@@ -83,8 +103,17 @@ model User {
   deletedAt         DateTime? @map("deleted_at")
 
   // Subscription (personal workspace)
-  plan             PlanType @default(FREE)
-  stripeCustomerId String?  @unique @map("stripe_customer_id")
+  plan             PlanType      @default(FREE)
+  executionMode    ExecutionMode @default(SERVERLESS) @map("execution_mode")
+  stripeCustomerId String?       @unique @map("stripe_customer_id")
+  
+  // Workspace Add-ons (array of addon tier strings: MICRO, SMALL, MEDIUM, LARGE, XLARGE)
+  workspaceAddons    String[]  @default([]) @map("workspace_addons")
+  
+  // Computed workspace resources (updated when plan/addons change)
+  workspaceRamMb     Int?      @map("workspace_ram_mb")
+  workspaceCpuCores  Float?    @map("workspace_cpu_cores")
+  workspaceStorageMb Int?      @map("workspace_storage_mb")
 
   // Status
   isActive    Boolean   @default(true) @map("is_active")
@@ -107,6 +136,9 @@ model User {
   resourceQuota       ResourceQuota?
   usageHistory        UsageHistory[]
   subscription        Subscription?
+  memberAllocations   MemberAllocation[]
+  deptAllocsSetBy     DeptAllocation[]   @relation("DeptAllocSetBy")
+  memberAllocsSetBy   MemberAllocation[] @relation("MemberAllocSetBy")
 
   @@index([email])
   @@index([stripeCustomerId])
@@ -204,11 +236,17 @@ model Organization {
   slug             String       @unique
   
   // Billing (linked in Phase 5)
-  plan             PlanType     @default(FREE)
+  plan             OrgPlan      @default(ORG_STARTER) @map("org_plan")
   stripeCustomerId String?      @unique @map("stripe_customer_id")
   
-  // Limits (can override plan defaults)
-  maxMembers       Int?         @map("max_members")
+  // Seat management
+  maxSeats         Int          @default(5) @map("max_seats")
+  usedSeats        Int          @default(0) @map("used_seats")
+  
+  // Shared workspace pool resources (from org plan)
+  poolRamMb        Int          @default(4096) @map("pool_ram_mb")
+  poolCpuCores     Float        @default(2) @map("pool_cpu_cores")
+  poolStorageMb    Int          @default(20480) @map("pool_storage_mb")
   
   // Database Isolation (Future-Ready)
   // See Phase 1.5 for architecture details
@@ -307,6 +345,8 @@ model Department {
   workflows        Workflow[]
   resourceQuota    ResourceQuota?
   usageHistory     UsageHistory[]
+  deptAllocation   DeptAllocation?
+  memberAllocations MemberAllocation[]
   
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -399,6 +439,74 @@ model ResourceQuota {
   @@index([departmentId])
   @@index([userId])
   @@map("resource_quotas")
+}
+
+// ===========================================
+// Department Allocation (Phase 6.8: Quota Management)
+// Admin allocates org pool resources to departments
+// ===========================================
+model DeptAllocation {
+  id              String         @id @default(cuid())
+  departmentId    String         @unique @map("department_id")
+  
+  // Allocated from org pool
+  maxGateways     Int?           @map("max_gateways")
+  maxWorkflows    Int?           @map("max_workflows")
+  maxPlugins      Int?           @map("max_plugins")
+  aiTokenBudget   Int?           @map("ai_token_budget")    // tokens per month
+  
+  // Workspace allocation
+  maxRamMb        Int?           @map("max_ram_mb")
+  maxCpuCores     Float?         @map("max_cpu_cores")
+  maxStorageMb    Int?           @map("max_storage_mb")
+  
+  allocMode       AllocationMode @default(SOFT_CAP) @map("alloc_mode")
+  
+  // Timestamps
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  setById         String         @map("set_by_id")
+  
+  // Relations
+  department      Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  setBy           User           @relation("DeptAllocSetBy", fields: [setById], references: [id])
+  
+  @@map("dept_allocations")
+}
+
+// ===========================================
+// Member Allocation (Phase 6.8: Quota Management)
+// Manager allocates dept resources to members
+// ===========================================
+model MemberAllocation {
+  id              String         @id @default(cuid())
+  userId          String         @map("user_id")
+  departmentId    String         @map("department_id")
+  
+  // Allocated from department pool
+  maxGateways     Int?           @map("max_gateways")
+  maxWorkflows    Int?           @map("max_workflows")
+  aiTokenBudget   Int?           @map("ai_token_budget")
+  
+  maxRamMb        Int?           @map("max_ram_mb")
+  maxCpuCores     Float?         @map("max_cpu_cores")
+  maxStorageMb    Int?           @map("max_storage_mb")
+  
+  allocMode       AllocationMode @default(SOFT_CAP) @map("alloc_mode")
+  
+  // Timestamps
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  setById         String         @map("set_by_id")
+  
+  // Relations
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department      Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  setBy           User           @relation("MemberAllocSetBy", fields: [setById], references: [id])
+  
+  @@unique([userId, departmentId])
+  @@index([departmentId])
+  @@map("member_allocations")
 }
 
 // ===========================================

@@ -15,8 +15,8 @@ const logger = loggers.server;
  * Email configuration
  */
 const EMAIL_CONFIG = {
-  from: process.env.EMAIL_FROM || "2Bot <noreply@2bot.dev>",
-  replyTo: process.env.EMAIL_REPLY_TO || "support@2bot.dev",
+  from: process.env.EMAIL_FROM || "2Bot <noreply@2bot.org>",
+  replyTo: process.env.EMAIL_REPLY_TO || "support@2bot.org",
   baseUrl: process.env.APP_URL || "http://localhost:3000",
 };
 

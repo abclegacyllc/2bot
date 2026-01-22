@@ -435,7 +435,7 @@ function Footer() {
               Privacy Policy
             </Link>
             <a
-              href="mailto:support@2bot.ai"
+              href="mailto:support@2bot.org"
               className="text-muted-foreground transition-colors hover:text-foreground"
             >
               Contact

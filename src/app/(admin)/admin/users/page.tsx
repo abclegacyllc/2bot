@@ -77,6 +77,7 @@ function UserRowSkeleton() {
 function PlanBadge({ plan }: { plan: string }) {
   const variants: Record<string, string> = {
     FREE: "bg-muted",
+    STARTER: "bg-green-600",
     PRO: "bg-blue-600",
     BUSINESS: "bg-purple-600",
     ENTERPRISE: "bg-orange-600",
@@ -227,7 +228,7 @@ export default function AdminUsersPage() {
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
         <span className="text-sm text-muted-foreground py-1">Filter by plan:</span>
-        {["FREE", "PRO", "BUSINESS", "ENTERPRISE"].map((plan) => (
+        {["FREE", "STARTER", "PRO", "BUSINESS", "ENTERPRISE"].map((plan) => (
           <Button
             key={plan}
             variant={planFilter === plan ? "default" : "outline"}

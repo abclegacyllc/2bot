@@ -218,7 +218,7 @@ function CreateOrganizationContent() {
                         />
                       </FormControl>
                       <FormDescription className="text-muted-foreground">
-                        Used in URLs: 2bot.io/org/
+                        Used in URLs: 2bot.org/org/
                         <span className="text-primary">
                           {watchedSlug || "your-slug"}
                         </span>

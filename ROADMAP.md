@@ -9346,6 +9346,83 @@ Version Header (optional override):
 X-API-Version: 2026-01-01    # Date-based version pinning
 ```
 
+### URL-Based Context (GitHub-Style) ⭐ Phase 6.7
+
+2Bot uses **URL-based context** (like GitHub) instead of token-based context switching.
+Context (personal vs organization) is determined by the URL path, not the JWT token.
+
+**Benefits:**
+- URLs are shareable and bookmarkable
+- Clear ownership: URL shows whose resources you're accessing
+- Simpler JWT tokens (smaller attack surface)
+- No context-switching API calls needed
+- Easier debugging (just look at URL)
+
+#### Personal Resources (`/api/user/*`)
+
+Access your personal resources (organizationId = null):
+
+```
+GET    /api/user/gateways          # List personal gateways
+POST   /api/user/gateways          # Create personal gateway
+GET    /api/user/plugins           # List installed plugins
+GET    /api/user/quota             # Personal quota status
+GET    /api/user/organizations     # List orgs you're a member of
+```
+
+#### Organization Resources (`/api/orgs/:orgId/*`)
+
+Access organization resources (requires membership):
+
+```
+GET    /api/orgs/:orgId                    # Get organization details
+PATCH  /api/orgs/:orgId                    # Update organization
+DELETE /api/orgs/:orgId                    # Delete organization (owner only)
+
+GET    /api/orgs/:orgId/gateways           # List org gateways
+POST   /api/orgs/:orgId/gateways           # Create org gateway
+GET    /api/orgs/:orgId/plugins            # List org plugins
+GET    /api/orgs/:orgId/quota              # Org quota status
+GET    /api/orgs/:orgId/members            # List org members
+POST   /api/orgs/:orgId/members/invite     # Invite member
+DELETE /api/orgs/:orgId/members/:memberId  # Remove member
+
+GET    /api/orgs/:orgId/departments                  # List departments
+POST   /api/orgs/:orgId/departments                  # Create department
+GET    /api/orgs/:orgId/departments/:deptId          # Get department
+PATCH  /api/orgs/:orgId/departments/:deptId          # Update department
+DELETE /api/orgs/:orgId/departments/:deptId          # Delete department
+GET    /api/orgs/:orgId/departments/:deptId/members  # Department members
+
+POST   /api/orgs/:orgId/emergency-stop     # Emergency stop all services
+```
+
+#### Authorization Rules
+
+| Route Pattern | Requires | Access Check |
+|---------------|----------|--------------|
+| `/api/user/*` | Valid JWT | User owns the resource |
+| `/api/orgs/:orgId/*` | Valid JWT + Membership | User is member of org |
+| `/api/orgs/:orgId/* (write)` | Valid JWT + Admin | User has ADMIN/OWNER role |
+
+#### Deprecated Routes (v1 → v2 Migration)
+
+These routes still work but will be removed in v2:
+
+| Deprecated Route | Replacement | Sunset Date |
+|------------------|-------------|-------------|
+| `GET /api/gateways` | `/api/user/gateways` or `/api/orgs/:orgId/gateways` | 2026-07-01 |
+| `GET /api/plugins/user/plugins` | `/api/user/plugins` | 2026-07-01 |
+| `GET /api/quota/status` | `/api/user/quota` or `/api/orgs/:orgId/quota` | 2026-07-01 |
+| `GET /api/organizations/me` | `/api/user/organizations` | 2026-07-01 |
+
+Deprecated routes return these headers:
+```
+Deprecation: true
+Link: </api/user/gateways>; rel="successor-version"
+Sunset: Fri, 01 Jul 2026 00:00:00 GMT
+```
+
 ### REST API Endpoints
 
 ```
@@ -9500,10 +9577,11 @@ POST   /api/webhooks/telegram/:gatewayId
 POST   /api/webhooks/stripe
 POST   /api/webhooks/service/:serviceId    # Service webhook trigger
 
-Organizations: ⭐
-GET    /api/org                            # Get user's organization
+Organizations: ⭐ (See "URL-Based Context" for new /api/orgs/:orgId/* routes)
+# Legacy /api/org/* routes below are deprecated - use /api/orgs/:orgId/* instead
+GET    /api/org                            # Get user's organization (DEPRECATED)
 POST   /api/org                            # Create organization
-PATCH  /api/org                            # Update org settings
+PATCH  /api/org                            # Update org settings (DEPRECATED)
 DELETE /api/org                            # Delete organization (owner only)
 
 GET    /api/org/members                    # List members
