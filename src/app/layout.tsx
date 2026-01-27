@@ -16,8 +16,27 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "2Bot Platform",
-  description: "Telegram + AI automation platform",
+  title: "2Bot - AI-Powered Telegram Automation Platform",
+  description: "Build powerful Telegram bots with AI capabilities. Connect plugins, automate workflows, and scale your communication — all without writing code.",
+  keywords: ["telegram bot", "ai automation", "chatbot", "telegram automation", "bot builder", "no-code"],
+  authors: [{ name: "2Bot" }],
+  openGraph: {
+    title: "2Bot - AI-Powered Telegram Automation",
+    description: "Build powerful Telegram bots with AI capabilities. Connect plugins, automate workflows, and scale your communication.",
+    url: "https://www.2bot.org",
+    siteName: "2Bot",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "2Bot - AI-Powered Telegram Automation",
+    description: "Build powerful Telegram bots with AI capabilities.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({

@@ -12,7 +12,7 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Zap, ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Sparkles, Zap } from "lucide-react";
 import Link from "next/link";
 
 type ResourceType =
@@ -104,7 +104,7 @@ export function UpgradePrompt({
   suggestedPlan,
   currentLimit,
   suggestedLimit,
-  pricingUrl = "/dashboard/billing",
+  pricingUrl = "/billing",
   onUpgrade,
   variant = "card",
   className,

@@ -1,47 +1,35 @@
 /**
  * URL Configuration for Enterprise Subdomain Support
  * 
- * Phase 6.7.5.2: Centralized URL configuration
+ * Phase 6.9.1.2: Dual-mode URL configuration
+ * 
+ * - Production: Defaults to enterprise subdomains (api.2bot.org, dash.2bot.org, etc.)
+ * - Development: Defaults to localhost ports (3000, 3001, etc.)
  * 
  * This module provides environment-based URL configuration for all 2bot services.
- * Supports both single-domain (current) and multi-subdomain (enterprise) deployments.
+ * Supports both single-domain (legacy) and multi-subdomain (enterprise) deployments.
  * 
  * @module shared/config/urls
  */
 
 /**
- * Determine if we're running in a browser environment
+ * Check if we're in production mode
+ * 
+ * IMPORTANT: Next.js requires direct access to process.env.NEXT_PUBLIC_* 
+ * for client-side code. Using a function to wrap it won't work.
+ */
+const isProduction = process.env.NODE_ENV === 'production';
+
+/**
+ * Check if running in browser environment
  */
 const isBrowser = typeof window !== 'undefined';
 
 /**
- * Extended window interface for environment variables
- */
-interface WindowWithEnv extends Window {
-  __ENV__?: Record<string, string | undefined>;
-}
-
-/**
- * Get environment variable value (works in both Node.js and browser)
- */
-function getEnvVar(name: string): string | undefined {
-  if (isBrowser) {
-    // In browser, only NEXT_PUBLIC_ vars are available
-    const windowWithEnv = window as WindowWithEnv;
-    return windowWithEnv.__ENV__?.[name];
-  }
-  return process.env[name];
-}
-
-/**
- * Check if we're in production mode
- */
-function isProduction(): boolean {
-  return getEnvVar('NODE_ENV') === 'production';
-}
-
-/**
  * Service URLs configuration
+ * 
+ * IMPORTANT: We must use process.env.NEXT_PUBLIC_* directly (not through a function)
+ * because Next.js inlines these at build time by looking for literal references.
  * 
  * Port assignment:
  * - :3000 - Dashboard (Next.js main app)
@@ -58,8 +46,8 @@ export const URLS = {
    * In enterprise mode: api.2bot.org
    * In single-domain mode: 2bot.org/api (via proxy)
    */
-  api: getEnvVar('NEXT_PUBLIC_API_URL') || 
-       (isProduction() 
+  api: process.env.NEXT_PUBLIC_API_URL || 
+       (isProduction 
          ? 'https://api.2bot.org' 
          : 'http://localhost:3001'),
   
@@ -67,8 +55,8 @@ export const URLS = {
    * Dashboard (Next.js :3000)
    * Main application for authenticated users
    */
-  dashboard: getEnvVar('NEXT_PUBLIC_DASHBOARD_URL') || 
-             (isProduction() 
+  dashboard: process.env.NEXT_PUBLIC_DASHBOARD_URL || 
+             (isProduction 
                ? 'https://dash.2bot.org' 
                : 'http://localhost:3000'),
   
@@ -76,17 +64,17 @@ export const URLS = {
    * Main site (:3002)
    * Landing pages, marketing, public content
    */
-  main: getEnvVar('NEXT_PUBLIC_APP_URL') || 
-        (isProduction() 
-          ? 'https://2bot.org' 
+  main: process.env.NEXT_PUBLIC_APP_URL || 
+        (isProduction 
+          ? 'https://www.2bot.org' 
           : 'http://localhost:3002'),
   
   /**
    * Admin panel (:3003)
    * Platform administration (ADMIN role only)
    */
-  admin: getEnvVar('NEXT_PUBLIC_ADMIN_URL') || 
-         (isProduction() 
+  admin: process.env.NEXT_PUBLIC_ADMIN_URL || 
+         (isProduction 
            ? 'https://admin.2bot.org' 
            : 'http://localhost:3003'),
   
@@ -94,8 +82,8 @@ export const URLS = {
    * Support team dashboard (:3004) - Phase 7
    * Customer support and ticket management
    */
-  support: getEnvVar('NEXT_PUBLIC_SUPPORT_URL') || 
-           (isProduction() 
+  support: process.env.NEXT_PUBLIC_SUPPORT_URL || 
+           (isProduction 
              ? 'https://support.2bot.org' 
              : 'http://localhost:3004'),
   
@@ -103,8 +91,8 @@ export const URLS = {
    * Public documentation (:3005)
    * API docs, guides, tutorials
    */
-  docs: getEnvVar('NEXT_PUBLIC_DOCS_URL') || 
-        (isProduction() 
+  docs: process.env.NEXT_PUBLIC_DOCS_URL || 
+        (isProduction 
           ? 'https://docs.2bot.org' 
           : 'http://localhost:3005'),
   
@@ -112,8 +100,8 @@ export const URLS = {
    * Developer portal (:3006)
    * Marketplace publishing, analytics, SDK downloads
    */
-  dev: getEnvVar('NEXT_PUBLIC_DEV_URL') || 
-       (isProduction() 
+  dev: process.env.NEXT_PUBLIC_DEV_URL || 
+       (isProduction 
          ? 'https://dev.2bot.org' 
          : 'http://localhost:3006'),
 } as const;
@@ -121,31 +109,22 @@ export const URLS = {
 /**
  * Build API URL for a given path
  * 
+ * Production-like development: Same URL structure in dev and prod.
+ * Only the base URL differs (localhost:3001 vs api.2bot.org).
+ * 
  * @example
- * // In enterprise mode (api.2bot.org):
+ * // Development:
+ * apiUrl('/user/gateways') → 'http://localhost:3001/user/gateways'
+ * 
+ * // Production:
  * apiUrl('/user/gateways') → 'https://api.2bot.org/user/gateways'
  * 
- * // In single-domain mode with proxy:
- * apiUrl('/user/gateways') → 'http://localhost:3001/api/user/gateways'
- * 
- * @param path - API endpoint path (without /api prefix in enterprise mode)
+ * @param path - API endpoint path (e.g., '/user/gateways')
  * @returns Full API URL
  */
 export function apiUrl(path: string): string {
-  const baseUrl = URLS.api;
-  
-  // Ensure path starts with /
+  const baseUrl = URLS.api.replace(/\/$/, ''); // Remove trailing slash
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  
-  // In single-domain mode (localhost or non-api subdomain), add /api prefix
-  const needsApiPrefix = baseUrl.includes('localhost') || 
-                          (!baseUrl.includes('api.2bot.org') && !getEnvVar('ENTERPRISE_MODE'));
-  
-  if (needsApiPrefix) {
-    return `${baseUrl}/api${normalizedPath}`;
-  }
-  
-  // Enterprise mode: direct to api subdomain (no /api prefix needed)
   return `${baseUrl}${normalizedPath}`;
 }
 
@@ -170,11 +149,11 @@ export function serviceUrl(
 }
 
 /**
- * Check if running in enterprise subdomain mode
+ * Check if running in production environment
+ * @deprecated Use isProduction constant instead - no longer need "enterprise mode" distinction
  */
 export function isEnterpriseMode(): boolean {
-  return Boolean(getEnvVar('ENTERPRISE_MODE')) || 
-         Boolean(getEnvVar('NEXT_PUBLIC_API_URL')?.includes('api.2bot.org'));
+  return isProduction;
 }
 
 /**
@@ -184,7 +163,8 @@ export function isEnterpriseMode(): boolean {
 export function getCurrentService(): keyof typeof URLS | 'unknown' {
   if (!isBrowser) return 'unknown';
   
-  const hostname = window.location.hostname;
+  const win = (globalThis as Record<string, unknown>).window as { location: { hostname: string; port: string } };
+  const hostname = win.location.hostname;
   
   if (hostname.includes('dash.')) return 'dashboard';
   if (hostname.includes('api.')) return 'api';
@@ -193,7 +173,7 @@ export function getCurrentService(): keyof typeof URLS | 'unknown' {
   if (hostname.includes('docs.')) return 'docs';
   if (hostname.includes('dev.')) return 'dev';
   if (hostname.includes('localhost')) {
-    const port = window.location.port;
+    const port = win.location.port;
     switch (port) {
       case '3000': return 'dashboard';
       case '3001': return 'api';
@@ -226,7 +206,7 @@ export const SUBDOMAIN_PORTS = {
 export const PRODUCTION_SUBDOMAINS = {
   dashboard: 'dash.2bot.org',
   api: 'api.2bot.org',
-  main: '2bot.org',
+  main: 'www.2bot.org',
   admin: 'admin.2bot.org',
   support: 'support.2bot.org',
   docs: 'docs.2bot.org',

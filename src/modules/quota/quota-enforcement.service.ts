@@ -15,15 +15,14 @@
  * @module modules/quota/quota-enforcement.service
  */
 
-import { AllocationMode } from '@prisma/client';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
 import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
-import { AppError } from '@/shared/errors';
 import type { ServiceContext } from '@/shared/types/context';
-import { ResourceType } from './quota.types';
+import { AllocationMode } from '@prisma/client';
 import { QuotaExceededError } from './quota.service';
+import { ResourceType } from './quota.types';
 
 const log = logger.child({ module: 'quota-enforcement' });
 

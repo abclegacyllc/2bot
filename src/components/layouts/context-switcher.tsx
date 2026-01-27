@@ -4,7 +4,7 @@
  * Context Switcher Component
  *
  * Dropdown menu for switching between personal and organization contexts.
- * Shows current context, available organizations, and create org option.
+ * Shows current context, available organizations, pending invites, and create org option.
  *
  * @module components/layouts/context-switcher
  */
@@ -20,9 +20,18 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Building2, ChevronDown, Home, Plus } from "lucide-react";
+import { apiUrl } from "@/shared/config/urls";
+import { Building2, Check, ChevronDown, Home, Loader2, Plus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+interface PendingInvite {
+  id: string;
+  organizationName: string;
+  organizationId: string;
+  role: string;
+  inviterEmail: string | null;
+}
 
 /**
  * Format org role for display
@@ -45,8 +54,41 @@ function getOrgInitials(name: string): string {
 
 export function ContextSwitcher() {
   const router = useRouter();
-  const { context, availableOrgs, switchContext } = useAuth();
+  const { context, availableOrgs, switchContext, token, refreshAvailableOrgs } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [processingInvite, setProcessingInvite] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+
+  // Fetch pending invites when dropdown opens
+  const fetchPendingInvites = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      const res = await fetch(apiUrl("/user/invites"), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setPendingInvites(data.data || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch pending invites:", error);
+    }
+  }, [token]);
+
+  // Fetch invites on mount and when token changes
+  useEffect(() => {
+    fetchPendingInvites();
+  }, [fetchPendingInvites]);
+
+  // Refetch when dropdown opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchPendingInvites();
+    }
+  }, [isOpen, fetchPendingInvites]);
 
   const handleSwitch = async (
     type: "personal" | "organization",
@@ -67,7 +109,7 @@ export function ContextSwitcher() {
       setIsLoading(true);
       await switchContext(type, orgId);
       // Redirect to dashboard after switch
-      router.push("/dashboard");
+      router.push("/");
     } catch (error) {
       console.error("Failed to switch context:", error);
     } finally {
@@ -75,16 +117,64 @@ export function ContextSwitcher() {
     }
   };
 
-  const handleCreateOrg = () => {
-    router.push("/dashboard/organizations/new");
+  const handleAcceptInvite = async (inviteId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!token || processingInvite) return;
+
+    try {
+      setProcessingInvite(inviteId);
+      const res = await fetch(apiUrl(`/user/invites/${inviteId}/accept`), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        // Remove from pending list
+        setPendingInvites((prev) => prev.filter((inv) => inv.id !== inviteId));
+        // Refresh available orgs
+        await refreshAvailableOrgs();
+      }
+    } catch (error) {
+      console.error("Failed to accept invite:", error);
+    } finally {
+      setProcessingInvite(null);
+    }
   };
 
+  const handleDeclineInvite = async (inviteId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!token || processingInvite) return;
+
+    try {
+      setProcessingInvite(inviteId);
+      const res = await fetch(apiUrl(`/user/invites/${inviteId}/decline`), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        // Remove from pending list
+        setPendingInvites((prev) => prev.filter((inv) => inv.id !== inviteId));
+      }
+    } catch (error) {
+      console.error("Failed to decline invite:", error);
+    } finally {
+      setProcessingInvite(null);
+    }
+  };
+
+  const handleCreateOrg = () => {
+    router.push("/organizations/create");
+  };
+
+  const inviteCount = pendingInvites.length;
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          className="gap-2 min-w-[140px]"
+          className="gap-2 min-w-[140px] relative"
           disabled={isLoading}
         >
           {context.type === "personal" ? (
@@ -101,10 +191,17 @@ export function ContextSwitcher() {
             </>
           )}
           <ChevronDown className="h-4 w-4 ml-auto" />
+          
+          {/* Notification badge for pending invites */}
+          {inviteCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+              {inviteCount > 9 ? "9+" : inviteCount}
+            </span>
+          )}
         </Button>
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-72">
         {/* Personal workspace */}
         <DropdownMenuItem
           onClick={() => handleSwitch("personal")}
@@ -128,6 +225,65 @@ export function ContextSwitcher() {
             )}
           </div>
         </DropdownMenuItem>
+
+        {/* Pending Invites */}
+        {pendingInvites.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground flex items-center gap-2">
+              Pending Invites
+              <Badge variant="destructive" className="text-[10px] h-4 px-1">
+                {inviteCount}
+              </Badge>
+            </div>
+            {pendingInvites.map((invite) => (
+              <div
+                key={invite.id}
+                className="px-2 py-2 flex items-center gap-2"
+              >
+                <Avatar className="h-8 w-8 flex-shrink-0">
+                  <AvatarFallback className="bg-orange-500/10 text-orange-500 text-xs">
+                    {getOrgInitials(invite.organizationName)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm truncate">
+                    {invite.organizationName}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    as {formatRole(invite.role)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {processingInvite === invite.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                        onClick={(e) => handleDeclineInvite(invite.id, e)}
+                        title="Decline"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-green-500 hover:text-green-600 hover:bg-green-500/10"
+                        onClick={(e) => handleAcceptInvite(invite.id, e)}
+                        title="Accept"
+                      >
+                        <Check className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
 
         {/* Organizations list */}
         {availableOrgs.length > 0 && (

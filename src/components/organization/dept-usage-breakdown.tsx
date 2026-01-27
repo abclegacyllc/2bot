@@ -9,14 +9,14 @@
  * @module components/organization/dept-usage-breakdown
  */
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { UsageProgressBar } from "@/components/quota/usage-progress-bar";
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Building2, ChevronRight } from "lucide-react";
 import Link from "next/link";
@@ -76,7 +76,7 @@ export function DeptUsageBreakdown({
           return (
             <Link
               key={dept.id}
-              href={`/dashboard/organizations/${orgId}/departments/${dept.id}`}
+              href={`/organizations/${orgId}/departments/${dept.id}`}
               className="block"
             >
               <div

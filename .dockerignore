@@ -1,0 +1,84 @@
+# ============================================
+# Docker Build Ignore File
+# ============================================
+# Reduces build context size from ~1.5GB to ~10MB
+
+# Dependencies (installed in container)
+node_modules
+.pnpm-store
+
+# Build outputs
+.next
+dist
+build
+out
+
+# Development files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files (secrets - passed at runtime)
+.env
+.env.*
+!.env.development.example
+!.env.production.example
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Testing
+coverage
+.nyc_output
+jest.config.*
+
+# Documentation
+docs
+*.md
+!README.md
+
+# SSL certificates (mounted at runtime)
+ssl
+
+# Backup files
+*.bak
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Nginx configs (mounted at runtime)
+nginx/logs
+
+# Scripts (not needed in container)
+scripts
+
+# Docker files (not needed in context)
+docker-compose*.yml
+Dockerfile*
+
+# Prisma migrations - KEEP for migrate deploy
+# prisma/migrations
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+**/__tests__
+
+# Misc
+.turbo
+.vercel
+.sentryclirc
+
+# Archive folder (old/deprecated code)
+_archive_

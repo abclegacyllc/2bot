@@ -6,38 +6,37 @@
  * @module shared/constants/__tests__/plans.test
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  // Types
-  type PlanType,
-  type ExecutionMode,
-  
-  // Plan Arrays
-  ALL_PLAN_TYPES,
-  SERVERLESS_PLANS,
-  WORKSPACE_PLANS,
-  PAID_PLAN_TYPES,
-  
-  // Plan Order
-  PLAN_ORDER,
-  
-  // Functions
-  getExecutionMode,
-  hasWorkspaceByDefault,
-  isHigherPlan,
-  isAtLeastPlan,
-  getPlanLimits,
-  canDoAction,
-  getRemainingQuota,
-  isUnlimited,
-  canUpgradeTo,
-  canDowngradeTo,
-  comparePlans,
-  getUpgradeOptions,
-  isPaidPlan,
-  
-  // Limits
-  PLAN_LIMITS,
+    // Plan Arrays
+    ALL_PLAN_TYPES,
+    canChooseRegion,
+    canDoAction,
+    canDowngradeTo,
+    canUpgradeTo,
+    canUpgradeToIsolated,
+    comparePlans,
+    // Functions
+    getExecutionMode,
+    getPlanIsolationLevel,
+    getPlanLimits,
+    getPriceId,
+    getRemainingQuota,
+    getUpgradeOptions,
+    hasDedicatedDb,
+    hasStripePrice,
+    hasWorkspaceByDefault,
+    isAtLeastPlan,
+    isHigherPlan,
+    isPaidPlan,
+    isUnlimited,
+    PAID_PLAN_TYPES,
+    // Limits
+    PLAN_LIMITS,
+    // Plan Order
+    PLAN_ORDER,
+    SERVERLESS_PLANS,
+    WORKSPACE_PLANS
 } from '../plans';
 
 // ===========================================
@@ -96,11 +95,11 @@ describe('PLAN_LIMITS', () => {
     expect(PLAN_LIMITS.FREE.workspace).toBeNull();
     expect(PLAN_LIMITS.STARTER.workspace).toBeNull();
     
-    // Check workspace resource structure
+    // Check workspace resource structure (PRO gets SMALL tier: 2GB RAM, 1 CPU, 20GB storage)
     expect(PLAN_LIMITS.PRO.workspace).toEqual({
-      ramMb: 512,
-      cpuCores: 0.5,
-      storageMb: 2048,
+      ramMb: 2048,
+      cpuCores: 1,
+      storageMb: 20480,
     });
     
     // Check workspace plans have unlimited executions
@@ -428,5 +427,100 @@ describe('isUnlimited', () => {
     expect(isUnlimited('PRO', 'executionsPerMonth')).toBe(true);
     expect(isUnlimited('BUSINESS', 'executionsPerMonth')).toBe(true);
     expect(isUnlimited('ENTERPRISE', 'executionsPerMonth')).toBe(true);
+  });
+});
+
+// ===========================================
+// Database Isolation Tests
+// ===========================================
+
+describe('getPlanIsolationLevel', () => {
+  it('returns SHARED for lower tier plans', () => {
+    expect(getPlanIsolationLevel('FREE')).toBe('SHARED');
+    expect(getPlanIsolationLevel('STARTER')).toBe('SHARED');
+    expect(getPlanIsolationLevel('PRO')).toBe('SHARED');
+    expect(getPlanIsolationLevel('BUSINESS')).toBe('SHARED');
+  });
+
+  it('returns DEDICATED for ENTERPRISE', () => {
+    expect(getPlanIsolationLevel('ENTERPRISE')).toBe('DEDICATED');
+  });
+});
+
+describe('hasDedicatedDb', () => {
+  it('returns false for non-enterprise plans', () => {
+    expect(hasDedicatedDb('FREE')).toBe(false);
+    expect(hasDedicatedDb('STARTER')).toBe(false);
+    expect(hasDedicatedDb('PRO')).toBe(false);
+    expect(hasDedicatedDb('BUSINESS')).toBe(false);
+  });
+
+  it('returns true for ENTERPRISE', () => {
+    expect(hasDedicatedDb('ENTERPRISE')).toBe(true);
+  });
+});
+
+describe('canUpgradeToIsolated', () => {
+  it('returns true for BUSINESS plan', () => {
+    expect(canUpgradeToIsolated('BUSINESS')).toBe(true);
+  });
+
+  it('returns false for plans that cannot upgrade', () => {
+    expect(canUpgradeToIsolated('FREE')).toBe(false);
+    expect(canUpgradeToIsolated('STARTER')).toBe(false);
+  });
+});
+
+describe('canChooseRegion', () => {
+  it('returns true only for ENTERPRISE', () => {
+    expect(canChooseRegion('ENTERPRISE')).toBe(true);
+  });
+
+  it('returns false for other plans', () => {
+    expect(canChooseRegion('FREE')).toBe(false);
+    expect(canChooseRegion('STARTER')).toBe(false);
+    expect(canChooseRegion('PRO')).toBe(false);
+    expect(canChooseRegion('BUSINESS')).toBe(false);
+  });
+});
+
+// ===========================================
+// Stripe Price Tests
+// ===========================================
+
+describe('hasStripePrice', () => {
+  it('returns false for FREE plan (never has Stripe price)', () => {
+    expect(hasStripePrice('FREE')).toBe(false);
+  });
+
+  it('returns boolean for paid plans (depends on env vars)', () => {
+    // These return false without env vars set
+    expect(typeof hasStripePrice('STARTER')).toBe('boolean');
+    expect(typeof hasStripePrice('PRO')).toBe('boolean');
+    expect(typeof hasStripePrice('BUSINESS')).toBe('boolean');
+    expect(typeof hasStripePrice('ENTERPRISE')).toBe('boolean');
+  });
+
+  it('is consistent with getPriceId', () => {
+    // hasStripePrice should return true iff getPriceId returns non-null
+    for (const plan of ALL_PLAN_TYPES) {
+      const hasPriceResult = hasStripePrice(plan);
+      const priceId = getPriceId(plan);
+      expect(hasPriceResult).toBe(priceId !== null);
+    }
+  });
+});
+
+describe('getPriceId', () => {
+  it('returns null for FREE plan', () => {
+    expect(getPriceId('FREE')).toBeNull();
+  });
+
+  it('returns string or null for paid plans', () => {
+    // Without env vars, returns null
+    for (const plan of PAID_PLAN_TYPES) {
+      const priceId = getPriceId(plan);
+      expect(priceId === null || typeof priceId === 'string').toBe(true);
+    }
   });
 });

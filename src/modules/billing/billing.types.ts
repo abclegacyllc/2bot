@@ -4,6 +4,7 @@
  * Type definitions for the billing module
  */
 
+import type { OrgPlanType } from '@/shared/constants/org-plans';
 import type { PlanType, WorkspaceResources } from '@/shared/constants/plans';
 
 // ===========================================
@@ -25,7 +26,7 @@ export type StripeStatus =
 
 export interface SubscriptionInfo {
   id: string;
-  plan: PlanType;
+  plan: PlanType | OrgPlanType;  // Can be user plan or org plan
   status: StripeStatus | 'none';
   currentPeriodEnd?: Date;
   cancelAtPeriodEnd: boolean;

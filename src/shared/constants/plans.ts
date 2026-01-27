@@ -3,9 +3,18 @@
  * 
  * Defines resource limits for each subscription tier.
  * -1 means unlimited
+ * 
+ * WORKSPACE NOTE:
+ * - Plans reference workspace tiers from workspace-addons.ts
+ * - Change INCLUDED_WORKSPACE_TIER to update which tier a plan includes
+ * - Actual specs come from WORKSPACE_SPECS (single source of truth)
  */
 
 import type { IsolationLevel } from '../types/context';
+
+// Import workspace specs - single source of truth for workspace resources
+// This import creates a dependency, but it's intentional for DRY principle
+import { WORKSPACE_SPECS, type WorkspaceAddonTier } from './workspace-addons';
 
 // ===========================================
 // Plan Type Definitions
@@ -34,6 +43,49 @@ export const PLAN_ORDER: Record<PlanType, number> = {
   BUSINESS: 3,
   ENTERPRISE: 4,
 };
+
+// ===========================================
+// Included Workspace Tier per Plan (Easy to Change!)
+// ===========================================
+// Maps which workspace tier is included with each plan.
+// null = no workspace included (serverless mode)
+// 'CUSTOM' for ENTERPRISE = custom negotiated resources
+// 
+// To change what workspace a plan includes, just update this mapping.
+// Actual specs come from WORKSPACE_SPECS in workspace-addons.ts
+
+export const INCLUDED_WORKSPACE_TIER: Record<PlanType, WorkspaceAddonTier | 'CUSTOM' | null> = {
+  FREE: null,           // Serverless only (can purchase add-ons)
+  STARTER: null,        // Serverless only (can purchase add-ons)
+  PRO: 'SMALL',         // Includes SMALL: 2GB RAM, 1 CPU, 20GB storage
+  BUSINESS: 'LARGE',    // Includes LARGE: 8GB RAM, 4 CPU, 80GB storage
+  ENTERPRISE: 'CUSTOM', // Custom negotiated resources
+};
+
+/**
+ * Get the workspace resources included with a plan
+ * Returns null for serverless plans, WorkspaceResources for workspace plans
+ */
+export function getIncludedWorkspace(plan: PlanType): WorkspaceResources | null {
+  const tier = INCLUDED_WORKSPACE_TIER[plan];
+  
+  if (tier === null) {
+    return null; // Serverless plan, no included workspace
+  }
+  
+  if (tier === 'CUSTOM') {
+    // Enterprise gets custom/unlimited resources
+    return { ramMb: -1, cpuCores: -1, storageMb: -1 };
+  }
+  
+  // Get specs from WORKSPACE_SPECS (single source of truth)
+  const specs = WORKSPACE_SPECS[tier];
+  return {
+    ramMb: specs.ramMb,
+    cpuCores: specs.cpuCores,
+    storageMb: specs.storageMb,
+  };
+}
 
 // ===========================================
 // Execution Mode Helpers
@@ -111,17 +163,24 @@ export interface PlanLimits {
   // Pricing (cents)
   priceMonthly: number | null;  // null = custom
   priceYearly: number | null;
+  
+  // Display
+  displayName: string;
+  description: string;
 }
 
 // ===========================================
 // Plan Limits Configuration
 // ===========================================
+// NOTE: Workspace specs are derived from INCLUDED_WORKSPACE_TIER mapping above.
+// The 'workspace' field uses getIncludedWorkspace() for the actual values.
+// To change what workspace a plan includes, update INCLUDED_WORKSPACE_TIER.
 
 export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
   FREE: {
     executionMode: 'SERVERLESS',
     executionsPerMonth: 500,
-    workspace: null,
+    workspace: getIncludedWorkspace('FREE'),  // null (serverless)
     gateways: 1,
     workflows: 3,
     workflowSteps: 5,
@@ -135,11 +194,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     canUpgradeToIsolated: false,
     priceMonthly: 0,
     priceYearly: 0,
+    displayName: 'Free',
+    description: 'Get started with basic automation',
   },
   STARTER: {
     executionMode: 'SERVERLESS',
     executionsPerMonth: 5000,
-    workspace: null,
+    workspace: getIncludedWorkspace('STARTER'),  // null (serverless)
     gateways: 3,
     workflows: 10,
     workflowSteps: 10,
@@ -153,11 +214,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     canUpgradeToIsolated: false,
     priceMonthly: 900,
     priceYearly: 9000,
+    displayName: 'Starter',
+    description: 'For individuals getting serious',
   },
   PRO: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,  // UNLIMITED
-    workspace: { ramMb: 512, cpuCores: 0.5, storageMb: 2048 },
+    executionsPerMonth: null,  // UNLIMITED - workspace mode = unlimited executions
+    workspace: getIncludedWorkspace('PRO'),  // SMALL tier from WORKSPACE_SPECS
     gateways: 10,
     workflows: 50,
     workflowSteps: 15,
@@ -171,11 +234,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     canUpgradeToIsolated: true,
     priceMonthly: 2900,
     priceYearly: 29000,
+    displayName: 'Pro',
+    description: 'For power users with advanced needs',
   },
   BUSINESS: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,  // UNLIMITED
-    workspace: { ramMb: 2048, cpuCores: 2, storageMb: 10240 },
+    executionsPerMonth: null,  // UNLIMITED - workspace mode = unlimited executions
+    workspace: getIncludedWorkspace('BUSINESS'),  // LARGE tier from WORKSPACE_SPECS
     gateways: 25,
     workflows: 200,
     workflowSteps: 25,
@@ -189,11 +254,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     canUpgradeToIsolated: true,
     priceMonthly: 7900,
     priceYearly: 79000,
+    displayName: 'Business',
+    description: 'For teams that need more power',
   },
   ENTERPRISE: {
     executionMode: 'WORKSPACE',
     executionsPerMonth: null,  // UNLIMITED
-    workspace: { ramMb: -1, cpuCores: -1, storageMb: -1 },  // Custom
+    workspace: getIncludedWorkspace('ENTERPRISE'),  // CUSTOM (-1 = unlimited)
     gateways: -1,
     workflows: -1,
     workflowSteps: 30,
@@ -208,6 +275,8 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     customRegion: true,
     priceMonthly: null,  // Custom
     priceYearly: null,
+    displayName: 'Enterprise',
+    description: 'Custom solutions for large organizations',
   },
 };
 
@@ -334,6 +403,153 @@ export const PLAN_PRICING = {
     description: 'Custom solutions for large organizations',
   },
 } as const;
+
+// ===========================================
+// Plan Display Features (for UI)
+// ===========================================
+
+/**
+ * User-friendly feature strings for each plan (derived from PLAN_LIMITS)
+ * Used by pricing pages, upgrade modals, etc.
+ */
+export function getPlanFeatures(plan: PlanType): string[] {
+  const limits = PLAN_LIMITS[plan];
+  const features: string[] = [];
+  
+  // Gateways
+  if (limits.gateways === -1) {
+    features.push('Unlimited gateways');
+  } else {
+    features.push(`${limits.gateways} gateway${limits.gateways > 1 ? 's' : ''}`);
+  }
+  
+  // Plugins
+  if (limits.plugins === -1) {
+    features.push('Unlimited plugins');
+  } else {
+    features.push(`${limits.plugins} plugins`);
+  }
+  
+  // Executions
+  if (limits.executionsPerMonth === null) {
+    features.push('Unlimited executions');
+  } else {
+    features.push(`${limits.executionsPerMonth.toLocaleString()} executions/month`);
+  }
+  
+  // Workspace resources (for workspace plans)
+  if (limits.workspace) {
+    if (limits.workspace.ramMb === -1) {
+      features.push('Custom RAM allocation');
+    } else {
+      const ram = limits.workspace.ramMb >= 1024 
+        ? `${(limits.workspace.ramMb / 1024).toFixed(0)}GB` 
+        : `${limits.workspace.ramMb}MB`;
+      features.push(`${ram} RAM workspace`);
+    }
+  }
+  
+  // AI tokens
+  if (limits.aiTokensPerMonth === -1) {
+    features.push('Unlimited AI tokens');
+  } else if (limits.aiTokensPerMonth >= 1000000) {
+    features.push(`${(limits.aiTokensPerMonth / 1000000).toFixed(0)}M AI tokens/month`);
+  } else {
+    features.push(`${(limits.aiTokensPerMonth / 1000).toFixed(0)}K AI tokens/month`);
+  }
+  
+  // History
+  if (limits.historyDays >= 365) {
+    features.push('1 year history retention');
+  } else {
+    features.push(`${limits.historyDays} days history`);
+  }
+  
+  return features;
+}
+
+/**
+ * Get all plan display data for UI rendering
+ */
+export interface PlanDisplayData {
+  id: PlanType;
+  name: string;
+  price: number; // -1 for custom
+  description: string;
+  features: string[];
+  popular: boolean;
+  cta: string;
+  href: string;
+}
+
+export function getAllPlansForDisplay(): PlanDisplayData[] {
+  return [
+    {
+      id: 'FREE',
+      name: PLAN_PRICING.FREE.name,
+      price: PLAN_PRICING.FREE.price,
+      description: PLAN_PRICING.FREE.description,
+      features: getPlanFeatures('FREE'),
+      popular: false,
+      cta: 'Get Started',
+      href: '/register',
+    },
+    {
+      id: 'STARTER',
+      name: PLAN_PRICING.STARTER.name,
+      price: PLAN_PRICING.STARTER.price,
+      description: PLAN_PRICING.STARTER.description,
+      features: getPlanFeatures('STARTER'),
+      popular: false,
+      cta: 'Start Free Trial',
+      href: '/register',
+    },
+    {
+      id: 'PRO',
+      name: PLAN_PRICING.PRO.name,
+      price: PLAN_PRICING.PRO.price,
+      description: PLAN_PRICING.PRO.description,
+      features: getPlanFeatures('PRO'),
+      popular: true,
+      cta: 'Start Free Trial',
+      href: '/register',
+    },
+    {
+      id: 'BUSINESS',
+      name: PLAN_PRICING.BUSINESS.name,
+      price: PLAN_PRICING.BUSINESS.price,
+      description: PLAN_PRICING.BUSINESS.description,
+      features: getPlanFeatures('BUSINESS'),
+      popular: false,
+      cta: 'Contact Sales',
+      href: '/register',
+    },
+    {
+      id: 'ENTERPRISE',
+      name: PLAN_PRICING.ENTERPRISE.name,
+      price: PLAN_PRICING.ENTERPRISE.price,
+      description: PLAN_PRICING.ENTERPRISE.description,
+      features: [
+        ...getPlanFeatures('ENTERPRISE'),
+        'Dedicated database',
+        'Custom region',
+        '24/7 support',
+      ],
+      popular: false,
+      cta: 'Contact Sales',
+      href: 'mailto:enterprise@2bot.org',
+    },
+  ];
+}
+
+/**
+ * Get upgrade-eligible plans for display (excludes FREE and ENTERPRISE)
+ */
+export function getUpgradePlansForDisplay(): PlanDisplayData[] {
+  return getAllPlansForDisplay().filter(
+    plan => plan.id !== 'FREE' && plan.id !== 'ENTERPRISE'
+  );
+}
 
 // ===========================================
 // Stripe Price IDs (Phase 5: Billing)

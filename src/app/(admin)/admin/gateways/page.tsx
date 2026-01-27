@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiUrl } from "@/shared/config/urls";
 import {
     AlertTriangle,
     Bot,
@@ -130,7 +131,7 @@ export default function AdminGatewaysPage() {
       if (statusFilter) params.set("status", statusFilter);
       if (typeFilter) params.set("type", typeFilter);
 
-      const response = await fetch(`/api/admin/gateways?${params}`, {
+      const response = await fetch(apiUrl(`/admin/gateways?${params}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) {

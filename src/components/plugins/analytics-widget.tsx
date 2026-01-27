@@ -30,6 +30,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { apiUrl } from "@/shared/config/urls";
 
 // ===========================================
 // Types
@@ -241,7 +242,7 @@ export function AnalyticsWidget({
       setLoading(true);
       setError(null);
 
-      const response = await fetch(`/api/plugins/user/plugins/${userPluginId}/analytics`, {
+      const response = await fetch(apiUrl(`/plugins/user/plugins/${userPluginId}/analytics`), {
         credentials: "include",
       });
 

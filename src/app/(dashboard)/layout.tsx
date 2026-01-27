@@ -18,36 +18,64 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import {
-    Bot,
-    Building2,
-    ChevronLeft,
-    ChevronRight,
-    CreditCard,
-    Home,
-    LogOut,
-    Menu,
-    Plug,
-    Settings,
-    Shield,
-    ShoppingBag,
+  Bot,
+  Building2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CreditCard,
+  Home,
+  LogOut,
+  Menu,
+  Plug,
+  Settings,
+  Shield,
+  ShoppingBag,
+  User
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
-// Navigation items
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: Home },
-  { href: "/dashboard/gateways", label: "Gateways", icon: Bot },
-  { href: "/dashboard/plugins", label: "Plugin Store", icon: ShoppingBag },
-  { href: "/dashboard/my-plugins", label: "My Plugins", icon: Plug },
-  { href: "/dashboard/settings/billing", label: "Billing", icon: CreditCard },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+// Shared navigation items (both contexts) - base paths
+const sharedNavItemsBase = [
+  { path: "", label: "Dashboard", icon: Home },
+  { path: "/gateways", label: "Gateways", icon: Bot },
+  { path: "/plugins", label: "Plugin Store", icon: ShoppingBag },
+  { path: "/my-plugins", label: "My Plugins", icon: Plug },
 ];
 
-// Organization-only nav items
-const orgNavItems = [
-  { href: "/dashboard/organizations", label: "Organization", icon: Building2 },
+// Build shared nav items based on context
+const buildSharedNavItems = (isOrgContext: boolean, orgSlug: string) => 
+  sharedNavItemsBase.map(item => ({
+    href: isOrgContext && orgSlug 
+      ? `/organizations/${orgSlug}${item.path}`
+      : `${item.path || '/'}`,
+    label: item.label,
+    icon: item.icon,
+  }));
+
+// Personal workspace specific items
+const personalNavItems = [
+  // Invites are now shown in the context switcher with notification badge
+  { href: "/billing", label: "Billing", icon: CreditCard },
+];
+
+// Organization workspace specific items  
+const buildOrgNavItems = (orgSlug: string) => [
+  // Org billing at top level (same as personal)
+  { href: `/organizations/${orgSlug}/billing`, label: "Billing", icon: CreditCard },
+];
+
+// Settings sub-items for PERSONAL context
+const personalSettingsSubItems = [
+  { href: "/settings", label: "Profile", icon: User },
+];
+
+// Settings sub-items for ORGANIZATION context (dynamic - see buildOrgSettingsSubItems)
+const buildOrgSettingsSubItems = (orgSlug: string) => [
+  { href: `/organizations/${orgSlug}/settings`, label: "General", icon: Building2 },
+  { href: `/organizations/${orgSlug}/members`, label: "Members", icon: User },
 ];
 
 // Admin-only nav item
@@ -61,14 +89,34 @@ function Sidebar({
   onToggle: () => void;
 }) {
   const pathname = usePathname();
-  const { context, user } = useAuth();
-
-  // Build nav items based on context and role
-  let allNavItems = 
-    context.type === "organization" ? [...navItems, ...orgNavItems] : navItems;
+  const { context, user, availableOrgs } = useAuth();
+  const [settingsExpanded, setSettingsExpanded] = useState(
+    pathname.startsWith("/settings") || pathname.includes("/organizations/")
+  );
   
   // Add admin link for ADMIN/SUPER_ADMIN users
   const isAdmin = user?.role === "ADMIN" || user?.role === "SUPER_ADMIN";
+  const isOrgContext = context.type === "organization";
+  
+  // Get current org slug for dynamic URLs
+  const currentOrg = isOrgContext 
+    ? availableOrgs.find(o => o.id === context.organizationId)
+    : null;
+  const orgSlug = currentOrg?.slug || context.organizationId || "";
+  
+  // Build nav items based on context
+  const sharedNavItems = buildSharedNavItems(isOrgContext, orgSlug);
+  const mainNavItems = isOrgContext 
+    ? [...sharedNavItems, ...buildOrgNavItems(orgSlug)]
+    : [...sharedNavItems, ...personalNavItems];
+  
+  // Build settings sub-items based on context
+  const settingsSubItems = isOrgContext && orgSlug
+    ? buildOrgSettingsSubItems(orgSlug)
+    : personalSettingsSubItems;
+  
+  // Check if any settings item is active
+  const isSettingsActive = pathname.startsWith("/settings");
 
   return (
     <aside
@@ -79,7 +127,7 @@ function Sidebar({
       {/* Logo */}
       <div className="h-16 flex items-center justify-between px-4 border-b border-border">
         {!collapsed && (
-          <Link href="/dashboard" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🤖</span>
             <span className="font-bold text-foreground text-lg">2Bot</span>
           </Link>
@@ -100,10 +148,11 @@ function Sidebar({
 
       {/* Navigation */}
       <nav className="p-2 space-y-1">
-        {allNavItems.map((item) => {
+        {/* Main nav items */}
+        {mainNavItems.map((item) => {
           const isActive =
             pathname === item.href ||
-            (item.href !== "/dashboard" && pathname.startsWith(item.href));
+            (item.href !== "/" && pathname.startsWith(item.href));
           const Icon = item.icon;
 
           return (
@@ -122,6 +171,57 @@ function Sidebar({
             </Link>
           );
         })}
+
+        {/* Settings expandable menu */}
+        <div>
+          <button
+            onClick={() => !collapsed && setSettingsExpanded(!settingsExpanded)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+              isSettingsActive
+                ? "bg-purple-600/20 text-purple-400"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+            title={collapsed ? "Settings" : undefined}
+          >
+            <Settings className="h-5 w-5 flex-shrink-0" />
+            {!collapsed && (
+              <>
+                <span className="flex-1 text-left">Settings</span>
+                <ChevronDown 
+                  className={`h-4 w-4 transition-transform ${
+                    settingsExpanded ? "rotate-180" : ""
+                  }`} 
+                />
+              </>
+            )}
+          </button>
+          
+          {/* Settings sub-items (slide down) */}
+          {!collapsed && settingsExpanded && (
+            <div className="ml-4 mt-1 space-y-1 border-l border-border pl-3">
+              {settingsSubItems.map((item) => {
+                const isActive = pathname === item.href || 
+                  (item.href !== "/settings" && pathname.startsWith(item.href));
+                const Icon = item.icon;
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive
+                        ? "bg-purple-600/20 text-purple-400"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="h-4 w-4 flex-shrink-0" />
+                    <span>{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Admin link - only for admins */}
         {isAdmin && (
@@ -146,9 +246,8 @@ function Sidebar({
   );
 }
 
-function Header() {
+function Header({ onMobileMenuToggle }: { onMobileMenuToggle: () => void }) {
   const { user, logout, context } = useAuth();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <header className="h-16 bg-card/80 backdrop-blur-sm border-b border-border flex items-center justify-between px-6 sticky top-0 z-30">
@@ -157,7 +256,7 @@ function Header() {
         variant="ghost"
         size="sm"
         className="lg:hidden text-muted-foreground"
-        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        onClick={onMobileMenuToggle}
       >
         <Menu className="h-5 w-5" />
       </Button>
@@ -200,14 +299,35 @@ function Header() {
 
 function DashboardLayoutContent({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Sidebar */}
-      <Sidebar
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
-      />
+      {/* Mobile Sidebar Overlay */}
+      {mobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Mobile Sidebar */}
+      <div className={`fixed inset-y-0 left-0 z-50 lg:hidden transition-transform duration-300 ${
+        mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
+      }`}>
+        <Sidebar
+          collapsed={false}
+          onToggle={() => setMobileMenuOpen(false)}
+        />
+      </div>
+
+      {/* Desktop Sidebar */}
+      <div className="hidden lg:block">
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
+      </div>
 
       {/* Main content area */}
       <div
@@ -216,7 +336,7 @@ function DashboardLayoutContent({ children }: { children: ReactNode }) {
         }`}
       >
         {/* Header */}
-        <Header />
+        <Header onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
 
         {/* Page content */}
         <main className="p-6">{children}</main>

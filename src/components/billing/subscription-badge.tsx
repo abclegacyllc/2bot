@@ -13,6 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { apiUrl } from "@/shared/config/urls";
 import { AlertCircle, Building, Crown, Star, Zap } from "lucide-react";
 import Link from "next/link";
 import useSWR from "swr";
@@ -75,7 +76,7 @@ export function SubscriptionBadge({
   showStatus?: boolean;
 }) {
   const { data: subscription } = useSWR<SubscriptionInfo>(
-    "/api/billing/subscription",
+    apiUrl("/billing/subscription"),
     fetcher
   );
 
@@ -113,7 +114,7 @@ export function SubscriptionBadge({
  */
 export function SubscriptionStatusDot({ className }: { className?: string }) {
   const { data: subscription } = useSWR<SubscriptionInfo>(
-    "/api/billing/subscription",
+    apiUrl("/billing/subscription"),
     fetcher
   );
 
@@ -141,7 +142,7 @@ export function SubscriptionStatusDot({ className }: { className?: string }) {
  */
 export function SubscriptionAlert({ className }: { className?: string }) {
   const { data: subscription } = useSWR<SubscriptionInfo>(
-    "/api/billing/subscription",
+    apiUrl("/billing/subscription"),
     fetcher
   );
 
@@ -149,7 +150,7 @@ export function SubscriptionAlert({ className }: { className?: string }) {
 
   const handleManageBilling = async () => {
     try {
-      const response = await fetch("/api/billing/portal", {
+      const response = await fetch(apiUrl("/billing/portal"), {
         method: "POST",
       });
       const data = await response.json();
@@ -218,7 +219,7 @@ export function SubscriptionAlert({ className }: { className?: string }) {
  */
 export function UpgradeBanner({ className }: { className?: string }) {
   const { data: subscription } = useSWR<SubscriptionInfo>(
-    "/api/billing/subscription",
+    apiUrl("/billing/subscription"),
     fetcher
   );
 
@@ -237,7 +238,7 @@ export function UpgradeBanner({ className }: { className?: string }) {
           Unlock more features with a paid plan
         </span>
       </div>
-      <Link href="/dashboard/settings/billing/upgrade">
+      <Link href="/billing/upgrade">
         <Button size="sm" className="bg-purple-600 hover:bg-purple-700">
           Upgrade
         </Button>

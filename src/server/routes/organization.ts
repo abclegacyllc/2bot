@@ -509,6 +509,83 @@ organizationRouter.post(
   })
 );
 
+/**
+ * GET /api/organizations/invites/token/:token
+ *
+ * Get pending invite details by token (public - no auth required)
+ * Used to display invite info before user registers
+ *
+ * @param {string} token - Invite token
+ */
+organizationRouter.get(
+  "/invites/token/:token",
+  asyncHandler(async (req: Request, res: Response) => {
+    const token = getPathParam(req, "token");
+
+    const invite = await organizationService.getInviteByToken(token);
+
+    if (!invite) {
+      res.status(404).json({
+        success: false,
+        error: "Invitation not found or has expired",
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: invite,
+    });
+  })
+);
+
+/**
+ * POST /api/organizations/invites/token/:token/accept
+ *
+ * Accept a pending invite after registration
+ *
+ * @param {string} token - Invite token
+ */
+organizationRouter.post(
+  "/invites/token/:token/accept",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const ctx = getServiceContext(req);
+    const token = getPathParam(req, "token");
+
+    const membership = await organizationService.acceptPendingInvite(ctx, token);
+
+    res.json({
+      success: true,
+      data: membership,
+    });
+  })
+);
+
+/**
+ * POST /api/organizations/invites/token/:token/decline
+ *
+ * Decline a pending invite (public - no auth required)
+ * Allows invitees to decline without registering
+ *
+ * @param {string} token - Invite token
+ * @body {string} [email] - Email to verify (optional, for non-registered users)
+ */
+organizationRouter.post(
+  "/invites/token/:token/decline",
+  asyncHandler(async (req: Request, res: Response) => {
+    const token = getPathParam(req, "token");
+    const email = req.body?.email;
+
+    const result = await organizationService.declinePendingInvite(token, email);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
 // ===========================================
 // Department Routes
 // ===========================================

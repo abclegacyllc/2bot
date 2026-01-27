@@ -1,12 +1,26 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, UserRole } from "@prisma/client";
 import { hash } from "bcrypt";
+import dotenv from "dotenv";
+import path from "path";
 import { Pool } from "pg";
 
 import { getAllBuiltinPluginSeedData } from "../src/modules/plugin/handlers";
 
+// Load environment variables BEFORE accessing them
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+
+const DATABASE_URL = process.env.DATABASE_URL;
+
+if (!DATABASE_URL) {
+  console.error("❌ DATABASE_URL is not set!");
+  console.error("   Please check your .env or .env.local file");
+  process.exit(1);
+}
+
 const pool = new Pool({
-  connectionString: "postgresql://postgres:postgres@localhost:5432/twobot?schema=public",
+  connectionString: DATABASE_URL,
 });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
@@ -16,6 +30,8 @@ const SALT_ROUNDS = 12;
 async function main() {
   // eslint-disable-next-line no-console
   console.log("🌱 Starting database seed...");
+  // eslint-disable-next-line no-console
+  console.log(`📍 Using database: ${DATABASE_URL?.replace(/:[^:@]+@/, ':***@') || 'Unknown'}`);
 
   // Clean existing data (for development only)
   await prisma.userPlugin.deleteMany();
@@ -92,4 +108,8 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end();
+    // eslint-disable-next-line no-console
+    console.log("👋 Database connection closed");
+    process.exit(0);
   });

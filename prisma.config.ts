@@ -10,6 +10,6 @@ export default defineConfig({
     seed: "npx tsx prisma/seed.ts",
   },
   datasource: {
-    url: "postgresql://postgres:postgres@localhost:5432/twobot?schema=public",
+    url: process.env.DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/2bot_dev?schema=public",
   },
 });

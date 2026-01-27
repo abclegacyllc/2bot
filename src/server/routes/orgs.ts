@@ -11,27 +11,63 @@
 import { gatewayService } from "@/modules/gateway";
 import type { GatewayListItem } from "@/modules/gateway/gateway.types";
 import {
+    createDeptSchema,
     departmentService,
+    inviteMemberSchema,
     organizationService,
+    updateMemberRoleSchema,
+    updateOrgSchema,
     type MemberWithUser,
     type SafeDepartment,
+    type SafeOrganization,
 } from "@/modules/organization";
 import { pluginService } from "@/modules/plugin";
 import type { SafeUserPlugin } from "@/modules/plugin/plugin.types";
-import { quotaService } from "@/modules/quota";
+import {
+    installPluginSchema,
+    togglePluginSchema,
+    updatePluginConfigSchema,
+} from "@/modules/plugin/plugin.validation";
+import { QuotaAllocationService, quotaService } from "@/modules/quota";
 import type { QuotaStatus } from "@/modules/quota/quota.types";
-import { BadRequestError } from "@/shared/errors";
+import { BadRequestError, ValidationError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext, type ServiceContext } from "@/shared/types/context";
 import { Router, type Request, type Response } from "express";
+import type { ZodError } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
-import { requireOrgMember } from "../middleware/org-auth";
+import { requireOrgAdmin, requireOrgMember, requireOrgOwner } from "../middleware/org-auth";
+import { orgAlertsRouter } from "./org-alerts";
+import { orgBillingRouter } from "./org-billing";
 
 export const orgsRouter = Router();
 
 // All routes require authentication
 orgsRouter.use(requireAuth);
+
+// Mount org billing routes at /api/orgs/:orgId/billing/*
+orgsRouter.use("/:orgId/billing", orgBillingRouter);
+
+// Mount org alerts routes at /api/orgs/:orgId/alerts/* (Phase 6.9)
+orgsRouter.use("/:orgId/alerts", orgAlertsRouter);
+
+/**
+ * Format Zod validation errors into a simple object
+ */
+function formatZodErrors(
+  error: ZodError
+): Record<string, string[]> {
+  const errors: Record<string, string[]> = {};
+  for (const issue of error.issues) {
+    const path = issue.path.join(".") || "general";
+    if (!errors[path]) {
+      errors[path] = [];
+    }
+    errors[path].push(issue.message);
+  }
+  return errors;
+}
 
 /**
  * Extract and validate path parameter as string
@@ -76,6 +112,90 @@ function getOrgContext(req: Request, orgId: string): ServiceContext {
     }
   );
 }
+
+// ===========================================
+// Organization Details Route
+// ===========================================
+
+/**
+ * GET /api/orgs/:orgId
+ *
+ * Get organization details by ID
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @returns {SafeOrganization} Organization details
+ */
+orgsRouter.get(
+  "/:orgId",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    const org = await organizationService.getById(ctx, orgId);
+
+    res.json({
+      success: true,
+      data: org,
+    });
+  })
+);
+
+/**
+ * PUT /api/orgs/:orgId
+ *
+ * Update organization details
+ * Requires ORG_ADMIN role or higher
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @body {string} name - New organization name
+ * @body {string} slug - New organization slug
+ * @returns {SafeOrganization} Updated organization
+ */
+orgsRouter.put(
+  "/:orgId",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeOrganization>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    const parseResult = updateOrgSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
+    }
+
+    const org = await organizationService.update(ctx, orgId, parseResult.data);
+
+    res.json({
+      success: true,
+      data: org,
+    });
+  })
+);
+
+/**
+ * DELETE /api/orgs/:orgId
+ *
+ * Delete organization
+ * Requires ORG_OWNER role
+ *
+ * @param {string} orgId - Organization ID from URL
+ */
+orgsRouter.delete(
+  "/:orgId",
+  requireOrgOwner,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<null>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    await organizationService.delete(ctx, orgId);
+
+    res.json({
+      success: true,
+      data: null,
+    });
+  })
+);
 
 // ===========================================
 // Gateway Routes
@@ -129,6 +249,153 @@ orgsRouter.get(
     res.json({
       success: true,
       data: plugins,
+    });
+  })
+);
+
+/**
+ * GET /api/orgs/:orgId/plugins/:pluginId
+ *
+ * Get a specific organization plugin by ID
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} pluginId - UserPlugin ID
+ * @returns {SafeUserPlugin} Organization plugin details
+ */
+orgsRouter.get(
+  "/:orgId/plugins/:pluginId",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const pluginId = getPathParam(req, "pluginId");
+    const ctx = getOrgContext(req, orgId);
+
+    const userPlugin = await pluginService.getUserPluginById(ctx, pluginId);
+
+    res.json({
+      success: true,
+      data: userPlugin,
+    });
+  })
+);
+
+/**
+ * POST /api/orgs/:orgId/plugins/install
+ *
+ * Install a plugin for the organization
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @body {string} slug - Slug of the plugin to install
+ * @body {object} [config] - Plugin configuration
+ * @body {string} [gatewayId] - Gateway to bind the plugin to
+ * @returns {SafeUserPlugin} Installed plugin
+ */
+orgsRouter.post(
+  "/:orgId/plugins/install",
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    const parseResult = installPluginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Invalid install data", formatZodErrors(parseResult.error));
+    }
+
+    const userPlugin = await pluginService.installPlugin(ctx, parseResult.data);
+
+    res.status(201).json({
+      success: true,
+      data: userPlugin,
+    });
+  })
+);
+
+/**
+ * DELETE /api/orgs/:orgId/plugins/:pluginId
+ *
+ * Uninstall a plugin from the organization
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} pluginId - UserPlugin ID
+ */
+orgsRouter.delete(
+  "/:orgId/plugins/:pluginId",
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<null>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const pluginId = getPathParam(req, "pluginId");
+    const ctx = getOrgContext(req, orgId);
+
+    await pluginService.uninstallPlugin(ctx, pluginId);
+
+    res.json({
+      success: true,
+      data: null,
+    });
+  })
+);
+
+/**
+ * PUT /api/orgs/:orgId/plugins/:pluginId/config
+ *
+ * Update organization plugin configuration
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} pluginId - UserPlugin ID
+ * @body {object} config - New plugin configuration
+ * @returns {SafeUserPlugin} Updated plugin
+ */
+orgsRouter.put(
+  "/:orgId/plugins/:pluginId/config",
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const pluginId = getPathParam(req, "pluginId");
+    const ctx = getOrgContext(req, orgId);
+
+    const parseResult = updatePluginConfigSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Invalid config data", formatZodErrors(parseResult.error));
+    }
+
+    const userPlugin = await pluginService.updatePluginConfig(ctx, pluginId, parseResult.data);
+
+    res.json({
+      success: true,
+      data: userPlugin,
+    });
+  })
+);
+
+/**
+ * POST /api/orgs/:orgId/plugins/:pluginId/toggle
+ *
+ * Enable or disable an organization plugin
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} pluginId - UserPlugin ID
+ * @body {boolean} enabled - Enable or disable the plugin
+ * @returns {SafeUserPlugin} Updated plugin
+ */
+orgsRouter.post(
+  "/:orgId/plugins/:pluginId/toggle",
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const pluginId = getPathParam(req, "pluginId");
+    const ctx = getOrgContext(req, orgId);
+
+    const parseResult = togglePluginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Invalid toggle data", formatZodErrors(parseResult.error));
+    }
+
+    const userPlugin = await pluginService.togglePlugin(ctx, pluginId, parseResult.data.enabled);
+
+    res.json({
+      success: true,
+      data: userPlugin,
     });
   })
 );
@@ -193,6 +460,38 @@ orgsRouter.get(
 );
 
 /**
+ * POST /api/orgs/:orgId/departments
+ *
+ * Create a new department in the organization
+ * Requires ORG_ADMIN role or higher
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @body {string} name - Department name
+ * @body {string} description - Optional department description
+ * @returns {SafeDepartment} Created department
+ */
+orgsRouter.post(
+  "/:orgId/departments",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeDepartment>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    const parseResult = createDeptSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
+    }
+
+    const department = await departmentService.create(ctx, orgId, parseResult.data);
+
+    res.status(201).json({
+      success: true,
+      data: department,
+    });
+  })
+);
+
+/**
  * GET /api/orgs/:orgId/departments/:deptId
  *
  * Get department details
@@ -214,6 +513,66 @@ orgsRouter.get(
     res.json({
       success: true,
       data: department,
+    });
+  })
+);
+
+// ===========================================
+// Department Quota Allocation Routes (Phase 6.9)
+// ===========================================
+
+/**
+ * GET /api/orgs/:orgId/departments/:deptId/quotas
+ *
+ * Get department quota allocations
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} deptId - Department ID from URL
+ * @returns {DeptAllocationResponse | null} Department quota allocation
+ */
+orgsRouter.get(
+  "/:orgId/departments/:deptId/quotas",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const deptId = getPathParam(req, "deptId");
+
+    const quotas = await QuotaAllocationService.getDeptAllocation(deptId);
+
+    res.json({
+      success: true,
+      data: quotas,
+    });
+  })
+);
+
+/**
+ * POST /api/orgs/:orgId/departments/:deptId/quotas
+ *
+ * Set or update department quota allocations
+ * Requires ORG_ADMIN role or higher
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} deptId - Department ID from URL
+ * @body {SetDeptAllocationRequest} Quota allocation values
+ * @returns {DeptAllocationResponse} Updated quota allocation
+ */
+orgsRouter.post(
+  "/:orgId/departments/:deptId/quotas",
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const deptId = getPathParam(req, "deptId");
+    const ctx = getOrgContext(req, orgId);
+
+    const quotas = await QuotaAllocationService.setDeptAllocation(
+      ctx,
+      deptId,
+      req.body
+    );
+
+    res.json({
+      success: true,
+      data: quotas,
     });
   })
 );
@@ -242,6 +601,114 @@ orgsRouter.get(
     res.json({
       success: true,
       data: members,
+    });
+  })
+);
+
+/**
+ * POST /api/orgs/:orgId/members
+ *
+ * Invite a member to the organization
+ * Requires ORG_ADMIN role or higher
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @body {string} email - Email of user to invite
+ * @body {string} role - Role to assign (ORG_MEMBER, ORG_ADMIN, etc.)
+ * @returns {MemberWithUser} Created membership
+ */
+orgsRouter.post(
+  "/:orgId/members",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<MemberWithUser>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    const parseResult = inviteMemberSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
+    }
+
+    const member = await organizationService.inviteMember(ctx, orgId, parseResult.data);
+
+    res.status(201).json({
+      success: true,
+      data: member,
+    });
+  })
+);
+
+/**
+ * PUT /api/orgs/:orgId/members/:memberId
+ *
+ * Update a member's role
+ * Requires ORG_OWNER role
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} memberId - Membership ID from URL
+ * @body {string} role - New role to assign
+ * @returns {MemberWithUser} Updated membership
+ */
+orgsRouter.put(
+  "/:orgId/members/:memberId",
+  requireOrgOwner,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<MemberWithUser>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const memberId = getPathParam(req, "memberId");
+    const ctx = getOrgContext(req, orgId);
+
+    // Look up the membership to get the userId
+    const membership = await organizationService.getMembershipById(memberId, orgId);
+    if (!membership) {
+      throw new BadRequestError("Member not found");
+    }
+
+    const parseResult = updateMemberRoleSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
+    }
+
+    const updated = await organizationService.updateMemberRole(
+      ctx,
+      orgId,
+      membership.userId,
+      parseResult.data
+    );
+
+    res.json({
+      success: true,
+      data: updated,
+    });
+  })
+);
+
+/**
+ * DELETE /api/orgs/:orgId/members/:memberId
+ *
+ * Remove a member from the organization
+ * Requires ORG_ADMIN role or higher
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} memberId - Membership ID from URL
+ */
+orgsRouter.delete(
+  "/:orgId/members/:memberId",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<null>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const memberId = getPathParam(req, "memberId");
+    const ctx = getOrgContext(req, orgId);
+
+    // Look up the membership to get the userId
+    const membership = await organizationService.getMembershipById(memberId, orgId);
+    if (!membership) {
+      throw new BadRequestError("Member not found");
+    }
+
+    await organizationService.removeMember(ctx, orgId, membership.userId);
+
+    res.json({
+      success: true,
+      data: null,
     });
   })
 );
@@ -359,6 +826,84 @@ orgsRouter.get(
     res.json({
       success: true,
       data: usage,
+    });
+  })
+);
+
+// ===========================================
+// Invitation Routes
+// ===========================================
+
+/**
+ * GET /api/orgs/:orgId/invites
+ *
+ * Get pending invitations for an organization
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @returns {OrgInviteResponse[]} Pending invitations
+ */
+orgsRouter.get(
+  "/:orgId/invites",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    const invites = await organizationService.getPendingInvites(ctx, orgId);
+
+    res.json({
+      success: true,
+      data: invites,
+    });
+  })
+);
+
+/**
+ * DELETE /api/orgs/:orgId/invites/:inviteId
+ *
+ * Cancel a pending invitation
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} inviteId - Invite ID from URL
+ */
+orgsRouter.delete(
+  "/:orgId/invites/:inviteId",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const inviteId = getPathParam(req, "inviteId");
+    const ctx = getOrgContext(req, orgId);
+
+    await organizationService.cancelInvite(ctx, orgId, inviteId);
+
+    res.json({
+      success: true,
+      message: "Invitation cancelled successfully",
+    });
+  })
+);
+
+/**
+ * POST /api/orgs/:orgId/invites/:inviteId/resend
+ *
+ * Resend an invitation email
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} inviteId - Invite ID from URL
+ */
+orgsRouter.post(
+  "/:orgId/invites/:inviteId/resend",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const inviteId = getPathParam(req, "inviteId");
+    const ctx = getOrgContext(req, orgId);
+
+    await organizationService.resendInvite(ctx, orgId, inviteId);
+
+    res.json({
+      success: true,
+      message: "Invitation resent successfully",
     });
   })
 );

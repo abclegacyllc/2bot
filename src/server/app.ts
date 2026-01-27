@@ -14,17 +14,16 @@ const serverLogger = loggers.server;
 /**
  * API prefix for routes
  * 
- * Phase 6.7.5.3: Configurable API prefix
+ * Phase 6.9: Production-like development (no prefix)
  * 
- * - Single-domain mode: API_PREFIX="/api" (default)
- *   Routes at: 2bot.org/api/user/gateways
+ * Both development and production use the same URL structure:
+ * - Dev:  localhost:3001/user/gateways
+ * - Prod: api.2bot.org/user/gateways
  * 
- * - Enterprise subdomain mode: API_PREFIX=""
- *   Routes at: api.2bot.org/user/gateways
- * 
- * Set API_PREFIX="" in environment for subdomain deployment
+ * This ensures dev/prod parity and catches issues early.
+ * The API_PREFIX env var is kept for edge cases only.
  */
-const API_PREFIX = process.env.API_PREFIX ?? "/api";
+const API_PREFIX = process.env.API_PREFIX ?? "";
 
 /**
  * Create and configure Express application

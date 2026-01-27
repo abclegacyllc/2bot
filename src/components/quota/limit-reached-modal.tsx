@@ -9,17 +9,16 @@
  * @module components/quota/limit-reached-modal
  */
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { AlertCircle, Clock, Zap, ArrowRight, XCircle } from "lucide-react";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import { AlertCircle, ArrowRight, Clock, XCircle, Zap } from "lucide-react";
 import Link from "next/link";
 
 type ResourceType =
@@ -101,7 +100,7 @@ export function LimitReachedModal({
   currentPlan = "Free",
   suggestedPlan,
   suggestedLimit,
-  pricingUrl = "/dashboard/billing",
+  pricingUrl = "/billing",
   onUpgrade,
 }: LimitReachedModalProps) {
   const resourceName = RESOURCE_NAMES[resource];

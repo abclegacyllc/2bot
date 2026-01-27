@@ -8,8 +8,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { apiUrl, serviceUrl } from "@/shared/config/urls";
 
 // Validation schema (matches server-side)
 const registerSchema = z.object({
@@ -36,8 +37,11 @@ const registerSchema = z.object({
 
 type RegisterFormData = z.infer<typeof registerSchema>;
 
-export default function RegisterPage() {
-  const router = useRouter();
+function RegisterForm() {
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite");
+  const inviteEmail = searchParams.get("email");
+  
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,18 +49,25 @@ export default function RegisterPage() {
     resolver: zodResolver(registerSchema),
     defaultValues: {
       name: "",
-      email: "",
+      email: inviteEmail || "",
       password: "",
       confirmPassword: "",
     },
   });
+
+  // Update email when invite params load
+  useEffect(() => {
+    if (inviteEmail) {
+      form.setValue("email", inviteEmail);
+    }
+  }, [inviteEmail, form]);
 
   async function onSubmit(data: RegisterFormData) {
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await fetch("/api/auth/register", {
+      const response = await fetch(apiUrl("/auth/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -83,12 +94,34 @@ export default function RegisterPage() {
       }
 
       // Store token (will be handled by auth context in Task 1.6.1)
-      if (result.data?.token) {
-        localStorage.setItem("token", result.data.token);
+      const newToken = result.data?.token;
+      if (newToken) {
+        localStorage.setItem("token", newToken);
+      }
+
+      // If we have an invite token, accept it after registration
+      if (inviteToken && newToken) {
+        try {
+          const inviteResponse = await fetch(apiUrl(`/invites/${inviteToken}/accept`), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${newToken}`,
+            },
+          });
+          
+          if (!inviteResponse.ok) {
+            // Don't block registration, just log warning
+            console.warn("Failed to accept invite after registration");
+          }
+        } catch (inviteError) {
+          console.warn("Failed to accept invite after registration:", inviteError);
+        }
       }
 
       // Redirect to dashboard
-      router.push("/dashboard");
+      // Use serviceUrl for cross-subdomain redirect in enterprise mode
+      window.location.href = serviceUrl('dashboard', '/');
     } catch {
       setError("Network error. Please check your connection and try again.");
     } finally {
@@ -101,12 +134,22 @@ export default function RegisterPage() {
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl text-foreground">Create an account</CardTitle>
         <CardDescription className="text-muted-foreground">
-          Enter your details below to create your account
+          {inviteToken
+            ? "Create your account to accept the organization invitation"
+            : "Enter your details below to create your account"}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {/* Invite Notice */}
+            {inviteToken && (
+              <div className="p-3 text-sm text-blue-400 bg-blue-950/50 border border-blue-900 rounded-md">
+                You&apos;re registering to accept an organization invitation.
+                {inviteEmail && <> Please use the email: <strong>{inviteEmail}</strong></>}
+              </div>
+            )}
+
             {/* Global Error */}
             {error ? <div className="p-3 text-sm text-red-400 bg-red-950/50 border border-red-900 rounded-md">
                 {error}
@@ -222,5 +265,31 @@ export default function RegisterPage() {
         </div>
       </CardFooter>
     </Card>
+  );
+}
+
+function RegisterLoading() {
+  return (
+    <Card className="border-border bg-card/50 backdrop-blur">
+      <CardHeader className="space-y-1">
+        <CardTitle className="text-2xl text-foreground">Create an account</CardTitle>
+        <CardDescription className="text-muted-foreground">
+          Loading...
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-center py-8">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={<RegisterLoading />}>
+      <RegisterForm />
+    </Suspense>
   );
 }

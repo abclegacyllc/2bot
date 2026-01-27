@@ -105,7 +105,7 @@ function Sidebar({
       {/* Back to Dashboard */}
       <div className="absolute bottom-4 left-0 right-0 px-2">
         <Link
-          href="/dashboard"
+          href="/"
           className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-muted-foreground hover:bg-muted hover:text-foreground`}
           title={collapsed ? "Back to Dashboard" : undefined}
         >
@@ -172,7 +172,7 @@ function AdminRoleGuard({ children }: { children: ReactNode }) {
     if (!isLoading && user) {
       // Only ADMIN and SUPER_ADMIN can access
       if (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN") {
-        router.replace("/dashboard");
+        router.replace("/");
       }
     }
   }, [user, isLoading, router]);

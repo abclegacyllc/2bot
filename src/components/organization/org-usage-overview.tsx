@@ -13,13 +13,13 @@ import { ResourceUsageCard } from "@/components/quota/resource-usage-card";
 import { UsageWarningBanner } from "@/components/quota/usage-warning-banner";
 import { cn } from "@/lib/utils";
 import {
-  Zap,
-  Server,
-  Plug,
-  GitBranch,
-  Users,
-  Building2,
-  Clock,
+    Building2,
+    Clock,
+    GitBranch,
+    Plug,
+    Server,
+    Users,
+    Zap,
 } from "lucide-react";
 import { useMemo } from "react";
 

@@ -11,8 +11,8 @@
  * @module modules/quota/__tests__/quota-allocation.test
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
+import { describe, expect, it } from 'vitest';
 
 // ===========================================
 // Validation Logic Tests
@@ -302,7 +302,7 @@ describe('AllocationMode', () => {
 
   describe('SOFT_CAP mode', () => {
     it('allows exceeding with warning', () => {
-      const mode = 'SOFT_CAP';
+      const mode: string = 'SOFT_CAP';
       const limit = 10;
       const current = 12;
 
@@ -317,7 +317,7 @@ describe('AllocationMode', () => {
 
   describe('HARD_CAP mode', () => {
     it('blocks exceeding limit', () => {
-      const mode = 'HARD_CAP';
+      const mode: string = 'HARD_CAP';
       const limit = 10;
       const current = 12;
 
@@ -331,7 +331,7 @@ describe('AllocationMode', () => {
 
   describe('UNLIMITED mode', () => {
     it('never blocks', () => {
-      const mode = 'UNLIMITED';
+      const mode: string = 'UNLIMITED';
       const limit = 10;
       const current = 1000;
 

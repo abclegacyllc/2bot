@@ -14,8 +14,28 @@ export type { TokenPayload } from "@/modules/auth/auth.types";
 
 /**
  * JWT Configuration
+ * Uses lazy initialization to avoid build-time errors
  */
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
+let _jwtSecret: string | null = null;
+
+function getJwtSecret(): string {
+  if (_jwtSecret) {
+    return _jwtSecret;
+  }
+  
+  if (process.env.JWT_SECRET) {
+    _jwtSecret = process.env.JWT_SECRET;
+    return _jwtSecret;
+  }
+  
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET environment variable is required in production");
+  }
+  
+  _jwtSecret = "dev-secret-change-in-production";
+  return _jwtSecret;
+}
+
 const JWT_EXPIRES_IN = "7d";
 const JWT_ISSUER = "2bot";
 const JWT_AUDIENCE = "2bot-api";
@@ -48,7 +68,7 @@ export function generateToken(
   payload: TokenPayload,
   options?: TokenOptions
 ): string {
-  return jwt.sign(payload, JWT_SECRET, {
+  return jwt.sign(payload, getJwtSecret(), {
     expiresIn: options?.expiresIn ?? JWT_EXPIRES_IN,
     issuer: JWT_ISSUER,
     audience: JWT_AUDIENCE,
@@ -63,7 +83,7 @@ export function generateToken(
  */
 export function verifyToken(token: string): TokenPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, getJwtSecret(), {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     }) as DecodedToken;

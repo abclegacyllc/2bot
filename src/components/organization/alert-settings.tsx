@@ -20,6 +20,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { apiUrl } from "@/shared/config/urls";
 import { useEffect, useState } from "react";
 
 // ===========================================
@@ -72,10 +73,10 @@ export function AlertSettings() {
     const fetchData = async () => {
       try {
         const [configRes, historyRes] = await Promise.all([
-          fetch("/api/alerts/config", {
+          fetch(apiUrl("/alerts/config"), {
             credentials: "include",
           }),
-          fetch("/api/alerts/history?limit=10", {
+          fetch(apiUrl("/alerts/history?limit=10"), {
             credentials: "include",
           }),
         ]);
@@ -109,7 +110,7 @@ export function AlertSettings() {
     setSuccess(null);
 
     try {
-      const res = await fetch("/api/alerts/config", {
+      const res = await fetch(apiUrl("/alerts/config"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -150,7 +151,7 @@ export function AlertSettings() {
   // Acknowledge alert
   const acknowledgeAlert = async (alertId: string) => {
     try {
-      await fetch(`/api/alerts/${alertId}/acknowledge`, {
+      await fetch(apiUrl(`/alerts/${alertId}/acknowledge`), {
         method: "POST",
         credentials: "include",
       });

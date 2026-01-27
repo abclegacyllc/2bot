@@ -1,39 +1,292 @@
+# ===========================================
+# docker-compose.enterprise.yml
+# ===========================================
+# Enterprise deployment with subdomain separation
+#
+# Phase 6.7.5.4: Multi-subdomain Docker configuration
+#
+# Usage:
+#   docker-compose -f docker-compose.enterprise.yml up -d
+#
+# Subdomains:
+#   - 2bot.org         → Landing/Marketing (:3002)
+#   - dash.2bot.org    → Dashboard (:3000)
+#   - api.2bot.org     → API Server (:3001)
+#   - admin.2bot.org   → Admin Panel (:3003)
+#   - support.2bot.org → Support Team (:3004) - Phase 7
+#   - docs.2bot.org    → Documentation (:3005) - Future
+#   - dev.2bot.org     → Developer Portal (:3006) - Future
+#
+# Prerequisites:
+#   - Cloudflare subdomains pointing to server
+#   - SSL certificates configured
+#   - Nginx reverse proxy configured
+# ===========================================
+
+version: "3.8"
+
 services:
+  # ===========================================
+  # Database Services (shared)
+  # ===========================================
   postgres:
     image: postgres:15-alpine
     container_name: 2bot-postgres
     restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-twobot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-2bot_dev}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-twobot}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+    networks:
+      - 2bot-network
 
   redis:
     image: redis:7-alpine
     container_name: 2bot-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
+    ports:
+      - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 5s
+    networks:
+      - 2bot-network
 
+  # ===========================================
+  # Main Website (2bot.org) - Port :3002
+  # ===========================================
+  # Landing pages, marketing, public content
+  # Minimal Next.js or static site
+  # ===========================================
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=https://api.2bot.org
+        - NEXT_PUBLIC_DASHBOARD_URL=https://dash.2bot.org
+    container_name: 2bot-web
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=https://api.2bot.org
+      - NEXT_PUBLIC_DASHBOARD_URL=https://dash.2bot.org
+      - NEXT_PUBLIC_APP_URL=https://2bot.org
+      - ENTERPRISE_MODE=true
+    depends_on:
+      - api
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # Dashboard (dash.2bot.org) - Port :3000
+  # ===========================================
+  # Main application for authenticated users
+  # Gateways, plugins, settings, etc.
+  # ===========================================
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=https://api.2bot.org
+    container_name: 2bot-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=https://api.2bot.org
+      - NEXT_PUBLIC_APP_URL=https://dash.2bot.org
+      - NEXT_PUBLIC_DASHBOARD_URL=https://dash.2bot.org
+      - ENTERPRISE_MODE=true
+      # Database connection for Next.js server components
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      - api
+      - postgres
+      - redis
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # API Server (api.2bot.org) - Port :3001
+  # ===========================================
+  # Express backend - all API endpoints
+  # No /api prefix in enterprise mode
+  # ===========================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: 2bot-api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - SERVER_PORT=3001
+      - SERVER_HOST=0.0.0.0
+      # Phase 6.7.5.3: No /api prefix for subdomain deployment
+      - API_PREFIX=
+      # Database
+      - DATABASE_URL=${DATABASE_URL}
+      # Redis
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      # JWT
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRY=${JWT_EXPIRY:-7d}
+      # CORS - Allow all subdomains
+      - CORS_ORIGINS=https://2bot.org,https://www.2bot.org,https://dash.2bot.org,https://admin.2bot.org,https://support.2bot.org,https://docs.2bot.org,https://dev.2bot.org
+      # Stripe
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      # Email
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - EMAIL_FROM=${EMAIL_FROM}
+      # Sentry
+      - SENTRY_DSN=${SENTRY_DSN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # Admin Panel (admin.2bot.org) - Port :3003
+  # ===========================================
+  # Platform administration (ADMIN role only)
+  # User management, analytics, system config
+  # ===========================================
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=https://api.2bot.org
+    container_name: 2bot-admin
+    restart: unless-stopped
+    ports:
+      - "3003:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=https://api.2bot.org
+      - NEXT_PUBLIC_APP_URL=https://admin.2bot.org
+      - NEXT_PUBLIC_ADMIN_URL=https://admin.2bot.org
+      - ENTERPRISE_MODE=true
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      - api
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # Support Team Dashboard (support.2bot.org) - Port :3004
+  # Phase 7 - Uncomment when ready
+  # ===========================================
+  # Customer support and ticket management
+  # ===========================================
+  # support:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.support
+  #   container_name: 2bot-support
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3004:3000"
+  #   environment:
+  #     - NODE_ENV=production
+  #     - NEXT_PUBLIC_API_URL=https://api.2bot.org
+  #     - NEXT_PUBLIC_APP_URL=https://support.2bot.org
+  #     - NEXT_PUBLIC_SUPPORT_URL=https://support.2bot.org
+  #     - ENTERPRISE_MODE=true
+  #   depends_on:
+  #     - api
+  #   networks:
+  #     - 2bot-network
+
+  # ===========================================
+  # Public Documentation (docs.2bot.org) - Port :3005
+  # Future - Uncomment when ready
+  # ===========================================
+  # API docs, guides, tutorials
+  # Consider: Docusaurus, GitBook, or custom Next.js
+  # ===========================================
+  # docs:
+  #   image: nginx:alpine
+  #   container_name: 2bot-docs
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3005:80"
+  #   volumes:
+  #     - ./docs-build:/usr/share/nginx/html:ro
+  #   networks:
+  #     - 2bot-network
+
+  # ===========================================
+  # Developer Portal (dev.2bot.org) - Port :3006
+  # Future - Uncomment when ready
+  # ===========================================
+  # Marketplace publishing, analytics, SDK downloads
+  # ===========================================
+  # dev:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.dev
+  #   container_name: 2bot-dev
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3006:3000"
+  #   environment:
+  #     - NODE_ENV=production
+  #     - NEXT_PUBLIC_API_URL=https://api.2bot.org
+  #     - NEXT_PUBLIC_APP_URL=https://dev.2bot.org
+  #     - NEXT_PUBLIC_DEV_URL=https://dev.2bot.org
+  #     - ENTERPRISE_MODE=true
+  #   depends_on:
+  #     - api
+  #   networks:
+  #     - 2bot-network
+
+# ===========================================
+# Volumes
+# ===========================================
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
+
+# ===========================================
+# Networks
+# ===========================================
+networks:
+  2bot-network:
+    driver: bridge

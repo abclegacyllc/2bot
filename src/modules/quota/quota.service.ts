@@ -13,6 +13,7 @@
 
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
+import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
 import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
 import { AppError } from '@/shared/errors';
 import type { ServiceContext } from '@/shared/types/context';
@@ -49,6 +50,24 @@ function getPlanQuotaLimits(plan: PlanType): ResourceLimits {
     maxGateways: limits.gateways === -1 ? -1 : limits.gateways,
     maxDepartments: limits.maxDepartments === -1 ? -1 : limits.maxDepartments,
     maxMembers: limits.maxMembers === -1 ? -1 : limits.maxMembers,
+  };
+}
+
+/**
+ * Convert ORG_PLAN_LIMITS to ResourceLimits format for quota checking
+ * Single source of truth - all values come from org-plans.ts
+ */
+function getOrgPlanQuotaLimits(plan: OrgPlanType): ResourceLimits {
+  const limits = ORG_PLAN_LIMITS[plan] || ORG_PLAN_LIMITS.ORG_FREE;
+  return {
+    maxWorkflows: limits.sharedWorkflows === -1 ? -1 : limits.sharedWorkflows,
+    maxPlugins: limits.sharedPlugins === -1 ? -1 : limits.sharedPlugins,
+    maxApiCalls: limits.executionsPerMonth,  // null = unlimited → -1
+    maxStorage: limits.pool?.storageMb ?? 0,
+    maxSteps: -1,  // Org plans don't limit workflow steps
+    maxGateways: limits.sharedGateways === -1 ? -1 : limits.sharedGateways,
+    maxDepartments: limits.departments === null ? -1 : limits.departments,
+    maxMembers: limits.seats.included === -1 ? -1 : limits.seats.included,
   };
 }
 
@@ -575,10 +594,10 @@ class QuotaServiceImpl {
     });
 
     if (!org) {
-      return getPlanQuotaLimits('FREE');
+      return getOrgPlanQuotaLimits('ORG_FREE');
     }
 
-    const planLimits = getPlanQuotaLimits(org.plan as PlanType);
+    const planLimits = getOrgPlanQuotaLimits(org.plan as OrgPlanType);
 
     if (org.resourceQuota) {
       return this.mergeQuotas(planLimits, org.resourceQuota);
@@ -597,7 +616,7 @@ class QuotaServiceImpl {
     });
 
     if (!dept) {
-      return getPlanQuotaLimits('FREE');
+      return getOrgPlanQuotaLimits('ORG_FREE');
     }
 
     // Start with org limits

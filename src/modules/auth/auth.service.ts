@@ -229,7 +229,7 @@ class AuthService {
    *
    * @deprecated Phase 6.7: Context switching is now UI-only via navigation.
    * This method is kept for backward compatibility but returns the same token.
-   * Frontend should navigate to /dashboard (personal) or /dashboard/organizations/:orgId (org).
+   * Frontend should navigate to /dashboard (personal) or /organizations/:orgId (org).
    *
    * @param userId - User ID
    * @param sessionId - Current session ID

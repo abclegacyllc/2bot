@@ -9,9 +9,14 @@
  * Phase 6.7: Simplified authentication
  * - Token only contains user identity (no context/orgs)
  * - Context is UI-only, determined by URL navigation
- * - Organizations fetched via /api/user/organizations
+ * - Organizations fetched via /user/organizations
+ *
+ * Phase 6.9: Enterprise subdomain architecture
+ * - Uses apiUrl() for direct API calls (no Next.js proxy)
+ * - Dev: localhost:3001, Prod: api.2bot.org
  */
 
+import { apiUrl } from "@/shared/config/urls";
 import { useRouter } from "next/navigation";
 import type {
     ReactNode
@@ -43,6 +48,7 @@ interface User {
 interface ActiveContext {
   type: "personal" | "organization";
   organizationId?: string;
+  organizationSlug?: string;
   organizationName?: string;
   orgRole?: "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER";
   plan: "FREE" | "PRO" | "ENTERPRISE";
@@ -66,6 +72,7 @@ interface AuthContextType {
   context: ActiveContext;
   availableOrgs: AvailableOrg[];
   switchContext: (type: "personal" | "organization", orgId?: string) => Promise<void>;
+  refreshAvailableOrgs: () => Promise<void>;
   // Auth methods
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   logout: () => Promise<void>;
@@ -140,7 +147,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (!token) return [];
 
     try {
-      const response = await fetch("/api/user/organizations", {
+      const response = await fetch(apiUrl("/user/organizations"), {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -163,7 +170,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (!token) return null;
 
     try {
-      const response = await fetch("/api/auth/me", {
+      const response = await fetch(apiUrl("/auth/me"), {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -221,7 +228,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Login function
   const login = useCallback(
     async (email: string, password: string, rememberMe = false): Promise<void> => {
-      const response = await fetch("/api/auth/login", {
+      const response = await fetch(apiUrl("/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, rememberMe }),
@@ -256,7 +263,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     try {
       if (token) {
-        await fetch("/api/auth/logout", {
+        await fetch(apiUrl("/auth/logout"), {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -277,7 +284,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Register function
   const register = useCallback(
     async (email: string, password: string, name?: string): Promise<void> => {
-      const response = await fetch("/api/auth/register", {
+      const response = await fetch(apiUrl("/auth/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, name }),
@@ -308,7 +315,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Switch context (Phase 6.7 - UI-only navigation)
   // Context switching is now handled via URL navigation instead of token switching.
   // Personal resources: /dashboard/* uses /api/user/*
-  // Organization resources: /dashboard/organizations/:orgId/* uses /api/orgs/:orgId/*
+  // Organization resources: /organizations/:orgId/* uses /api/orgs/:orgId/*
   const switchContext = useCallback(
     async (type: "personal" | "organization", orgId?: string): Promise<void> => {
       const token = getStoredToken();
@@ -325,7 +332,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           plan: user?.plan || "FREE",
         });
         // Navigate to personal dashboard
-        router.push("/dashboard");
+        router.push("/");
       } else if (type === "organization" && orgId) {
         // Find the org in available orgs
         const org = availableOrgs.find((o) => o.id === orgId);
@@ -336,18 +343,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setContext({
           type: "organization",
           organizationId: org.id,
+          organizationSlug: org.slug,
           organizationName: org.name,
           orgRole: org.role,
           plan: "FREE", // Default, will be refreshed from org endpoint
         });
-        // Navigate to organization dashboard
-        router.push(`/dashboard/organizations/${orgId}`);
+        // Navigate to organization dashboard using slug for clean URLs
+        router.push(`/organizations/${org.slug}`);
       } else {
         throw new Error("Invalid context switch parameters");
       }
     },
     [router, user?.plan, availableOrgs]
   );
+
+  // Refresh available organizations
+  const refreshAvailableOrgs = useCallback(async (): Promise<void> => {
+    const orgs = await fetchAvailableOrgs();
+    setAvailableOrgs(orgs);
+  }, [fetchAvailableOrgs]);
 
   const value: AuthContextType = {
     user,
@@ -357,6 +371,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     context,
     availableOrgs,
     switchContext,
+    refreshAvailableOrgs,
     login,
     logout,
     register,

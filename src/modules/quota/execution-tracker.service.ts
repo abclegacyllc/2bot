@@ -11,10 +11,9 @@ import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { redis } from '@/lib/redis';
 import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
-import { 
-  PLAN_LIMITS, 
-  type PlanType,
-  SERVERLESS_PLANS,
+import {
+  PLAN_LIMITS,
+  type PlanType
 } from '@/shared/constants/plans';
 import type { ServiceContext } from '@/shared/types/context';
 import {
@@ -23,8 +22,8 @@ import {
   type ExecutionResourceUsage,
   type TrackResult,
   type UsageSummary,
-  type WarningLevel,
   WARNING_THRESHOLDS,
+  type WarningLevel,
   getCurrentPeriodEnd,
   getCurrentPeriodStart,
   getNextPeriodStart,

@@ -41,7 +41,7 @@ export class PlanLimitError extends Error {
     this.resource = resource;
     this.current = current;
     this.max = max;
-    this.upgradeUrl = "/dashboard/settings/billing/upgrade";
+    this.upgradeUrl = "/billing/upgrade";
   }
 
   toJSON() {

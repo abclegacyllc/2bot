@@ -1,0 +1,29 @@
+                 List of relations
+ Schema |         Name          | Type  |  Owner   
+--------+-----------------------+-------+----------
+ public | alert_configs         | table | postgres
+ public | alert_history         | table | postgres
+ public | audit_logs            | table | postgres
+ public | credit_balances       | table | postgres
+ public | credit_transactions   | table | postgres
+ public | department_members    | table | postgres
+ public | departments           | table | postgres
+ public | dept_allocations      | table | postgres
+ public | gateways              | table | postgres
+ public | member_allocations    | table | postgres
+ public | memberships           | table | postgres
+ public | organizations         | table | postgres
+ public | password_reset_tokens | table | postgres
+ public | plugins               | table | postgres
+ public | resource_quotas       | table | postgres
+ public | sessions              | table | postgres
+ public | subscriptions         | table | postgres
+ public | usage_history         | table | postgres
+ public | user_plugins          | table | postgres
+ public | users                 | table | postgres
+ public | workflow_runs         | table | postgres
+ public | workflow_step_runs    | table | postgres
+ public | workflow_steps        | table | postgres
+ public | workflows             | table | postgres
+(24 rows)
+

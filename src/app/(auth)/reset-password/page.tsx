@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { apiUrl } from "@/shared/config/urls";
 
 // Validation schema
 const resetPasswordSchema = z
@@ -85,7 +86,7 @@ function ResetPasswordForm() {
     setError(null);
 
     try {
-      const response = await fetch("/api/auth/reset-password", {
+      const response = await fetch(apiUrl("/auth/reset-password"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

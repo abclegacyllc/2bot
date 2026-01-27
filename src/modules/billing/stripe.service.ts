@@ -6,6 +6,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
+import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
 import type { PlanType } from '@/shared/constants/plans';
 import {
     getPlanLimits,
@@ -200,7 +201,9 @@ class StripeService {
    * Get current subscription info for context
    */
   async getSubscriptionInfo(ctx: ServiceContext): Promise<SubscriptionInfo> {
-    const subscription = ctx.isOrgContext() && ctx.organizationId
+    const isOrgContext = ctx.isOrgContext() && ctx.organizationId;
+    
+    const subscription = isOrgContext
       ? await prisma.subscription.findUnique({
           where: { organizationId: ctx.organizationId },
         })
@@ -208,12 +211,41 @@ class StripeService {
           where: { userId: ctx.userId },
         });
 
-    const plan = subscription?.plan ?? 'FREE';
-    const limits = getPlanLimits(plan);
+    // Default to appropriate free tier based on context
+    const planStr = subscription?.plan ?? (isOrgContext ? 'ORG_FREE' : 'FREE');
+    
+    // Get limits from the appropriate plan constants based on context
+    if (isOrgContext) {
+      const orgPlan = planStr as OrgPlanType;
+      const orgLimits = ORG_PLAN_LIMITS[orgPlan] || ORG_PLAN_LIMITS.ORG_FREE;
+      
+      return {
+        id: subscription?.id ?? '',
+        plan: orgPlan,
+        status: (subscription?.stripeStatus as StripeStatus) ?? 'none',
+        currentPeriodEnd: subscription?.currentPeriodEnd ?? undefined,
+        cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
+        limits: {
+          gateways: orgLimits.sharedGateways,
+          plugins: orgLimits.sharedPlugins,
+          executionsPerMonth: orgLimits.executionsPerMonth,
+          aiTokensPerMonth: orgLimits.sharedAiTokensPerMonth,
+          workspace: orgLimits.pool.ramMb !== null ? {
+            ramMb: orgLimits.pool.ramMb,
+            cpuCores: orgLimits.pool.cpuCores ?? 0,
+            storageMb: orgLimits.pool.storageMb ?? 0,
+          } : null,
+        },
+      };
+    }
+
+    // User context - use regular plan limits
+    const userPlan = planStr as PlanType;
+    const limits = getPlanLimits(userPlan);
 
     return {
       id: subscription?.id ?? '',
-      plan,
+      plan: userPlan,
       status: (subscription?.stripeStatus as StripeStatus) ?? 'none',
       currentPeriodEnd: subscription?.currentPeriodEnd ?? undefined,
       cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
@@ -241,7 +273,7 @@ class StripeService {
         await prisma.subscription.create({
           data: {
             organizationId: ctx.organizationId,
-            plan: 'FREE',
+            plan: 'ORG_FREE',
           },
         });
       }

@@ -2,11 +2,11 @@
 
 export * from "./data-categories";
 export * from "./limits";
+export * from "./org-plans";
 export * from "./permissions";
 export * from "./plans";
 export * from "./rate-limits";
 export * from "./workspace-addons";
-export * from "./org-plans";
 
 /**
  * Supported gateway types

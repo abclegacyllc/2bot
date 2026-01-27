@@ -7,17 +7,18 @@
  * @module components/quota
  */
 
-export { UsageProgressBar, type ProgressBarSize } from "./usage-progress-bar";
-export { UsageWarningBanner } from "./usage-warning-banner";
+export { LimitReachedModal } from "./limit-reached-modal";
+export {
+    PlanComparisonMini,
+    buildComparisonFeatures
+} from "./plan-comparison-mini";
 export { ResourceUsageCard } from "./resource-usage-card";
 export { UpgradePrompt } from "./upgrade-prompt";
 export {
-  PlanComparisonMini,
-  buildComparisonFeatures,
-} from "./plan-comparison-mini";
-export { LimitReachedModal } from "./limit-reached-modal";
-export { UsageOverview } from "./usage-overview";
-export {
-  UsageHistoryChart,
-  generateMockUsageData,
+    UsageHistoryChart,
+    generateMockUsageData
 } from "./usage-history-chart";
+export { UsageOverview } from "./usage-overview";
+export { UsageProgressBar, type ProgressBarSize } from "./usage-progress-bar";
+export { UsageWarningBanner } from "./usage-warning-banner";
+

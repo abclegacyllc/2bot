@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiUrl } from "@/shared/config/urls";
 import {
     AlertTriangle,
     Calendar,
@@ -137,7 +138,7 @@ export default function AdminUsersPage() {
       if (search) params.set("search", search);
       if (planFilter) params.set("plan", planFilter);
 
-      const response = await fetch(`/api/admin/users?${params}`, {
+      const response = await fetch(apiUrl(`/admin/users?${params}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) {

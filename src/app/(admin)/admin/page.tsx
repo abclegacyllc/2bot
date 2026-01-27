@@ -16,13 +16,14 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { apiUrl } from "@/shared/config/urls";
 import {
-  AlertTriangle,
-  Bot,
-  CreditCard,
-  DollarSign,
-  Users,
-  Zap,
+    AlertTriangle,
+    Bot,
+    CreditCard,
+    DollarSign,
+    Users,
+    Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -108,7 +109,7 @@ export default function AdminOverviewPage() {
     const fetchStats = async () => {
       if (!token) return;
       try {
-        const response = await fetch("/api/admin/stats", {
+        const response = await fetch(apiUrl("/admin/stats"), {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) {

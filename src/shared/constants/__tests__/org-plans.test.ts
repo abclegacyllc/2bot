@@ -7,31 +7,24 @@
  * @module shared/constants/__tests__/org-plans.test
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  // Types
-  type OrgPlanType,
-  type OrgPlanLimits,
-  
-  // Plan Arrays
-  ALL_ORG_PLAN_TYPES,
-  PAID_ORG_PLAN_TYPES,
-  
-  // Plan Order
-  ORG_PLAN_ORDER,
-  
-  // Functions
-  isHigherOrgPlan,
-  isAtLeastOrgPlan,
-  getOrgPlanLimits,
-  orgPlanHasFeature,
-  isOrgLimitExceeded,
-  getOrgRemainingCapacity,
-  calculateExtraSeatsPrice,
-  formatOrgPoolResources,
-  
-  // Limits
-  ORG_PLAN_LIMITS,
+    // Plan Arrays
+    ALL_ORG_PLAN_TYPES,
+    calculateExtraSeatsPrice,
+    formatOrgPoolResources,
+    getOrgPlanLimits,
+    getOrgRemainingCapacity,
+    isAtLeastOrgPlan,
+    // Functions
+    isHigherOrgPlan,
+    isOrgLimitExceeded,
+    // Limits
+    ORG_PLAN_LIMITS,
+    // Plan Order
+    ORG_PLAN_ORDER,
+    orgPlanHasFeature,
+    PAID_ORG_PLAN_TYPES
 } from '../org-plans';
 
 // ===========================================
@@ -39,8 +32,9 @@ import {
 // ===========================================
 
 describe('ORG_PLAN_LIMITS', () => {
-  it('has all 5 org plan types', () => {
-    expect(ALL_ORG_PLAN_TYPES).toHaveLength(5);
+  it('has all 6 org plan types', () => {
+    expect(ALL_ORG_PLAN_TYPES).toHaveLength(6);
+    expect(ALL_ORG_PLAN_TYPES).toContain('ORG_FREE');
     expect(ALL_ORG_PLAN_TYPES).toContain('ORG_STARTER');
     expect(ALL_ORG_PLAN_TYPES).toContain('ORG_GROWTH');
     expect(ALL_ORG_PLAN_TYPES).toContain('ORG_PRO');
@@ -48,14 +42,22 @@ describe('ORG_PLAN_LIMITS', () => {
     expect(ALL_ORG_PLAN_TYPES).toContain('ORG_ENTERPRISE');
   });
 
-  it('all org plans use WORKSPACE execution mode', () => {
-    for (const plan of ALL_ORG_PLAN_TYPES) {
+  it('paid org plans use WORKSPACE execution mode, ORG_FREE uses SERVERLESS', () => {
+    // ORG_FREE uses SERVERLESS mode with limited executions
+    expect(ORG_PLAN_LIMITS.ORG_FREE.executionMode).toBe('SERVERLESS');
+    
+    // All paid org plans use WORKSPACE mode
+    for (const plan of PAID_ORG_PLAN_TYPES) {
       expect(ORG_PLAN_LIMITS[plan].executionMode).toBe('WORKSPACE');
     }
   });
 
-  it('all org plans have unlimited executions', () => {
-    for (const plan of ALL_ORG_PLAN_TYPES) {
+  it('paid org plans have unlimited executions, ORG_FREE has limited', () => {
+    // ORG_FREE has limited executions
+    expect(typeof ORG_PLAN_LIMITS.ORG_FREE.executionsPerMonth).toBe('number');
+    
+    // All paid org plans have unlimited executions
+    for (const plan of PAID_ORG_PLAN_TYPES) {
       expect(ORG_PLAN_LIMITS[plan].executionsPerMonth).toBeNull();
     }
   });
@@ -194,18 +196,28 @@ describe('orgPlanHasFeature', () => {
   });
 
   describe('audit logs feature', () => {
-    it('audit logs available on all plans', () => {
-      for (const plan of ALL_ORG_PLAN_TYPES) {
+    it('audit logs not available on ORG_FREE', () => {
+      expect(orgPlanHasFeature('ORG_FREE', 'auditLogs')).toBe(false);
+    });
+
+    it('audit logs available on all paid plans', () => {
+      for (const plan of PAID_ORG_PLAN_TYPES) {
         expect(orgPlanHasFeature(plan, 'auditLogs')).toBe(true);
       }
+      expect(orgPlanHasFeature('ORG_ENTERPRISE', 'auditLogs')).toBe(true);
     });
   });
 
   describe('API access feature', () => {
-    it('API access available on all plans', () => {
-      for (const plan of ALL_ORG_PLAN_TYPES) {
+    it('API access not available on ORG_FREE', () => {
+      expect(orgPlanHasFeature('ORG_FREE', 'apiAccess')).toBe(false);
+    });
+
+    it('API access available on all paid plans', () => {
+      for (const plan of PAID_ORG_PLAN_TYPES) {
         expect(orgPlanHasFeature(plan, 'apiAccess')).toBe(true);
       }
+      expect(orgPlanHasFeature('ORG_ENTERPRISE', 'apiAccess')).toBe(true);
     });
   });
 });
@@ -216,14 +228,16 @@ describe('orgPlanHasFeature', () => {
 
 describe('ORG_PLAN_ORDER', () => {
   it('orders plans correctly', () => {
-    expect(ORG_PLAN_ORDER.ORG_STARTER).toBe(0);
-    expect(ORG_PLAN_ORDER.ORG_GROWTH).toBe(1);
-    expect(ORG_PLAN_ORDER.ORG_PRO).toBe(2);
-    expect(ORG_PLAN_ORDER.ORG_BUSINESS).toBe(3);
-    expect(ORG_PLAN_ORDER.ORG_ENTERPRISE).toBe(4);
+    expect(ORG_PLAN_ORDER.ORG_FREE).toBe(0);
+    expect(ORG_PLAN_ORDER.ORG_STARTER).toBe(1);
+    expect(ORG_PLAN_ORDER.ORG_GROWTH).toBe(2);
+    expect(ORG_PLAN_ORDER.ORG_PRO).toBe(3);
+    expect(ORG_PLAN_ORDER.ORG_BUSINESS).toBe(4);
+    expect(ORG_PLAN_ORDER.ORG_ENTERPRISE).toBe(5);
   });
 
   it('reflects increasing value', () => {
+    expect(ORG_PLAN_ORDER.ORG_FREE).toBeLessThan(ORG_PLAN_ORDER.ORG_STARTER);
     expect(ORG_PLAN_ORDER.ORG_STARTER).toBeLessThan(ORG_PLAN_ORDER.ORG_GROWTH);
     expect(ORG_PLAN_ORDER.ORG_GROWTH).toBeLessThan(ORG_PLAN_ORDER.ORG_PRO);
     expect(ORG_PLAN_ORDER.ORG_PRO).toBeLessThan(ORG_PLAN_ORDER.ORG_BUSINESS);
@@ -419,10 +433,11 @@ describe('display information', () => {
   });
 
   it('has expected display names', () => {
-    expect(ORG_PLAN_LIMITS.ORG_STARTER.displayName).toBe('Starter');
-    expect(ORG_PLAN_LIMITS.ORG_GROWTH.displayName).toBe('Growth');
-    expect(ORG_PLAN_LIMITS.ORG_PRO.displayName).toBe('Professional');
-    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.displayName).toBe('Business');
-    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.displayName).toBe('Enterprise');
+    expect(ORG_PLAN_LIMITS.ORG_FREE.displayName).toBe('Org Free');
+    expect(ORG_PLAN_LIMITS.ORG_STARTER.displayName).toBe('Org Starter');
+    expect(ORG_PLAN_LIMITS.ORG_GROWTH.displayName).toBe('Org Growth');
+    expect(ORG_PLAN_LIMITS.ORG_PRO.displayName).toBe('Org Pro');
+    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.displayName).toBe('Org Business');
+    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.displayName).toBe('Org Enterprise');
   });
 });

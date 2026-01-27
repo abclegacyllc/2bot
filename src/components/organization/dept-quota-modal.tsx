@@ -30,6 +30,7 @@ import {
     FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { apiUrl } from "@/shared/config/urls";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -126,7 +127,7 @@ export function DeptQuotaModal({
         maxStorage: parseQuotaValue(data.maxStorage),
       };
 
-      const res = await fetch(`/api/departments/${department.id}/quotas`, {
+      const res = await fetch(apiUrl(`/departments/${department.id}/quotas`), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

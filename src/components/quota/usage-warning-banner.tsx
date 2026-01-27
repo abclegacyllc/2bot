@@ -13,7 +13,7 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, X, Zap, AlertCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, X, Zap } from "lucide-react";
 
 type WarningLevel = "warning" | "critical" | "blocked";
 

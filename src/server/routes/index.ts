@@ -16,6 +16,7 @@ import { authRouter } from "./auth";
 import { billingRouter } from "./billing";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
+import { invitesRouter } from "./invites";
 import { organizationRouter } from "./organization";
 import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
@@ -49,6 +50,13 @@ router.use("/user", userRouter);
  * Uses plural "orgs" to match GitHub API convention
  */
 router.use("/orgs", orgsRouter);
+
+/**
+ * Invites routes (Public)
+ * /api/invites/:token for public invite access
+ * Used directly by nginx in production
+ */
+router.use("/invites", invitesRouter);
 
 /**
  * Organization routes (Phase 4) - Legacy

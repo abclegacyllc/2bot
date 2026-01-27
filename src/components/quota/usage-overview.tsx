@@ -9,19 +9,19 @@
  * @module components/quota/usage-overview
  */
 
-import { ResourceUsageCard } from "./resource-usage-card";
-import { UsageWarningBanner } from "./usage-warning-banner";
 import { cn } from "@/lib/utils";
 import {
-  Zap,
-  Server,
-  Plug,
-  GitBranch,
-  HardDrive,
-  Clock,
-  Users,
+    Clock,
+    GitBranch,
+    HardDrive,
+    Plug,
+    Server,
+    Users,
+    Zap,
 } from "lucide-react";
 import { useMemo } from "react";
+import { ResourceUsageCard } from "./resource-usage-card";
+import { UsageWarningBanner } from "./usage-warning-banner";
 
 interface ResourceUsage {
   current: number;

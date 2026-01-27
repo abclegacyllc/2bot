@@ -10,14 +10,14 @@ WORKDIR /app
 # Install dependencies needed for native modules
 RUN apk add --no-cache libc6-compat
 
-# Copy package files
+# Copy package files FIRST for better caching
 COPY package.json package-lock.json* ./
-COPY prisma ./prisma/
 
 # Install all dependencies (including devDependencies for build)
-RUN npm ci
+RUN npm ci --prefer-offline
 
-# Generate Prisma client
+# Copy prisma schema and generate client
+COPY prisma ./prisma/
 RUN npx prisma generate
 
 # Stage 2: Builder

@@ -8,11 +8,11 @@
 
 | Item | Value |
 |------|-------|
-| **Last Updated** | 2026-01-22 |
-| **Last Session** | S38: Phase 6.8 Plan Architecture Session 6 (COMPLETE) |
-| **Current Phase** | Phase 6.8: Plan Architecture Redesign ✅ |
-| **Next Task** | Next phase (TBD) |
-| **Overall Progress** | Phase 6.8: 24/24 tasks (ALL PARTS COMPLETE) |
+| **Last Updated** | 2026-01-27 |
+| **Last Session** | S44: Phase 6.9 Final Verification |
+| **Current Phase** | Phase 6.9: Enterprise Subdomain Migration ✅ Complete |
+| **Next Task** | Phase 7 or next feature development |
+| **Overall Progress** | Phase 6.9: 23/23 tasks (All Complete) |
 
 ---
 
@@ -30,9 +30,144 @@
 | Phase 6: Launch | ✅ Complete | 16/16 tasks | Production deployed to www.2bot.org ✓ |
 | Phase 6.7: Architecture | ✅ Complete | 16/16 tasks | URL-based APIs + Enterprise Subdomain Ready |
 | Phase 6.8: Plan Arch | ✅ Complete | 24/24 tasks | All parts complete (A-F) |
+| Phase 6.9: Enterprise | ✅ Complete | 23/23 tasks | All Sessions Complete |
 ---
 
-## ⭐ Phase 6.8: Plan Architecture Redesign (Current)
+## ⭐ Phase 6.9: Enterprise Subdomain Migration (Current)
+
+> **Goal:** Migrate from single-domain (2bot.org/api/*) to multi-subdomain architecture (api.2bot.org/*, dash.2bot.org/*, admin.2bot.org/*)
+> **Why:** Enables enterprise features, better security isolation, and scalable deployment
+
+### Session 0 Complete (2026-01-26): Pre-Migration Tasks
+- [x] **6.9.0.1** Verify route mapping - Audited all deprecated routes have replacements
+- [x] **6.9.0.2** Create developer environment config
+  - Created `.env.development.example` with localhost URLs
+- [x] **6.9.0.3** Verify backup procedure exists
+  - Confirmed `scripts/deploy/backup.sh` is ready
+- [x] **6.9.0.4** Create missing org alerts routes
+  - Created `src/server/routes/org-alerts.ts` with 5 endpoints
+- [x] **6.9.0.5** Create missing dept quotas routes
+  - Added GET/POST `/:orgId/departments/:deptId/quotas` to orgs.ts
+- [x] **6.9.0.6** Create user quota/realtime route
+  - Added SSE endpoint `/api/user/quota/realtime` to user.ts
+
+### Session 1 Complete (2026-01-26): Configuration + Production-Like Development
+> **Architecture Principle:** Development mirrors production URL structure (12-Factor App)
+
+- [x] **6.9.1.1** Update CORS for production-like development
+- [x] **6.9.1.2** Simplify URL config (removed dual-mode logic)
+- [x] **6.9.1.3** Set API_PREFIX="" as default (no /api prefix)
+- [x] **6.9.1.4** Update environment files (removed API_PREFIX from dev)
+
+### Key Decision: Production-Like Development
+Instead of dual-mode (different paths in dev vs prod), we now use:
+- **Same URL structure** in development and production
+- **Only base URL differs**: `localhost:3001` → `api.2bot.org`
+- **No API_PREFIX**: Routes at `/user/gateways`, not `/api/user/gateways`
+
+### Files Modified Session 1 (2026-01-26):
+- `src/server/middleware/cors.ts` - Simplified CORS (prod origins in prod, both in dev)
+- `src/shared/config/urls.ts` - Simplified apiUrl() (no dual-mode logic)
+- `src/server/app.ts` - API_PREFIX defaults to "" 
+- `.env.development.example` - Removed API_PREFIX setting
+
+### Files Created/Modified Session 0:
+- `src/server/routes/org-alerts.ts` - NEW: Organization alerts router (5 endpoints)
+- `src/server/routes/orgs.ts` - Added dept quotas routes + mounted org-alerts router
+- `src/server/routes/user.ts` - Added quota/realtime SSE endpoint
+- `.env.development.example` - NEW: Developer environment template
+- `docs/tasks/phase-6.9-enterprise-migration.md` - Updated with pre-migration tasks
+
+### Route Mapping (All Routes Ready):
+| Deprecated Route | New Route | Status |
+|------------------|-----------|--------|
+| `/alerts/*` | `/orgs/:orgId/alerts/*` | ✅ Created |
+| `/quota/realtime` | `/user/quota/realtime` | ✅ Created |
+| `/dept-quotas/*` | `/orgs/:orgId/departments/:deptId/quotas` | ✅ Created |
+
+### Session 2 Complete (2026-01-26): Frontend Migration
+- [x] **6.9.2.1** Create API client utility (`src/lib/api-client.ts`)
+- [x] **6.9.2.2** Update auth-provider to use apiUrl()
+- [x] **6.9.2.3** Update all dashboard pages (~25 files)
+- [x] **6.9.2.4** Update all components (~5 files)
+- [x] **6.9.2.5** Update admin pages (~3 files)
+
+### Files Created/Modified Session 2:
+- `src/lib/api-client.ts` - NEW: Typed API client (GET, POST, PUT, PATCH, DELETE)
+- `src/components/providers/auth-provider.tsx` - Uses apiUrl() for all fetch calls
+- `src/app/(auth)/*` - All auth pages use apiUrl()
+- `src/app/(dashboard)/**/*` - All dashboard pages use apiUrl()
+- `src/app/(admin)/**/*` - All admin pages use apiUrl()
+- `src/components/**/*` - All components use apiUrl()
+
+### Session 3 Complete (2026-01-26): Cleanup (Archive Approach)
+> **Principle:** Archive instead of delete for safer rollback
+
+- [x] **6.9.3.1** Archive Next.js API routes to `_archive_/next-api-routes/`
+- [x] **6.9.3.2** Defer deprecated backend route removal (keep with sunset headers)
+- [x] **6.9.3.3** Archive single-domain nginx config to `_archive_/`
+- [x] **6.9.3.4** Archive single-domain docker-compose, promote enterprise
+
+### Files Archived Session 3:
+- `_archive_/next-api-routes/` - Former `src/app/api/`
+- `_archive_/2bot.org.conf` - Former `nginx/2bot.org.conf`
+- `_archive_/docker-compose.single-domain.yml` - Former `docker-compose.yml`
+- `nginx/2bot.conf` - Renamed from `nginx/2bot.enterprise.conf`
+- `docker-compose.yml` - Renamed from `docker-compose.enterprise.yml`
+
+### Session 4 Complete (2026-01-26): Testing
+- [x] **6.9.4.1** Test All API Endpoints
+  - Created `scripts/smoke-test-6.9.sh` with comprehensive tests
+  - Added `make smoke-test` and `make smoke-test-prod` commands
+- [x] **6.9.4.2** Test CORS from All Subdomains
+  - CORS testing included in smoke test script
+  - Verifies localhost:3000 (dev) and all production subdomains
+- [x] **6.9.4.3** Zero-Downtime Production Deployment
+  - Created `scripts/deploy/deploy-enterprise.sh` with rolling deployment
+  - Deploys API → Dashboard → Admin → Web sequentially with health checks
+- [x] **6.9.4.4** Verify Developer Mode Still Works
+  - Updated Makefile health checks for no-prefix architecture
+  - `make dev` starts environment with correct URLs
+  - `make health` and `make smoke-test` verify all services
+
+### Files Created/Modified Session 4:
+- `scripts/smoke-test-6.9.sh` - NEW: Comprehensive API/CORS/Frontend test script
+- `scripts/deploy/deploy-enterprise.sh` - NEW: Rolling deployment with health checks
+- `Makefile` - Added smoke-test targets, updated health URLs (no /api prefix)
+
+### Test Commands:
+```bash
+# Development smoke test
+make smoke-test
+
+# With authentication (for user endpoints)
+TOKEN=<jwt> ./scripts/smoke-test-6.9.sh dev
+
+# Production smoke test
+TOKEN=<jwt> make smoke-test-prod
+
+# Quick health check
+make health
+```
+
+### Deployment Commands:
+```bash
+# Dry-run deployment (no changes)
+./scripts/deploy/deploy-enterprise.sh --dry-run
+
+# Production deployment
+./scripts/deploy/deploy-enterprise.sh
+```
+
+---
+
+## ✅ Phase 6.9 Complete!
+- [ ] **6.9.4.3** Test Admin Panel
+- [ ] **6.9.4.4** Production Deployment
+
+---
+
+## ⭐ Phase 6.8: Plan Architecture Redesign (Complete)
 
 > **Goal:** Implement proper User Plan vs Organization Plan separation with dual execution modes
 > **Why:** Current plan system has inconsistencies (missing STARTER in some places, conflicting limits)

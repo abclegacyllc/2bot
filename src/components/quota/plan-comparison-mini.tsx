@@ -11,7 +11,7 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Check, X, ArrowRight, Sparkles } from "lucide-react";
+import { ArrowRight, Check, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 
 interface PlanFeature {
@@ -60,7 +60,7 @@ export function PlanComparisonMini({
   suggestedPrice = 0,
   billingPeriod = "monthly",
   features,
-  pricingUrl = "/dashboard/billing",
+  pricingUrl = "/billing",
   onUpgrade,
   className,
 }: PlanComparisonMiniProps) {

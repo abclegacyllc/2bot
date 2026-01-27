@@ -123,8 +123,8 @@ billingRouter.post(
 
     // Create checkout session
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const successUrl = `${baseUrl}/dashboard/settings/billing?success=true`;
-    const cancelUrl = `${baseUrl}/dashboard/settings/billing?canceled=true`;
+    const successUrl = `${baseUrl}/billing?success=true`;
+    const cancelUrl = `${baseUrl}/billing?canceled=true`;
 
     const url = await stripeService.createCheckoutSession(
       ctx,
@@ -157,7 +157,7 @@ billingRouter.post(
       }
     }
 
-    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/settings/billing`;
+    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/billing`;
     const url = await stripeService.createPortalSession(ctx, returnUrl);
 
     res.json({

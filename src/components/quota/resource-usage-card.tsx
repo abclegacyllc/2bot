@@ -10,8 +10,8 @@
  */
 
 import { cn } from "@/lib/utils";
-import { UsageProgressBar, type ProgressBarSize } from "./usage-progress-bar";
 import { LucideIcon } from "lucide-react";
+import { UsageProgressBar, type ProgressBarSize } from "./usage-progress-bar";
 
 interface ResourceUsageCardProps {
   icon: LucideIcon;

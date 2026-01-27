@@ -11,12 +11,11 @@
 
 import { Router, type Request, type Response } from 'express';
 
-import { quotaService, usageTracker, ExecutionTrackerService } from '@/modules/quota';
-import { gatewayService } from '@/modules/gateway';
+import { ExecutionTrackerService, quotaService, usageTracker } from '@/modules/quota';
+import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
 import { BadRequestError } from '@/shared/errors';
 import type { ApiResponse } from '@/shared/types';
 import { createServiceContext } from '@/shared/types/context';
-import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
 
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/error-handler';

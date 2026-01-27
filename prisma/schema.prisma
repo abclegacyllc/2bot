@@ -42,6 +42,13 @@ enum MembershipStatus {
   SUSPENDED     // Temporarily disabled
 }
 
+enum InviteStatus {
+  PENDING       // Waiting for response
+  ACCEPTED      // Invite was accepted
+  DECLINED      // Invite was declined by recipient
+  EXPIRED       // Invite has expired (computed, not stored)
+}
+
 enum DatabaseType {
   SHARED        // Uses default shared database (Free/Starter/Pro/Business)
   DEDICATED     // Has own database instance (Enterprise)
@@ -66,6 +73,7 @@ enum ExecutionMode {
 }
 
 enum OrgPlan {
+  ORG_FREE        // Free tier - limited features
   ORG_STARTER     // $49/mo - 5 seats, 5 gateways
   ORG_GROWTH      // $99/mo - 15 seats, 15 gateways
   ORG_PRO         // $199/mo - 40 seats, 50 gateways
@@ -139,6 +147,7 @@ model User {
   memberAllocations   MemberAllocation[]
   deptAllocsSetBy     DeptAllocation[]   @relation("DeptAllocSetBy")
   memberAllocsSetBy   MemberAllocation[] @relation("MemberAllocSetBy")
+  orgInvitesSent      OrgInvite[]
 
   @@index([email])
   @@index([stripeCustomerId])
@@ -206,8 +215,8 @@ model Subscription {
   stripePriceId        String?   @map("stripe_price_id")
   stripeStatus         String?   @map("stripe_status") // 'active', 'past_due', 'canceled', etc.
   
-  // Plan info
-  plan                 PlanType  @default(FREE)
+  // Plan info - String to support both user (FREE, STARTER, etc.) and org (ORG_FREE, ORG_STARTER, etc.) plans
+  plan                 String    @default("FREE")
   
   // Billing period
   currentPeriodStart   DateTime? @map("current_period_start")
@@ -236,7 +245,7 @@ model Organization {
   slug             String       @unique
   
   // Billing (linked in Phase 5)
-  plan             OrgPlan      @default(ORG_STARTER) @map("org_plan")
+  plan             OrgPlan      @default(ORG_FREE) @map("org_plan")
   stripeCustomerId String?      @unique @map("stripe_customer_id")
   
   // Seat management
@@ -272,6 +281,7 @@ model Organization {
   alertConfig      AlertConfig?
   alertHistory     AlertHistory[]
   subscription     Subscription?
+  orgInvites       OrgInvite[]
   
   @@index([slug])
   @@index([databaseType])
@@ -314,6 +324,46 @@ model Membership {
   @@index([organizationId])
   @@index([status])
   @@map("memberships")
+}
+
+// ===========================================
+// OrgInvite Model (Phase 4: Organization)
+// Pending invites for users who haven't registered yet
+// ===========================================
+model OrgInvite {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  
+  // Invite target (email, not a user yet)
+  email          String
+  role           OrgRole      @default(ORG_MEMBER)
+  
+  // Secure invite token
+  token          String       @unique
+  
+  // Invite tracking
+  invitedBy      String       @map("invited_by")
+  expiresAt      DateTime     @map("expires_at")
+  resendCount    Int          @default(0) @map("resend_count")
+  lastResentAt   DateTime?    @map("last_resent_at")
+  
+  // Status
+  status         InviteStatus @default(PENDING)
+  usedAt         DateTime?    @map("used_at")
+  declinedAt     DateTime?    @map("declined_at")
+  
+  // Timestamps
+  createdAt      DateTime     @default(now()) @map("created_at")
+  
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter        User         @relation(fields: [invitedBy], references: [id])
+  
+  @@unique([organizationId, email])
+  @@index([email])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("org_invites")
 }
 
 // ===========================================

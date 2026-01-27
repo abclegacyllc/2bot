@@ -11,24 +11,24 @@
  * @module modules/quota/quota-allocation.service
  */
 
-import { AllocationMode, type OrgRole } from '@prisma/client';
 import { audit } from '@/lib/audit';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
 import { AppError, ForbiddenError, NotFoundError } from '@/shared/errors';
 import type { ServiceContext } from '@/shared/types/context';
+import { AllocationMode, type OrgRole } from '@prisma/client';
 import type {
-  DeptAllocationResponse,
-  DeptAllocationSummary,
-  MemberAllocationResponse,
-  OrgAllocationSummary,
-  QuotaAllocation,
-  SetDeptAllocationRequest,
-  SetMemberAllocationRequest,
-  UnallocatedResources,
-  ValidationError,
-  ValidationResult,
+    DeptAllocationResponse,
+    DeptAllocationSummary,
+    MemberAllocationResponse,
+    OrgAllocationSummary,
+    QuotaAllocation,
+    SetDeptAllocationRequest,
+    SetMemberAllocationRequest,
+    UnallocatedResources,
+    ValidationError,
+    ValidationResult,
 } from './quota-allocation.types';
 
 const log = logger.child({ module: 'quota-allocation' });

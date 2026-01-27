@@ -11,8 +11,7 @@ import type {
     MembershipStatus,
     Organization,
     OrgPlan,
-    OrgRole,
-    PlanType,
+    OrgRole
 } from "@prisma/client";
 
 // Re-export Prisma types
@@ -128,6 +127,19 @@ export interface PendingInvite {
   role: OrgRole;
   invitedAt: Date;
   inviterEmail?: string;
+}
+
+/**
+ * Organization invite response (for pending invites list)
+ */
+export interface OrgInviteResponse {
+  id: string;
+  email: string;
+  role: OrgRole;
+  invitedBy: string;
+  inviterEmail: string | null;
+  expiresAt: Date;
+  createdAt: Date;
 }
 
 // ===========================================

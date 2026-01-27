@@ -3,13 +3,36 @@ import type { CorsOptions } from "cors";
 /**
  * Allowed origins for CORS
  * 
- * Phase 6.7.5.1: Updated for enterprise subdomain support
- * Supports both single-domain and multi-subdomain deployments
+ * Phase 6.9.1.1: Dual-mode CORS support
+ * - Production: Only production origins (subdomains)
+ * - Development: Includes localhost origins
+ * 
+ * Supports both single-domain and multi-subdomain deployments.
  */
-const allowedOrigins = [
-  // ===========================================
-  // Development URLs
-  // ===========================================
+
+const isProduction = process.env.NODE_ENV === "production";
+
+/**
+ * Production origins (always included)
+ */
+const productionOrigins = [
+  // Main Domain
+  "https://2bot.org",
+  "https://www.2bot.org",
+  
+  // Enterprise Subdomains
+  "https://dash.2bot.org",     // Dashboard (:3000)
+  "https://api.2bot.org",      // API (:3001) - for internal calls
+  "https://admin.2bot.org",    // Admin panel (:3003)
+  "https://support.2bot.org",  // Support team (:3004) - Phase 7
+  "https://docs.2bot.org",     // Documentation (:3005)
+  "https://dev.2bot.org",      // Developer portal (:3006)
+];
+
+/**
+ * Development origins (only in development mode)
+ */
+const developmentOrigins = [
   "http://localhost:3000",   // Dashboard (Next.js)
   "http://localhost:3001",   // API (Express)
   "http://localhost:3002",   // Main/Landing site
@@ -17,26 +40,19 @@ const allowedOrigins = [
   "http://localhost:3004",   // Support team (Phase 7)
   "http://localhost:3005",   // Documentation
   "http://localhost:3006",   // Developer portal
+];
+
+/**
+ * Build allowed origins based on environment
+ */
+const allowedOrigins = [
+  // Always include production origins
+  ...productionOrigins,
   
-  // ===========================================
-  // Production - Main Domain
-  // ===========================================
-  "https://2bot.org",
-  "https://www.2bot.org",
+  // Only include localhost in development
+  ...(isProduction ? [] : developmentOrigins),
   
-  // ===========================================
-  // Production - Enterprise Subdomains
-  // ===========================================
-  "https://dash.2bot.org",     // Dashboard (:3000)
-  "https://api.2bot.org",      // API (:3001) - for internal calls
-  "https://admin.2bot.org",    // Admin panel (:3003)
-  "https://support.2bot.org",  // Support team (:3004) - Phase 7
-  "https://docs.2bot.org",     // Documentation (:3005)
-  "https://dev.2bot.org",      // Developer portal (:3006)
-  
-  // ===========================================
   // Environment-configured URLs (dynamic)
-  // ===========================================
   process.env.NEXT_PUBLIC_APP_URL,
   process.env.NEXT_PUBLIC_DASHBOARD_URL,
   process.env.NEXT_PUBLIC_API_URL,

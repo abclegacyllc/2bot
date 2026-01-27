@@ -7,9 +7,9 @@
  */
 
 import { useAuth } from "@/components/providers/auth-provider";
+import { serviceUrl } from "@/shared/config/urls";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -30,7 +30,6 @@ const loginSchema = z.object({
 type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
-  const router = useRouter();
   const { login } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +52,8 @@ export default function LoginPage() {
       await login(data.email, data.password, data.rememberMe);
 
       // Redirect to dashboard after successful login
-      router.push("/dashboard");
+      // Use serviceUrl for cross-subdomain redirect in enterprise mode
+      window.location.href = serviceUrl('dashboard', '/');
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed. Please check your credentials.");
     } finally {
