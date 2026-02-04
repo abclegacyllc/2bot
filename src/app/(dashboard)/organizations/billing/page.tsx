@@ -23,6 +23,7 @@ import {
     CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { apiUrl } from "@/shared/config/urls";
 import { INCLUDED_ORG_WORKSPACE_POOL, ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
 import {
@@ -63,7 +64,7 @@ interface OrgUsageInfo {
   members: number;
   departments: number;
   executionsThisMonth: number;
-  aiTokensThisMonth: number;
+  creditsThisMonth: number;
 }
 
 // This matches what the quota API actually returns
@@ -138,12 +139,13 @@ function LimitItem({
 function OrgBillingContent() {
   const { token, context } = useAuth();
   const router = useRouter();
+  const { can } = useOrgPermissions();
 
   const fetcher = createFetcher(token);
 
-  // Check permissions - must be after hooks but before rendering
+  // Check permissions using org-permissions single source of truth
   const isOrgContext = context.type === "organization" && !!context.organizationId;
-  const canManageBilling = context.orgRole === "ORG_OWNER" || context.orgRole === "ORG_ADMIN";
+  const canManageBilling = can('org:billing:view');
   const orgId = context.organizationId;
   const orgName = context.organizationName || "Organization";
 
@@ -152,7 +154,7 @@ function OrgBillingContent() {
     success: boolean;
     data: OrgSubscriptionInfo;
   }>(
-    token && orgId ? apiUrl(`/organizations/${orgId}/billing/subscription`) : null,
+    token && orgId ? apiUrl(`/orgs/${orgId}/billing/subscription`) : null,
     fetcher
   );
 
@@ -161,7 +163,7 @@ function OrgBillingContent() {
     success: boolean;
     data: OrgQuota;
   }>(
-    token && orgId ? apiUrl(`/organizations/${orgId}/quota`) : null,
+    token && orgId ? apiUrl(`/orgs/${orgId}/quota`) : null,
     fetcher
   );
 
@@ -214,7 +216,7 @@ function OrgBillingContent() {
     members: orgData?.data?.memberCount ?? 0,
     departments: deptsData?.data?.length ?? 0,
     executionsThisMonth: quota?.apiCalls?.used ?? 0,
-    aiTokensThisMonth: 0, // AI tokens not yet tracked in quota
+    creditsThisMonth: 0, // Credits not yet tracked in quota
   };
 
   const getStatusBadge = () => {
@@ -421,17 +423,17 @@ function OrgBillingContent() {
                 max={planLimits.sharedWorkflows}
               />
               <LimitItem
-                label="AI Tokens/Month"
+                label="Credits/Month"
                 icon={Bot}
-                current={usage.aiTokensThisMonth}
-                max={planLimits.sharedAiTokensPerMonth}
+                current={usage.creditsThisMonth}
+                max={planLimits.sharedCreditsPerMonth}
               />
               {planLimits.executionMode === "SERVERLESS" && (
                 <LimitItem
-                  label="Monthly Executions"
+                  label="Workflow Runs/Month"
                   icon={Cpu}
                   current={usage.executionsThisMonth}
-                  max={planLimits.executionsPerMonth}
+                  max={planLimits.workflowRunsPerMonth}
                 />
               )}
             </div>
@@ -528,7 +530,7 @@ function OrgBillingContent() {
                   <Server className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
                   <h4 className="font-medium text-foreground">No Workspace Pool</h4>
                   <p className="text-sm text-muted-foreground mt-1 mb-4">
-                    Your plan uses serverless execution with {planLimits.executionsPerMonth?.toLocaleString()} monthly executions.
+                    Your plan uses serverless execution with {planLimits.workflowRunsPerMonth?.toLocaleString()} monthly workflow runs.
                   </p>
                   {canManageBilling && (
                     <Link href="/organizations/billing/workspace">

@@ -14,12 +14,11 @@ import { organizationService } from "@/modules/organization";
 import { pluginService } from "@/modules/plugin";
 import type { SafeUserPlugin } from "@/modules/plugin/plugin.types";
 import {
-    installPluginSchema,
-    togglePluginSchema,
-    updatePluginConfigSchema,
+  installPluginSchema,
+  togglePluginSchema,
+  updatePluginConfigSchema,
 } from "@/modules/plugin/plugin.validation";
-import { quotaService } from "@/modules/quota";
-import type { QuotaStatus } from "@/modules/quota/quota.types";
+import { resourceService, type PersonalResourceStatus } from "@/modules/resource";
 import { BadRequestError, ValidationError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext, type ServiceContext } from "@/shared/types/context";
@@ -269,20 +268,20 @@ userRouter.post(
 /**
  * GET /api/user/quota
  *
- * Get user's personal quota status
+ * Get user's personal resource status
  *
- * @returns {QuotaStatus} Current quota usage and limits
+ * @returns {PersonalResourceStatus} Current resource usage and limits
  */
 userRouter.get(
   "/quota",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<QuotaStatus>>) => {
+  asyncHandler(async (req: Request, res: Response<ApiResponse<PersonalResourceStatus>>) => {
     const ctx = getPersonalContext(req);
 
-    const quota = await quotaService.getQuotaStatus(ctx);
+    const status = await resourceService.getResourceStatus(ctx);
 
     res.json({
       success: true,
-      data: quota,
+      data: status as PersonalResourceStatus,
     });
   })
 );
@@ -315,19 +314,19 @@ userRouter.get(
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
 
-    // Send initial quota immediately
+    // Send initial resource status immediately
     try {
-      const initialQuota = await quotaService.getQuotaStatus(ctx);
-      res.write(`data: ${JSON.stringify(initialQuota)}\n\n`);
+      const initialStatus = await resourceService.getResourceStatus(ctx);
+      res.write(`data: ${JSON.stringify(initialStatus)}\n\n`);
     } catch (error) {
-      res.write(`data: ${JSON.stringify({ error: "Failed to fetch quota" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: "Failed to fetch resource status" })}\n\n`);
     }
 
     // Set up interval for updates (every 5 seconds)
     const interval = setInterval(async () => {
       try {
-        const quota = await quotaService.getQuotaStatus(ctx);
-        res.write(`data: ${JSON.stringify(quota)}\n\n`);
+        const status = await resourceService.getResourceStatus(ctx);
+        res.write(`data: ${JSON.stringify(status)}\n\n`);
       } catch {
         // Silently handle errors during streaming
         // Connection may be closed, will be cleaned up below

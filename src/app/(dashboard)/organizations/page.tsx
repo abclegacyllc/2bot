@@ -20,6 +20,7 @@ import {
     CardTitle,
 } from "@/components/ui/card";
 import { apiUrl } from "@/shared/config/urls";
+import { getOrgPlanDisplayName, type OrgPlanType } from "@/shared/constants/org-plans";
 import {
     ArrowRight,
     Building2,
@@ -159,12 +160,12 @@ export default function OrganizationsListPage() {
                       </h3>
                       <div className="flex items-center gap-3 mt-1">
                         <Badge
-                          variant={org.plan === "FREE" ? "secondary" : "default"}
+                          variant={org.plan === "ORG_FREE" ? "secondary" : "default"}
                           className={
-                            org.plan !== "FREE" ? "bg-purple-600/20 text-purple-400" : ""
+                            org.plan !== "ORG_FREE" ? "bg-purple-600/20 text-purple-400" : ""
                           }
                         >
-                          {org.plan}
+                          {getOrgPlanDisplayName(org.plan as OrgPlanType)}
                         </Badge>
                         <span className="text-sm text-muted-foreground capitalize">
                           {org.role.toLowerCase()}

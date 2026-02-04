@@ -15,6 +15,9 @@ import { sendOrganizationInviteEmail, sendPendingInviteEmail } from "@/lib/email
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
+    hasMinRole
+} from "@/shared/constants/org-permissions";
+import {
     getOrgPlanLimits,
     isAtLeastOrgPlan,
     isOrgLimitExceeded,
@@ -53,23 +56,6 @@ function toAuditContext(ctx: ServiceContext): AuditContext {
     ipAddress: ctx.ipAddress,
     userAgent: ctx.userAgent,
   };
-}
-
-/**
- * Role hierarchy for permission checks
- */
-const ROLE_HIERARCHY: Record<OrgRole, number> = {
-  ORG_OWNER: 4,
-  ORG_ADMIN: 3,
-  DEPT_MANAGER: 2,
-  ORG_MEMBER: 1,
-};
-
-/**
- * Check if a role is at least as high as another
- */
-function hasMinRole(userRole: OrgRole, minRole: OrgRole): boolean {
-  return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[minRole];
 }
 
 // ===========================================
@@ -1151,7 +1137,7 @@ class OrganizationService {
     if (!org) throw new NotFoundError("Organization not found");
 
     const limits = this.getOrgPlanLimits(org.plan);
-    const limit = limits.sharedAiTokensPerMonth;
+    const limit = limits.sharedCreditsPerMonth;
     // TODO: Implement actual AI token tracking in ExecutionTracker (Task 6.8.17)
     const used = 0;
 

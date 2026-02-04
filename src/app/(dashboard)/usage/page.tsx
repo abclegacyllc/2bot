@@ -1,5 +1,5 @@
 import { Metadata } from "next";
-import { UsageDashboardClient } from "./client";
+import { UsageDashboardV2Client } from "./client-v2";
 
 export const metadata: Metadata = {
   title: "Usage | 2Bot Dashboard",
@@ -10,8 +10,9 @@ export const metadata: Metadata = {
  * User Usage Dashboard Page
  *
  * Displays the current user's resource usage, limits, and history.
+ * Uses new hierarchical resource types (Phase 3 migration).
  * Server component that renders the client dashboard.
  */
 export default function UsagePage() {
-  return <UsageDashboardClient />;
+  return <UsageDashboardV2Client />;
 }

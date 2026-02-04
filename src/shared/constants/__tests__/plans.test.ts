@@ -75,14 +75,14 @@ describe('PLAN_LIMITS', () => {
     expect(PLAN_LIMITS.ENTERPRISE.executionMode).toBe('WORKSPACE');
   });
 
-  it('has execution limits for serverless plans', () => {
-    // Serverless plans should have execution limits
-    expect(PLAN_LIMITS.FREE.executionsPerMonth).toBe(500);
-    expect(PLAN_LIMITS.STARTER.executionsPerMonth).toBe(5000);
+  it('has workflow run limits for serverless plans', () => {
+    // Serverless plans should have workflow run limits
+    expect(PLAN_LIMITS.FREE.workflowRunsPerMonth).toBe(500);
+    expect(PLAN_LIMITS.STARTER.workflowRunsPerMonth).toBe(5000);
     
     // Should be numeric, not null
-    expect(typeof PLAN_LIMITS.FREE.executionsPerMonth).toBe('number');
-    expect(typeof PLAN_LIMITS.STARTER.executionsPerMonth).toBe('number');
+    expect(typeof PLAN_LIMITS.FREE.workflowRunsPerMonth).toBe('number');
+    expect(typeof PLAN_LIMITS.STARTER.workflowRunsPerMonth).toBe('number');
   });
 
   it('has workspace resources for workspace plans', () => {
@@ -102,10 +102,10 @@ describe('PLAN_LIMITS', () => {
       storageMb: 20480,
     });
     
-    // Check workspace plans have unlimited executions
-    expect(PLAN_LIMITS.PRO.executionsPerMonth).toBeNull();
-    expect(PLAN_LIMITS.BUSINESS.executionsPerMonth).toBeNull();
-    expect(PLAN_LIMITS.ENTERPRISE.executionsPerMonth).toBeNull();
+    // Check workspace plans have unlimited workflow runs
+    expect(PLAN_LIMITS.PRO.workflowRunsPerMonth).toBeNull();
+    expect(PLAN_LIMITS.BUSINESS.workflowRunsPerMonth).toBeNull();
+    expect(PLAN_LIMITS.ENTERPRISE.workflowRunsPerMonth).toBeNull();
   });
 
   it('has increasing gateway limits per tier', () => {
@@ -413,20 +413,20 @@ describe('isUnlimited', () => {
   it('returns false for FREE plan resources', () => {
     expect(isUnlimited('FREE', 'gateways')).toBe(false);
     expect(isUnlimited('FREE', 'workflows')).toBe(false);
-    expect(isUnlimited('FREE', 'executionsPerMonth')).toBe(false);
+    expect(isUnlimited('FREE', 'workflowRunsPerMonth')).toBe(false);
   });
 
   it('returns true for ENTERPRISE unlimited resources', () => {
     expect(isUnlimited('ENTERPRISE', 'gateways')).toBe(true);
     expect(isUnlimited('ENTERPRISE', 'workflows')).toBe(true);
     expect(isUnlimited('ENTERPRISE', 'plugins')).toBe(true);
-    expect(isUnlimited('ENTERPRISE', 'aiTokensPerMonth')).toBe(true);
+    expect(isUnlimited('ENTERPRISE', 'creditsPerMonth')).toBe(true);
   });
 
-  it('returns true for workspace plan executions', () => {
-    expect(isUnlimited('PRO', 'executionsPerMonth')).toBe(true);
-    expect(isUnlimited('BUSINESS', 'executionsPerMonth')).toBe(true);
-    expect(isUnlimited('ENTERPRISE', 'executionsPerMonth')).toBe(true);
+  it('returns true for workspace plan workflow runs', () => {
+    expect(isUnlimited('PRO', 'workflowRunsPerMonth')).toBe(true);
+    expect(isUnlimited('BUSINESS', 'workflowRunsPerMonth')).toBe(true);
+    expect(isUnlimited('ENTERPRISE', 'workflowRunsPerMonth')).toBe(true);
   });
 });
 

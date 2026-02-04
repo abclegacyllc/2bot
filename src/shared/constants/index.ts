@@ -2,6 +2,7 @@
 
 export * from "./data-categories";
 export * from "./limits";
+export * from "./org-permissions";
 export * from "./org-plans";
 export * from "./permissions";
 export * from "./plans";

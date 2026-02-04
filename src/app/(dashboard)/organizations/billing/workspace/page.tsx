@@ -22,6 +22,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
 import { INCLUDED_ORG_WORKSPACE_POOL, ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
@@ -211,15 +212,16 @@ function WorkspaceBoosterCard({
 function OrgWorkspaceContent() {
   const { token, context } = useAuth();
   const router = useRouter();
+  const { can } = useOrgPermissions();
   const [purchasing, setPurchasing] = useState<OrgWorkspaceBoosterTier | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly");
 
   const fetcher = createFetcher(token);
 
-  // Check context - must be after hooks
+  // Check context using org-permissions single source of truth
   const isOrgContext = context.type === "organization" && !!context.organizationId;
-  const canManageBilling = context.orgRole === "ORG_OWNER" || context.orgRole === "ORG_ADMIN";
+  const canManageBilling = can('org:billing:manage');
   const orgId = context.organizationId;
   const orgName = context.organizationName || "Organization";
 
@@ -228,7 +230,7 @@ function OrgWorkspaceContent() {
     success: boolean;
     data: { plan: string; workspaceBooster?: string };
   }>(
-    token && orgId ? apiUrl(`/organizations/${orgId}/billing/subscription`) : null,
+    token && orgId ? apiUrl(`/orgs/${orgId}/billing/subscription`) : null,
     fetcher
   );
 
@@ -260,7 +262,7 @@ function OrgWorkspaceContent() {
     setError(null);
 
     try {
-      const res = await fetch(apiUrl(`/organizations/${orgId}/billing/workspace`), {
+      const res = await fetch(apiUrl(`/orgs/${orgId}/billing/workspace`), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,

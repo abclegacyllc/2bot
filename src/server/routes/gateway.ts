@@ -377,6 +377,43 @@ gatewayRouter.post(
 );
 
 /**
+ * POST /api/gateways/health-check
+ *
+ * Manually trigger health check for all user's gateways
+ * Admin can check all gateways system-wide
+ *
+ * @returns {object} Health check results
+ */
+gatewayRouter.post(
+  "/health-check",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<{
+    total: number;
+    tested: number;
+    healthy: number;
+    unhealthy: number;
+  }>>) => {
+    const { gatewayMonitor } = await import("@/modules/gateway/gateway-monitor");
+    
+    // Run health check
+    const results = await gatewayMonitor.testAllGateways();
+    
+    // Summarize results
+    const summary = {
+      total: results.length,
+      tested: results.length,
+      healthy: results.filter(r => r.healthy).length,
+      unhealthy: results.filter(r => !r.healthy).length,
+    };
+
+    res.json({
+      success: true,
+      data: summary,
+    });
+  })
+);
+
+/**
  * DELETE /api/gateways/:id
  *
  * Delete a gateway

@@ -135,13 +135,13 @@ model User {
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
   gateways            Gateway[]
-  creditBalance       CreditBalance?
+  creditWallet        CreditWallet?
   userPlugins         UserPlugin[]
   workflows           Workflow[]
+  aiUsage             AIUsage[]
   memberships         Membership[]
   invitedMemberships  Membership[] @relation("InvitedMemberships")
   departmentMembers   DepartmentMember[]
-  resourceQuota       ResourceQuota?
   usageHistory        UsageHistory[]
   subscription        Subscription?
   memberAllocations   MemberAllocation[]
@@ -276,12 +276,12 @@ model Organization {
   gateways         Gateway[]
   userPlugins      UserPlugin[]
   workflows        Workflow[]
-  resourceQuota    ResourceQuota?
   usageHistory     UsageHistory[]
   alertConfig      AlertConfig?
   alertHistory     AlertHistory[]
   subscription     Subscription?
   orgInvites       OrgInvite[]
+  creditWallet     CreditWallet?
   
   @@index([slug])
   @@index([databaseType])
@@ -376,11 +376,8 @@ model Department {
   name             String
   description      String?
   
-  // Resource Quotas (can override org defaults)
-  maxWorkflows     Int?         @map("max_workflows")
-  maxPlugins       Int?         @map("max_plugins")  
-  maxApiCalls      Int?         @map("max_api_calls")    // Per day
-  maxStorage       Int?         @map("max_storage")      // MB
+  // NOTE: Legacy quota fields (maxWorkflows, maxPlugins, maxWorkflowRuns, maxStorage)
+  // have been migrated to DeptAllocation table. Use allocationService for quotas.
   
   // Status
   isActive         Boolean      @default(true) @map("is_active")
@@ -393,7 +390,6 @@ model Department {
   organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   members          DepartmentMember[]
   workflows        Workflow[]
-  resourceQuota    ResourceQuota?
   usageHistory     UsageHistory[]
   deptAllocation   DeptAllocation?
   memberAllocations MemberAllocation[]
@@ -417,9 +413,8 @@ model DepartmentMember {
   // Role in this department
   role           DepartmentRole   @default(MEMBER)
   
-  // Employee-level quotas (can override dept defaults)
-  maxWorkflows   Int?             @map("max_workflows")     // Default: 5 for employees
-  maxPlugins     Int?             @map("max_plugins")       // Default: 3 for employees
+  // NOTE: Legacy quota fields (maxWorkflows, maxPlugins) have been migrated
+  // to MemberAllocation table. Use allocationService for member quotas.
   
   // Timestamps
   createdAt      DateTime         @default(now()) @map("created_at")
@@ -449,49 +444,6 @@ enum PeriodType {
 }
 
 // ===========================================
-// Resource Quota (Phase 4: Organization Quotas)
-// Tracks usage and limits for orgs, depts, users
-// ===========================================
-model ResourceQuota {
-  id               String       @id @default(cuid())
-  
-  // Owner reference (exactly one of these)
-  organizationId   String?      @unique @map("organization_id")
-  departmentId     String?      @unique @map("department_id")
-  userId           String?      @unique @map("user_id")
-  
-  // Limits (null = use parent/plan default)
-  maxWorkflows     Int?         @map("max_workflows")
-  maxPlugins       Int?         @map("max_plugins")
-  maxApiCalls      Int?         @map("max_api_calls")      // Per day
-  maxStorage       Int?         @map("max_storage")        // MB
-  maxSteps         Int?         @map("max_steps")          // Per workflow
-  
-  // Current Usage (updated periodically)
-  usedWorkflows    Int          @default(0) @map("used_workflows")
-  usedPlugins      Int          @default(0) @map("used_plugins")
-  usedApiCalls     Int          @default(0) @map("used_api_calls")
-  usedStorage      Int          @default(0) @map("used_storage")
-  
-  // Reset tracking
-  apiCallsResetAt  DateTime?    @map("api_calls_reset_at")
-  
-  // Timestamps
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
-  
-  // Relations
-  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  department       Department?   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@index([organizationId])
-  @@index([departmentId])
-  @@index([userId])
-  @@map("resource_quotas")
-}
-
-// ===========================================
 // Department Allocation (Phase 6.8: Quota Management)
 // Admin allocates org pool resources to departments
 // ===========================================
@@ -503,7 +455,11 @@ model DeptAllocation {
   maxGateways     Int?           @map("max_gateways")
   maxWorkflows    Int?           @map("max_workflows")
   maxPlugins      Int?           @map("max_plugins")
-  aiTokenBudget   Int?           @map("ai_token_budget")    // tokens per month
+  creditBudget    Int?           @map("credit_budget")      // credits per month
+  
+  // Credit usage tracking (resets monthly)
+  creditUsed      Int            @default(0) @map("credit_used")
+  creditResetAt   DateTime?      @map("credit_reset_at")
   
   // Workspace allocation
   maxRamMb        Int?           @map("max_ram_mb")
@@ -536,7 +492,11 @@ model MemberAllocation {
   // Allocated from department pool
   maxGateways     Int?           @map("max_gateways")
   maxWorkflows    Int?           @map("max_workflows")
-  aiTokenBudget   Int?           @map("ai_token_budget")
+  creditBudget    Int?           @map("credit_budget")
+  
+  // Credit usage tracking (resets monthly)
+  creditUsed      Int            @default(0) @map("credit_used")
+  creditResetAt   DateTime?      @map("credit_reset_at")
   
   maxRamMb        Int?           @map("max_ram_mb")
   maxCpuCores     Float?         @map("max_cpu_cores")
@@ -576,8 +536,8 @@ model UsageHistory {
   periodType       PeriodType   @default(DAILY) @map("period_type")
   
   // Metrics
-  apiCalls         Int          @default(0) @map("api_calls")
-  workflowRuns     Int          @default(0) @map("workflow_runs")
+  requests         Int          @default(0) @map("requests")  // HTTP request count (monitoring)
+  workflowRuns     Int          @default(0) @map("workflow_runs")  // Billing metric
   pluginExecutions Int          @default(0) @map("plugin_executions")
   storageUsed      Int          @default(0) @map("storage_used")    // MB at period end
   errors           Int          @default(0)
@@ -716,6 +676,7 @@ model Gateway {
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workflows     Workflow[]
   workflowSteps WorkflowStep[]
+  aiUsage       AIUsage[]
 
   @@index([userId])
   @@index([organizationId])
@@ -760,43 +721,71 @@ model AuditLog {
 // ===========================================
 // Credit System Models (Phase 1.5: Architecture)
 // ===========================================
-model CreditBalance {
-  id        String   @id @default(cuid())
-  userId    String   @unique @map("user_id")
+
+/**
+ * CreditWallet - Universal credit storage
+ * 
+ * Can belong to EITHER a user OR an organization (mutually exclusive).
+ * This enables:
+ * - Personal credits for individual users
+ * - Shared organization credits for team members
+ * - Future: Department-level budgets
+ * 
+ * Credit Resolution Order:
+ * 1. If user is in org with shared credits → use org wallet
+ * 2. Else → use personal wallet
+ */
+model CreditWallet {
+  id              String   @id @default(cuid())
   
-  balance   Int      @default(0)  // Current credit balance
-  lifetime  Int      @default(0)  // Total credits ever purchased
+  // Owner - exactly one must be set (user XOR organization)
+  userId          String?  @unique @map("user_id")
+  organizationId  String?  @unique @map("organization_id")
   
-  // Auto-topup settings (JSON for flexibility)
-  settings  Json     @default("{}")
+  // Balance
+  balance         Int      @default(0)   // Current credit balance (whole credits only)
+  lifetime        Int      @default(0)   // Total credits ever added (purchases + grants)
+  pendingCredits  Float    @default(0)   @map("pending_credits") // Accumulated fractional credits
   
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  // Monthly allocation from plan (resets each billing period)
+  monthlyAllocation Int    @default(0)   @map("monthly_allocation")
+  monthlyUsed       Int    @default(0)   @map("monthly_used")
+  allocationResetAt DateTime? @map("allocation_reset_at")
+  
+  // Settings (auto-topup, notifications, etc.)
+  settings        Json     @default("{}")
+  
+  // Timestamps
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions CreditTransaction[]
+  user            User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions    CreditTransaction[]
 
-  @@map("credit_balances")
+  @@map("credit_wallets")
 }
 
 model CreditTransaction {
   id              String   @id @default(cuid())
-  creditBalanceId String   @map("credit_balance_id")
   
-  type            String   // 'purchase', 'usage', 'refund', 'bonus', 'grant'
+  // Wallet reference
+  creditWalletId  String?  @map("credit_wallet_id")
+  
+  type            String   // 'purchase', 'usage', 'refund', 'bonus', 'grant', 'allocation'
   amount          Int      // Positive = credit, Negative = debit
   balanceAfter    Int      @map("balance_after")
   
   description     String
-  metadata        Json?    // { stripeId?, aiProvider?, model?, itemId? }
+  metadata        Json?    // { stripeId?, aiProvider?, model?, itemId?, walletType? }
   
   createdAt       DateTime @default(now()) @map("created_at")
 
   // Relations
-  creditBalance   CreditBalance @relation(fields: [creditBalanceId], references: [id], onDelete: Cascade)
+  creditWallet    CreditWallet?  @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
 
-  @@index([creditBalanceId])
+  @@index([creditWalletId])
   @@index([type])
   @@index([createdAt])
   @@map("credit_transactions")
@@ -1072,4 +1061,93 @@ model WorkflowStepRun {
   @@unique([runId, stepOrder])
   @@index([runId])
   @@map("workflow_step_runs")
+}
+
+// ===========================================
+// AI Usage Tracking (Phase: 2Bot AI)
+// Unified tracking for both BYOK and 2Bot AI
+// ===========================================
+model AIUsage {
+  id              String    @id @default(cuid())
+  
+  // Owner
+  userId          String    @map("user_id")
+  organizationId  String?   @map("organization_id")
+  departmentId    String?   @map("department_id")  // Track dept for budget enforcement
+  gatewayId       String?   @map("gateway_id")
+  
+  // What was used - using universal capability naming
+  capability      String    @map("capability") // "text-generation", "image-generation", "speech-synthesis", "speech-recognition", "text-embedding", "image-understanding"
+  model           String    // "gpt-4o-mini", "dall-e-3", "whisper", etc.
+  
+  // Source - determines if credits apply
+  source          String    // "byok" = user's key (no credits), "2bot" = platform key (credits)
+  
+  // Raw metrics - store ALL for analytics (nullable based on capability type)
+  inputTokens     Int?      @map("input_tokens")      // Chat/embedding input
+  outputTokens    Int?      @map("output_tokens")     // Chat output
+  totalTokens     Int?      @map("total_tokens")      // Chat/embedding total
+  imageCount      Int?      @map("image_count")       // Image generation
+  characterCount  Int?      @map("character_count")   // TTS character count
+  audioSeconds    Int?      @map("audio_seconds")     // STT audio duration
+  
+  // Credits (only populated for source="2bot")
+  creditsUsed     Float     @default(0) @map("credits_used") // Precise fractional credits
+  
+  // Billing period for aggregation
+  billingPeriod   String    @map("billing_period")    // "2026-01" format
+  
+  // Request metadata (optional)
+  requestId       String?   @map("request_id")        // For debugging
+  durationMs      Int?      @map("duration_ms")       // Request latency
+  
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gateway         Gateway?  @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, billingPeriod])
+  @@index([organizationId, billingPeriod])
+  @@index([departmentId, billingPeriod])
+  @@index([gatewayId, createdAt])
+  @@index([source, billingPeriod])
+  @@index([capability, createdAt])
+  @@map("ai_usage")
+}
+
+// ===========================================
+// Credit Rates (Phase: 2Bot AI)
+// Configurable credit costs per AI capability/model
+// ===========================================
+model CreditRate {
+  id              String    @id @default(cuid())
+  
+  // What this rate applies to - using universal capability naming
+  capability      String    @map("capability") // "text-generation", "image-generation", etc.
+  model           String    // "gpt-4o-mini", "dall-e-3", "whisper", etc.
+  
+  // Credit rates (only one applies based on capability type)
+  creditsPerInputToken   Float?   @map("credits_per_input_token")   // Chat input (per token)
+  creditsPerOutputToken  Float?   @map("credits_per_output_token")  // Chat output (per token)
+  creditsPerImage        Int?     @map("credits_per_image")         // Image generation
+  creditsPerChar         Float?   @map("credits_per_char")          // TTS (per character)
+  creditsPerMinute       Int?     @map("credits_per_minute")        // STT
+  
+  // Your actual cost (for margin tracking - admin only)
+  yourCostPer1kInput     Decimal? @map("your_cost_per_1k_input") @db.Decimal(10, 6)
+  yourCostPer1kOutput    Decimal? @map("your_cost_per_1k_output") @db.Decimal(10, 6)
+  yourCostPerUnit        Decimal? @map("your_cost_per_unit") @db.Decimal(10, 6)
+  
+  // Status
+  isActive        Boolean   @default(true) @map("is_active")
+  
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  
+  @@unique([capability, model])
+  @@index([isActive])
+  @@map("credit_rates")
 }

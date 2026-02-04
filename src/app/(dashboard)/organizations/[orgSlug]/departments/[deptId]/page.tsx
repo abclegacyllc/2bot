@@ -11,8 +11,10 @@
  * @module app/(dashboard)/organizations/[orgId]/departments/[deptId]/page
  */
 
-import { ResourceOverview } from "@/components/organization/resource-overview";
 import { useAuth } from "@/components/providers/auth-provider";
+import {
+    DeptResourceView,
+} from "@/components/resources";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -33,6 +35,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import {
@@ -53,21 +56,6 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 // Types for API responses
-interface QuotaItem {
-  used: number;
-  limit: number | null;
-  percentage: number;
-  isUnlimited: boolean;
-}
-
-interface QuotaStatus {
-  workflows: QuotaItem;
-  plugins: QuotaItem;
-  apiCalls: QuotaItem & { resetsAt: string | null };
-  storage: QuotaItem;
-  gateways: QuotaItem;
-}
-
 interface DepartmentInfo {
   id: string;
   name: string;
@@ -84,12 +72,12 @@ interface EmployeeUsage {
   usage: {
     workflows: number;
     plugins: number;
-    apiCalls: number;
+    gateways: number;
   };
   limits: {
     maxWorkflows: number | null;
     maxPlugins: number | null;
-    maxApiCalls: number | null;
+    maxGateways: number | null;
   };
   isPaused: boolean;
 }
@@ -100,15 +88,20 @@ export default function DepartmentDetailPage() {
   const { token } = useAuth();
   const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
+  const { can, role } = useOrgPermissions();
 
   const deptId = params.deptId as string;
 
   const [department, setDepartment] = useState<DepartmentInfo | null>(null);
-  const [quotaStatus, setQuotaStatus] = useState<QuotaStatus | null>(null);
   const [employees, setEmployees] = useState<EmployeeUsage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [pausingEmployee, setPausingEmployee] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Permission checks
+  const canUpdateDepartment = can("org:departments:update");
+  const canUpdateQuotas = can("org:departments:manage_quotas");
+  const canEmergencyStop = role === "ORG_OWNER" || role === "ORG_ADMIN";
 
   // Check if user can access manager dashboard
   const canAccess = isFound && orgId;
@@ -121,9 +114,9 @@ export default function DepartmentDetailPage() {
   }, [orgLoading, isFound, router]);
 
   const fetchData = useCallback(async () => {
-    if (!token || !deptId) return;
+    if (!token || !deptId || !orgId) return;
 
-    setIsLoading(true);
+    setIsLoading(true)
     setError(null);
 
     try {
@@ -146,48 +139,7 @@ export default function DepartmentDetailPage() {
       const deptData = await deptRes.json();
       setDepartment(deptData.data);
 
-      // Fetch department quota status
-      const quotaRes = await fetch(apiUrl(`/orgs/${orgId}/departments/${deptId}/quotas`), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (quotaRes.ok) {
-        const quotaData = await quotaRes.json();
-        const limits = quotaData.data || {};
-        setQuotaStatus({
-          workflows: {
-            used: 0,
-            limit: limits.maxWorkflows,
-            percentage: 0,
-            isUnlimited: limits.maxWorkflows === null || limits.maxWorkflows === -1,
-          },
-          plugins: {
-            used: 0,
-            limit: limits.maxPlugins,
-            percentage: 0,
-            isUnlimited: limits.maxPlugins === null || limits.maxPlugins === -1,
-          },
-          apiCalls: {
-            used: 0,
-            limit: limits.maxApiCalls,
-            percentage: 0,
-            isUnlimited: limits.maxApiCalls === null || limits.maxApiCalls === -1,
-            resetsAt: null,
-          },
-          storage: {
-            used: 0,
-            limit: limits.maxStorage,
-            percentage: 0,
-            isUnlimited: limits.maxStorage === null || limits.maxStorage === -1,
-          },
-          gateways: {
-            used: 0,
-            limit: null,
-            percentage: 0,
-            isUnlimited: true,
-          },
-        });
-      }
+      // Resource status is fetched via DeptResourceView component
 
       // Fetch department members
       const membersRes = await fetch(apiUrl(`/orgs/${orgId}/departments/${deptId}/members`), {
@@ -204,7 +156,7 @@ export default function DepartmentDetailPage() {
             quotas?: {
               maxWorkflows?: number;
               maxPlugins?: number;
-              maxApiCalls?: number;
+              maxGateways?: number;
             };
           }) => ({
             id: member.user.id,
@@ -214,12 +166,12 @@ export default function DepartmentDetailPage() {
             usage: {
               workflows: 0,
               plugins: 0,
-              apiCalls: 0,
+              gateways: 0,
             },
             limits: {
               maxWorkflows: member.quotas?.maxWorkflows ?? null,
               maxPlugins: member.quotas?.maxPlugins ?? null,
-              maxApiCalls: member.quotas?.maxApiCalls ?? null,
+              maxGateways: member.quotas?.maxGateways ?? null,
             },
             isPaused: false,
           })
@@ -231,7 +183,7 @@ export default function DepartmentDetailPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, deptId]);
+  }, [token, deptId, orgId]);
 
   useEffect(() => {
     if (deptId) {
@@ -345,17 +297,19 @@ export default function DepartmentDetailPage() {
           {department && !department.isActive && (
             <Badge variant="destructive">Stopped</Badge>
           )}
-          <Link href={buildOrgUrl(`/departments/${deptId}/quotas`)}>
-            <Button variant="outline" size="sm" className="border-border">
-              <Settings className="mr-1 h-4 w-4" />
-              Settings
-            </Button>
-          </Link>
+          {canUpdateDepartment && (
+            <Link href={buildOrgUrl(`/departments/${deptId}/quotas`)}>
+              <Button variant="outline" size="sm" className="border-border">
+                <Settings className="mr-1 h-4 w-4" />
+                Settings
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 
       {/* Department Usage */}
-      {quotaStatus && (
+      {orgId && deptId && (
         <Card className="border-border bg-card/50">
           <CardHeader>
             <CardTitle className="text-foreground flex items-center gap-2">
@@ -367,7 +321,7 @@ export default function DepartmentDetailPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ResourceOverview quotaStatus={quotaStatus} />
+            <DeptResourceView orgId={orgId} deptId={deptId} />
           </CardContent>
         </Card>
       )}
@@ -434,23 +388,22 @@ export default function DepartmentDetailPage() {
                     <div className="flex items-center gap-1">
                       <Activity className="h-4 w-4 text-muted-foreground" />
                       <span>
-                        {formatNumber(emp.usage.apiCalls)}/
-                        {emp.limits.maxApiCalls
-                          ? formatNumber(emp.limits.maxApiCalls)
-                          : "∞"}
+                        {emp.usage.gateways}/{emp.limits.maxGateways ?? "∞"}
                       </span>
                     </div>
 
                     <div className="flex gap-2">
-                      <Button asChild variant="outline" size="sm" className="border-border">
-                        <Link
-                          href={buildOrgUrl(`/departments/${deptId}/employees/${emp.id}/quotas`)}
-                        >
-                          Edit
-                        </Link>
-                      </Button>
+                      {canUpdateQuotas && (
+                        <Button asChild variant="outline" size="sm" className="border-border">
+                          <Link
+                            href={buildOrgUrl(`/departments/${deptId}/employees/${emp.id}/quotas`)}
+                          >
+                            Edit
+                          </Link>
+                        </Button>
+                      )}
 
-                      {!emp.isPaused && emp.role !== "MANAGER" && (
+                      {canEmergencyStop && !emp.isPaused && emp.role !== "MANAGER" && (
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button

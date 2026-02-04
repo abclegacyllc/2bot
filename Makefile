@@ -373,7 +373,7 @@ db-studio: check-deps       ## Open Prisma Studio (database GUI)
 # TESTING & QUALITY
 # ===========================================
 
-test: check-deps            ## Run tests
+test: check-deps            ## Run unit tests (fast, mocked)
 	npm run test:run
 
 test-watch: check-deps      ## Run tests in watch mode
@@ -381,6 +381,37 @@ test-watch: check-deps      ## Run tests in watch mode
 
 test-coverage: check-deps   ## Run tests with coverage report
 	npm run test:coverage
+
+test-integration: check-deps db-test-setup  ## Run integration tests (real test DB)
+	@echo "$(CYAN)Running integration tests with test database...$(RESET)"
+	npm run test:integration
+
+test-all: test test-integration  ## Run all tests (unit + integration)
+	@echo "$(GREEN)✅ All tests completed$(RESET)"
+
+db-test-setup:              ## Setup test database (run once)
+	@echo "$(CYAN)Setting up test database...$(RESET)"
+	@if [ ! -f .env.test ]; then \
+		echo "$(YELLOW)Creating .env.test from .env.test.example...$(RESET)"; \
+		cp .env.test.example .env.test; \
+		echo "$(YELLOW)⚠️  Please edit .env.test and set TEST_DATABASE_URL$(RESET)"; \
+		echo "$(YELLOW)   Example: postgresql://user:pass@localhost:5432/2bot_test$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Test database configuration found$(RESET)"
+	@echo "$(CYAN)Creating test database schema...$(RESET)"
+	@DATABASE_URL=$$(grep TEST_DATABASE_URL .env.test | cut -d '=' -f2) npx prisma db push --skip-generate
+	@echo "$(GREEN)✅ Test database ready$(RESET)"
+
+db-test-reset:              ## Reset test database (clean slate)
+	@echo "$(YELLOW)⚠️  This will DELETE all data in the test database!$(RESET)"
+	@read -p "Continue? (y/N): " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		DATABASE_URL=$$(grep TEST_DATABASE_URL .env.test | cut -d '=' -f2) npx prisma db push --force-reset --skip-generate; \
+		echo "$(GREEN)✅ Test database reset$(RESET)"; \
+	else \
+		echo "$(RED)Cancelled$(RESET)"; \
+	fi
 
 lint: check-deps            ## Run ESLint
 	npm run lint

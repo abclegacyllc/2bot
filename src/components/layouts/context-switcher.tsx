@@ -108,8 +108,7 @@ export function ContextSwitcher() {
     try {
       setIsLoading(true);
       await switchContext(type, orgId);
-      // Redirect to dashboard after switch
-      router.push("/");
+      // switchContext already handles navigation, no need to redirect here
     } catch (error) {
       console.error("Failed to switch context:", error);
     } finally {

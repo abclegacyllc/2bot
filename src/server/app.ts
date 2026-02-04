@@ -1,4 +1,5 @@
 import { loggers } from "@/lib/logger";
+import { initializeProviderHealth } from "@/modules/2bot-ai-provider/provider-health.service";
 import cors from "cors";
 import express, { type Express } from "express";
 import helmet from "helmet";
@@ -85,18 +86,26 @@ export const SERVER_CONFIG = {
 
 /**
  * Start the Express server
+ * Returns the server instance for graceful shutdown handling
  */
-export function startServer(app: Express): void {
+export function startServer(app: Express): ReturnType<Express['listen']> {
   const { port, host, apiPrefix } = SERVER_CONFIG;
   const healthPath = apiPrefix ? `${apiPrefix}/health` : "/health";
 
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     serverLogger.info({ port, host }, `🚀 Express API server running on http://${host}:${port}`);
     serverLogger.info(`   Health check: http://${host}:${port}${healthPath}`);
     if (!apiPrefix) {
       serverLogger.info(`   Enterprise mode: Routes at root (no /api prefix)`);
     }
+
+    // Initialize AI provider health checks (async, non-blocking)
+    initializeProviderHealth().catch((err) => {
+      serverLogger.error({ err }, "Failed to initialize AI provider health checks");
+    });
   });
+
+  return server;
 }
 
 // Export for use in custom server

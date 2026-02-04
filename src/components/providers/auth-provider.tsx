@@ -17,16 +17,17 @@
  */
 
 import { apiUrl } from "@/shared/config/urls";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type {
-    ReactNode
+  ReactNode
 } from "react";
 import {
-    createContext,
-    useCallback,
-    useContext,
-    useEffect,
-    useState,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
 } from "react";
 
 // User type (matches backend response)
@@ -136,10 +137,46 @@ function getUserPlanFromToken(token: string | null): "FREE" | "PRO" | "ENTERPRIS
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [context, setContext] = useState<ActiveContext>(defaultContext);
   const [availableOrgs, setAvailableOrgs] = useState<AvailableOrg[]>([]);
+  
+  // Use ref to track context without causing re-renders in effects
+  const contextRef = useRef<ActiveContext>(defaultContext);
+  useEffect(() => {
+    contextRef.current = context;
+  }, [context]);
+
+  // Phase 6.7: Detect context from current URL pathname
+  const detectContextFromUrl = useCallback((pathname: string, orgs: AvailableOrg[], currentUser: User | null): ActiveContext => {
+    // Check if we're on an organization route: /organizations/:slug/*
+    const orgMatch = pathname.match(/^\/organizations\/([^/]+)/);
+    
+    if (orgMatch && orgMatch[1]) {
+      const slug = orgMatch[1];
+      // Find the org in available orgs
+      const org = orgs.find(o => o.slug === slug || o.id === slug);
+      
+      if (org) {
+        return {
+          type: "organization",
+          organizationId: org.id,
+          organizationSlug: org.slug,
+          organizationName: org.name,
+          orgRole: org.role,
+          plan: currentUser?.plan || "FREE", // Org plan context uses user's personal plan as fallback
+        };
+      }
+    }
+    
+    // Default to personal context
+    return {
+      type: "personal",
+      plan: currentUser?.plan || "FREE",
+    };
+  }, []);
 
   // Phase 6.7: Fetch available organizations from API
   const fetchAvailableOrgs = useCallback(async (): Promise<AvailableOrg[]> => {
@@ -198,32 +235,53 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // Also refresh available orgs
     const orgs = await fetchAvailableOrgs();
     setAvailableOrgs(orgs);
-  }, [fetchUser, fetchAvailableOrgs]);
+    
+    // Re-sync context with current URL after refresh
+    const urlContext = detectContextFromUrl(pathname, orgs, userData);
+    setContext(urlContext);
+  }, [fetchUser, fetchAvailableOrgs, pathname, detectContextFromUrl]);
 
   // Initialize auth state on mount
   useEffect(() => {
     async function initAuth() {
       setIsLoading(true);
       try {
-        const token = getStoredToken();
-        // Phase 6.7: Set default context with user's plan from token
-        const userPlan = getUserPlanFromToken(token);
-        setContext({ type: "personal", plan: userPlan });
-        
         const userData = await fetchUser();
         setUser(userData);
         
         // Fetch available orgs from API (not from token)
+        let orgs: AvailableOrg[] = [];
         if (userData) {
-          const orgs = await fetchAvailableOrgs();
+          orgs = await fetchAvailableOrgs();
           setAvailableOrgs(orgs);
         }
+        
+        // Phase 6.7: Set context based on current URL, not default personal
+        const urlContext = detectContextFromUrl(pathname, orgs, userData);
+        setContext(urlContext);
       } finally {
         setIsLoading(false);
       }
     }
     initAuth();
-  }, [fetchUser, fetchAvailableOrgs]);
+  }, [fetchUser, fetchAvailableOrgs, pathname, detectContextFromUrl]);
+
+  // Sync context when URL changes (e.g., user navigates between personal and org)
+  useEffect(() => {
+    if (isLoading) return;
+    
+    // Detect context from current URL
+    const urlContext = detectContextFromUrl(pathname, availableOrgs, user);
+    const currentContext = contextRef.current;
+    
+    // Only update if context actually changed to avoid infinite loops
+    if (
+      urlContext.type !== currentContext.type ||
+      urlContext.organizationId !== currentContext.organizationId
+    ) {
+      setContext(urlContext);
+    }
+  }, [pathname, availableOrgs, user, isLoading, detectContextFromUrl]);
 
   // Login function
   const login = useCallback(
@@ -324,13 +382,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       // Phase 6.7: UI-only context switching via navigation
-      // No need to fetch new token - just update local state and navigate
+      // Just navigate - the URL sync effect will update context automatically
       if (type === "personal") {
-        // Update local context to personal
-        setContext({
-          type: "personal",
-          plan: user?.plan || "FREE",
-        });
         // Navigate to personal dashboard
         router.push("/");
       } else if (type === "organization" && orgId) {
@@ -339,22 +392,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (!org) {
           throw new Error("Organization not found");
         }
-        // Update local context to organization
-        setContext({
-          type: "organization",
-          organizationId: org.id,
-          organizationSlug: org.slug,
-          organizationName: org.name,
-          orgRole: org.role,
-          plan: "FREE", // Default, will be refreshed from org endpoint
-        });
         // Navigate to organization dashboard using slug for clean URLs
         router.push(`/organizations/${org.slug}`);
       } else {
         throw new Error("Invalid context switch parameters");
       }
     },
-    [router, user?.plan, availableOrgs]
+    [router, availableOrgs]
   );
 
   // Refresh available organizations

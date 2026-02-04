@@ -17,6 +17,7 @@ import { GatewayStatusBadge } from "@/components/gateways/gateway-status";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import type { GatewayListItem } from "@/modules/gateway/gateway.types";
 import { apiUrl } from "@/shared/config/urls";
@@ -149,7 +150,7 @@ function GatewayCard({ gateway, orgSlug }: { gateway: GatewayListItem; orgSlug: 
 /**
  * Empty state component
  */
-function EmptyState({ orgSlug }: { orgSlug: string }) {
+function EmptyState({ orgSlug, canCreate }: { orgSlug: string; canCreate: boolean }) {
   return (
     <Card className="border-border bg-card/50 border-dashed">
       <CardContent className="py-12 text-center">
@@ -158,14 +159,18 @@ function EmptyState({ orgSlug }: { orgSlug: string }) {
         </div>
         <h3 className="text-lg font-medium text-foreground mb-2">No gateways yet</h3>
         <p className="text-muted-foreground mb-4 max-w-sm mx-auto">
-          Connect your first gateway to start automating with Telegram bots and AI providers.
+          {canCreate
+            ? "Connect your first gateway to start automating with Telegram bots and AI providers."
+            : "No gateways have been set up for this organization yet."}
         </p>
-        <Link href={`/organizations/${orgSlug}/gateways/new`}>
-          <Button className="bg-blue-600 hover:bg-blue-700">
-            <PlusIcon />
-            <span className="ml-2">Add Gateway</span>
-          </Button>
-        </Link>
+        {canCreate && (
+          <Link href={`/organizations/${orgSlug}/gateways/create`}>
+            <Button className="bg-blue-600 hover:bg-blue-700">
+              <PlusIcon />
+              <span className="ml-2">Add Gateway</span>
+            </Button>
+          </Link>
+        )}
       </CardContent>
     </Card>
   );
@@ -226,9 +231,13 @@ function GatewaysContent() {
   const { token } = useAuth();
   const { orgId, orgSlug, orgName, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
+  const { can } = useOrgPermissions();
   const [gateways, setGateways] = useState<GatewayListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Permission checks
+  const canCreateGateway = can("org:gateways:create");
 
   useEffect(() => {
     async function fetchGateways() {
@@ -286,12 +295,14 @@ function GatewaysContent() {
               Manage {orgName ? `${orgName}'s` : "organization"} Telegram bots and AI provider connections
             </p>
           </div>
-          <Link href={buildOrgUrl("/gateways/new")}>
-            <Button className="bg-blue-600 hover:bg-blue-700">
-              <PlusIcon />
-              <span className="ml-2">Add Gateway</span>
-            </Button>
-          </Link>
+          {canCreateGateway && (
+            <Link href={buildOrgUrl("/gateways/create")}>
+              <Button className="bg-blue-600 hover:bg-blue-700">
+                <PlusIcon />
+                <span className="ml-2">Add Gateway</span>
+              </Button>
+            </Link>
+          )}
         </div>
 
         {/* Content */}
@@ -311,7 +322,7 @@ function GatewaysContent() {
             </CardContent>
           </Card>
         ) : gateways.length === 0 ? (
-          <EmptyState orgSlug={orgSlug} />
+          <EmptyState orgSlug={orgSlug} canCreate={canCreateGateway} />
         ) : (
           <div className="space-y-3">
             {gateways.map((gateway) => (

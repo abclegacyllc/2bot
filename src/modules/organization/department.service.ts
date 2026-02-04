@@ -22,9 +22,8 @@ import type { ServiceContext } from "@/shared/types/context";
 import type {
     AddDeptMemberRequest,
     CreateDeptRequest,
+    DepartmentWithMemberCount,
     DeptMemberWithUser,
-    DeptQuotas,
-    MemberQuotas,
     SafeDepartment,
     UpdateDeptMemberRequest,
     UpdateDeptRequest,
@@ -340,11 +339,11 @@ class DepartmentService {
       "Member added to department"
     );
 
+    // NOTE: Quota/allocation for new members should be set separately
+    // via allocationService.setMemberAllocation()
     return {
       id: member.id,
       role: member.role,
-      maxWorkflows: member.maxWorkflows,
-      maxPlugins: member.maxPlugins,
       user: member.user,
       createdAt: member.createdAt,
     };
@@ -418,8 +417,8 @@ class DepartmentService {
       where: { id: member.id },
       data: {
         role: data.role,
-        maxWorkflows: data.maxWorkflows,
-        maxPlugins: data.maxPlugins,
+        // NOTE: Quota/allocation updates are handled separately
+        // via allocationService.setMemberAllocation()
       },
       include: {
         user: {
@@ -446,8 +445,6 @@ class DepartmentService {
     return {
       id: updated.id,
       role: updated.role,
-      maxWorkflows: updated.maxWorkflows,
-      maxPlugins: updated.maxPlugins,
       user: updated.user,
       createdAt: updated.createdAt,
     };
@@ -489,28 +486,52 @@ class DepartmentService {
     return members.map((m) => ({
       id: m.id,
       role: m.role,
-      maxWorkflows: m.maxWorkflows,
-      maxPlugins: m.maxPlugins,
+      // NOTE: Quota/allocation data should be fetched separately
+      // via allocationService.getMemberAllocation()
       user: m.user,
       createdAt: m.createdAt,
     }));
   }
 
   // ===========================================
-  // Quota Management
+  // Quota Management - DEPRECATED
+  // ===========================================
+  // 
+  // NOTE: These methods are DEPRECATED.
+  // Use allocationService from @/modules/resource instead:
+  // 
+  //   import { allocationService } from '@/modules/resource';
+  //   
+  //   // For department allocations:
+  //   await allocationService.setDeptAllocation(ctx, deptId, {
+  //     maxGateways, maxPlugins, maxWorkflows,
+  //     creditBudget, ramMb, cpuCores, storageMb
+  //   });
+  //   
+  //   // For member allocations:
+  //   await allocationService.setMemberAllocation(ctx, userId, deptId, {
+  //     maxGateways, maxWorkflows, creditBudget,
+  //     ramMb, cpuCores, storageMb
+  //   });
+  //
+  // The old methods below are kept for backward compatibility but
+  // will be removed in a future version.
   // ===========================================
 
   /**
    * Set department quotas
-   * Only OWNER or ADMIN can set quotas
+   * @deprecated Use allocationService.setDeptAllocation() instead
    */
   async setDeptQuotas(
     ctx: ServiceContext,
     deptId: string,
-    quotas: DeptQuotas
+    _quotas: unknown
   ): Promise<SafeDepartment> {
     const dept = await prisma.department.findUnique({
       where: { id: deptId },
+      include: {
+        _count: { select: { members: true, workflows: true } },
+      },
     });
 
     if (!dept) {
@@ -524,41 +545,25 @@ class DepartmentService {
       "ORG_ADMIN"
     );
 
-    const updated = await prisma.department.update({
-      where: { id: deptId },
-      data: {
-        maxWorkflows: quotas.maxWorkflows,
-        maxPlugins: quotas.maxPlugins,
-        maxApiCalls: quotas.maxApiCalls,
-        maxStorage: quotas.maxStorage,
-      },
-      include: {
-        _count: { select: { members: true, workflows: true } },
-      },
-    });
+    // NOTE: This method no longer updates the Department model directly.
+    // Use allocationService.setDeptAllocation() for the new 3-pool system.
+    deptLogger.warn(
+      { deptId },
+      "setDeptQuotas is deprecated - use allocationService.setDeptAllocation()"
+    );
 
-    // Audit log
-    void audit(toAuditContext(ctx), {
-      action: "department.set_quotas",
-      resource: "department",
-      resourceId: deptId,
-      metadata: { quotas },
-    });
-
-    deptLogger.info({ deptId, quotas }, "Department quotas updated");
-
-    return toSafeDepartment(updated);
+    return toSafeDepartment(dept as DepartmentWithMemberCount);
   }
 
   /**
    * Set member quotas
-   * Manager can set quotas for their members
+   * @deprecated Use allocationService.setMemberAllocation() instead
    */
   async setMemberQuotas(
     ctx: ServiceContext,
     deptId: string,
     userId: string,
-    quotas: MemberQuotas
+    _quotas: unknown
   ): Promise<DeptMemberWithUser> {
     // Check permissions
     await this.requireManagePermission(ctx, deptId);
@@ -569,18 +574,6 @@ class DepartmentService {
           userId,
           departmentId: deptId,
         },
-      },
-    });
-
-    if (!member) {
-      throw new NotFoundError("Member not found in department");
-    }
-
-    const updated = await prisma.departmentMember.update({
-      where: { id: member.id },
-      data: {
-        maxWorkflows: quotas.maxWorkflows,
-        maxPlugins: quotas.maxPlugins,
       },
       include: {
         user: {
@@ -594,23 +587,22 @@ class DepartmentService {
       },
     });
 
-    // Audit log
-    void audit(toAuditContext(ctx), {
-      action: "department_member.set_quotas",
-      resource: "department_member",
-      resourceId: member.id,
-      metadata: { quotas },
-    });
+    if (!member) {
+      throw new NotFoundError("Member not found in department");
+    }
 
-    deptLogger.info({ deptId, userId, quotas }, "Member quotas updated");
+    // NOTE: This method no longer updates the DepartmentMember model directly.
+    // Use allocationService.setMemberAllocation() for the new 3-pool system.
+    deptLogger.warn(
+      { deptId, userId },
+      "setMemberQuotas is deprecated - use allocationService.setMemberAllocation()"
+    );
 
     return {
-      id: updated.id,
-      role: updated.role,
-      maxWorkflows: updated.maxWorkflows,
-      maxPlugins: updated.maxPlugins,
-      user: updated.user,
-      createdAt: updated.createdAt,
+      id: member.id,
+      role: member.role,
+      user: member.user,
+      createdAt: member.createdAt,
     };
   }
 

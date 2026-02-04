@@ -11,16 +11,16 @@ import { sendEmail } from '@/lib/email';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { redis } from '@/lib/redis';
-import { quotaService } from '@/modules/quota';
+import { resourceService } from '@/modules/resource';
 import type { ServiceContext } from '@/shared/types/context';
 import {
-    AlertSeverity,
-    AlertType,
-    type Alert,
-    type AlertConfig,
-    type AlertConfigInput,
-    type AlertHistoryEntry,
-    type AlertStats,
+  AlertSeverity,
+  AlertType,
+  type Alert,
+  type AlertConfig,
+  type AlertConfigInput,
+  type AlertHistoryEntry,
+  type AlertStats,
 } from './alert.types';
 
 const log = logger.child({ module: 'alerts' });
@@ -81,22 +81,50 @@ class AlertServiceImpl {
       getPermissions: () => [],
     };
     
-    // Check quota status
-    const quotaStatus = await quotaService.getQuotaStatus(ctx);
+    // Get resource status using new hierarchical types
+    const status = await resourceService.getResourceStatus(ctx);
     
-    // Check each resource
+    // Only process org context
+    if (status.context !== 'organization') {
+      return [];
+    }
+    
+    // Check each resource pool
     const resources = [
-      { name: 'API Calls', status: quotaStatus.apiCalls },
-      { name: 'Workflows', status: quotaStatus.workflows },
-      { name: 'Plugins', status: quotaStatus.plugins },
-      { name: 'Storage', status: quotaStatus.storage },
-      { name: 'Gateways', status: quotaStatus.gateways },
+      { 
+        name: 'Gateways', 
+        used: status.automation.gateways.count.used,
+        limit: status.automation.gateways.count.limit,
+        percentage: status.automation.gateways.count.percentage,
+        isUnlimited: status.automation.gateways.count.isUnlimited,
+      },
+      { 
+        name: 'Workflows', 
+        used: status.automation.workflows.count.used,
+        limit: status.automation.workflows.count.limit,
+        percentage: status.automation.workflows.count.percentage,
+        isUnlimited: status.automation.workflows.count.isUnlimited,
+      },
+      { 
+        name: 'Plugins', 
+        used: status.automation.plugins.count.used,
+        limit: status.automation.plugins.count.limit,
+        percentage: status.automation.plugins.count.percentage,
+        isUnlimited: status.automation.plugins.count.isUnlimited,
+      },
+      { 
+        name: 'Seats', 
+        used: status.billing.subscription.seats.used,
+        limit: status.billing.subscription.seats.limit,
+        percentage: status.billing.subscription.seats.percentage,
+        isUnlimited: status.billing.subscription.seats.isUnlimited,
+      },
     ];
     
     for (const resource of resources) {
-      if (resource.status.isUnlimited) continue;
+      if (resource.isUnlimited) continue;
       
-      const { percentage, used, limit } = resource.status;
+      const { percentage, used, limit } = resource;
       
       if (percentage >= 100) {
         const alert = await this.createAlert(organizationId, {

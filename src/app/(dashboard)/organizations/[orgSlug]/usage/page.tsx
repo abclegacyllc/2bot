@@ -1,5 +1,5 @@
 import { Metadata } from "next";
-import { OrgUsageDashboardClient } from "./client";
+import { OrgUsageDashboardV2Client } from "./client-v2";
 
 export const metadata: Metadata = {
   title: "Organization Usage | 2Bot Dashboard",
@@ -10,8 +10,9 @@ export const metadata: Metadata = {
  * Organization Usage Dashboard Page
  *
  * Displays the organization's resource usage, limits, and per-member breakdown.
+ * Uses new hierarchical resource types (Phase 3 migration).
  * The client component uses useOrganization hook to resolve slug to orgId.
  */
 export default function OrgUsagePage() {
-  return <OrgUsageDashboardClient />;
+  return <OrgUsageDashboardV2Client />;
 }

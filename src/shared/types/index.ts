@@ -2,6 +2,7 @@
 export * from "./api";
 export * from "./common";
 export * from "./context";
+export * from "./resources";
 
 // Re-export plan types from constants for convenience
 export type { RateLimitType } from "../constants/limits";

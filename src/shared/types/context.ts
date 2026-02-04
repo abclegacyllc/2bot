@@ -9,11 +9,11 @@
  */
 
 import {
-    type OrgRole,
-    type Permission,
-    type UserRole,
-    getUserPermissions,
-    hasPermission
+  type OrgRole,
+  type Permission,
+  type UserRole,
+  getUserPermissions,
+  hasPermission
 } from '../constants/permissions';
 import type { PlanType } from '../constants/plans';
 
@@ -86,6 +86,7 @@ export interface RequestMetadata {
 export interface ContextOptions {
   contextType?: 'personal' | 'organization';
   organizationId?: string;
+  departmentId?: string;
   orgRole?: OrgRole;
   effectivePlan?: PlanType;
 }
@@ -103,6 +104,7 @@ export function createServiceContext(
   const activeContext = tokenPayload.activeContext;
   const contextType = contextOptions?.contextType ?? activeContext?.type ?? 'personal';
   const organizationId = contextOptions?.organizationId ?? activeContext?.organizationId;
+  const departmentId = contextOptions?.departmentId;
   const orgRole = contextOptions?.orgRole ?? activeContext?.orgRole;
   const effectivePlan = contextOptions?.effectivePlan ?? activeContext?.plan ?? tokenPayload.plan;
 
@@ -112,6 +114,7 @@ export function createServiceContext(
     userPlan: tokenPayload.plan,
     contextType,
     organizationId,
+    departmentId,
     orgRole,
     effectivePlan,
     ipAddress: requestMeta?.ipAddress,

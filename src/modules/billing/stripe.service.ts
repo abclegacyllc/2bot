@@ -228,8 +228,8 @@ class StripeService {
         limits: {
           gateways: orgLimits.sharedGateways,
           plugins: orgLimits.sharedPlugins,
-          executionsPerMonth: orgLimits.executionsPerMonth,
-          aiTokensPerMonth: orgLimits.sharedAiTokensPerMonth,
+          workflowRunsPerMonth: orgLimits.workflowRunsPerMonth,
+          creditsPerMonth: orgLimits.sharedCreditsPerMonth,
           workspace: orgLimits.pool.ramMb !== null ? {
             ramMb: orgLimits.pool.ramMb,
             cpuCores: orgLimits.pool.cpuCores ?? 0,
@@ -252,8 +252,8 @@ class StripeService {
       limits: {
         gateways: limits.gateways,
         plugins: limits.plugins,
-        executionsPerMonth: limits.executionsPerMonth,
-        aiTokensPerMonth: limits.aiTokensPerMonth,
+        workflowRunsPerMonth: limits.workflowRunsPerMonth,
+        creditsPerMonth: limits.creditsPerMonth,
         workspace: limits.workspace,
       },
     };

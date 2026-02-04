@@ -15,35 +15,36 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import {
-    ALL_ORG_PLAN_TYPES,
-    INCLUDED_ORG_WORKSPACE_POOL,
-    ORG_PLAN_LIMITS,
-    ORG_PLAN_ORDER,
-    type OrgPlanType,
+  ALL_ORG_PLAN_TYPES,
+  INCLUDED_ORG_WORKSPACE_POOL,
+  ORG_PLAN_LIMITS,
+  ORG_PLAN_ORDER,
+  type OrgPlanType,
 } from "@/shared/constants/org-plans";
 import type { LucideIcon } from "lucide-react";
 import {
-    AlertCircle,
-    ArrowLeft,
-    Building2,
-    Check,
-    Crown,
-    Info,
-    Loader2,
-    Rocket,
-    Sparkles,
-    Star,
-    Users,
-    Zap,
+  AlertCircle,
+  ArrowLeft,
+  Building2,
+  Check,
+  Crown,
+  Info,
+  Loader2,
+  Rocket,
+  Sparkles,
+  Star,
+  Users,
+  Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -83,15 +84,16 @@ function OrgUpgradeContent() {
   const router = useRouter();
   const { orgId, orgName: hookOrgName, orgRole, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
+  const { can } = useOrgPermissions();
   const [upgrading, setUpgrading] = useState<OrgPlanType | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly");
 
   const fetcher = createFetcher(token);
 
-  // Check context - must be after hooks
+  // Check context using org-permissions single source of truth
   const isOrgContext = isFound && !!orgId;
-  const canManageBilling = orgRole === "ORG_OWNER" || orgRole === "ORG_ADMIN";
+  const canManageBilling = can('org:billing:manage');
   const orgName = hookOrgName || "Organization";
 
   // Fetch current subscription
@@ -99,7 +101,7 @@ function OrgUpgradeContent() {
     success: boolean;
     data: { plan: string };
   }>(
-    token && orgId ? apiUrl(`/organizations/${orgId}/billing/subscription`) : null,
+    token && orgId ? apiUrl(`/orgs/${orgId}/billing/subscription`) : null,
     fetcher
   );
 
@@ -137,7 +139,7 @@ function OrgUpgradeContent() {
     setError(null);
 
     try {
-      const res = await fetch(apiUrl(`/organizations/${orgId}/billing/checkout`), {
+      const res = await fetch(apiUrl(`/orgs/${orgId}/billing/checkout`), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -327,12 +329,12 @@ function OrgUpgradeContent() {
                     ) : (
                       <li className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Check className="h-4 w-4 text-green-400" />
-                        {plan.executionsPerMonth?.toLocaleString()} executions/month
+                        {plan.workflowRunsPerMonth?.toLocaleString()} workflow runs/month
                       </li>
                     )}
                     <li className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Check className="h-4 w-4 text-green-400" />
-                      {plan.sharedAiTokensPerMonth === -1 ? "Unlimited" : (plan.sharedAiTokensPerMonth / 1000).toLocaleString()}K AI tokens/month
+                      {plan.sharedCreditsPerMonth === -1 ? "Unlimited" : (plan.sharedCreditsPerMonth / 1000).toLocaleString()}K credits/month
                     </li>
                     <li className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Check className="h-4 w-4 text-green-400" />

@@ -21,6 +21,14 @@ const REDACT_PATHS = [
   "req.headers.authorization",
   "req.headers.cookie",
   "res.headers['set-cookie']",
+  // AI Privacy Redaction
+  "messages",
+  "content",
+  "input",
+  "output",
+  "prompt",
+  "completion",
+  "text", // Common field for text content
 ];
 
 /**

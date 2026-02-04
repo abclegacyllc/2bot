@@ -14,7 +14,7 @@ import { decryptJson, encrypt } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { enforceGatewayLimit } from "@/lib/plan-limits";
 import { prisma } from "@/lib/prisma";
-import { ForbiddenError, NotFoundError } from "@/shared/errors";
+import { BadRequestError, ForbiddenError, NotFoundError } from "@/shared/errors";
 import type { ServiceContext } from "@/shared/types/context";
 
 import type {
@@ -50,10 +50,114 @@ class GatewayOwnershipError extends ForbiddenError {
 }
 
 /**
+ * Extract unique identifier from gateway credentials
+ * This is used to prevent duplicate gateways across the platform
+ */
+function extractCredentialIdentifier(
+  type: GatewayType,
+  credentials: GatewayCredentials
+): string | null {
+  if (type === "TELEGRAM_BOT") {
+    // For Telegram bots, the bot token is the unique identifier
+    // Format: 123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+    const botToken = (credentials as { botToken?: string }).botToken;
+    if (!botToken) return null;
+    
+    // Extract bot ID from token (the part before the colon)
+    // This uniquely identifies the bot
+    const botId = botToken.split(":")[0];
+    return `telegram_bot:${botId}`;
+  }
+  
+  if (type === "AI") {
+    // For AI providers, we could check API key hash, but this is more complex
+    // because the same API key might legitimately be used in different contexts
+    // (personal workspace vs organization)
+    // For now, we'll allow duplicate AI credentials
+    return null;
+  }
+  
+  if (type === "WEBHOOK") {
+    // Webhooks can be duplicated (different endpoints can use same URL)
+    return null;
+  }
+  
+  return null;
+}
+
+/**
  * Gateway Service
  * All methods require ServiceContext for authorization and auditing
  */
 class GatewayService {
+  /**
+   * Check if credentials are already in use by another gateway
+   */
+  private async checkDuplicateCredentials(
+    type: GatewayType,
+    credentials: GatewayCredentials,
+    excludeGatewayId?: string
+  ): Promise<void> {
+    const identifier = extractCredentialIdentifier(type, credentials);
+    if (!identifier) {
+      // This gateway type doesn't need duplicate checking
+      return;
+    }
+
+    // Get all gateways of this type
+    const existingGateways = await prisma.gateway.findMany({
+      where: {
+        type,
+        ...(excludeGatewayId && { id: { not: excludeGatewayId } }),
+      },
+      select: {
+        id: true,
+        name: true,
+        credentialsEnc: true,
+        userId: true,
+        organizationId: true,
+        user: {
+          select: {
+            email: true,
+          },
+        },
+        organization: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Check each gateway's credentials
+    for (const gateway of existingGateways) {
+      try {
+        const existingCreds = decryptJson<GatewayCredentials>(gateway.credentialsEnc);
+        const existingIdentifier = extractCredentialIdentifier(type, existingCreds);
+
+        if (existingIdentifier === identifier) {
+          // Found a duplicate!
+          const owner = gateway.organization
+            ? `organization "${gateway.organization.name}"`
+            : `user ${gateway.user.email}`;
+
+          throw new BadRequestError(
+            `This ${type === "TELEGRAM_BOT" ? "bot token" : "credential"} is already in use by another gateway (${gateway.name}) owned by ${owner}. Each bot token can only be used once across the platform. Please use a different token or contact the owner to remove their gateway.`
+          );
+        }
+      } catch (err) {
+        // If we can't decrypt, skip this gateway
+        if (err instanceof BadRequestError) {
+          throw err; // Re-throw our duplicate error
+        }
+        gatewayLogger.warn(
+          { gatewayId: gateway.id },
+          "Failed to decrypt gateway credentials during duplicate check"
+        );
+      }
+    }
+  }
+
   /**
    * Create a new gateway
    */
@@ -62,6 +166,9 @@ class GatewayService {
 
     // Check plan limits before creating
     await enforceGatewayLimit(ctx);
+
+    // Check for duplicate credentials
+    await this.checkDuplicateCredentials(data.type, data.credentials);
 
     // Encrypt credentials
     const credentialsEnc = encrypt(data.credentials);
@@ -88,7 +195,27 @@ class GatewayService {
 
     gatewayLogger.info({ gatewayId: gateway.id, type: gateway.type }, "Gateway created");
 
+    // Test new gateway automatically (non-blocking)
+    void this.testNewGatewayHealth(gateway.id);
+
     return this.toSafeGateway(gateway, data.credentials);
+  }
+
+  /**
+   * Test a newly created gateway's health automatically
+   * This runs in the background and doesn't block the creation response
+   */
+  private async testNewGatewayHealth(gatewayId: string): Promise<void> {
+    try {
+      // Dynamic import to avoid circular dependency
+      const { gatewayMonitor } = await import("./gateway-monitor");
+      await gatewayMonitor.testNewGateway(gatewayId);
+    } catch (error) {
+      gatewayLogger.error(
+        { gatewayId, error },
+        "Failed to test new gateway health"
+      );
+    }
   }
 
   /**
@@ -103,8 +230,8 @@ class GatewayService {
       throw new NotFoundError("Gateway not found");
     }
 
-    // Check ownership
-    this.checkOwnership(ctx, gateway);
+    // Check ownership (now async - checks org membership too)
+    await this.checkOwnership(ctx, gateway);
 
     return gateway;
   }
@@ -154,6 +281,14 @@ class GatewayService {
     // Get existing gateway (with ownership check)
     const existing = await this.findById(ctx, id);
 
+    // Check write permission (admins only for org gateways)
+    await this.checkWritePermission(ctx, existing);
+
+    // If updating credentials, check for duplicates
+    if (data.credentials !== undefined) {
+      await this.checkDuplicateCredentials(existing.type, data.credentials, id);
+    }
+
     // Prepare update data
     const updateData: {
       name?: string;
@@ -198,6 +333,9 @@ class GatewayService {
   async delete(ctx: ServiceContext, id: string): Promise<void> {
     // Get existing gateway (with ownership check)
     const gateway = await this.findById(ctx, id);
+
+    // Check write permission (admins only for org gateways)
+    await this.checkWritePermission(ctx, gateway);
 
     await prisma.gateway.delete({
       where: { id },
@@ -277,15 +415,16 @@ class GatewayService {
   }
 
   /**
-   * Check if user/org owns the gateway
+   * Check if user/org owns the gateway (read access)
+   * Allows access if user is a member of the organization that owns the gateway
    */
-  private checkOwnership(ctx: ServiceContext, gateway: Gateway): void {
+  private async checkOwnership(ctx: ServiceContext, gateway: Gateway): Promise<void> {
     // Super admins can access any gateway
     if (ctx.isSuperAdmin()) {
       return;
     }
 
-    // Check organization ownership
+    // Check organization ownership (when accessed via org context)
     if (ctx.organizationId) {
       if (gateway.organizationId !== ctx.organizationId) {
         throw new GatewayOwnershipError();
@@ -293,9 +432,85 @@ class GatewayService {
       return;
     }
 
-    // Check user ownership (and ensure gateway isn't org-owned)
-    if (gateway.userId !== ctx.userId || gateway.organizationId !== null) {
+    // Check user ownership for personal gateways
+    if (gateway.organizationId === null) {
+      if (gateway.userId !== ctx.userId) {
+        throw new GatewayOwnershipError();
+      }
+      return;
+    }
+
+    // Gateway belongs to an organization, check if user is a member
+    const membership = await prisma.membership.findFirst({
+      where: {
+        userId: ctx.userId,
+        organizationId: gateway.organizationId,
+        status: "ACTIVE",
+      },
+    });
+
+    if (!membership) {
       throw new GatewayOwnershipError();
+    }
+
+    // User is a member of the org that owns this gateway - allow read access
+  }
+
+  /**
+   * Check if user has write permission for the gateway (update/delete)
+   * For org gateways: requires OWNER or ADMIN role
+   * For personal gateways: must be the owner
+   */
+  private async checkWritePermission(ctx: ServiceContext, gateway: Gateway): Promise<void> {
+    // Super admins can modify any gateway
+    if (ctx.isSuperAdmin()) {
+      return;
+    }
+
+    // Personal gateway - only owner can modify
+    if (gateway.organizationId === null) {
+      if (gateway.userId !== ctx.userId) {
+        throw new GatewayOwnershipError();
+      }
+      return;
+    }
+
+    // Org gateway accessed via org context - check role in context
+    if (ctx.organizationId) {
+      if (gateway.organizationId !== ctx.organizationId) {
+        throw new GatewayOwnershipError();
+      }
+      // Check if user has admin+ role via org membership
+      const membership = await prisma.membership.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId,
+          status: "ACTIVE",
+        },
+      });
+
+      if (!membership || !['OWNER', 'ADMIN'].includes(membership.role)) {
+        throw new ForbiddenError("Only organization admins can modify gateways");
+      }
+      return;
+    }
+
+    // Org gateway accessed without org context - check membership role
+    const membership = await prisma.membership.findFirst({
+      where: {
+        userId: ctx.userId,
+        organizationId: gateway.organizationId,
+        status: "ACTIVE",
+      },
+    });
+
+    if (!membership) {
+      throw new GatewayOwnershipError();
+    }
+
+    // Must be OWNER or ADMIN to modify org gateways
+    if (!['OWNER', 'ADMIN'].includes(membership.role)) {
+      throw new ForbiddenError("Only organization admins can modify gateways");
     }
   }
 

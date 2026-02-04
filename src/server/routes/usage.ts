@@ -11,7 +11,7 @@
 
 import { Router, type Request, type Response } from 'express';
 
-import { ExecutionTrackerService, quotaService, usageTracker } from '@/modules/quota';
+import { resourceService, usageTracker } from '@/modules/resource';
 import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
 import { BadRequestError } from '@/shared/errors';
 import type { ApiResponse } from '@/shared/types';
@@ -68,18 +68,18 @@ usageRouter.get(
     const limits = PLAN_LIMITS[plan] || PLAN_LIMITS.FREE;
 
     // Get real-time usage data
-    const [quotaStatus, realtimeUsage, executionCount] = await Promise.all([
-      quotaService.getQuotaStatus(ctx),
+    const [resourceStatus, realtimeUsage] = await Promise.all([
+      resourceService.getPersonalStatus(ctx),
       usageTracker.getRealTimeUsage(ctx),
-      ExecutionTrackerService.getExecutionCount(ctx),
     ]);
 
     // Calculate reset date (first of next month)
     const now = new Date();
     const resetsAt = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-    // Get gateway count from quota status
-    const gatewayCount = quotaStatus.gateways?.used || 0;
+    // Get gateway count from resource status
+    const gatewayCount = resourceStatus.automation.gateways.count.used || 0;
+    const executionCount = resourceStatus.automation.workflows.metrics.runs.current || 0;
 
     // Build daily history (last 14 days)
     const dailyHistory = await getDailyHistory(userId, 14);
@@ -87,8 +87,8 @@ usageRouter.get(
     // Build response
     const usage = {
       executions: {
-        current: executionCount.current,
-        limit: limits.executionsPerMonth,
+        current: executionCount,
+        limit: limits.workflowRunsPerMonth,
         resetsAt: resetsAt.toISOString(),
       },
       gateways: {
@@ -96,11 +96,11 @@ usageRouter.get(
         limit: limits.gateways === -1 ? null : limits.gateways,
       },
       plugins: {
-        current: quotaStatus.plugins?.used || 0,
+        current: resourceStatus.automation.plugins.count.used || 0,
         limit: limits.plugins === -1 ? null : limits.plugins,
       },
       workflows: {
-        current: quotaStatus.workflows?.used || 0,
+        current: resourceStatus.automation.workflows.count.used || 0,
         limit: limits.workflows === -1 ? null : limits.workflows,
       },
       dailyHistory,

@@ -5,6 +5,7 @@
  *
  * Overview of organization resource usage across all departments.
  * Shows org-wide usage, department breakdown, and quick actions.
+ * Uses new hierarchical resource types (Phase 3 migration).
  *
  * Access: Organization Owner only
  *
@@ -12,8 +13,12 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
-import { ResourceOverview } from "@/components/organization/resource-overview";
 import { useAuth } from "@/components/providers/auth-provider";
+import {
+    isOrgStatus,
+    ResourceOverview,
+    useResourceStatus,
+} from "@/components/resources";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -34,6 +39,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import {
@@ -53,21 +59,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 // Types for API responses
-interface QuotaItem {
-  used: number;
-  limit: number | null;
-  percentage: number;
-  isUnlimited: boolean;
-}
-
-interface OrgQuotaStatus {
-  workflows: QuotaItem;
-  plugins: QuotaItem;
-  apiCalls: QuotaItem & { resetsAt: string | null };
-  storage: QuotaItem;
-  gateways: QuotaItem;
-}
-
 interface DepartmentUsage {
   id: string;
   name: string;
@@ -75,14 +66,14 @@ interface DepartmentUsage {
   usage: {
     workflows: number;
     plugins: number;
-    apiCalls: number;
-    storage: number;
+    gateways: number;
+    creditSpent: number;
   };
   limits: {
     maxWorkflows: number | null;
     maxPlugins: number | null;
-    maxApiCalls: number | null;
-    maxStorage: number | null;
+    maxGateways: number | null;
+    creditBudget: number | null;
   };
   isActive: boolean;
 }
@@ -102,23 +93,30 @@ function OwnerDashboardContent() {
   const { buildOrgUrl } = useOrgUrls();
 
   const [org, setOrg] = useState<OrganizationInfo | null>(null);
-  const [quotaStatus, setQuotaStatus] = useState<OrgQuotaStatus | null>(null);
   const [departments, setDepartments] = useState<DepartmentUsage[]>([]);
+  
+  // Use new resource status hook
+  const { status: resourceStatus, refresh: refreshResourceStatus } = useResourceStatus({ orgId: orgId || undefined });
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [isEmergencyStopping, setIsEmergencyStopping] = useState(false);
   const [stoppingDeptId, setStoppingDeptId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Check if user is owner
-  const isOwner = isFound && orgRole === "ORG_OWNER";
+  // Use org-permissions hook for permission checks
+  const { can, role } = useOrgPermissions();
+  const isOwner = isFound && role === "ORG_OWNER";
+  
+  // Permission checks for specific actions
+  const canEmergencyStop = role === "ORG_OWNER" || role === "ORG_ADMIN";
+  const canUpdateQuotas = can("org:departments:manage_quotas");
 
   // Redirect if not owner or not found
   useEffect(() => {
-    if (!orgLoading && (!isFound || orgRole !== "ORG_OWNER")) {
+    if (!orgLoading && (!isFound || role !== "ORG_OWNER")) {
       router.push("/");
     }
-  }, [orgLoading, isFound, orgRole, router]);
+  }, [orgLoading, isFound, role, router]);
 
   const fetchData = useCallback(async () => {
     if (!token || !isFound || !orgId) return;
@@ -139,15 +137,8 @@ function OwnerDashboardContent() {
       const orgData = await orgRes.json();
       setOrg(orgData.data);
 
-      // Fetch quota status - using /organizations/:orgId/quota for org context
-      const quotaRes = await fetch(apiUrl(`/organizations/${orgId}/quota`), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (quotaRes.ok) {
-        const quotaData = await quotaRes.json();
-        setQuotaStatus(quotaData.data);
-      }
+      // Resource status is now fetched via useResourceStatus hook
+      await refreshResourceStatus();
 
       // Fetch departments with usage
       const deptRes = await fetch(
@@ -169,8 +160,8 @@ function OwnerDashboardContent() {
             quotas?: {
               maxWorkflows?: number;
               maxPlugins?: number;
-              maxApiCalls?: number;
-              maxStorage?: number;
+              maxGateways?: number;
+              creditBudget?: number;
             };
           }) => ({
             id: dept.id,
@@ -180,14 +171,14 @@ function OwnerDashboardContent() {
             usage: {
               workflows: 0, // Will be filled when we have usage tracking
               plugins: 0,
-              apiCalls: 0,
-              storage: 0,
+              gateways: 0,
+              creditSpent: 0,
             },
             limits: {
               maxWorkflows: dept.quotas?.maxWorkflows ?? null,
               maxPlugins: dept.quotas?.maxPlugins ?? null,
-              maxApiCalls: dept.quotas?.maxApiCalls ?? null,
-              maxStorage: dept.quotas?.maxStorage ?? null,
+              maxGateways: dept.quotas?.maxGateways ?? null,
+              creditBudget: dept.quotas?.creditBudget ?? null,
             },
           })
         );
@@ -198,7 +189,7 @@ function OwnerDashboardContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, isFound, orgId]);
+  }, [token, isFound, orgId, refreshResourceStatus]);
 
   useEffect(() => {
     if (isFound && orgId) {
@@ -214,7 +205,7 @@ function OwnerDashboardContent() {
       // Generate report data
       const reportData = {
         organization: org,
-        quotaStatus,
+        resourceStatus,
         departments,
         generatedAt: new Date().toISOString(),
       };
@@ -342,7 +333,7 @@ function OwnerDashboardContent() {
       </div>
 
       {/* Organization-wide Usage */}
-      {Boolean(quotaStatus) && (
+      {resourceStatus && isOrgStatus(resourceStatus) && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -354,7 +345,7 @@ function OwnerDashboardContent() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <ResourceOverview quotaStatus={quotaStatus!} />
+            <ResourceOverview status={resourceStatus} />
           </CardContent>
         </Card>
       )}
@@ -376,7 +367,7 @@ function OwnerDashboardContent() {
               <Users className="h-12 w-12 opacity-50" />
               <p className="mt-4">No departments created yet</p>
               <Button asChild variant="outline" className="mt-4">
-                <Link href={buildOrgUrl("/departments/new")}>
+                <Link href={buildOrgUrl("/departments/create")}>
                   Create Department
                 </Link>
               </Button>
@@ -419,24 +410,24 @@ function OwnerDashboardContent() {
                     <div className="flex items-center gap-1">
                       <Activity className="h-4 w-4 text-muted-foreground" />
                       <span>
-                        {formatNumber(dept.usage.apiCalls)}/
-                        {dept.limits.maxApiCalls
-                          ? formatNumber(dept.limits.maxApiCalls)
-                          : "∞"}
+                        {dept.usage.gateways}/
+                        {dept.limits.maxGateways ?? "∞"}
                       </span>
                     </div>
                   </div>
 
                   <div className="flex gap-2">
-                    <Button asChild variant="outline" size="sm">
-                      <Link
-                        href={buildOrgUrl(`/departments/${dept.id}/quotas`)}
-                      >
-                        Edit Quota
-                      </Link>
-                    </Button>
+                    {canUpdateQuotas && (
+                      <Button asChild variant="outline" size="sm">
+                        <Link
+                          href={buildOrgUrl(`/departments/${dept.id}/quotas`)}
+                        >
+                          Edit Allocation
+                        </Link>
+                      </Button>
+                    )}
 
-                    {dept.isActive ? <AlertDialog>
+                    {canEmergencyStop && dept.isActive ? <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button
                             variant="ghost"
@@ -504,45 +495,47 @@ function OwnerDashboardContent() {
           Export Report
         </Button>
 
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="destructive" disabled={isEmergencyStopping}>
-              {isEmergencyStopping ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <OctagonX className="mr-2 h-4 w-4" />
-              )}
-              Emergency Stop All
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Emergency Stop Organization?</AlertDialogTitle>
-              <AlertDialogDescription asChild>
-                <div className="space-y-2">
-                  <p>This will immediately:</p>
-                  <ul className="list-inside list-disc space-y-1">
-                    <li>Disable all departments</li>
-                    <li>Pause all organization workflows</li>
-                    <li>Pause all employee personal workflows</li>
-                  </ul>
-                  <p className="font-medium text-destructive">
-                    This action can be reversed, but will disrupt all operations.
-                  </p>
-                </div>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleEmergencyStopAll}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                Stop All
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        {canEmergencyStop && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" disabled={isEmergencyStopping}>
+                {isEmergencyStopping ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <OctagonX className="mr-2 h-4 w-4" />
+                )}
+                Emergency Stop All
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Emergency Stop Organization?</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2">
+                    <p>This will immediately:</p>
+                    <ul className="list-inside list-disc space-y-1">
+                      <li>Disable all departments</li>
+                      <li>Pause all organization workflows</li>
+                      <li>Pause all employee personal workflows</li>
+                    </ul>
+                    <p className="font-medium text-destructive">
+                      This action can be reversed, but will disrupt all operations.
+                    </p>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleEmergencyStopAll}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  Stop All
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
     </div>
   );

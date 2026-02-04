@@ -128,6 +128,8 @@ function createTestContext(options: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: no duplicate gateways
+  mockedPrisma.gateway.findMany.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -437,5 +439,202 @@ describe('Gateway credential security', () => {
     // Should have credentialInfo instead
     expect(result.credentialInfo).toBeDefined();
     expect(result.credentialInfo.type).toBe('TELEGRAM_BOT');
+  });
+});
+
+// ===========================================
+// Duplicate Credential Prevention Tests
+// ===========================================
+
+describe('Gateway duplicate credential prevention', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('prevents creating gateway with duplicate Telegram bot token', async () => {
+    const ctx = createTestContext();
+    const botToken = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz';
+    
+    // Mock existing gateway with same bot token
+    mockedPrisma.gateway.findMany.mockResolvedValue([
+      {
+        id: 'existing-gw',
+        name: 'Existing Bot',
+        type: 'TELEGRAM_BOT',
+        credentialsEnc: `encrypted:{"botToken":"${botToken}"}`,
+        userId: 'other-user',
+        organizationId: null,
+        user: { email: 'other@example.com' },
+        organization: null,
+      },
+    ]);
+
+    const newGatewayData = {
+      name: 'My Bot',
+      type: 'TELEGRAM_BOT' as const,
+      credentials: { botToken },
+    };
+
+    await expect(gatewayService.create(ctx, newGatewayData)).rejects.toThrow(
+      /bot token is already in use/i
+    );
+  });
+
+  it('prevents updating gateway to use duplicate Telegram bot token', async () => {
+    const ctx = createTestContext();
+    const duplicateToken = '987654321:XYZabcDEFghiJKLmno';
+    
+    // Mock the gateway being updated
+    mockedPrisma.gateway.findUnique.mockResolvedValue({
+      ...mockGateway,
+      id: 'gw-to-update',
+    });
+    
+    // Mock existing gateway with the token we're trying to use
+    mockedPrisma.gateway.findMany.mockResolvedValue([
+      {
+        id: 'existing-gw',
+        name: 'Other Bot',
+        type: 'TELEGRAM_BOT',
+        credentialsEnc: `encrypted:{"botToken":"${duplicateToken}"}`,
+        userId: 'other-user',
+        organizationId: null,
+        user: { email: 'other@example.com' },
+        organization: null,
+      },
+    ]);
+
+    await expect(
+      gatewayService.update(ctx, 'gw-to-update', {
+        credentials: { botToken: duplicateToken },
+      })
+    ).rejects.toThrow(/bot token is already in use/i);
+  });
+
+  it('allows creating gateway with unique Telegram bot token', async () => {
+    const ctx = createTestContext();
+    const uniqueToken = '111111111:UniqueTokenValue';
+    
+    // Mock no existing gateways with this token
+    mockedPrisma.gateway.findMany.mockResolvedValue([]);
+    
+    mockedPrisma.gateway.create.mockResolvedValue({
+      ...mockGateway,
+      credentialsEnc: `encrypted:{"botToken":"${uniqueToken}"}`,
+    });
+
+    const result = await gatewayService.create(ctx, {
+      name: 'Unique Bot',
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: uniqueToken },
+    });
+
+    expect(result).toBeDefined();
+    expect(mockedPrisma.gateway.create).toHaveBeenCalled();
+  });
+
+  it('allows same user to update their own gateway credentials', async () => {
+    const ctx = createTestContext();
+    const newToken = '222222222:UpdatedTokenValue';
+    
+    // Mock the gateway being updated (same user)
+    mockedPrisma.gateway.findUnique.mockResolvedValue({
+      ...mockGateway,
+      id: 'gw-update',
+      userId: ctx.userId,
+    });
+    
+    // Mock only this gateway exists with old token
+    mockedPrisma.gateway.findMany.mockResolvedValue([
+      {
+        id: 'gw-update',
+        name: 'My Bot',
+        type: 'TELEGRAM_BOT',
+        credentialsEnc: `encrypted:{"botToken":"old-token"}`,
+        userId: ctx.userId,
+        organizationId: null,
+        user: { email: 'user@example.com' },
+        organization: null,
+      },
+    ]);
+    
+    mockedPrisma.gateway.update.mockResolvedValue({
+      ...mockGateway,
+      id: 'gw-update',
+      credentialsEnc: `encrypted:{"botToken":"${newToken}"}`,
+    });
+
+    const result = await gatewayService.update(ctx, 'gw-update', {
+      credentials: { botToken: newToken },
+    });
+
+    expect(result).toBeDefined();
+    expect(mockedPrisma.gateway.update).toHaveBeenCalled();
+  });
+
+  it('allows duplicate AI credentials (same API key can be used multiple times)', async () => {
+    const ctx = createTestContext();
+    const apiKey = 'sk-same-api-key';
+    
+    // Mock existing AI gateway with same API key
+    mockedPrisma.gateway.findMany.mockResolvedValue([
+      {
+        id: 'existing-ai',
+        name: 'Existing AI',
+        type: 'AI',
+        credentialsEnc: `encrypted:{"provider":"openai","apiKey":"${apiKey}"}`,
+        userId: 'other-user',
+        organizationId: null,
+        user: { email: 'other@example.com' },
+        organization: null,
+      },
+    ]);
+    
+    mockedPrisma.gateway.create.mockResolvedValue({
+      ...mockGateway,
+      type: 'AI',
+      credentialsEnc: `encrypted:{"provider":"openai","apiKey":"${apiKey}"}`,
+    });
+
+    // Should NOT throw - AI credentials can be duplicated
+    const result = await gatewayService.create(ctx, {
+      name: 'My AI',
+      type: 'AI',
+      credentials: { provider: 'openai', apiKey },
+    });
+
+    expect(result).toBeDefined();
+  });
+
+  it('provides helpful error message with owner information', async () => {
+    const ctx = createTestContext();
+    const botToken = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz';
+    
+    // Mock existing gateway owned by organization
+    mockedPrisma.gateway.findMany.mockResolvedValue([
+      {
+        id: 'org-gw',
+        name: 'Company Bot',
+        type: 'TELEGRAM_BOT',
+        credentialsEnc: `encrypted:{"botToken":"${botToken}"}`,
+        userId: 'org-owner',
+        organizationId: 'org-123',
+        user: { email: 'owner@company.com' },
+        organization: { name: 'ACME Corp' },
+      },
+    ]);
+
+    try {
+      await gatewayService.create(ctx, {
+        name: 'My Bot',
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken },
+      });
+      expect.fail('Should have thrown error');
+    } catch (error: any) {
+      expect(error.message).toContain('bot token is already in use');
+      expect(error.message).toContain('Company Bot');
+      expect(error.message).toContain('ACME Corp');
+    }
   });
 });

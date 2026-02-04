@@ -11,27 +11,30 @@
  * @module app/(dashboard)/layout
  */
 
+import { TwoBotAIAssistantWidget } from "@/components/2bot-ai-assistant";
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { CreditsBalanceDisplay } from "@/components/credits";
 import { ContextSwitcher } from "@/components/layouts";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import {
-  Bot,
-  Building2,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  CreditCard,
-  Home,
-  LogOut,
-  Menu,
-  Plug,
-  Settings,
-  Shield,
-  ShoppingBag,
-  User
+    Bot,
+    Building2,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    Coins,
+    CreditCard,
+    Home,
+    LogOut,
+    Menu,
+    Plug,
+    Settings,
+    Shield,
+    ShoppingBag,
+    User
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -58,12 +61,14 @@ const buildSharedNavItems = (isOrgContext: boolean, orgSlug: string) =>
 // Personal workspace specific items
 const personalNavItems = [
   // Invites are now shown in the context switcher with notification badge
+  { href: "/credits", label: "Credits", icon: Coins },
   { href: "/billing", label: "Billing", icon: CreditCard },
 ];
 
 // Organization workspace specific items  
 const buildOrgNavItems = (orgSlug: string) => [
-  // Org billing at top level (same as personal)
+  // Org credits and billing
+  { href: `/organizations/${orgSlug}/credits`, label: "Credits", icon: Coins },
   { href: `/organizations/${orgSlug}/billing`, label: "Billing", icon: CreditCard },
 ];
 
@@ -249,6 +254,20 @@ function Sidebar({
 function Header({ onMobileMenuToggle }: { onMobileMenuToggle: () => void }) {
   const { user, logout, context } = useAuth();
 
+  // Format role for display
+  const formatRole = (role: string): string => {
+    // Remove ORG_ prefix and format nicely
+    return role.replace("ORG_", "").replace("_", " ").toLowerCase()
+      .split(" ")
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  };
+
+  // Get display role based on context
+  const displayRole = context.type === "organization" 
+    ? (context.orgRole ? formatRole(context.orgRole) : "Member")
+    : (user?.role ? formatRole(user.role) : "Member");
+
   return (
     <header className="h-16 bg-card/80 backdrop-blur-sm border-b border-border flex items-center justify-between px-6 sticky top-0 z-30">
       {/* Mobile menu button */}
@@ -264,10 +283,10 @@ function Header({ onMobileMenuToggle }: { onMobileMenuToggle: () => void }) {
       {/* Context info */}
       <div className="flex items-center gap-3">
         <Badge
-          variant={context.plan === "FREE" ? "secondary" : "default"}
-          className={context.plan !== "FREE" ? "bg-purple-600" : ""}
+          variant={context.type === "organization" ? "default" : "secondary"}
+          className={context.type === "organization" ? "bg-purple-600" : ""}
         >
-          {context.plan}
+          {displayRole}
         </Badge>
         {context.type === "organization" && (
           <span className="text-sm text-muted-foreground hidden sm:inline">
@@ -278,6 +297,7 @@ function Header({ onMobileMenuToggle }: { onMobileMenuToggle: () => void }) {
 
       {/* Right side */}
       <div className="flex items-center gap-3">
+        <CreditsBalanceDisplay />
         <ContextSwitcher />
         <ThemeToggle />
         <div className="hidden sm:block text-sm text-muted-foreground">
@@ -341,6 +361,9 @@ function DashboardLayoutContent({ children }: { children: ReactNode }) {
         {/* Page content */}
         <main className="p-6">{children}</main>
       </div>
+
+      {/* 2Bot AI Assistant Widget */}
+      <TwoBotAIAssistantWidget position="bottom-right" />
     </div>
   );
 }

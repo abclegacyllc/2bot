@@ -6,7 +6,9 @@
  * @module lib/__tests__/plan-limits.test
  */
 
+import { ORG_PLAN_LIMITS } from '@/shared/constants/org-plans';
 import type { PlanType } from '@/shared/constants/plans';
+import { PLAN_LIMITS } from '@/shared/constants/plans';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ===========================================
@@ -21,6 +23,9 @@ vi.mock('@/lib/prisma', () => ({
     userPlugin: {
       count: vi.fn(),
     },
+    organization: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -28,14 +33,14 @@ vi.mock('@/lib/prisma', () => ({
 import { prisma } from '@/lib/prisma';
 import { createServiceContext } from '@/shared/types/context';
 import {
-  checkExecutionLimit,
-  checkGatewayLimit,
-  checkPluginLimit,
-  enforceExecutionLimit,
-  enforceGatewayLimit,
-  enforcePluginLimit,
-  getResourceUsage,
-  PlanLimitError,
+    checkExecutionLimit,
+    checkGatewayLimit,
+    checkPluginLimit,
+    enforceExecutionLimit,
+    enforceGatewayLimit,
+    enforcePluginLimit,
+    getResourceUsage,
+    PlanLimitError,
 } from '../plan-limits';
 
 const mockedPrisma = prisma as unknown as {
@@ -44,6 +49,9 @@ const mockedPrisma = prisma as unknown as {
   };
   userPlugin: {
     count: ReturnType<typeof vi.fn>;
+  };
+  organization: {
+    findUnique: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -92,15 +100,15 @@ describe('PlanLimitError', () => {
     const error = new PlanLimitError(
       'Gateway limit reached',
       'gateways',
-      5,
-      5
+      ORG_PLAN_LIMITS.ORG_FREE.sharedGateways,
+      ORG_PLAN_LIMITS.ORG_FREE.sharedGateways
     );
 
     expect(error.message).toBe('Gateway limit reached');
     expect(error.name).toBe('PlanLimitError');
     expect(error.resource).toBe('gateways');
-    expect(error.current).toBe(5);
-    expect(error.max).toBe(5);
+    expect(error.current).toBe(ORG_PLAN_LIMITS.ORG_FREE.sharedGateways);
+    expect(error.max).toBe(ORG_PLAN_LIMITS.ORG_FREE.sharedGateways);
     expect(error.upgradeUrl).toBe('/billing/upgrade');
   });
 
@@ -133,24 +141,24 @@ describe('checkGatewayLimit', () => {
   it('returns allowed=true when under limit', async () => {
     mockedPrisma.gateway.count.mockResolvedValue(0);
 
-    const ctx = createTestContext({ plan: 'FREE' }); // FREE plan = 1 gateway
+    const ctx = createTestContext({ plan: 'FREE' });
     const result = await checkGatewayLimit(ctx);
 
     expect(result.allowed).toBe(true);
     expect(result.current).toBe(0);
-    expect(result.max).toBe(1);
-    expect(result.remaining).toBe(1);
+    expect(result.max).toBe(PLAN_LIMITS.FREE.gateways);
+    expect(result.remaining).toBe(PLAN_LIMITS.FREE.gateways);
   });
 
   it('returns allowed=false when at limit', async () => {
-    mockedPrisma.gateway.count.mockResolvedValue(1);
+    mockedPrisma.gateway.count.mockResolvedValue(PLAN_LIMITS.FREE.gateways);
 
-    const ctx = createTestContext({ plan: 'FREE' }); // FREE plan = 1 gateway
+    const ctx = createTestContext({ plan: 'FREE' });
     const result = await checkGatewayLimit(ctx);
 
     expect(result.allowed).toBe(false);
-    expect(result.current).toBe(1);
-    expect(result.max).toBe(1);
+    expect(result.current).toBe(PLAN_LIMITS.FREE.gateways);
+    expect(result.max).toBe(PLAN_LIMITS.FREE.gateways);
     expect(result.remaining).toBe(0);
   });
 
@@ -167,6 +175,10 @@ describe('checkGatewayLimit', () => {
 
   it('uses organizationId filter for org context', async () => {
     mockedPrisma.gateway.count.mockResolvedValue(3);
+    mockedPrisma.organization.findUnique.mockResolvedValue({
+      id: 'org-123',
+      plan: 'ORG_PRO',
+    } as any);
 
     const ctx = createTestContext({ 
       plan: 'PRO',
@@ -197,26 +209,27 @@ describe('checkGatewayLimit', () => {
 
 describe('checkPluginLimit', () => {
   it('returns allowed=true when under limit', async () => {
-    mockedPrisma.userPlugin.count.mockResolvedValue(2);
+    const currentCount = PLAN_LIMITS.FREE.plugins - 1;
+    mockedPrisma.userPlugin.count.mockResolvedValue(currentCount);
 
-    const ctx = createTestContext({ plan: 'FREE' }); // FREE plan = 3 plugins
+    const ctx = createTestContext({ plan: 'FREE' });
     const result = await checkPluginLimit(ctx);
 
     expect(result.allowed).toBe(true);
-    expect(result.current).toBe(2);
-    expect(result.max).toBe(3);
-    expect(result.remaining).toBe(1);
+    expect(result.current).toBe(currentCount);
+    expect(result.max).toBe(PLAN_LIMITS.FREE.plugins);
+    expect(result.remaining).toBe(PLAN_LIMITS.FREE.plugins - currentCount);
   });
 
   it('returns allowed=false when at limit', async () => {
-    mockedPrisma.userPlugin.count.mockResolvedValue(3);
+    mockedPrisma.userPlugin.count.mockResolvedValue(PLAN_LIMITS.FREE.plugins);
 
-    const ctx = createTestContext({ plan: 'FREE' }); // FREE plan = 3 plugins
+    const ctx = createTestContext({ plan: 'FREE' });
     const result = await checkPluginLimit(ctx);
 
     expect(result.allowed).toBe(false);
-    expect(result.current).toBe(3);
-    expect(result.max).toBe(3);
+    expect(result.current).toBe(PLAN_LIMITS.FREE.plugins);
+    expect(result.max).toBe(PLAN_LIMITS.FREE.plugins);
     expect(result.remaining).toBe(0);
   });
 
@@ -244,7 +257,7 @@ describe('checkExecutionLimit', () => {
     expect(result.remaining).toBe(-1);
   });
 
-  it('returns unlimited for PRO plan (null executionsPerMonth)', async () => {
+  it('returns unlimited for PRO plan (null workflowRunsPerMonth)', async () => {
     const ctx = createTestContext({ plan: 'PRO' });
     const result = await checkExecutionLimit(ctx);
 
@@ -285,9 +298,9 @@ describe('enforceGatewayLimit', () => {
   });
 
   it('throws PlanLimitError when at limit', async () => {
-    mockedPrisma.gateway.count.mockResolvedValue(1);
+    mockedPrisma.gateway.count.mockResolvedValue(PLAN_LIMITS.FREE.gateways);
 
-    const ctx = createTestContext({ plan: 'FREE' }); // FREE plan = 1 gateway
+    const ctx = createTestContext({ plan: 'FREE' });
 
     await expect(enforceGatewayLimit(ctx)).rejects.toThrow(PlanLimitError);
     await expect(enforceGatewayLimit(ctx)).rejects.toThrow('Gateway limit reached');
@@ -306,7 +319,7 @@ describe('enforceGatewayLimit', () => {
 
 describe('enforcePluginLimit', () => {
   it('does not throw when under limit', async () => {
-    mockedPrisma.userPlugin.count.mockResolvedValue(1);
+    mockedPrisma.userPlugin.count.mockResolvedValue(PLAN_LIMITS.FREE.plugins - 1);
 
     const ctx = createTestContext({ plan: 'FREE' });
 
@@ -314,7 +327,7 @@ describe('enforcePluginLimit', () => {
   });
 
   it('throws PlanLimitError when at limit', async () => {
-    mockedPrisma.userPlugin.count.mockResolvedValue(3);
+    mockedPrisma.userPlugin.count.mockResolvedValue(PLAN_LIMITS.FREE.plugins);
 
     const ctx = createTestContext({ plan: 'FREE' });
 
@@ -356,9 +369,9 @@ describe('getResourceUsage', () => {
 
     expect(usage.plan).toBe('FREE');
     expect(usage.gateways.current).toBe(0);
-    expect(usage.gateways.max).toBe(1);  // FREE = 1 gateway
+    expect(usage.gateways.max).toBe(PLAN_LIMITS.FREE.gateways);
     expect(usage.plugins.current).toBe(2);
-    expect(usage.plugins.max).toBe(3);   // FREE = 3 plugins
+    expect(usage.plugins.max).toBe(PLAN_LIMITS.FREE.plugins);
     expect(usage.executionsToday).toBeDefined();
   });
 
@@ -403,8 +416,8 @@ describe('Plan-specific limits', () => {
     const ctx = createTestContext({ plan: 'FREE' });
     const usage = await getResourceUsage(ctx);
 
-    expect(usage.gateways.max).toBe(1);   // FREE = 1 gateway
-    expect(usage.plugins.max).toBe(3);    // FREE = 3 plugins
+    expect(usage.gateways.max).toBe(PLAN_LIMITS.FREE.gateways);
+    expect(usage.plugins.max).toBe(PLAN_LIMITS.FREE.plugins);
   });
 
   it('STARTER plan has correct limits', async () => {
@@ -414,8 +427,8 @@ describe('Plan-specific limits', () => {
     const ctx = createTestContext({ plan: 'STARTER' });
     const usage = await getResourceUsage(ctx);
 
-    expect(usage.gateways.max).toBe(3);   // STARTER = 3 gateways
-    expect(usage.plugins.max).toBe(10);   // STARTER = 10 plugins
+    expect(usage.gateways.max).toBe(PLAN_LIMITS.STARTER.gateways);
+    expect(usage.plugins.max).toBe(PLAN_LIMITS.STARTER.plugins);
   });
 
   it('PRO plan has correct limits', async () => {
@@ -425,8 +438,8 @@ describe('Plan-specific limits', () => {
     const ctx = createTestContext({ plan: 'PRO' });
     const usage = await getResourceUsage(ctx);
 
-    expect(usage.gateways.max).toBe(10);  // PRO = 10 gateways
-    expect(usage.plugins.max).toBe(25);   // PRO = 25 plugins
+    expect(usage.gateways.max).toBe(PLAN_LIMITS.PRO.gateways);
+    expect(usage.plugins.max).toBe(PLAN_LIMITS.PRO.plugins);
   });
 
   it('BUSINESS plan has correct limits', async () => {
@@ -436,8 +449,8 @@ describe('Plan-specific limits', () => {
     const ctx = createTestContext({ plan: 'BUSINESS' });
     const usage = await getResourceUsage(ctx);
 
-    expect(usage.gateways.max).toBe(25);  // BUSINESS = 25 gateways
-    expect(usage.plugins.max).toBe(100);  // BUSINESS = 100 plugins
+    expect(usage.gateways.max).toBe(PLAN_LIMITS.BUSINESS.gateways);
+    expect(usage.plugins.max).toBe(PLAN_LIMITS.BUSINESS.plugins);
   });
 
   it('ENTERPRISE plan has unlimited everything', async () => {

@@ -18,7 +18,8 @@ function getEmailConfig() {
   return {
     from: process.env.EMAIL_FROM || "2Bot <hello@2bot.org>",
     replyTo: process.env.EMAIL_REPLY_TO || "support@2bot.org",
-    baseUrl: process.env.APP_URL || "https://www.2bot.org",
+    // Use NEXT_PUBLIC_APP_URL as single source of truth (no duplicate APP_URL needed)
+    baseUrl: process.env.NEXT_PUBLIC_APP_URL || "https://www.2bot.org",
     dashboardUrl: process.env.NEXT_PUBLIC_DASHBOARD_URL || "https://dash.2bot.org",
   };
 }

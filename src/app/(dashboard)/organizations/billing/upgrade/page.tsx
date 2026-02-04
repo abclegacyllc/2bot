@@ -21,6 +21,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { apiUrl } from "@/shared/config/urls";
 import {
     ALL_ORG_PLAN_TYPES,
@@ -80,15 +81,16 @@ function formatPrice(cents: number | null): string {
 function OrgUpgradeContent() {
   const { token, context } = useAuth();
   const router = useRouter();
+  const { can } = useOrgPermissions();
   const [upgrading, setUpgrading] = useState<OrgPlanType | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly");
 
   const fetcher = createFetcher(token);
 
-  // Check context - must be after hooks
+  // Check context using org-permissions single source of truth
   const isOrgContext = context.type === "organization" && !!context.organizationId;
-  const canManageBilling = context.orgRole === "ORG_OWNER" || context.orgRole === "ORG_ADMIN";
+  const canManageBilling = can('org:billing:manage');
   const orgId = context.organizationId;
   const orgName = context.organizationName || "Organization";
 
@@ -97,7 +99,7 @@ function OrgUpgradeContent() {
     success: boolean;
     data: { plan: string };
   }>(
-    token && orgId ? apiUrl(`/organizations/${orgId}/billing/subscription`) : null,
+    token && orgId ? apiUrl(`/orgs/${orgId}/billing/subscription`) : null,
     fetcher
   );
 
@@ -126,7 +128,7 @@ function OrgUpgradeContent() {
     setError(null);
 
     try {
-      const res = await fetch(apiUrl(`/organizations/${orgId}/billing/checkout`), {
+      const res = await fetch(apiUrl(`/orgs/${orgId}/billing/checkout`), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -316,12 +318,12 @@ function OrgUpgradeContent() {
                     ) : (
                       <li className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Check className="h-4 w-4 text-green-400" />
-                        {plan.executionsPerMonth?.toLocaleString()} executions/month
+                        {plan.workflowRunsPerMonth?.toLocaleString()} workflow runs/month
                       </li>
                     )}
                     <li className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Check className="h-4 w-4 text-green-400" />
-                      {plan.sharedAiTokensPerMonth === -1 ? "Unlimited" : (plan.sharedAiTokensPerMonth / 1000).toLocaleString()}K AI tokens/month
+                      {plan.sharedCreditsPerMonth === -1 ? "Unlimited" : (plan.sharedCreditsPerMonth / 1000).toLocaleString()}K credits/month
                     </li>
                     <li className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Check className="h-4 w-4 text-green-400" />

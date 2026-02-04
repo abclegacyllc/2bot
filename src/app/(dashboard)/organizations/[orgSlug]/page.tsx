@@ -13,23 +13,24 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import { useOrganization } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
+import { getOrgPlanDisplayName, type OrgPlanType } from "@/shared/constants/org-plans";
 import {
-  Activity,
-  ArrowLeft,
-  Building2,
-  CreditCard,
-  Layers,
-  Loader2,
-  Settings,
-  Users,
+    Activity,
+    ArrowLeft,
+    Building2,
+    CreditCard,
+    Layers,
+    Loader2,
+    Settings,
+    Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -173,10 +174,10 @@ export default function OrganizationOverviewPage() {
           </div>
         </div>
         <Badge
-          variant={organization.plan === "FREE" ? "secondary" : "default"}
-          className={organization.plan !== "FREE" ? "bg-purple-600" : ""}
+          variant={organization.plan === "ORG_FREE" ? "secondary" : "default"}
+          className={organization.plan !== "ORG_FREE" ? "bg-purple-600" : ""}
         >
-          {organization.plan}
+          {getOrgPlanDisplayName(organization.plan as OrgPlanType)}
         </Badge>
       </div>
 
@@ -219,10 +220,10 @@ export default function OrganizationOverviewPage() {
           </CardHeader>
           <CardContent>
             <Badge
-              variant={organization.plan === "FREE" ? "secondary" : "default"}
-              className={organization.plan !== "FREE" ? "bg-purple-600" : ""}
+              variant={organization.plan === "ORG_FREE" ? "secondary" : "default"}
+              className={organization.plan !== "ORG_FREE" ? "bg-purple-600" : ""}
             >
-              {organization.plan}
+              {getOrgPlanDisplayName(organization.plan as OrgPlanType)}
             </Badge>
           </CardContent>
         </Card>

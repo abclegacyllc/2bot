@@ -52,13 +52,13 @@ describe('ORG_PLAN_LIMITS', () => {
     }
   });
 
-  it('paid org plans have unlimited executions, ORG_FREE has limited', () => {
-    // ORG_FREE has limited executions
-    expect(typeof ORG_PLAN_LIMITS.ORG_FREE.executionsPerMonth).toBe('number');
+  it('paid org plans have unlimited workflow runs, ORG_FREE has limited', () => {
+    // ORG_FREE has limited workflow runs
+    expect(typeof ORG_PLAN_LIMITS.ORG_FREE.workflowRunsPerMonth).toBe('number');
     
-    // All paid org plans have unlimited executions
+    // All paid org plans have unlimited workflow runs
     for (const plan of PAID_ORG_PLAN_TYPES) {
-      expect(ORG_PLAN_LIMITS[plan].executionsPerMonth).toBeNull();
+      expect(ORG_PLAN_LIMITS[plan].workflowRunsPerMonth).toBeNull();
     }
   });
 
@@ -79,11 +79,11 @@ describe('ORG_PLAN_LIMITS', () => {
   });
 
   it('has increasing AI token budgets per tier', () => {
-    expect(ORG_PLAN_LIMITS.ORG_STARTER.sharedAiTokensPerMonth).toBe(500000);
-    expect(ORG_PLAN_LIMITS.ORG_GROWTH.sharedAiTokensPerMonth).toBe(2000000);
-    expect(ORG_PLAN_LIMITS.ORG_PRO.sharedAiTokensPerMonth).toBe(10000000);
-    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.sharedAiTokensPerMonth).toBe(50000000);
-    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.sharedAiTokensPerMonth).toBe(-1); // unlimited
+    expect(ORG_PLAN_LIMITS.ORG_STARTER.sharedCreditsPerMonth).toBe(5000);
+    expect(ORG_PLAN_LIMITS.ORG_GROWTH.sharedCreditsPerMonth).toBe(20000);
+    expect(ORG_PLAN_LIMITS.ORG_PRO.sharedCreditsPerMonth).toBe(100000);
+    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.sharedCreditsPerMonth).toBe(500000);
+    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.sharedCreditsPerMonth).toBe(-1); // unlimited
   });
 
   it('has increasing seat allocations per tier', () => {

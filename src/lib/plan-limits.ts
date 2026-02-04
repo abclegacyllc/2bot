@@ -10,6 +10,14 @@
 import { prisma } from "@/lib/prisma";
 import { getPlanLimits, type PlanType } from "@/shared/constants/plans";
 import type { ServiceContext } from "@/shared/types/context";
+import {
+    checkOrgGatewayLimit,
+    checkOrgPluginLimit,
+    checkOrgWorkflowLimit,
+    enforceOrgGatewayLimit,
+    enforceOrgPluginLimit,
+    enforceOrgWorkflowLimit,
+} from "./org-plan-limits";
 
 /**
  * Result of a limit check
@@ -75,8 +83,15 @@ function isUnlimited(limit: number): boolean {
 
 /**
  * Check gateway creation limit for current context
+ * Delegates to organization limits if in org context
  */
 export async function checkGatewayLimit(ctx: ServiceContext): Promise<LimitCheckResult> {
+  // Delegate to organization limits if in org context
+  if (ctx.isOrgContext() && ctx.organizationId) {
+    return checkOrgGatewayLimit(ctx);
+  }
+
+  // Personal context - use individual plan limits
   const limits = getPlanLimits(ctx.effectivePlan);
   const max = limits.gateways;
 
@@ -98,8 +113,15 @@ export async function checkGatewayLimit(ctx: ServiceContext): Promise<LimitCheck
 
 /**
  * Check plugin installation limit for current context
+ * Delegates to organization limits if in org context
  */
 export async function checkPluginLimit(ctx: ServiceContext): Promise<LimitCheckResult> {
+  // Delegate to organization limits if in org context
+  if (ctx.isOrgContext() && ctx.organizationId) {
+    return checkOrgPluginLimit(ctx);
+  }
+
+  // Personal context - use individual plan limits
   const limits = getPlanLimits(ctx.effectivePlan);
   const max = limits.plugins;
 
@@ -120,15 +142,45 @@ export async function checkPluginLimit(ctx: ServiceContext): Promise<LimitCheckR
 }
 
 /**
- * Check daily execution limit for current context
- * Note: Uses executionsPerMonth from plan limits (converted to approximate daily)
+ * Check workflow limit for current context
+ * Delegates to organization limits if in org context
+ */
+export async function checkWorkflowLimit(ctx: ServiceContext): Promise<LimitCheckResult> {
+  // Delegate to organization limits if in org context
+  if (ctx.isOrgContext() && ctx.organizationId) {
+    return checkOrgWorkflowLimit(ctx);
+  }
+
+  // Personal context - check individual workflow limits
+  const limits = getPlanLimits(ctx.effectivePlan);
+  const max = limits.workflows;
+
+  // Unlimited check
+  if (max === -1) {
+    return { allowed: true, current: 0, max: -1, remaining: -1 };
+  }
+
+  const filter = buildOwnerFilter(ctx);
+  const current = await prisma.workflow.count({ where: filter });
+
+  return {
+    allowed: current < max,
+    current,
+    max,
+    remaining: Math.max(0, max - current),
+  };
+}
+
+/**
+ * Check daily workflow run limit for current context
+ * Note: Uses workflowRunsPerMonth from plan limits (converted to approximate daily)
  * For more precise tracking, use the quota service
  */
 export async function checkExecutionLimit(ctx: ServiceContext): Promise<LimitCheckResult> {
   const limits = getPlanLimits(ctx.effectivePlan);
   
-  // executionsPerMonth - convert to approximate daily (null = unlimited)
-  const monthlyLimit = limits.executionsPerMonth;
+  // workflowRunsPerMonth - convert to approximate daily (null = unlimited)
+  const monthlyLimit = limits.workflowRunsPerMonth;
   
   // Unlimited check
   if (monthlyLimit === null || monthlyLimit === -1) {
@@ -176,8 +228,15 @@ export async function getResourceUsage(ctx: ServiceContext): Promise<{
 
 /**
  * Enforce gateway limit - throws PlanLimitError if limit reached
+ * Delegates to organization limits if in org context
  */
 export async function enforceGatewayLimit(ctx: ServiceContext): Promise<void> {
+  // Delegate to organization enforcement if in org context
+  if (ctx.isOrgContext() && ctx.organizationId) {
+    return enforceOrgGatewayLimit(ctx);
+  }
+
+  // Personal context - enforce individual limits
   const limit = await checkGatewayLimit(ctx);
 
   if (!limit.allowed) {
@@ -192,14 +251,44 @@ export async function enforceGatewayLimit(ctx: ServiceContext): Promise<void> {
 
 /**
  * Enforce plugin limit - throws PlanLimitError if limit reached
+ * Delegates to organization limits if in org context
  */
 export async function enforcePluginLimit(ctx: ServiceContext): Promise<void> {
+  // Delegate to organization enforcement if in org context
+  if (ctx.isOrgContext() && ctx.organizationId) {
+    return enforceOrgPluginLimit(ctx);
+  }
+
+  // Personal context - enforce individual limits
   const limit = await checkPluginLimit(ctx);
 
   if (!limit.allowed) {
     throw new PlanLimitError(
       `Plugin limit reached (${limit.current}/${limit.max}). Upgrade your plan to install more plugins.`,
       "plugins",
+      limit.current,
+      limit.max
+    );
+  }
+}
+
+/**
+ * Enforce workflow limit - throws PlanLimitError if limit reached
+ * Delegates to organization limits if in org context
+ */
+export async function enforceWorkflowLimit(ctx: ServiceContext): Promise<void> {
+  // Delegate to organization enforcement if in org context
+  if (ctx.isOrgContext() && ctx.organizationId) {
+    return enforceOrgWorkflowLimit(ctx);
+  }
+
+  // Personal context - enforce individual limits
+  const limit = await checkWorkflowLimit(ctx);
+
+  if (!limit.allowed) {
+    throw new PlanLimitError(
+      `Workflow limit reached (${limit.current}/${limit.max}). Upgrade your plan to create more workflows.`,
+      "workflows",
       limit.current,
       limit.max
     );

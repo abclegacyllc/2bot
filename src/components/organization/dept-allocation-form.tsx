@@ -36,6 +36,11 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { apiUrl } from "@/shared/config/urls";
+import type {
+    DeptAllocationRecord,
+    QuotaAllocation,
+    UnallocatedResources
+} from "@/shared/types/resources";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
@@ -46,40 +51,13 @@ import { z } from "zod";
 // Types
 // ===================================
 
-interface QuotaAllocation {
-  maxGateways: number | null;
-  maxWorkflows: number | null;
-  maxPlugins: number | null;
-  aiTokenBudget: number | null;
-  maxRamMb: number | null;
-  maxCpuCores: number | null;
-  maxStorageMb: number | null;
-}
-
-interface UnallocatedResources {
-  gateways: number | null;
-  workflows: number | null;
-  plugins: number | null;
-  aiTokenBudget: number | null;
-  ramMb: number | null;
-  cpuCores: number | null;
-  storageMb: number | null;
-}
-
-interface DeptAllocation {
-  id: string;
-  departmentId: string;
-  departmentName: string;
-  maxGateways: number | null;
-  maxWorkflows: number | null;
-  maxPlugins: number | null;
-  aiTokenBudget: number | null;
-  allocMode: string;
-}
+// Use DeptAllocationRecord from shared types, renamed for local use
+type DeptAllocation = DeptAllocationRecord;
 
 interface Department {
   id: string;
   name: string;
+  hasAllocation?: boolean;
 }
 
 interface DeptAllocationFormProps {
@@ -102,7 +80,7 @@ const formSchema = z.object({
   maxGateways: z.string().optional(),
   maxWorkflows: z.string().optional(),
   maxPlugins: z.string().optional(),
-  aiTokenBudget: z.string().optional(),
+  creditBudget: z.string().optional(),
   allocMode: z.enum(["SOFT_CAP", "HARD_CAP", "RESERVED", "UNLIMITED"]),
 });
 
@@ -156,7 +134,7 @@ export function DeptAllocationForm({
       maxGateways: formatNumber(existingAllocation?.maxGateways ?? null),
       maxWorkflows: formatNumber(existingAllocation?.maxWorkflows ?? null),
       maxPlugins: formatNumber(existingAllocation?.maxPlugins ?? null),
-      aiTokenBudget: formatNumber(existingAllocation?.aiTokenBudget ?? null),
+      creditBudget: formatNumber(existingAllocation?.creditBudget ?? null),
       allocMode: (existingAllocation?.allocMode as FormValues["allocMode"]) ?? "SOFT_CAP",
     },
   });
@@ -170,7 +148,7 @@ export function DeptAllocationForm({
         maxGateways: parseNumber(values.maxGateways),
         maxWorkflows: parseNumber(values.maxWorkflows),
         maxPlugins: parseNumber(values.maxPlugins),
-        aiTokenBudget: parseNumber(values.aiTokenBudget),
+        creditBudget: parseNumber(values.creditBudget),
         allocMode: values.allocMode,
       };
 
@@ -322,7 +300,7 @@ export function DeptAllocationForm({
 
               <FormField
                 control={form.control}
-                name="aiTokenBudget"
+                name="creditBudget"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>AI Token Budget</FormLabel>
@@ -335,7 +313,7 @@ export function DeptAllocationForm({
                       />
                     </FormControl>
                     <FormDescription>
-                      Available: {formatLimit(unallocated.aiTokenBudget)}
+                      Available: {formatLimit(unallocated.creditBudget)}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

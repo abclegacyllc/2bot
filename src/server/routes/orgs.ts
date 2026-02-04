@@ -9,7 +9,8 @@
  */
 
 import { gatewayService } from "@/modules/gateway";
-import type { GatewayListItem } from "@/modules/gateway/gateway.types";
+import type { GatewayListItem, SafeGateway } from "@/modules/gateway/gateway.types";
+import { createGatewaySchema } from "@/modules/gateway/gateway.validation";
 import {
     createDeptSchema,
     departmentService,
@@ -28,8 +29,11 @@ import {
     togglePluginSchema,
     updatePluginConfigSchema,
 } from "@/modules/plugin/plugin.validation";
-import { QuotaAllocationService, quotaService } from "@/modules/quota";
-import type { QuotaStatus } from "@/modules/quota/quota.types";
+import {
+    allocationService,
+    resourceService,
+    type OrgResourceStatus,
+} from "@/modules/resource";
 import { BadRequestError, ValidationError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext, type ServiceContext } from "@/shared/types/context";
@@ -40,6 +44,7 @@ import { asyncHandler } from "../middleware/error-handler";
 import { requireOrgAdmin, requireOrgMember, requireOrgOwner } from "../middleware/org-auth";
 import { orgAlertsRouter } from "./org-alerts";
 import { orgBillingRouter } from "./org-billing";
+import { orgCreditsRouter } from "./org-credits";
 
 export const orgsRouter = Router();
 
@@ -48,6 +53,9 @@ orgsRouter.use(requireAuth);
 
 // Mount org billing routes at /api/orgs/:orgId/billing/*
 orgsRouter.use("/:orgId/billing", orgBillingRouter);
+
+// Mount org credits routes at /api/orgs/:orgId/credits/*
+orgsRouter.use("/:orgId/credits", orgCreditsRouter);
 
 // Mount org alerts routes at /api/orgs/:orgId/alerts/* (Phase 6.9)
 orgsRouter.use("/:orgId/alerts", orgAlertsRouter);
@@ -221,6 +229,40 @@ orgsRouter.get(
     res.json({
       success: true,
       data: gateways,
+    });
+  })
+);
+
+/**
+ * POST /api/orgs/:orgId/gateways
+ *
+ * Create a new gateway for the organization
+ * Requires ORG_ADMIN role or higher
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @body {string} name - Gateway name
+ * @body {GatewayType} type - Gateway type (TELEGRAM_BOT, AI, WEBHOOK)
+ * @body {object} credentials - Type-specific credentials
+ * @body {object} [config] - Optional type-specific config
+ * @returns {SafeGateway} Created gateway
+ */
+orgsRouter.post(
+  "/:orgId/gateways",
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeGateway>>) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    const parseResult = createGatewaySchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Invalid gateway data", formatZodErrors(parseResult.error));
+    }
+
+    const gateway = await gatewayService.create(ctx, parseResult.data);
+
+    res.status(201).json({
+      success: true,
+      data: gateway,
     });
   })
 );
@@ -401,29 +443,149 @@ orgsRouter.post(
 );
 
 // ===========================================
-// Quota Routes
+// Resource & Allocation Routes
 // ===========================================
 
 /**
  * GET /api/orgs/:orgId/quota
  *
- * Get organization's quota status
+ * Get organization's resource status
  *
  * @param {string} orgId - Organization ID from URL
- * @returns {QuotaStatus} Current quota usage and limits
+ * @returns {OrgResourceStatus} Current resource status
  */
 orgsRouter.get(
   "/:orgId/quota",
   requireOrgMember,
-  asyncHandler(async (req: Request, res: Response<ApiResponse<QuotaStatus>>) => {
+  asyncHandler(async (req: Request, res: Response<ApiResponse<OrgResourceStatus>>) => {
     const orgId = getPathParam(req, "orgId");
     const ctx = getOrgContext(req, orgId);
 
-    const quota = await quotaService.getQuotaStatus(ctx);
+    const quota = await resourceService.getOrgStatus(ctx, orgId);
 
     res.json({
       success: true,
       data: quota,
+    });
+  })
+);
+
+/**
+ * GET /api/orgs/:orgId/allocations
+ *
+ * List all department allocations for an organization
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @returns {DeptAllocationRecord[]} All department allocations
+ */
+orgsRouter.get(
+  "/:orgId/allocations",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+
+    const allocations = await allocationService.getOrgDeptAllocations(orgId);
+
+    // Map to DeptAllocationRecord format for frontend
+    const records = allocations.map(a => ({
+      id: a.id,
+      departmentId: a.departmentId,
+      departmentName: a.department.name,
+      maxGateways: a.maxGateways,
+      maxWorkflows: a.maxWorkflows,
+      maxPlugins: a.maxPlugins,
+      creditBudget: a.creditBudget,
+      maxRamMb: a.ramMb,
+      maxCpuCores: a.cpuCores,
+      maxStorageMb: a.storageMb,
+      allocMode: a.mode,
+    }));
+
+    res.json({
+      success: true,
+      data: records,
+    });
+  })
+);
+
+/**
+ * GET /api/orgs/:orgId/allocations/summary
+ *
+ * Get summary of org allocation usage
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @returns {OrgAllocationSummary} Allocation summary
+ */
+orgsRouter.get(
+  "/:orgId/allocations/summary",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+
+    // Get org status which includes allocation summary
+    const status = await resourceService.getOrgStatus(ctx, orgId);
+
+    // Build summary from status
+    const summary = {
+      orgLimits: {
+        maxGateways: status.automation.gateways.count.limit,
+        maxWorkflows: status.automation.workflows.count.limit,
+        maxPlugins: status.automation.plugins.count.limit,
+        creditBudget: status.billing.credits.monthlyBudget,
+        maxRamMb: status.workspace?.compute?.ram?.limit ?? null,
+        maxCpuCores: status.workspace?.compute?.cpu?.limit ?? null,
+        maxStorageMb: status.workspace?.storage?.allocation?.limit ?? null,
+      },
+      allocatedToDepts: status.allocations?.allocated ?? {
+        gateways: 0,
+        plugins: 0,
+        workflows: 0,
+        creditBudget: 0,
+        ramMb: 0,
+        cpuCores: 0,
+        storageMb: 0,
+      },
+      unallocated: status.allocations?.unallocated ?? {
+        gateways: null,
+        plugins: null,
+        workflows: null,
+        creditBudget: null,
+        ramMb: null,
+        cpuCores: null,
+        storageMb: null,
+      },
+      deptCount: status.allocations?.departmentCount ?? 0,
+    };
+
+    res.json({
+      success: true,
+      data: summary,
+    });
+  })
+);
+
+/**
+ * DELETE /api/orgs/:orgId/allocations/:deptId
+ *
+ * Remove a department's allocation
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} deptId - Department ID from URL
+ */
+orgsRouter.delete(
+  "/:orgId/allocations/:deptId",
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const deptId = getPathParam(req, "deptId");
+    const ctx = getOrgContext(req, orgId);
+
+    await allocationService.removeDeptAllocation(ctx, deptId);
+
+    res.json({
+      success: true,
+      data: null,
     });
   })
 );
@@ -517,62 +679,160 @@ orgsRouter.get(
   })
 );
 
-// ===========================================
-// Department Quota Allocation Routes (Phase 6.9)
-// ===========================================
-
 /**
- * GET /api/orgs/:orgId/departments/:deptId/quotas
+ * GET /api/orgs/:orgId/departments/:deptId/members
  *
- * Get department quota allocations
+ * Get department members
  *
  * @param {string} orgId - Organization ID from URL
  * @param {string} deptId - Department ID from URL
- * @returns {DeptAllocationResponse | null} Department quota allocation
+ * @returns Department members with user info
  */
 orgsRouter.get(
-  "/:orgId/departments/:deptId/quotas",
+  "/:orgId/departments/:deptId/members",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const deptId = getPathParam(req, "deptId");
+    const ctx = getOrgContext(req, orgId);
+
+    const members = await departmentService.getMembers(ctx, deptId);
+
+    res.json({
+      success: true,
+      data: members,
+    });
+  })
+);
+
+// ===========================================
+// Department Allocation Routes (Phase 6.9 → Phase B)
+// Renamed from "quotas" to "allocations" for 3-pool resource system
+// ===========================================
+
+/**
+ * GET /api/orgs/:orgId/departments/:deptId/allocations
+ *
+ * Get department resource allocations
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} deptId - Department ID from URL
+ * @returns {DeptAllocationResponse | null} Department resource allocation
+ */
+orgsRouter.get(
+  "/:orgId/departments/:deptId/allocations",
   requireOrgMember,
   asyncHandler(async (req: Request, res: Response) => {
     const deptId = getPathParam(req, "deptId");
 
-    const quotas = await QuotaAllocationService.getDeptAllocation(deptId);
+    const allocation = await allocationService.getDeptAllocation(deptId);
 
     res.json({
       success: true,
-      data: quotas,
+      data: allocation,
     });
   })
 );
 
 /**
- * POST /api/orgs/:orgId/departments/:deptId/quotas
+ * POST /api/orgs/:orgId/departments/:deptId/allocations
  *
- * Set or update department quota allocations
+ * Set or update department resource allocations
  * Requires ORG_ADMIN role or higher
  *
  * @param {string} orgId - Organization ID from URL
  * @param {string} deptId - Department ID from URL
- * @body {SetDeptAllocationRequest} Quota allocation values
- * @returns {DeptAllocationResponse} Updated quota allocation
+ * @body {SetDeptAllocationRequest} Resource allocation values
+ * @returns {DeptAllocationResponse} Updated resource allocation
  */
 orgsRouter.post(
-  "/:orgId/departments/:deptId/quotas",
+  "/:orgId/departments/:deptId/allocations",
   requireOrgAdmin,
   asyncHandler(async (req: Request, res: Response) => {
     const orgId = getPathParam(req, "orgId");
     const deptId = getPathParam(req, "deptId");
     const ctx = getOrgContext(req, orgId);
 
-    const quotas = await QuotaAllocationService.setDeptAllocation(
+    await allocationService.setDeptAllocation(
       ctx,
       deptId,
       req.body
     );
 
+    const allocation = await allocationService.getDeptAllocation(deptId);
+
     res.json({
       success: true,
-      data: quotas,
+      data: allocation,
+    });
+  })
+);
+
+// ===========================================
+// Department Member Allocation Routes (Phase 6.9 → Phase B)
+// Renamed from "quotas" to "allocations" for 3-pool resource system
+// ===========================================
+
+/**
+ * GET /api/orgs/:orgId/departments/:deptId/members/:userId/allocations
+ *
+ * Get member resource allocations
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} deptId - Department ID from URL
+ * @param {string} userId - User ID from URL
+ * @returns Member resource allocation
+ */
+orgsRouter.get(
+  "/:orgId/departments/:deptId/members/:userId/allocations",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const _orgId = getPathParam(req, "orgId");
+    const deptId = getPathParam(req, "deptId");
+    const userId = getPathParam(req, "userId");
+
+    const allocation = await allocationService.getMemberAllocation(userId, deptId);
+
+    res.json({
+      success: true,
+      data: allocation,
+    });
+  })
+);
+
+/**
+ * POST /api/orgs/:orgId/departments/:deptId/members/:userId/allocations
+ *
+ * Set or update member resource allocations
+ * Requires DEPT_MANAGER role or higher
+ *
+ * @param {string} orgId - Organization ID from URL
+ * @param {string} deptId - Department ID from URL
+ * @param {string} userId - User ID from URL
+ * @body {SetMemberAllocationRequest} Resource allocation values
+ * @returns Updated resource allocation
+ */
+orgsRouter.post(
+  "/:orgId/departments/:deptId/members/:userId/allocations",
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+    const deptId = getPathParam(req, "deptId");
+    const userId = getPathParam(req, "userId");
+    const ctx = getOrgContext(req, orgId);
+
+    await allocationService.setMemberAllocation(
+      ctx,
+      userId,
+      deptId,
+      req.body
+    );
+
+    const allocation = await allocationService.getMemberAllocation(userId, deptId);
+
+    res.json({
+      success: true,
+      data: allocation,
     });
   })
 );
@@ -735,8 +995,8 @@ orgsRouter.get(
     // Get organization details
     const org = await organizationService.getById(ctx, orgId);
     
-    // Get quota status
-    const quotaStatus = await quotaService.getQuotaStatus(ctx);
+    // Get resource status (includes quota info)
+    const resourceStatus = await resourceService.getOrgStatus(ctx, orgId);
     
     // Get all gateways
     const gateways = await gatewayService.findByUser(ctx);
@@ -798,21 +1058,21 @@ orgsRouter.get(
         },
       },
       executions: {
-        current: quotaStatus.apiCalls?.used || 0,
-        limit: quotaStatus.apiCalls?.limit ?? null,
+        current: resourceStatus.billing.credits.usage.total.current || 0,
+        limit: resourceStatus.billing.credits.usage.total.limit ?? null,
         resetsAt: resetsAt.toISOString(),
       },
       gateways: {
         current: gateways.length,
-        limit: quotaStatus.gateways?.limit ?? null,
+        limit: resourceStatus.automation.gateways.count.limit ?? null,
       },
       plugins: {
-        current: quotaStatus.plugins?.used || 0,
-        limit: quotaStatus.plugins?.limit ?? null,
+        current: resourceStatus.automation.plugins.count.used || 0,
+        limit: resourceStatus.automation.plugins.count.limit ?? null,
       },
       workflows: {
-        current: quotaStatus.workflows?.used || 0,
-        limit: quotaStatus.workflows?.limit ?? null,
+        current: resourceStatus.automation.workflows.count.used || 0,
+        limit: resourceStatus.automation.workflows.count.limit ?? null,
       },
       teamMembers: {
         current: members.length,

@@ -1,0 +1,19 @@
+# PgBouncer userlist.txt
+# Format: "username" "password"
+# 
+# This file is auto-generated or manually created with your DB credentials.
+# For security, passwords can be MD5 hashed: "user" "md5<hash>"
+#
+# In production, replace with your actual credentials or use environment variables
+# with a script that generates this file at container startup.
+#
+# Example (plain text - for development only):
+# "postgres" "your_password_here"
+#
+# Example (MD5 - recommended for production):
+# "postgres" "md5<md5(password + username)>"
+#
+# Note: The password here should match POSTGRES_PASSWORD in your .env.production
+# Generate MD5: echo -n "passwordusername" | md5sum
+
+"2bot_prod" "REPLACE_WITH_POSTGRES_PASSWORD"

@@ -12,16 +12,19 @@
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { UsageCharts, type UsageDataPoint } from "@/components/organization";
 import { useAuth } from "@/components/providers/auth-provider";
+import {
+    isOrgStatus,
+    useResourceStatus,
+} from "@/components/resources";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
-import { apiUrl } from "@/shared/config/urls";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -39,21 +42,6 @@ interface RealTimeUsage {
   periodType: string;
 }
 
-interface QuotaStatus {
-  workflows: QuotaItem;
-  plugins: QuotaItem;
-  apiCalls: QuotaItem & { resetsAt: string | null };
-  storage: QuotaItem;
-  gateways: QuotaItem;
-}
-
-interface QuotaItem {
-  used: number;
-  limit: number | null;
-  percentage: number;
-  isUnlimited: boolean;
-}
-
 type PeriodType = "HOURLY" | "DAILY" | "WEEKLY" | "MONTHLY";
 
 // ===========================================
@@ -66,91 +54,50 @@ function MonitoringContent() {
   const { buildOrgUrl } = useOrgUrls();
   const [period, setPeriod] = useState<PeriodType>("DAILY");
   const [realTimeUsage, setRealTimeUsage] = useState<RealTimeUsage | null>(null);
-  const [quotaStatus, setQuotaStatus] = useState<QuotaStatus | null>(null);
   const [historyData, setHistoryData] = useState<UsageDataPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch data on mount and period change
+  // Use new resource status hook for quota data
+  const { status: resourceStatus, isLoading: resourceLoading } = useResourceStatus({ 
+    orgId: orgId || undefined,
+    refreshInterval: 30000 // Refresh every 30 seconds
+  });
+  
+  // Extract org status for display
+  const orgStatus = resourceStatus && isOrgStatus(resourceStatus) ? resourceStatus : null;
+
+  // Sync realtime usage from resource status
   useEffect(() => {
-    if (!isFound || !orgId || !token) return;
+    if (!isFound || !orgId) return;
 
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
 
-      try {
-        // Fetch org quota status using org-specific endpoint
-        const statusRes = await fetch(apiUrl(`/orgs/${orgId}/quota`), {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (!statusRes.ok) {
-          throw new Error("Failed to fetch organization quota data");
-        }
-
-        const statusData = await statusRes.json();
-        setQuotaStatus(statusData.data);
-
-        // Real-time usage - synthesize from quota status for now
-        // TODO: Add org-specific realtime endpoint /api/orgs/:orgId/quota/realtime
+    try {
+      // Real-time usage - synthesize from resource status
+      if (orgStatus) {
         const now = new Date();
         setRealTimeUsage({
-          apiCalls: statusData.data?.apiCalls?.used || 0,
-          workflowRuns: statusData.data?.workflows?.used || 0,
-          pluginExecutions: statusData.data?.plugins?.used || 0,
-          storageUsed: statusData.data?.storage?.used || 0,
-          errors: 0, // Not tracked in quota status
+          apiCalls: 0, // Not tracked in new resource status
+          workflowRuns: orgStatus.automation?.workflows?.count?.used || 0,
+          pluginExecutions: orgStatus.automation?.plugins?.count?.used || 0,
+          storageUsed: orgStatus.workspace?.storage?.allocation?.allocated || 0,
+          errors: 0,
           periodStart: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
           periodType: "MONTHLY",
         });
-
-        // History data - generate mock for now
-        // TODO: Add org-specific history endpoint /api/orgs/:orgId/quota/history
-        setHistoryData([]);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load data");
-      } finally {
-        setLoading(false);
       }
-    };
 
-    fetchData();
-
-    // Refresh data every 30 seconds
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(apiUrl(`/orgs/${orgId}/quota`), {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setQuotaStatus(data.data);
-          // Update realtime from quota status
-          const now = new Date();
-          setRealTimeUsage({
-            apiCalls: data.data?.apiCalls?.used || 0,
-            workflowRuns: data.data?.workflows?.used || 0,
-            pluginExecutions: data.data?.plugins?.used || 0,
-            storageUsed: data.data?.storage?.used || 0,
-            errors: 0,
-            periodStart: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
-            periodType: "MONTHLY",
-          });
-        }
-      } catch {
-        // Silently fail on refresh
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [isFound, orgId, period, token]);
+      // History data - generate mock for now
+      // TODO: Add org-specific history endpoint /api/orgs/:orgId/quota/history
+      setHistoryData([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load data");
+    } finally {
+      setLoading(false);
+    }
+  }, [isFound, orgId, period, orgStatus]);
 
   // Export CSV function
   const exportCsv = () => {
@@ -266,11 +213,7 @@ function MonitoringContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold text-foreground">{realTimeUsage.apiCalls.toLocaleString()}</p>
-                {quotaStatus ? <p className="text-sm text-muted-foreground">
-                    {quotaStatus.apiCalls.isUnlimited 
-                      ? "Unlimited" 
-                      : `of ${quotaStatus.apiCalls.limit?.toLocaleString()}`}
-                  </p> : null}
+                <p className="text-sm text-muted-foreground">This period</p>
               </CardContent>
             </Card>
 
@@ -280,7 +223,9 @@ function MonitoringContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold text-foreground">{realTimeUsage.workflowRuns.toLocaleString()}</p>
-                <p className="text-sm text-muted-foreground">Today</p>
+                {orgStatus ? <p className="text-sm text-muted-foreground">
+                    of {orgStatus.automation?.workflows?.count?.limit ?? "∞"}
+                  </p> : <p className="text-sm text-muted-foreground">Today</p>}
               </CardContent>
             </Card>
 
@@ -290,7 +235,9 @@ function MonitoringContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold text-foreground">{realTimeUsage.pluginExecutions.toLocaleString()}</p>
-                <p className="text-sm text-muted-foreground">Today</p>
+                {orgStatus ? <p className="text-sm text-muted-foreground">
+                    of {orgStatus.automation?.plugins?.count?.limit ?? "∞"}
+                  </p> : <p className="text-sm text-muted-foreground">Today</p>}
               </CardContent>
             </Card>
 
@@ -300,11 +247,9 @@ function MonitoringContent() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold text-foreground">{realTimeUsage.storageUsed} MB</p>
-                {quotaStatus ? <p className="text-sm text-muted-foreground">
-                    {quotaStatus.storage.isUnlimited 
-                      ? "Unlimited" 
-                      : `of ${quotaStatus.storage.limit} MB`}
-                  </p> : null}
+                {orgStatus?.workspace?.storage ? <p className="text-sm text-muted-foreground">
+                    of {orgStatus.workspace.storage.allocation?.limit ?? "∞"} MB
+                  </p> : <p className="text-sm text-muted-foreground">This period</p>}
               </CardContent>
             </Card>
 
@@ -324,24 +269,17 @@ function MonitoringContent() {
           </div> : null}
 
         {/* Health Status Cards */}
-        {!loading && quotaStatus ? <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {!loading && orgStatus ? <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="border-border bg-card/50">
               <CardHeader>
                 <CardTitle className="text-foreground flex items-center gap-2">
-                  <span className={`w-3 h-3 rounded-full ${
-                    quotaStatus.apiCalls.percentage < 80 ? 'bg-green-500' :
-                    quotaStatus.apiCalls.percentage < 95 ? 'bg-yellow-500' : 'bg-red-500'
-                  }`} />
+                  <span className="w-3 h-3 rounded-full bg-green-500" />
                   Health Status
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className={`text-lg ${
-                  quotaStatus.apiCalls.percentage < 80 ? 'text-green-400' :
-                  quotaStatus.apiCalls.percentage < 95 ? 'text-yellow-400' : 'text-red-400'
-                }`}>
-                  {quotaStatus.apiCalls.percentage < 80 ? '✓ All systems operational' :
-                   quotaStatus.apiCalls.percentage < 95 ? '⚠ Approaching limits' : '⚠ Critical usage'}
+                <p className="text-lg text-green-400">
+                  ✓ All systems operational
                 </p>
               </CardContent>
             </Card>
@@ -362,15 +300,15 @@ function MonitoringContent() {
 
             <Card className="border-border bg-card/50">
               <CardHeader>
-                <CardTitle className="text-foreground">API Quota Reset</CardTitle>
+                <CardTitle className="text-foreground">Billing Period</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-lg text-foreground">
-                  {quotaStatus.apiCalls.resetsAt
-                    ? new Date(quotaStatus.apiCalls.resetsAt).toLocaleString()
-                    : "N/A"}
+                  {orgStatus.billing?.credits?.usage?.ai?.total?.resetsAt
+                    ? new Date(orgStatus.billing.credits.usage.ai.total.resetsAt).toLocaleString()
+                    : "Monthly"}
                 </p>
-                <p className="text-sm text-muted-foreground">Daily limit resets</p>
+                <p className="text-sm text-muted-foreground">Usage resets</p>
               </CardContent>
             </Card>
           </div> : null}

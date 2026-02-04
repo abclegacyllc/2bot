@@ -74,6 +74,51 @@ export const IP_RATE_LIMITS: Record<string, RateLimitConfig> = {
     duration: 3600,
     blockDuration: 3600,
   },
+
+  // ==========================================
+  // 2Bot AI Endpoints - Cost Protection
+  // ==========================================
+
+  // Text generation: 30 requests per minute (expensive API calls)
+  'POST:/api/2bot-ai/text-generation': {
+    points: 30,
+    duration: 60,
+    blockDuration: 60,
+  },
+
+  // Image generation: 5 requests per minute (very expensive)
+  'POST:/api/2bot-ai/image-generation': {
+    points: 5,
+    duration: 60,
+    blockDuration: 120, // 2 minute block - images are costly
+  },
+
+  // Speech synthesis: 10 requests per minute
+  'POST:/api/2bot-ai/speech-synthesis': {
+    points: 10,
+    duration: 60,
+    blockDuration: 60,
+  },
+
+  // Speech recognition: 10 requests per minute
+  'POST:/api/2bot-ai/speech-recognition': {
+    points: 10,
+    duration: 60,
+    blockDuration: 60,
+  },
+
+  // Text embeddings: 50 requests per minute (cheaper but still costs)
+  'POST:/api/2bot-ai/text-embedding': {
+    points: 50,
+    duration: 60,
+    blockDuration: 30,
+  },
+
+  // Model discovery: 20 requests per minute (not expensive but still limit)
+  'GET:/api/2bot-ai/models': {
+    points: 20,
+    duration: 60,
+  },
 };
 
 /**

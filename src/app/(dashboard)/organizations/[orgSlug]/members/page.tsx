@@ -54,6 +54,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -66,7 +67,7 @@ import { z } from "zod";
 // Invite validation schema
 const inviteSchema = z.object({
   email: z.string().email("Invalid email address"),
-  role: z.enum(["ORG_ADMIN", "ORG_MEMBER"]),
+  role: z.enum(["ORG_ADMIN", "DEPT_MANAGER", "ORG_MEMBER"]),
 });
 
 type InviteInput = z.infer<typeof inviteSchema>;
@@ -74,7 +75,7 @@ type InviteInput = z.infer<typeof inviteSchema>;
 // Member type from API
 interface Member {
   id: string;
-  role: "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER";
+  role: "ORG_OWNER" | "ORG_ADMIN" | "DEPT_MANAGER" | "ORG_MEMBER";
   status: "ACTIVE" | "PENDING" | "INACTIVE";
   user: {
     id: string;
@@ -102,6 +103,7 @@ interface PendingInvite {
 }
 
 function formatRole(role: string): string {
+  if (role === "DEPT_MANAGER") return "Dept Manager";
   return role.replace("ORG_", "");
 }
 
@@ -203,9 +205,11 @@ function MembersContent() {
     }
   }, [isFound, orgId, fetchMembers]);
 
-  const canInvite = orgRole === "ORG_OWNER" || orgRole === "ORG_ADMIN";
-  const canChangeRole = orgRole === "ORG_OWNER";
-  const canRemove = orgRole === "ORG_OWNER" || orgRole === "ORG_ADMIN";
+  // Use org-permissions hook for permission checks
+  const { can, canRemove: canRemoveMember, canModifyRole } = useOrgPermissions();
+  const canInvite = can('org:members:invite');
+  const canChangeRole = can('org:members:update_role');
+  const canRemove = can('org:members:remove');
 
   const onInvite = async (data: InviteInput) => {
     if (!orgId || !token) return;
@@ -426,6 +430,7 @@ function MembersContent() {
                             </FormControl>
                             <SelectContent className="bg-muted border-border">
                               <SelectItem value="ORG_MEMBER">Member</SelectItem>
+                              <SelectItem value="DEPT_MANAGER">Department Manager</SelectItem>
                               <SelectItem value="ORG_ADMIN">Admin</SelectItem>
                             </SelectContent>
                           </Select>
@@ -511,6 +516,7 @@ function MembersContent() {
                             </SelectTrigger>
                             <SelectContent className="bg-muted border-border">
                               <SelectItem value="ORG_MEMBER">Member</SelectItem>
+                              <SelectItem value="DEPT_MANAGER">Department Manager</SelectItem>
                               <SelectItem value="ORG_ADMIN">Admin</SelectItem>
                             </SelectContent>
                           </Select>
@@ -521,7 +527,9 @@ function MembersContent() {
                                 ? "default"
                                 : member.role === "ORG_ADMIN"
                                   ? "secondary"
-                                  : "outline"
+                                  : member.role === "DEPT_MANAGER"
+                                    ? "secondary"
+                                    : "outline"
                             }
                           >
                             {formatRole(member.role)}

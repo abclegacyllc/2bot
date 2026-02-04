@@ -21,7 +21,7 @@ interface OrganizationFromSlug {
   /** Organization name */
   orgName: string | null;
   /** User's role in this organization */
-  orgRole: "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER" | null;
+  orgRole: "ORG_OWNER" | "ORG_ADMIN" | "DEPT_MANAGER" | "ORG_MEMBER" | null;
   /** Whether the org was found in available orgs */
   isFound: boolean;
   /** Whether we're still loading available orgs */

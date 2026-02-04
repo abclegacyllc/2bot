@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import Link from "next/link";
@@ -225,9 +226,10 @@ interface PluginCardProps {
   onConfigure: (plugin: UserPlugin) => void;
   onUninstall: (id: string) => void;
   isUpdating: boolean;
+  canManagePlugins: boolean;
 }
 
-function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating }: PluginCardProps) {
+function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating, canManagePlugins }: PluginCardProps) {
   return (
     <Card className="border-border bg-card/50">
       <CardHeader className="pb-3">
@@ -242,12 +244,13 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating }: 
             </CardDescription>
           </div>
           {/* Enable/Disable Toggle */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {plugin.isEnabled ? "Enabled" : "Disabled"}
-            </span>
-            <button
-              onClick={() => onToggle(plugin.id, !plugin.isEnabled)}
+          {canManagePlugins && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {plugin.isEnabled ? "Enabled" : "Disabled"}
+              </span>
+              <button
+                onClick={() => onToggle(plugin.id, !plugin.isEnabled)}
               disabled={isUpdating}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                 plugin.isEnabled ? "bg-emerald-600" : "bg-muted"
@@ -260,6 +263,12 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating }: 
               />
             </button>
           </div>
+          )}
+          {!canManagePlugins && (
+            <span className="text-xs text-muted-foreground">
+              {plugin.isEnabled ? "Enabled" : "Disabled"}
+            </span>
+          )}
         </div>
       </CardHeader>
       <CardContent className="pt-0 space-y-4">
@@ -295,26 +304,28 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating }: 
         </div>
 
         {/* Action buttons */}
-        <div className="flex gap-2 pt-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onConfigure(plugin)}
-            disabled={isUpdating}
-            className="flex-1 border-border text-foreground hover:bg-muted"
-          >
-            Configure
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onUninstall(plugin.id)}
-            disabled={isUpdating}
-            className="border-red-900/50 text-red-400 hover:bg-red-900/20"
-          >
-            Uninstall
-          </Button>
-        </div>
+        {canManagePlugins && (
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onConfigure(plugin)}
+              disabled={isUpdating}
+              className="flex-1 border-border text-foreground hover:bg-muted"
+            >
+              Configure
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onUninstall(plugin.id)}
+              disabled={isUpdating}
+              className="border-red-900/50 text-red-400 hover:bg-red-900/20"
+            >
+              Uninstall
+            </Button>
+          </div>
+        )}
 
         {/* Install date */}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -334,12 +345,18 @@ function MyPluginsContent() {
   const { token } = useAuth();
   const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
+  const { can } = useOrgPermissions();
   const [plugins, setPlugins] = useState<UserPlugin[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [configuringPlugin, setConfiguringPlugin] = useState<UserPlugin | null>(null);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
+
+  // Permission checks
+  const canConfigurePlugins = can("org:plugins:configure");
+  const canUninstallPlugins = can("org:plugins:uninstall");
+  const canManagePlugins = canConfigurePlugins || canUninstallPlugins;
 
   // Fetch org's installed plugins
   const fetchPlugins = useCallback(async () => {
@@ -564,6 +581,7 @@ function MyPluginsContent() {
                 onConfigure={setConfiguringPlugin}
                 onUninstall={handleUninstall}
                 isUpdating={updatingId === plugin.id}
+                canManagePlugins={canManagePlugins}
               />
             ))}
           </div>

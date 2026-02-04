@@ -5,16 +5,20 @@
  *
  * Main dashboard showing stats cards, quick actions, and gateway status.
  * Layout provides sidebar, header, and auth protection.
+ * Uses new hierarchical resource types (Phase 3 migration).
  */
 
 import { useAuth } from "@/components/providers/auth-provider";
+import {
+    isPersonalStatus,
+    useResourceStatus
+} from "@/components/resources";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { apiUrl } from "@/shared/config/urls";
 import {
-    Activity,
     ArrowRight,
     Bot,
     CheckCircle2,
@@ -36,7 +40,7 @@ import { useEffect, useState } from "react";
 interface DashboardStats {
   gateways: { current: number; max: number };
   plugins: { current: number; max: number };
-  executionsToday: { current: number; max: number };
+  credits: { current: number; max: number };
 }
 
 interface GatewayStatus {
@@ -119,7 +123,7 @@ function GatewayStatusList({ gateways }: { gateways: GatewayStatus[] }) {
           <div className="text-center py-6">
             <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground mb-4">No gateways connected yet</p>
-            <Link href="/gateways/new">
+            <Link href="/gateways/create">
               <Button size="sm" className="bg-purple-600 hover:bg-purple-700">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Gateway
@@ -233,7 +237,7 @@ function QuickActions() {
       title: "Add Gateway",
       description: "Connect a Telegram bot",
       icon: Plus,
-      href: "/gateways/new",
+      href: "/gateways/create",
       color: "text-blue-400",
       bgColor: "bg-blue-400/10",
     },
@@ -288,31 +292,18 @@ function QuickActions() {
 // Main Dashboard Content
 // ===========================================
 
-interface QuotaItem {
-  used: number;
-  limit: number | null;
-  percentage: number;
-  isUnlimited: boolean;
-}
-
-interface QuotaStatus {
-  workflows: QuotaItem;
-  plugins: QuotaItem;
-  apiCalls: QuotaItem & { resetsAt: string };
-  storage: QuotaItem;
-  gateways: QuotaItem;
-}
-
 function DashboardContent() {
   const { user, context, token, availableOrgs } = useAuth();
   const router = useRouter();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [gateways, setGateways] = useState<GatewayStatus[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [gatewaysLoading, setGatewaysLoading] = useState(true);
 
   // Determine if in organization context
   const isOrgContext = context.type === "organization" && !!context.organizationId;
   const orgId = context.organizationId;
+
+  // Use new resource status hook for quota data
+  const { status, isLoading: statusLoading } = useResourceStatus();
 
   // Redirect to org dashboard when in org context
   useEffect(() => {
@@ -323,85 +314,50 @@ function DashboardContent() {
     }
   }, [isOrgContext, orgId, availableOrgs, router]);
 
-  // Fetch dashboard stats (personal context only since org redirects)
+  // Fetch gateways separately (not part of resource status)
   useEffect(() => {
     // Skip fetching if in org context (we're redirecting)
-    if (isOrgContext) return;
+    if (isOrgContext || !token) return;
     
-    async function fetchDashboardData() {
-      if (!token) return;
-
+    async function fetchGateways() {
       try {
-        // Personal endpoints only (org context is handled by redirect)
-        const gatewaysUrl = apiUrl("/user/gateways");
-        const pluginsUrl = apiUrl("/user/plugins");
-        const quotaUrl = apiUrl("/user/quota");
-
-        // Fetch gateways, plugins, and quota status in parallel
-        const [gatewaysRes, pluginsRes, quotaRes] = await Promise.all([
-          fetch(gatewaysUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(pluginsUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch(quotaUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        ]);
-
-        const gatewaysData = await gatewaysRes.json();
-        const gatewayList = gatewaysData.data || [];
-        setGateways(gatewayList);
-
-        const pluginsData = await pluginsRes.json();
-        const pluginCount = pluginsData.data?.length || 0;
-
-        // Get quota data for accurate usage tracking
-        const quotaData = await quotaRes.json();
-        const quota: QuotaStatus | null = quotaData.success ? quotaData.data : null;
-
-        // Get plan limits (fallback if quota API fails)
-        const planLimits: Record<string, { gateways: number; plugins: number; executions: number }> = {
-          FREE: { gateways: 1, plugins: 3, executions: 100 },
-          STARTER: { gateways: 3, plugins: 10, executions: 1000 },
-          PRO: { gateways: 10, plugins: -1, executions: 10000 },
-          BUSINESS: { gateways: 25, plugins: -1, executions: 50000 },
-          ENTERPRISE: { gateways: -1, plugins: -1, executions: -1 },
-        };
-
-        const limits = planLimits[context.plan] ?? planLimits.FREE!;
-
-        // Use quota data if available, otherwise fall back to plan limits
-        setStats({
-          gateways: {
-            current: quota?.gateways?.used ?? gatewayList.length,
-            max: quota?.gateways?.isUnlimited ? -1 : (quota?.gateways?.limit ?? limits!.gateways),
-          },
-          plugins: {
-            current: quota?.plugins?.used ?? pluginCount,
-            max: quota?.plugins?.isUnlimited ? -1 : (quota?.plugins?.limit ?? limits!.plugins),
-          },
-          executionsToday: {
-            current: quota?.apiCalls?.used ?? 0,
-            max: quota?.apiCalls?.isUnlimited ? -1 : (quota?.apiCalls?.limit ?? limits!.executions),
-          },
+        const response = await fetch(apiUrl("/user/gateways"), {
+          headers: { Authorization: `Bearer ${token}` },
         });
+        const data = await response.json();
+        setGateways(data.data || []);
       } catch (error) {
-        console.error("Failed to fetch dashboard data:", error);
+        console.error("Failed to fetch gateways:", error);
       } finally {
-        setIsLoading(false);
+        setGatewaysLoading(false);
       }
     }
 
-    fetchDashboardData();
-  }, [token, context.plan, isOrgContext]);
+    fetchGateways();
+  }, [token, isOrgContext]);
 
   // Show nothing while redirecting to org dashboard
   if (isOrgContext) {
     return null;
   }
 
+  // Extract stats from resource status
+  const stats: DashboardStats | null = status && isPersonalStatus(status) ? {
+    gateways: {
+      current: status.automation.gateways.count.used,
+      max: status.automation.gateways.count.isUnlimited ? -1 : (status.automation.gateways.count.limit ?? -1),
+    },
+    plugins: {
+      current: status.automation.plugins.count.used,
+      max: status.automation.plugins.count.isUnlimited ? -1 : (status.automation.plugins.count.limit ?? -1),
+    },
+    credits: {
+      current: status.billing.credits.usage.ai.total.current,
+      max: status.billing.credits.usage.ai.total.isUnlimited ? -1 : (status.billing.credits.usage.ai.total.limit ?? -1),
+    },
+  } : null;
+
+  const isLoading = statusLoading || gatewaysLoading;
   const showUpgradeBanner = context.plan === "FREE";
 
   return (
@@ -449,11 +405,11 @@ function DashboardContent() {
               href="/my-plugins"
             />
             <StatsCard
-              title="Executions Today"
-              icon={Activity}
-              current={stats.executionsToday.current}
-              max={stats.executionsToday.max}
-              href="/my-plugins"
+              title="Credits Used"
+              icon={Sparkles}
+              current={stats.credits.current}
+              max={stats.credits.max}
+              href="/credits"
             />
           </div>
         ) : null}

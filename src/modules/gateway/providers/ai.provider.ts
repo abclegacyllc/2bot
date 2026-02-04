@@ -12,7 +12,9 @@
  * @module modules/gateway/providers/ai.provider
  */
 
+import { prisma } from "@/lib/prisma";
 import type { GatewayType } from "@prisma/client";
+import { byokUsageService } from "../ai-usage.service";
 import type { GatewayAction } from "../gateway.registry";
 import type { AICredentials, AIProvider as AIProviderType } from "../gateway.types";
 import { AI_PROVIDERS } from "../gateway.types";
@@ -177,6 +179,11 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
    */
   private configCache: Map<string, AIGatewayConfig> = new Map();
 
+  /**
+   * Gateway to userId mapping for BYOK usage tracking
+   */
+  private gatewayUserMap: Map<string, string> = new Map();
+
   // ==========================================
   // Abstract Method Implementations
   // ==========================================
@@ -234,6 +241,19 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
       this.configCache.set(gatewayId, config);
     }
 
+    // Fetch and cache userId for BYOK usage tracking
+    try {
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: { userId: true },
+      });
+      if (gateway) {
+        this.gatewayUserMap.set(gatewayId, gateway.userId);
+      }
+    } catch (error) {
+      this.log.warn({ gatewayId, error }, "Failed to fetch gateway userId for usage tracking");
+    }
+
     this.log.info(
       { gatewayId, provider: credentials.provider },
       "Connected to AI provider"
@@ -247,6 +267,7 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
   protected async doDisconnect(gatewayId: string): Promise<void> {
     this.credentialsCache.delete(gatewayId);
     this.configCache.delete(gatewayId);
+    this.gatewayUserMap.delete(gatewayId);
     this.log.debug({ gatewayId }, "Disconnected from AI provider");
   }
 
@@ -319,10 +340,11 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
 
     const config = this.configCache.get(gatewayId);
     const typedParams = params as Record<string, unknown> | undefined;
+    const userId = this.gatewayUserMap.get(gatewayId);
 
     switch (action) {
       case "chat":
-        return this.executeChat(credentials, config, typedParams) as Promise<TResult>;
+        return this.executeChat(gatewayId, userId, credentials, config, typedParams) as Promise<TResult>;
 
       case "listModels":
         return this.listModels(credentials) as Promise<TResult>;
@@ -428,14 +450,30 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
    * List available models
    */
   private async listModels(credentials: AICredentials): Promise<string[]> {
-    // Anthropic doesn't have a models endpoint
+    // Anthropic has /v1/models endpoint now
     if (credentials.provider === "anthropic") {
-      // Return static list for Anthropic
-      return [
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022",
-        "claude-3-opus-20240229",
-      ];
+      const baseUrl = credentials.baseUrl || PROVIDER_BASE_URLS.anthropic;
+      const response = await fetch(`${baseUrl}/models`, {
+        method: "GET",
+        headers: {
+          "x-api-key": credentials.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({})) as AIErrorResponse;
+        throw new AIApiError(
+          credentials.provider,
+          response.status,
+          errorData.error?.message || `HTTP ${response.status}`,
+          errorData.error?.type
+        );
+      }
+
+      const data = await response.json() as { data: Array<{ id: string }> };
+      return data.data?.map((m) => m.id) || [];
     }
 
     const response = await this.callApi<ModelsResponse>(
@@ -451,6 +489,8 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
    * Execute a chat completion request
    */
   private async executeChat(
+    gatewayId: string,
+    userId: string | undefined,
     credentials: AICredentials,
     config: AIGatewayConfig | undefined,
     params?: Record<string, unknown>
@@ -494,17 +534,18 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
     );
 
     // Anthropic uses a different endpoint
+    let response: ChatCompletionResponse;
     if (credentials.provider === "anthropic") {
-      return this.executeAnthropicChat(credentials, messages, request);
+      response = await this.executeAnthropicChat(credentials, messages, request);
+    } else {
+      // OpenAI-compatible API
+      response = await this.callApi<ChatCompletionResponse>(
+        credentials,
+        "/chat/completions",
+        "POST",
+        request
+      );
     }
-
-    // OpenAI-compatible API
-    const response = await this.callApi<ChatCompletionResponse>(
-      credentials,
-      "/chat/completions",
-      "POST",
-      request
-    );
 
     this.log.debug(
       {
@@ -514,6 +555,27 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
       },
       "Chat completion received"
     );
+
+    // Track BYOK usage if we have a userId
+    if (userId && response.usage) {
+      try {
+        await byokUsageService.recordUsage({
+          userId,
+          capability: "text-generation",
+          model: response.model || model,
+          inputTokens: response.usage.prompt_tokens,
+          outputTokens: response.usage.completion_tokens,
+          gatewayId,
+        });
+        this.log.debug(
+          { userId, gatewayId, tokens: response.usage.total_tokens },
+          "BYOK usage tracked"
+        );
+      } catch (error) {
+        // Don't fail the request if usage tracking fails
+        this.log.warn({ userId, gatewayId, error }, "Failed to track BYOK usage");
+      }
+    }
 
     return response;
   }

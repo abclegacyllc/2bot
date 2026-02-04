@@ -17,9 +17,7 @@ import {
     createDeptSchema,
     createOrgSchema,
     departmentService,
-    deptQuotasSchema,
     inviteMemberSchema,
-    memberQuotasSchema,
     organizationService,
     transferOwnershipSchema,
     updateDeptMemberSchema,
@@ -33,6 +31,7 @@ import {
     type SafeDepartment,
     type SafeOrganization,
 } from "@/modules/organization";
+import { allocationService, setDeptAllocationSchema, setMemberAllocationSchema } from "@/modules/resource";
 import { BadRequestError, ValidationError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext } from "@/shared/types/context";
@@ -741,34 +740,48 @@ organizationRouter.delete(
 /**
  * PUT /api/departments/:id/quotas
  *
- * Set department quotas
+ * Set department quotas (allocations)
  * Requires ADMIN+ role
  *
+ * @deprecated Use PUT /api/departments/:id/allocations with allocationService
+ * 
  * @param {string} id - Department ID
- * @body {number} [maxWorkflows] - Max workflows
+ * @body {number} [maxGateways] - Max gateways
  * @body {number} [maxPlugins] - Max plugins
- * @body {number} [maxApiCalls] - Max API calls per day
- * @body {number} [maxStorage] - Max storage in bytes
+ * @body {number} [maxWorkflows] - Max workflows
+ * @body {number} [creditBudget] - Credit budget
+ * @body {number} [ramMb] - RAM in MB
+ * @body {number} [cpuCores] - CPU cores
+ * @body {number} [storageMb] - Storage in MB
  *
  * @returns {SafeDepartment} Updated department
  */
 organizationRouter.put(
   "/departments/:id/quotas",
   requireAuth,
-  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeDepartment>>) => {
+  asyncHandler(async (req: Request, res: Response<ApiResponse<{ success: true }>>) => {
     const ctx = getServiceContext(req);
-    const id = getPathParam(req, "id");
+    const deptId = getPathParam(req, "id");
 
-    const parseResult = deptQuotasSchema.safeParse(req.body);
+    const parseResult = setDeptAllocationSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
     }
 
-    const dept = await departmentService.setDeptQuotas(ctx, id, parseResult.data);
+    // Use allocationService directly for new 3-pool resource system
+    await allocationService.setDeptAllocation(ctx, deptId, {
+      maxGateways: parseResult.data.maxGateways,
+      maxPlugins: parseResult.data.maxPlugins,
+      maxWorkflows: parseResult.data.maxWorkflows,
+      creditBudget: parseResult.data.creditBudget,
+      ramMb: parseResult.data.ramMb,
+      cpuCores: parseResult.data.cpuCores,
+      storageMb: parseResult.data.storageMb,
+    });
 
     res.json({
       success: true,
-      data: dept,
+      data: { success: true },
     });
   })
 );
@@ -900,34 +913,48 @@ organizationRouter.put(
 /**
  * PUT /api/departments/:deptId/members/:userId/quotas
  *
- * Set member quotas
+ * Set member quotas (allocations)
  * Requires ADMIN+ or DEPT_MANAGER role
+ *
+ * @deprecated Use PUT /api/departments/:deptId/members/:userId/allocations with allocationService
  *
  * @param {string} deptId - Department ID
  * @param {string} userId - User ID
- * @body {number} [maxWorkflows] - Max workflows quota
- * @body {number} [maxPlugins] - Max plugins quota
+ * @body {number} [maxGateways] - Max gateways
+ * @body {number} [maxWorkflows] - Max workflows
+ * @body {number} [creditBudget] - Credit budget
+ * @body {number} [ramMb] - RAM in MB
+ * @body {number} [cpuCores] - CPU cores
+ * @body {number} [storageMb] - Storage in MB
  *
  * @returns {DeptMemberWithUser} Updated department member
  */
 organizationRouter.put(
   "/departments/:deptId/members/:userId/quotas",
   requireAuth,
-  asyncHandler(async (req: Request, res: Response<ApiResponse<DeptMemberWithUser>>) => {
+  asyncHandler(async (req: Request, res: Response<ApiResponse<{ success: true }>>) => {
     const ctx = getServiceContext(req);
     const deptId = getPathParam(req, "deptId");
     const userId = getPathParam(req, "userId");
 
-    const parseResult = memberQuotasSchema.safeParse(req.body);
+    const parseResult = setMemberAllocationSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
     }
 
-    const member = await departmentService.setMemberQuotas(ctx, deptId, userId, parseResult.data);
+    // Use allocationService directly for new 3-pool resource system
+    await allocationService.setMemberAllocation(ctx, deptId, userId, {
+      maxGateways: parseResult.data.maxGateways,
+      maxWorkflows: parseResult.data.maxWorkflows,
+      creditBudget: parseResult.data.creditBudget,
+      ramMb: parseResult.data.ramMb,
+      cpuCores: parseResult.data.cpuCores,
+      storageMb: parseResult.data.storageMb,
+    });
 
     res.json({
       success: true,
-      data: member,
+      data: { success: true },
     });
   })
 );

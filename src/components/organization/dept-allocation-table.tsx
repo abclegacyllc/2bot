@@ -18,28 +18,13 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import type { DeptAllocationRecord } from "@/shared/types/resources";
 import { Pencil, Trash2 } from "lucide-react";
 
-interface DeptAllocation {
-  id: string;
-  departmentId: string;
-  departmentName: string;
-  maxGateways: number | null;
-  maxWorkflows: number | null;
-  maxPlugins: number | null;
-  aiTokenBudget: number | null;
-  maxRamMb: number | null;
-  maxCpuCores: number | null;
-  maxStorageMb: number | null;
-  allocMode: string;
-  setByName?: string;
-  updatedAt: string;
-}
-
 interface DeptAllocationTableProps {
-  allocations: DeptAllocation[];
-  onEdit: (allocation: DeptAllocation) => void;
-  onDelete: (departmentId: string) => void;
+  allocations: DeptAllocationRecord[];
+  onEdit?: (allocation: DeptAllocationRecord) => void;
+  onDelete?: (departmentId: string) => void;
 }
 
 // Format allocation mode for display
@@ -99,7 +84,7 @@ export function DeptAllocationTable({
             <TableHead className="text-right">Gateways</TableHead>
             <TableHead className="text-right">Workflows</TableHead>
             <TableHead className="text-right">Plugins</TableHead>
-            <TableHead className="text-right">AI Tokens</TableHead>
+            <TableHead className="text-right">Credits</TableHead>
             <TableHead>Mode</TableHead>
             <TableHead>Updated</TableHead>
             <TableHead className="text-right">Actions</TableHead>
@@ -123,7 +108,7 @@ export function DeptAllocationTable({
                   {formatNumber(alloc.maxPlugins)}
                 </TableCell>
                 <TableCell className="text-right">
-                  {formatNumber(alloc.aiTokenBudget)}
+                  {formatNumber(alloc.creditBudget)}
                 </TableCell>
                 <TableCell>
                   <Badge variant={modeInfo.variant}>{modeInfo.label}</Badge>
@@ -138,22 +123,26 @@ export function DeptAllocationTable({
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => onEdit(alloc)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                      <span className="sr-only">Edit</span>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => onDelete(alloc.departmentId)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                      <span className="sr-only">Delete</span>
-                    </Button>
+                    {onEdit && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onEdit(alloc)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                        <span className="sr-only">Edit</span>
+                      </Button>
+                    )}
+                    {onDelete && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onDelete(alloc.departmentId)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                        <span className="sr-only">Delete</span>
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

@@ -56,28 +56,30 @@ export const addDeptMemberSchema = z.object({
 export const updateDeptMemberSchema = z
   .object({
     role: z.enum(["MANAGER", "MEMBER"]).optional(),
-    maxWorkflows: z.number().int().min(0).nullish(),
-    maxPlugins: z.number().int().min(0).nullish(),
+    // NOTE: Quota/allocation updates are handled separately via
+    // allocationService.setMemberAllocation() with setMemberAllocationSchema
   })
   .refine((data) => Object.values(data).some((v) => v !== undefined), {
     message: "At least one field must be provided",
   });
 
 // ===========================================
-// Quota Schemas
+// Legacy Quota Schemas - REMOVED
 // ===========================================
-
-export const deptQuotasSchema = z.object({
-  maxWorkflows: z.number().int().min(0).nullish(),
-  maxPlugins: z.number().int().min(0).nullish(),
-  maxApiCalls: z.number().int().min(0).nullish(),
-  maxStorage: z.number().int().min(0).nullish(), // bytes
-});
-
-export const memberQuotasSchema = z.object({
-  maxWorkflows: z.number().int().min(0).nullish(),
-  maxPlugins: z.number().int().min(0).nullish(),
-});
+// 
+// deptQuotasSchema and memberQuotasSchema have been removed.
+// Use the new 3-pool resource validation schemas instead:
+// 
+// import { 
+//   setDeptAllocationSchema,
+//   setMemberAllocationSchema 
+// } from '@/modules/resource';
+// 
+// These provide full 3-pool validation:
+//   - Automation: maxGateways, maxPlugins, maxWorkflows
+//   - Workspace: ramMb, cpuCores, storageMb
+//   - Budget: creditBudget
+//
 
 // ===========================================
 // Export Types
@@ -87,5 +89,7 @@ export type CreateDeptInput = z.infer<typeof createDeptSchema>;
 export type UpdateDeptInput = z.infer<typeof updateDeptSchema>;
 export type AddDeptMemberInput = z.infer<typeof addDeptMemberSchema>;
 export type UpdateDeptMemberInput = z.infer<typeof updateDeptMemberSchema>;
-export type DeptQuotasInput = z.infer<typeof deptQuotasSchema>;
-export type MemberQuotasInput = z.infer<typeof memberQuotasSchema>;
+
+// Legacy types removed - use types from @/modules/resource instead:
+// - SetDeptAllocationInput (replaces DeptQuotasInput)
+// - SetMemberAllocationInput (replaces MemberQuotasInput)

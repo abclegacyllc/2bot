@@ -190,32 +190,6 @@ export class DataClient {
   }
 
   // ============================================================
-  // CreditBalance Operations
-  // ============================================================
-
-  get creditBalance() {
-    const filter = this.getTenantFilter();
-
-    return {
-      findMany: (args?: Parameters<typeof this._prisma.creditBalance.findMany>[0]) => {
-        return this._prisma.creditBalance.findMany({
-          ...args,
-          where: { ...filter, ...args?.where },
-        });
-      },
-      findFirst: (args?: Parameters<typeof this._prisma.creditBalance.findFirst>[0]) => {
-        return this._prisma.creditBalance.findFirst({
-          ...args,
-          where: { ...filter, ...args?.where },
-        });
-      },
-      findUnique: this._prisma.creditBalance.findUnique.bind(this._prisma.creditBalance),
-      upsert: this._prisma.creditBalance.upsert.bind(this._prisma.creditBalance),
-      update: this._prisma.creditBalance.update.bind(this._prisma.creditBalance),
-    };
-  }
-
-  // ============================================================
   // CreditTransaction Operations
   // ============================================================
 

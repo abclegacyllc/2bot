@@ -7,5 +7,6 @@
  */
 
 export * from "./dept-resource-view";
-export * from "./employee-quota-modal";
 
+// Archived:
+// - employee-quota-modal.tsx → Use full page instead

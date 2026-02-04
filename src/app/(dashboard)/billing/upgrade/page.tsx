@@ -15,34 +15,34 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import { apiUrl } from "@/shared/config/urls";
 import {
-  ALL_PLAN_TYPES,
-  INCLUDED_WORKSPACE_TIER,
-  PLAN_LIMITS,
-  PLAN_ORDER,
-  type PlanType,
+    ALL_PLAN_TYPES,
+    INCLUDED_WORKSPACE_TIER,
+    PLAN_LIMITS,
+    PLAN_ORDER,
+    type PlanType,
 } from "@/shared/constants/plans";
 import type { LucideIcon } from "lucide-react";
 import {
-  AlertCircle,
-  ArrowLeft,
-  Building,
-  Check,
-  CreditCard,
-  Crown,
-  Info,
-  Loader2,
-  Sparkles,
-  Star,
-  Users,
-  Zap,
+    AlertCircle,
+    ArrowLeft,
+    Building,
+    Check,
+    CreditCard,
+    Crown,
+    Info,
+    Loader2,
+    Sparkles,
+    Star,
+    Users,
+    Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -253,12 +253,12 @@ function UpgradeContent() {
                     ) : (
                       <li className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Check className="h-4 w-4 text-green-400" />
-                        {plan.executionsPerMonth?.toLocaleString()} executions/month
+                        {plan.workflowRunsPerMonth?.toLocaleString()} workflow runs/month
                       </li>
                     )}
                     <li className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Check className="h-4 w-4 text-green-400" />
-                      {plan.aiTokensPerMonth === -1 ? "Unlimited" : (plan.aiTokensPerMonth / 1000).toLocaleString()}K AI tokens/month
+                      {plan.creditsPerMonth === -1 ? "Unlimited" : (plan.creditsPerMonth / 1000).toLocaleString()}K credits/month
                     </li>
                     <li className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Check className="h-4 w-4 text-green-400" />

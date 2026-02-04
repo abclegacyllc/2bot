@@ -5,13 +5,19 @@
  *
  * Displays current organization subscription plan, status, and usage limits.
  * Allows org admins to upgrade or manage their subscription.
- * Uses centralized plan data from @/shared/constants/org-plans.ts
+ * Uses new hierarchical resource types (Phase 3 migration).
  *
  * @module app/(dashboard)/organizations/[orgSlug]/billing/page
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { useAuth } from "@/components/providers/auth-provider";
+import {
+    isOrgStatus,
+    ResourcePoolCard,
+    useResourceStatus,
+    type ResourcePoolItem,
+} from "@/components/resources";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +28,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import { INCLUDED_ORG_WORKSPACE_POOL, ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
@@ -64,16 +70,7 @@ interface OrgUsageInfo {
   members: number;
   departments: number;
   executionsThisMonth: number;
-  aiTokensThisMonth: number;
-}
-
-// This matches what the quota API actually returns
-interface OrgQuota {
-  gateways: { used: number; limit: number | null; percentage: number; isUnlimited: boolean };
-  workflows: { used: number; limit: number | null; percentage: number; isUnlimited: boolean };
-  plugins: { used: number; limit: number | null; percentage: number; isUnlimited: boolean };
-  apiCalls: { used: number; limit: number | null; percentage: number; isUnlimited: boolean; resetsAt: string | null };
-  storage: { used: number; limit: number | null; percentage: number; isUnlimited: boolean };
+  creditsThisMonth: number;
 }
 
 const createFetcher = (token: string | null) => async (url: string) => {
@@ -97,56 +94,18 @@ function formatDate(dateString: string): string {
   });
 }
 
-function LimitItem({
-  label,
-  icon: Icon,
-  current,
-  max,
-  unit = "",
-}: {
-  label: string;
-  icon: React.ElementType;
-  current: number;
-  max: number | null;
-  unit?: string;
-}) {
-  const isUnlimited = max === null || max === -1;
-  const percentage = isUnlimited ? 0 : Math.min((current / max) * 100, 100);
-  const isNearLimit = !isUnlimited && percentage >= 80;
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Icon className="h-4 w-4" />
-          <span className="text-sm">{label}</span>
-        </div>
-        <span className={`text-sm font-medium ${isNearLimit ? "text-yellow-400" : "text-foreground"}`}>
-          {current.toLocaleString()}
-          {unit} / {isUnlimited ? "∞" : `${max?.toLocaleString()}${unit}`}
-        </span>
-      </div>
-      {!isUnlimited && (
-        <Progress
-          value={percentage}
-          className={`h-2 ${isNearLimit ? "[&>div]:bg-yellow-500" : "[&>div]:bg-purple-500"}`}
-        />
-      )}
-    </div>
-  );
-}
-
 function OrgBillingContent() {
   const { token } = useAuth();
   const router = useRouter();
   const { orgId, orgName: hookOrgName, orgRole, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
+  const { can } = useOrgPermissions();
 
   const fetcher = createFetcher(token);
 
-  // Check permissions - must be after hooks but before rendering
+  // Check permissions using org-permissions single source of truth
   const isOrgContext = isFound && !!orgId;
-  const canManageBilling = orgRole === "ORG_OWNER" || orgRole === "ORG_ADMIN";
+  const canManageBilling = can('org:billing:view');
   const orgName = hookOrgName || "Organization";
 
   // Fetch organization subscription info
@@ -154,18 +113,12 @@ function OrgBillingContent() {
     success: boolean;
     data: OrgSubscriptionInfo;
   }>(
-    token && orgId ? apiUrl(`/organizations/${orgId}/billing/subscription`) : null,
+    token && orgId ? apiUrl(`/orgs/${orgId}/billing/subscription`) : null,
     fetcher
   );
 
-  // Fetch organization usage/quota
-  const { data: quotaData, error: quotaError, isLoading: quotaLoading } = useSWR<{
-    success: boolean;
-    data: OrgQuota;
-  }>(
-    token && orgId ? apiUrl(`/organizations/${orgId}/quota`) : null,
-    fetcher
-  );
+  // Fetch resource status using new hierarchical resource system
+  const { status: resourceStatus, isLoading: resourceLoading, error: resourceError } = useResourceStatus({ orgId: orgId || undefined });
 
   // Fetch organization details for member count
   const { data: orgData } = useSWR<{
@@ -207,9 +160,8 @@ function OrgBillingContent() {
   }
 
   const subscription = subData?.data;
-  const quota = quotaData?.data;
-  const isLoading = subLoading || quotaLoading;
-  const error = subError || quotaError;
+  const isLoading = subLoading || resourceLoading;
+  const error = subError || resourceError;
 
   // Get plan limits from centralized constants
   const currentOrgPlan = (subscription?.plan as OrgPlanType) || "ORG_FREE";
@@ -217,15 +169,23 @@ function OrgBillingContent() {
   const poolTier = INCLUDED_ORG_WORKSPACE_POOL[currentOrgPlan];
   const hasWorkspacePool = poolTier !== "NONE" && planLimits.pool.ramMb !== null;
 
-  // Usage from quota and org data
+  // Extract usage from new resource status
+  const orgStatus = resourceStatus && isOrgStatus(resourceStatus) ? resourceStatus : null;
   const usage: OrgUsageInfo = {
-    gateways: quota?.gateways?.used ?? 0,
-    plugins: quota?.plugins?.used ?? 0,
-    workflows: quota?.workflows?.used ?? 0,
+    gateways: orgStatus?.automation?.gateways?.count?.used ?? 0,
+    plugins: orgStatus?.automation?.plugins?.count?.used ?? 0,
+    workflows: orgStatus?.automation?.workflows?.count?.used ?? 0,
     members: orgData?.data?.memberCount ?? 0,
     departments: deptsData?.data?.length ?? 0,
-    executionsThisMonth: quota?.apiCalls?.used ?? 0,
-    aiTokensThisMonth: 0, // AI tokens not yet tracked in quota
+    executionsThisMonth: orgStatus?.automation?.workflows?.metrics?.runs?.current ?? 0,
+    creditsThisMonth: orgStatus?.billing?.credits?.usage?.ai?.total?.current ?? 0,
+  };
+
+  // Extract usage metrics for the Usage Pool card
+  const usageMetrics = {
+    gatewayRequests: orgStatus?.automation?.gateways?.metrics?.requests,
+    pluginExecutions: orgStatus?.automation?.plugins?.metrics?.executions,
+    workflowRuns: orgStatus?.automation?.workflows?.metrics?.runs,
   };
 
   const getStatusBadge = () => {
@@ -388,141 +348,144 @@ function OrgBillingContent() {
           </CardContent>
         </Card>
 
-        {/* Plan Limits */}
-        <Card className="border-border bg-card/50">
-          <CardHeader>
-            <CardTitle className="text-foreground flex items-center gap-2">
-              <Settings className="h-5 w-5 text-purple-400" />
-              Plan Limits
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Your organization&apos;s current usage vs plan limits
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <LimitItem
-                label="Members"
-                icon={Users}
-                current={usage.members}
-                max={planLimits.seats.included}
-              />
-              <LimitItem
-                label="Departments"
-                icon={FolderTree}
-                current={usage.departments}
-                max={planLimits.departments}
-              />
-              <LimitItem
-                label="Gateways"
-                icon={Zap}
-                current={usage.gateways}
-                max={planLimits.sharedGateways}
-              />
-              <LimitItem
-                label="Plugins"
-                icon={Database}
-                current={usage.plugins}
-                max={planLimits.sharedPlugins}
-              />
-              <LimitItem
-                label="Workflows"
-                icon={GitBranch}
-                current={usage.workflows}
-                max={planLimits.sharedWorkflows}
-              />
-              <LimitItem
-                label="AI Tokens/Month"
-                icon={Bot}
-                current={usage.aiTokensThisMonth}
-                max={planLimits.sharedAiTokensPerMonth}
-              />
-              {planLimits.executionMode === "SERVERLESS" && (
-                <LimitItem
-                  label="Monthly Executions"
-                  icon={Cpu}
-                  current={usage.executionsThisMonth}
-                  max={planLimits.executionsPerMonth}
-                />
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Organization Pool */}
+        <ResourcePoolCard
+          title="Organization Pool"
+          description="Member and department allocation"
+          icon={Users}
+          items={[
+            {
+              label: "Members",
+              icon: Users,
+              current: usage.members,
+              limit: planLimits.seats.included,
+            },
+            {
+              label: "Departments",
+              icon: FolderTree,
+              current: usage.departments,
+              limit: planLimits.departments,
+            },
+          ] satisfies ResourcePoolItem[]}
+        />
+
+        {/* Automation Pool */}
+        <ResourcePoolCard
+          title="Automation Pool"
+          description="Shared gateways, plugins, and workflows"
+          icon={Zap}
+          items={[
+            {
+              label: "Gateways",
+              icon: Server,
+              current: usage.gateways,
+              limit: planLimits.sharedGateways,
+            },
+            {
+              label: "Plugins",
+              icon: Database,
+              current: usage.plugins,
+              limit: planLimits.sharedPlugins,
+            },
+            {
+              label: "Workflows",
+              icon: GitBranch,
+              current: usage.workflows,
+              limit: planLimits.sharedWorkflows,
+            },
+          ] satisfies ResourcePoolItem[]}
+        />
+
+        {/* Usage Metrics Pool */}
+        <ResourcePoolCard
+          title="Usage This Period"
+          description="Organization-wide request and execution metrics"
+          icon={Cpu}
+          items={[
+            {
+              label: "Gateway Requests",
+              icon: Zap,
+              current: usageMetrics.gatewayRequests?.current ?? 0,
+              limit: usageMetrics.gatewayRequests?.limit ?? null,
+              period: usageMetrics.gatewayRequests?.period,
+              resetsAt: usageMetrics.gatewayRequests?.resetsAt,
+            },
+            {
+              label: "Plugin Executions",
+              icon: Cpu,
+              current: usageMetrics.pluginExecutions?.current ?? 0,
+              limit: usageMetrics.pluginExecutions?.limit ?? null,
+              period: usageMetrics.pluginExecutions?.period,
+              resetsAt: usageMetrics.pluginExecutions?.resetsAt,
+            },
+            {
+              label: "Workflow Runs",
+              icon: GitBranch,
+              current: usageMetrics.workflowRuns?.current ?? 0,
+              limit: usageMetrics.workflowRuns?.limit ?? planLimits.workflowRunsPerMonth,
+              period: usageMetrics.workflowRuns?.period,
+              resetsAt: usageMetrics.workflowRuns?.resetsAt,
+            },
+          ] satisfies ResourcePoolItem[]}
+        />
+
+        {/* Billing Pool */}
+        <ResourcePoolCard
+          title="Billing Pool"
+          description="Organization credits"
+          icon={Bot}
+          items={[
+            {
+              label: "Credits/Month",
+              icon: Bot,
+              current: usage.creditsThisMonth,
+              limit: planLimits.sharedCreditsPerMonth,
+            },
+          ] satisfies ResourcePoolItem[]}
+        />
 
         {/* Workspace Pool Section */}
-        {hasWorkspacePool && (
-          <Card className="border-border bg-card/50">
-            <CardHeader>
-              <CardTitle className="text-foreground flex items-center gap-2">
-                <Server className="h-5 w-5 text-purple-400" />
-                Workspace Pool
-              </CardTitle>
-              <CardDescription className="text-muted-foreground">
-                Shared compute resources for your organization
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6">
-                {/* Pool Stats */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="p-4 rounded-lg bg-muted/30 border border-border">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-2">
-                      <MemoryStick className="h-4 w-4" />
-                      <span className="text-sm">RAM Pool</span>
-                    </div>
-                    <p className="text-2xl font-bold text-foreground">
-                      {planLimits.pool.ramMb && planLimits.pool.ramMb >= 1024
-                        ? `${(planLimits.pool.ramMb / 1024).toFixed(0)}GB`
-                        : `${planLimits.pool.ramMb}MB`}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Shared across all members
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-lg bg-muted/30 border border-border">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-2">
-                      <Cpu className="h-4 w-4" />
-                      <span className="text-sm">CPU Pool</span>
-                    </div>
-                    <p className="text-2xl font-bold text-foreground">
-                      {planLimits.pool.cpuCores} {planLimits.pool.cpuCores === 1 ? "Core" : "Cores"}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Shared across all members
-                    </p>
-                  </div>
-                  <div className="p-4 rounded-lg bg-muted/30 border border-border">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-2">
-                      <HardDrive className="h-4 w-4" />
-                      <span className="text-sm">Storage Pool</span>
-                    </div>
-                    <p className="text-2xl font-bold text-foreground">
-                      {planLimits.pool.storageMb && planLimits.pool.storageMb >= 1024
-                        ? `${(planLimits.pool.storageMb / 1024).toFixed(0)}GB`
-                        : `${planLimits.pool.storageMb}MB`}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Shared across all members
-                    </p>
-                  </div>
-                </div>
-
-                {/* Add More Button */}
-                {canManageBilling && (
-                  <Link href={buildOrgUrl("/billing/workspace")}>
-                    <Button variant="outline" className="w-full border-purple-500/50 text-purple-400 hover:bg-purple-500/10">
-                      <Server className="mr-2 h-4 w-4" />
-                      Add More Pool Resources
-                    </Button>
-                  </Link>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* No Workspace Pool - Show for ORG_FREE */}
-        {!hasWorkspacePool && (
+        {hasWorkspacePool ? (
+          <ResourcePoolCard
+            title="Workspace Pool"
+            description="Shared compute resources for your organization"
+            icon={Server}
+            columns={3}
+            items={[
+              {
+                label: "RAM Pool",
+                icon: MemoryStick,
+                current: orgStatus?.workspace?.compute?.ram?.allocated ?? 0,
+                limit: planLimits.pool.ramMb,
+                unit: "MB",
+              },
+              {
+                label: "CPU Pool",
+                icon: Cpu,
+                current: orgStatus?.workspace?.compute?.cpu?.allocated ?? 0,
+                limit: planLimits.pool.cpuCores,
+                unit: "cores",
+              },
+              {
+                label: "Storage Pool",
+                icon: HardDrive,
+                current: orgStatus?.workspace?.storage?.allocation?.allocated ?? 0,
+                limit: planLimits.pool.storageMb,
+                unit: "MB",
+              },
+            ] satisfies ResourcePoolItem[]}
+            actions={
+              canManageBilling ? (
+                <Link href={buildOrgUrl("/billing/workspace")}>
+                  <Button variant="outline" size="sm" className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10">
+                    <Server className="mr-2 h-4 w-4" />
+                    Add Resources
+                  </Button>
+                </Link>
+              ) : undefined
+            }
+          />
+        ) : (
           <Card className="border-border bg-card/50">
             <CardHeader>
               <CardTitle className="text-foreground flex items-center gap-2">
@@ -539,7 +502,7 @@ function OrgBillingContent() {
                   <Server className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
                   <h4 className="font-medium text-foreground">No Workspace Pool</h4>
                   <p className="text-sm text-muted-foreground mt-1 mb-4">
-                    Your plan uses serverless execution with {planLimits.executionsPerMonth?.toLocaleString()} monthly executions.
+                    Your plan uses serverless execution with {planLimits.workflowRunsPerMonth?.toLocaleString()} monthly workflow runs.
                   </p>
                   {canManageBilling && (
                     <Link href={buildOrgUrl("/billing/workspace")}>

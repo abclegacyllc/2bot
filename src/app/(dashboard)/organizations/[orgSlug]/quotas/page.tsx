@@ -1,12 +1,13 @@
 "use client";
 
 /**
- * Organization Quota Management Page
+ * Organization Allocation Management Page
  *
- * Admin interface for managing department and member quota allocations.
+ * Admin interface for managing department and member resource allocations.
  * Shows org pool usage and allows admins to allocate resources to departments.
  *
  * URL: /organizations/[orgSlug]/quotas
+ * Note: URL kept as 'quotas' for backward compatibility, internally uses allocations
  *
  * @module app/(dashboard)/organizations/[orgSlug]/quotas/page
  */
@@ -18,20 +19,27 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
+import type {
+    OrgAllocationSummary
+} from "@/shared/types/quota";
+import type {
+    DeptAllocationRecord,
+} from "@/shared/types/resources";
 import {
-  ArrowLeft,
-  Loader2,
-  PieChart,
-  Plus,
-  Settings2,
+    ArrowLeft,
+    Loader2,
+    PieChart,
+    Plus,
+    Settings2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -47,49 +55,6 @@ interface OrgInfo {
   plan: string;
 }
 
-interface QuotaAllocation {
-  maxGateways: number | null;
-  maxWorkflows: number | null;
-  maxPlugins: number | null;
-  aiTokenBudget: number | null;
-  maxRamMb: number | null;
-  maxCpuCores: number | null;
-  maxStorageMb: number | null;
-}
-
-interface UnallocatedResources {
-  gateways: number | null;
-  workflows: number | null;
-  plugins: number | null;
-  aiTokenBudget: number | null;
-  ramMb: number | null;
-  cpuCores: number | null;
-  storageMb: number | null;
-}
-
-interface OrgAllocationSummary {
-  orgLimits: QuotaAllocation;
-  allocatedToDepts: QuotaAllocation;
-  unallocated: UnallocatedResources;
-  deptCount: number;
-}
-
-interface DeptAllocation {
-  id: string;
-  departmentId: string;
-  departmentName: string;
-  maxGateways: number | null;
-  maxWorkflows: number | null;
-  maxPlugins: number | null;
-  aiTokenBudget: number | null;
-  maxRamMb: number | null;
-  maxCpuCores: number | null;
-  maxStorageMb: number | null;
-  allocMode: string;
-  setByName?: string;
-  updatedAt: string;
-}
-
 interface Department {
   id: string;
   name: string;
@@ -99,21 +64,26 @@ interface Department {
 // Main Component
 // ===================================
 
-export default function QuotaManagementPage() {
+export default function AllocationManagementPage() {
   const router = useRouter();
   const { token, context, user } = useAuth();
   const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
+  const { can } = useOrgPermissions();
+
+  // Permission checks
+  const canAllocateResources = can("org:departments:manage_quotas");
+  const canDeleteAllocations = can("org:departments:manage_quotas");
 
   // State
   const [org, setOrg] = useState<OrgInfo | null>(null);
   const [summary, setSummary] = useState<OrgAllocationSummary | null>(null);
-  const [allocations, setAllocations] = useState<DeptAllocation[]>([]);
+  const [allocations, setAllocations] = useState<DeptAllocationRecord[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingDept, setEditingDept] = useState<DeptAllocation | null>(null);
+  const [editingDept, setEditingDept] = useState<DeptAllocationRecord | null>(null);
 
   // ===================================
   // Data Fetching
@@ -131,10 +101,10 @@ export default function QuotaManagementPage() {
         fetch(apiUrl(`/orgs/${orgId}`), {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch(apiUrl(`/orgs/${orgId}/quotas/summary`), {
+        fetch(apiUrl(`/orgs/${orgId}/allocations/summary`), {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch(apiUrl(`/orgs/${orgId}/quotas/departments`), {
+        fetch(apiUrl(`/orgs/${orgId}/allocations`), {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(apiUrl(`/orgs/${orgId}/departments`), {
@@ -188,7 +158,7 @@ export default function QuotaManagementPage() {
 
     try {
       const res = await fetch(
-        apiUrl(`/orgs/${orgId}/quotas/departments/${departmentId}`),
+        apiUrl(`/orgs/${orgId}/allocations/${departmentId}`),
         {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },
@@ -286,14 +256,14 @@ export default function QuotaManagementPage() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Settings2 className="h-6 w-6" />
-              Quota Management
+              Resource Allocations
             </h1>
             <p className="text-muted-foreground">
               {org?.name} · <Badge variant="outline">{org?.plan}</Badge>
             </p>
           </div>
         </div>
-        {unallocatedDepts.length > 0 && !showAddForm && !editingDept && (
+        {canAllocateResources && unallocatedDepts.length > 0 && !showAddForm && !editingDept && (
           <Button onClick={() => setShowAddForm(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Allocate to Department
@@ -334,10 +304,10 @@ export default function QuotaManagementPage() {
                 remaining={summary.unallocated.plugins}
               />
               <QuotaUsageBar
-                label="AI Tokens"
-                used={summary.allocatedToDepts.aiTokenBudget ?? 0}
-                limit={summary.orgLimits.aiTokenBudget}
-                remaining={summary.unallocated.aiTokenBudget}
+                label="Credits"
+                used={summary.allocatedToDepts.creditBudget ?? 0}
+                limit={summary.orgLimits.creditBudget}
+                remaining={summary.unallocated.creditBudget}
                 formatValue={(v) =>
                   v >= 1000000
                     ? `${(v / 1000000).toFixed(1)}M`
@@ -352,7 +322,7 @@ export default function QuotaManagementPage() {
       )}
 
       {/* Add/Edit Form */}
-      {(showAddForm || editingDept) && summary && (
+      {canAllocateResources && (showAddForm || editingDept) && summary && (
         <DeptAllocationForm
           orgId={orgId}
           token={token!}
@@ -385,7 +355,7 @@ export default function QuotaManagementPage() {
               <p className="text-sm mt-1">
                 Departments use the organization pool by default
               </p>
-              {unallocatedDepts.length > 0 && (
+              {unallocatedDepts.length > 0 && canAllocateResources && (
                 <Button
                   className="mt-4"
                   variant="outline"
@@ -399,8 +369,8 @@ export default function QuotaManagementPage() {
           ) : (
             <DeptAllocationTable
               allocations={allocations}
-              onEdit={setEditingDept}
-              onDelete={handleDelete}
+              onEdit={canAllocateResources ? setEditingDept : undefined}
+              onDelete={canDeleteAllocations ? handleDelete : undefined}
             />
           )}
         </CardContent>

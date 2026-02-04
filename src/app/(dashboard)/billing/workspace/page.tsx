@@ -27,15 +27,15 @@ import {
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
-import { INCLUDED_WORKSPACE_TIER, PLAN_LIMITS, type PlanType } from "@/shared/constants/plans";
+import { getPlanDisplayName, INCLUDED_WORKSPACE_TIER, PLAN_LIMITS, type PlanType } from "@/shared/constants/plans";
 import {
     ALL_ADDON_TIERS,
-    WORKSPACE_ADDONS,
-    WORKSPACE_PRICING,
-    WORKSPACE_SPECS,
     calculateTotalWorkspace,
     canPurchaseAddon,
     getMinRequiredPlanForAddon,
+    WORKSPACE_ADDONS,
+    WORKSPACE_PRICING,
+    WORKSPACE_SPECS,
     type WorkspaceAddonTier
 } from "@/shared/constants/workspace-addons";
 import {
@@ -418,7 +418,7 @@ function WorkspaceContent() {
         {/* Current Plan Info */}
         <Alert className="border-border bg-muted/30">
           <Info className="h-4 w-4" />
-          <AlertTitle>Current Plan: {currentPlan}</AlertTitle>
+          <AlertTitle>Current Plan: {getPlanDisplayName(currentPlan as PlanType)}</AlertTitle>
           <AlertDescription>
             {INCLUDED_WORKSPACE_TIER[currentPlan] 
               ? `Your plan includes the ${INCLUDED_WORKSPACE_TIER[currentPlan]} workspace tier. Add-ons will stack on top.`

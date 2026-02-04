@@ -2,6 +2,15 @@
 # 2Bot Platform - Production Docker Compose
 # ============================================
 # Full production stack with all services
+#
+# PgBouncer: Connection pooling for PostgreSQL
+#   - Reduces memory usage (each PG connection = ~10MB RAM)
+#   - Enables scaling to multiple API instances
+#   - To enable: change DATABASE_URL to use pgbouncer:6432
+#
+# Usage:
+#   Without PgBouncer (current): DATABASE_URL=...@postgres:5432/...
+#   With PgBouncer (scaling):    DATABASE_URL=...@pgbouncer:6432/...
 
 services:
   # ===========================================
@@ -26,6 +35,54 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # PgBouncer - Connection Pooling (Optional)
+  # ===========================================
+  # Enable when scaling to multiple API instances
+  # Benefits:
+  #   - Reduces PostgreSQL memory usage
+  #   - Shares connections across all API instances
+  #   - Handles connection spikes gracefully
+  # 
+  # To use: Change DATABASE_URL from postgres:5432 to pgbouncer:6432
+  # ===========================================
+  pgbouncer:
+    image: edoburu/pgbouncer:1.21.0
+    container_name: 2bot-pgbouncer
+    restart: unless-stopped
+    ports:
+      - "6432:6432"
+    environment:
+      # Database connection
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Pool settings
+      POOL_MODE: transaction          # Best for web apps (releases connection after each transaction)
+      MAX_CLIENT_CONN: 200            # Max connections from clients (API instances)
+      DEFAULT_POOL_SIZE: 20           # Connections to PostgreSQL per database
+      MIN_POOL_SIZE: 5                # Minimum connections to keep open
+      RESERVE_POOL_SIZE: 5            # Extra connections for burst traffic
+      RESERVE_POOL_TIMEOUT: 3         # Seconds to wait before using reserve pool
+      # Auth
+      AUTH_TYPE: plain
+      AUTH_FILE: /etc/pgbouncer/userlist.txt
+      # Logging
+      LOG_CONNECTIONS: 0
+      LOG_DISCONNECTIONS: 0
+      LOG_POOLER_ERRORS: 1
+    volumes:
+      - ./scripts/docker/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     networks:
       - 2bot-network
 

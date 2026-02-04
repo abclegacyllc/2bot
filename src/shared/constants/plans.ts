@@ -137,7 +137,7 @@ export interface PlanLimits {
   executionMode: ExecutionMode;
   
   // Serverless limits (only apply if mode = SERVERLESS)
-  executionsPerMonth: number | null;  // null = unlimited
+  workflowRunsPerMonth: number | null;  // null = unlimited
   
   // Workspace limits (only apply if mode = WORKSPACE)
   workspace: WorkspaceResources | null;  // null = not included (need add-on)
@@ -147,7 +147,7 @@ export interface PlanLimits {
   workflows: number;          // -1 = unlimited
   workflowSteps: number;
   plugins: number;            // -1 = unlimited
-  aiTokensPerMonth: number;   // -1 = unlimited
+  creditsPerMonth: number;    // -1 = unlimited
   historyDays: number;
   
   // Organization limits (for org owners)
@@ -179,13 +179,13 @@ export interface PlanLimits {
 export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
   FREE: {
     executionMode: 'SERVERLESS',
-    executionsPerMonth: 500,
+    workflowRunsPerMonth: 500,
     workspace: getIncludedWorkspace('FREE'),  // null (serverless)
     gateways: 1,
     workflows: 3,
     workflowSteps: 5,
     plugins: 3,
-    aiTokensPerMonth: 10000,
+    creditsPerMonth: 100,
     historyDays: 7,
     maxDepartments: 1,
     maxMembers: 3,
@@ -199,13 +199,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
   },
   STARTER: {
     executionMode: 'SERVERLESS',
-    executionsPerMonth: 5000,
+    workflowRunsPerMonth: 5000,
     workspace: getIncludedWorkspace('STARTER'),  // null (serverless)
     gateways: 3,
     workflows: 10,
     workflowSteps: 10,
     plugins: 10,
-    aiTokensPerMonth: 100000,
+    creditsPerMonth: 1000,
     historyDays: 30,
     maxDepartments: 3,
     maxMembers: 5,
@@ -219,13 +219,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
   },
   PRO: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,  // UNLIMITED - workspace mode = unlimited executions
+    workflowRunsPerMonth: null,  // UNLIMITED - workspace mode = unlimited workflow runs
     workspace: getIncludedWorkspace('PRO'),  // SMALL tier from WORKSPACE_SPECS
     gateways: 10,
     workflows: 50,
     workflowSteps: 15,
     plugins: 25,
-    aiTokensPerMonth: 500000,
+    creditsPerMonth: 5000,
     historyDays: 90,
     maxDepartments: 5,
     maxMembers: 10,
@@ -239,13 +239,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
   },
   BUSINESS: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,  // UNLIMITED - workspace mode = unlimited executions
+    workflowRunsPerMonth: null,  // UNLIMITED - workspace mode = unlimited workflow runs
     workspace: getIncludedWorkspace('BUSINESS'),  // LARGE tier from WORKSPACE_SPECS
     gateways: 25,
     workflows: 200,
     workflowSteps: 25,
     plugins: 100,
-    aiTokensPerMonth: 2000000,
+    creditsPerMonth: 20000,
     historyDays: 365,
     maxDepartments: 20,
     maxMembers: 50,
@@ -259,13 +259,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
   },
   ENTERPRISE: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,  // UNLIMITED
+    workflowRunsPerMonth: null,  // UNLIMITED
     workspace: getIncludedWorkspace('ENTERPRISE'),  // CUSTOM (-1 = unlimited)
     gateways: -1,
     workflows: -1,
     workflowSteps: 30,
     plugins: -1,
-    aiTokensPerMonth: -1,
+    creditsPerMonth: -1,
     historyDays: 365,
     maxDepartments: -1,
     maxMembers: -1,
@@ -300,7 +300,7 @@ export function getPlanLimits(plan: PlanType): PlanLimits {
  */
 export function canDoAction(
   plan: PlanType,
-  key: keyof Pick<PlanLimits, 'gateways' | 'workflows' | 'plugins' | 'aiTokensPerMonth'>,
+  key: keyof Pick<PlanLimits, 'gateways' | 'workflows' | 'plugins' | 'creditsPerMonth'>,
   currentUsage: number
 ): boolean {
   const limits = PLAN_LIMITS[plan];
@@ -315,7 +315,7 @@ export function canDoAction(
  */
 export function getRemainingQuota(
   plan: PlanType,
-  key: keyof Pick<PlanLimits, 'gateways' | 'workflows' | 'plugins' | 'aiTokensPerMonth'>,
+  key: keyof Pick<PlanLimits, 'gateways' | 'workflows' | 'plugins' | 'creditsPerMonth'>,
   currentUsage: number
 ): number {
   const limits = PLAN_LIMITS[plan];
@@ -329,7 +329,7 @@ export function getRemainingQuota(
  */
 export function isUnlimited(
   plan: PlanType, 
-  key: keyof Pick<PlanLimits, 'gateways' | 'workflows' | 'plugins' | 'aiTokensPerMonth' | 'executionsPerMonth'>
+  key: keyof Pick<PlanLimits, 'gateways' | 'workflows' | 'plugins' | 'creditsPerMonth' | 'workflowRunsPerMonth'>
 ): boolean {
   const value = PLAN_LIMITS[plan][key];
   return value === -1 || value === null;
@@ -430,11 +430,11 @@ export function getPlanFeatures(plan: PlanType): string[] {
     features.push(`${limits.plugins} plugins`);
   }
   
-  // Executions
-  if (limits.executionsPerMonth === null) {
-    features.push('Unlimited executions');
+  // Workflow Runs
+  if (limits.workflowRunsPerMonth === null) {
+    features.push('Unlimited workflow runs');
   } else {
-    features.push(`${limits.executionsPerMonth.toLocaleString()} executions/month`);
+    features.push(`${limits.workflowRunsPerMonth.toLocaleString()} workflow runs/month`);
   }
   
   // Workspace resources (for workspace plans)
@@ -450,12 +450,14 @@ export function getPlanFeatures(plan: PlanType): string[] {
   }
   
   // AI tokens
-  if (limits.aiTokensPerMonth === -1) {
-    features.push('Unlimited AI tokens');
-  } else if (limits.aiTokensPerMonth >= 1000000) {
-    features.push(`${(limits.aiTokensPerMonth / 1000000).toFixed(0)}M AI tokens/month`);
+  if (limits.creditsPerMonth === -1) {
+    features.push('Unlimited AI credits');
+  } else if (limits.creditsPerMonth >= 10000) {
+    features.push(`${(limits.creditsPerMonth / 1000).toFixed(0)}K credits/month`);
+  } else if (limits.creditsPerMonth >= 1000) {
+    features.push(`${(limits.creditsPerMonth / 1000).toFixed(1)}K credits/month`);
   } else {
-    features.push(`${(limits.aiTokensPerMonth / 1000).toFixed(0)}K AI tokens/month`);
+    features.push(`${limits.creditsPerMonth} credits/month`);
   }
   
   // History
@@ -537,7 +539,9 @@ export function getAllPlansForDisplay(): PlanDisplayData[] {
       ],
       popular: false,
       cta: 'Contact Sales',
-      href: 'mailto:enterprise@2bot.org',
+      href: process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_EMAIL 
+        ? `mailto:${process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_EMAIL}`
+        : 'mailto:enterprise@2bot.org',
     },
   ];
 }
@@ -654,4 +658,12 @@ export function getUpgradeOptions(currentPlan: PlanType): PlanType[] {
  */
 export function isPaidPlan(plan: PlanType): boolean {
   return plan !== 'FREE';
+}
+
+/**
+ * Get the display name for a plan
+ * Single source of truth for plan display names
+ */
+export function getPlanDisplayName(plan: PlanType): string {
+  return PLAN_LIMITS[plan].displayName;
 }

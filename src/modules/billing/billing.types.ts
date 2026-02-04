@@ -33,8 +33,8 @@ export interface SubscriptionInfo {
   limits: {
     gateways: number;
     plugins: number;
-    executionsPerMonth: number | null;  // null = unlimited
-    aiTokensPerMonth: number;
+    workflowRunsPerMonth: number | null;  // null = unlimited
+    creditsPerMonth: number;
     workspace: WorkspaceResources | null;  // null = not included
   };
 }

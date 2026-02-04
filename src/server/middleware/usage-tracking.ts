@@ -12,7 +12,7 @@
  */
 
 import { logger } from '@/lib/logger';
-import { usageTracker } from '@/modules/quota';
+import { usageTracker } from '@/modules/resource';
 import type { ServiceContext } from '@/shared/types/context';
 import type { NextFunction, Request, Response } from 'express';
 

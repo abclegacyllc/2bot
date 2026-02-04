@@ -34,16 +34,16 @@ export interface DepartmentWithMemberCount extends Department {
 
 /**
  * Safe department for API responses
+ * 
+ * NOTE: Quota/allocation fields are NOT included here.
+ * Use DeptAllocation from allocation.service for resource limits.
+ * This keeps department info separate from resource management.
  */
 export interface SafeDepartment {
   id: string;
   organizationId: string;
   name: string;
   description: string | null;
-  maxWorkflows: number | null;
-  maxPlugins: number | null;
-  maxApiCalls: number | null;
-  maxStorage: number | null;
   memberCount: number;
   workflowCount: number;
   isActive: boolean;
@@ -53,6 +53,9 @@ export interface SafeDepartment {
 
 /**
  * Convert Department to SafeDepartment
+ * 
+ * NOTE: Quota/allocation fields are managed separately via DeptAllocation.
+ * Use allocationService.getDeptAllocation() for resource limits.
  */
 export function toSafeDepartment(
   dept: DepartmentWithMemberCount
@@ -62,10 +65,6 @@ export function toSafeDepartment(
     organizationId: dept.organizationId,
     name: dept.name,
     description: dept.description,
-    maxWorkflows: dept.maxWorkflows,
-    maxPlugins: dept.maxPlugins,
-    maxApiCalls: dept.maxApiCalls,
-    maxStorage: dept.maxStorage,
     memberCount: dept._count.members,
     workflowCount: dept._count.workflows,
     isActive: dept.isActive,
@@ -80,12 +79,13 @@ export function toSafeDepartment(
 
 /**
  * Department member with user details
+ * 
+ * NOTE: Quota/allocation fields are NOT included here.
+ * Use MemberAllocation from allocation.service for resource limits.
  */
 export interface DeptMemberWithUser {
   id: string;
   role: DepartmentRole;
-  maxWorkflows: number | null;
-  maxPlugins: number | null;
   user: {
     id: string;
     name: string | null;
@@ -126,27 +126,29 @@ export interface AddDeptMemberRequest {
 
 /**
  * Update department member request
+ * 
+ * NOTE: Quota/allocation updates are handled separately via
+ * allocationService.setMemberAllocation() with MemberAllocationInput.
  */
 export interface UpdateDeptMemberRequest {
   role?: DepartmentRole;
-  maxWorkflows?: number | null;
-  maxPlugins?: number | null;
 }
 
-/**
- * Department quotas
- */
-export interface DeptQuotas {
-  maxWorkflows?: number | null;
-  maxPlugins?: number | null;
-  maxApiCalls?: number | null;
-  maxStorage?: number | null;
-}
-
-/**
- * Member quotas
- */
-export interface MemberQuotas {
-  maxWorkflows?: number | null;
-  maxPlugins?: number | null;
-}
+// ===========================================
+// Legacy Quota Types - REMOVED
+// ===========================================
+// 
+// DeptQuotas and MemberQuotas interfaces have been removed.
+// Use the new 3-pool resource system instead:
+// 
+// For department allocations:
+//   import { DeptAllocationInput } from '@/modules/resource';
+// 
+// For member allocations:
+//   import { MemberAllocationInput } from '@/modules/resource';
+// 
+// These provide the full 3-pool structure:
+//   - Automation: maxGateways, maxPlugins, maxWorkflows
+//   - Workspace: ramMb, cpuCores, storageMb
+//   - Budget: creditBudget
+//

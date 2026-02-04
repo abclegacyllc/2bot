@@ -8,25 +8,31 @@ import type { CorsOptions } from "cors";
  * - Development: Includes localhost origins
  * 
  * Supports both single-domain and multi-subdomain deployments.
+ * Uses ROOT_DOMAIN environment variable for flexibility.
  */
 
 const isProduction = process.env.NODE_ENV === "production";
 
 /**
- * Production origins (always included)
+ * Get root domain from environment (allows staging/custom domains)
+ */
+const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN || "2bot.org";
+
+/**
+ * Production origins (dynamically generated from ROOT_DOMAIN)
  */
 const productionOrigins = [
   // Main Domain
-  "https://2bot.org",
-  "https://www.2bot.org",
+  `https://${ROOT_DOMAIN}`,
+  `https://www.${ROOT_DOMAIN}`,
   
   // Enterprise Subdomains
-  "https://dash.2bot.org",     // Dashboard (:3000)
-  "https://api.2bot.org",      // API (:3001) - for internal calls
-  "https://admin.2bot.org",    // Admin panel (:3003)
-  "https://support.2bot.org",  // Support team (:3004) - Phase 7
-  "https://docs.2bot.org",     // Documentation (:3005)
-  "https://dev.2bot.org",      // Developer portal (:3006)
+  `https://dash.${ROOT_DOMAIN}`,     // Dashboard (:3000)
+  `https://api.${ROOT_DOMAIN}`,      // API (:3001) - for internal calls
+  `https://admin.${ROOT_DOMAIN}`,    // Admin panel (:3003)
+  `https://support.${ROOT_DOMAIN}`,  // Support team (:3004) - Phase 7
+  `https://docs.${ROOT_DOMAIN}`,     // Documentation (:3005)
+  `https://dev.${ROOT_DOMAIN}`,      // Developer portal (:3006)
 ];
 
 /**

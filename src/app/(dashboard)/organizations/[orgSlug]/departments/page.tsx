@@ -19,6 +19,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import {
@@ -46,9 +47,13 @@ export default function OrganizationDepartmentsPage() {
   const { orgId, orgSlug, orgName, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
   
+  const { can } = useOrgPermissions();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Permission check
+  const canCreateDepartment = can("org:departments:create");
 
   const fetchDepartments = useCallback(async () => {
     if (!token || !orgId) return;
@@ -168,12 +173,14 @@ export default function OrganizationDepartmentsPage() {
             Manage organization departments and their resources
           </p>
         </div>
-        <Link href={buildOrgUrl("/departments/new")}>
-          <Button className="bg-purple-600 hover:bg-purple-700">
-            <Plus className="mr-2 h-4 w-4" />
-            Create Department
-          </Button>
-        </Link>
+        {canCreateDepartment && (
+          <Link href={buildOrgUrl("/departments/create")}>
+            <Button className="bg-purple-600 hover:bg-purple-700">
+              <Plus className="mr-2 h-4 w-4" />
+              Create Department
+            </Button>
+          </Link>
+        )}
       </div>
 
       {/* Departments List */}
@@ -185,14 +192,18 @@ export default function OrganizationDepartmentsPage() {
               No Departments Yet
             </h3>
             <p className="text-muted-foreground mb-4">
-              Create departments to organize your team members
+              {canCreateDepartment
+                ? "Create departments to organize your team members"
+                : "No departments have been created yet"}
             </p>
-            <Link href={buildOrgUrl("/departments/new")}>
-              <Button className="bg-purple-600 hover:bg-purple-700">
-                <Plus className="mr-2 h-4 w-4" />
-                Create First Department
-              </Button>
-            </Link>
+            {canCreateDepartment && (
+              <Link href={buildOrgUrl("/departments/create")}>
+                <Button className="bg-purple-600 hover:bg-purple-700">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create First Department
+                </Button>
+              </Link>
+            )}
           </CardContent>
         </Card>
       ) : (

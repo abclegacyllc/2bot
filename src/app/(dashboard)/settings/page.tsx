@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { apiUrl } from "@/shared/config/urls";
+import { getPlanDisplayName, PAID_PLAN_TYPES, type PlanType } from "@/shared/constants/plans";
 import {
     ArrowRight,
     Building2,
@@ -328,10 +329,10 @@ function SettingsContent() {
               <div>
                 <p className="text-sm text-muted-foreground">Current Plan</p>
                 <Badge
-                  variant={user?.plan && ["PRO", "BUSINESS", "ENTERPRISE", "STARTER"].includes(user.plan) ? "default" : "secondary"}
+                  variant={user?.plan && PAID_PLAN_TYPES.includes(user.plan as PlanType) ? "default" : "secondary"}
                   className={user?.plan && user.plan !== "FREE" ? "bg-purple-600 mt-1" : "mt-1"}
                 >
-                  {user?.plan}
+                  {user?.plan ? getPlanDisplayName(user.plan as PlanType) : "Free"}
                 </Badge>
               </div>
               <div>

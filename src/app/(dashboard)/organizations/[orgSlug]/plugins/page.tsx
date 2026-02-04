@@ -16,6 +16,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import Link from "next/link";
@@ -75,11 +76,12 @@ interface PluginCardProps {
   plugin: PluginListItem;
   isInstalled: boolean;
   isInstalling: boolean;
+  canManagePlugins: boolean;
   onInstall: (slug: string) => void;
   onUninstall: (slug: string) => void;
 }
 
-function PluginCard({ plugin, isInstalled, isInstalling, onInstall, onUninstall }: PluginCardProps) {
+function PluginCard({ plugin, isInstalled, isInstalling, canManagePlugins, onInstall, onUninstall }: PluginCardProps) {
   return (
     <Card className="border-border bg-card/50 hover:bg-card/70 transition-colors">
       <CardHeader className="pb-3">
@@ -134,23 +136,30 @@ function PluginCard({ plugin, isInstalled, isInstalling, onInstall, onUninstall 
         ) : null}
 
         {/* Action button */}
-        {isInstalled ? (
-          <Button
-            variant="outline"
-            className="w-full border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300"
-            onClick={() => onUninstall(plugin.slug)}
-            disabled={isInstalling}
-          >
-            {isInstalling ? "Removing..." : "Uninstall"}
-          </Button>
-        ) : (
-          <Button
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-foreground"
-            onClick={() => onInstall(plugin.slug)}
-            disabled={isInstalling}
-          >
-            {isInstalling ? "Installing..." : "Install"}
-          </Button>
+        {canManagePlugins && (
+          isInstalled ? (
+            <Button
+              variant="outline"
+              className="w-full border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300"
+              onClick={() => onUninstall(plugin.slug)}
+              disabled={isInstalling}
+            >
+              {isInstalling ? "Removing..." : "Uninstall"}
+            </Button>
+          ) : (
+            <Button
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-foreground"
+              onClick={() => onInstall(plugin.slug)}
+              disabled={isInstalling}
+            >
+              {isInstalling ? "Installing..." : "Install"}
+            </Button>
+          )
+        )}
+        {!canManagePlugins && isInstalled && (
+          <div className="w-full text-center text-sm text-muted-foreground py-2">
+            Installed
+          </div>
         )}
       </CardContent>
     </Card>
@@ -165,6 +174,7 @@ function PluginsContent() {
   const { token } = useAuth();
   const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
+  const { can } = useOrgPermissions();
   const [plugins, setPlugins] = useState<PluginListItem[]>([]);
   const [installedPlugins, setInstalledPlugins] = useState<Map<string, InstalledPlugin>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
@@ -172,6 +182,11 @@ function PluginsContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [installingSlug, setInstallingSlug] = useState<string | null>(null);
+
+  // Permission check
+  const canInstallPlugins = can("org:plugins:install");
+  const canUninstallPlugins = can("org:plugins:uninstall");
+  const canManagePlugins = canInstallPlugins || canUninstallPlugins;
 
   // Categories for filtering
   const categories = ["analytics", "messaging", "automation", "moderation", "utilities", "general"];
@@ -447,6 +462,7 @@ function PluginsContent() {
                 plugin={plugin}
                 isInstalled={installedPlugins.has(plugin.slug)}
                 isInstalling={installingSlug === plugin.slug}
+                canManagePlugins={canManagePlugins}
                 onInstall={handleInstall}
                 onUninstall={handleUninstall}
               />

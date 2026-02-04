@@ -124,13 +124,15 @@ export interface OrgPlanFeatures {
 export interface OrgPlanLimits {
   // Execution mode - SERVERLESS for free, WORKSPACE for paid
   executionMode: ExecutionMode;
-  executionsPerMonth: number | null;  // null = unlimited (workspace mode)
+  
+  // Serverless limits (only for ORG_FREE)
+  workflowRunsPerMonth: number | null;  // null = unlimited (workspace mode)
   
   // Shared automation pool
   sharedGateways: number;         // -1 = unlimited
   sharedPlugins: number;
   sharedWorkflows: number;
-  sharedAiTokensPerMonth: number;
+  sharedCreditsPerMonth: number;
   
   // Seats
   seats: OrgPlanSeats;
@@ -163,11 +165,11 @@ export interface OrgPlanLimits {
 export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
   ORG_FREE: {
     executionMode: 'SERVERLESS',
-    executionsPerMonth: 1000,           // Limited executions like user FREE
+    workflowRunsPerMonth: 1000,  // Limited in serverless mode
     sharedGateways: 2,
     sharedPlugins: 5,
     sharedWorkflows: 5,
-    sharedAiTokensPerMonth: 50000,
+    sharedCreditsPerMonth: 500,
     seats: { included: 3, extraPricePerSeat: 0 },  // Can't add more on free
     departments: 1,
     pool: getIncludedOrgWorkspacePool('ORG_FREE'),  // NONE - no workspace pool
@@ -187,11 +189,11 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
   },
   ORG_STARTER: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,
+    workflowRunsPerMonth: null,  // Unlimited in workspace mode
     sharedGateways: 5,
     sharedPlugins: 20,
     sharedWorkflows: 25,
-    sharedAiTokensPerMonth: 500000,
+    sharedCreditsPerMonth: 5000,
     seats: { included: 5, extraPricePerSeat: 1000 },    // $10/seat
     departments: 3,
     pool: getIncludedOrgWorkspacePool('ORG_STARTER'),   // TEAM: 4GB, 2 CPU, 20GB
@@ -211,11 +213,11 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
   },
   ORG_GROWTH: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,
+    workflowRunsPerMonth: null,  // Unlimited in workspace mode
     sharedGateways: 15,
     sharedPlugins: 50,
     sharedWorkflows: 75,
-    sharedAiTokensPerMonth: 2000000,
+    sharedCreditsPerMonth: 20000,
     seats: { included: 15, extraPricePerSeat: 700 },    // $7/seat
     departments: 10,
     pool: getIncludedOrgWorkspacePool('ORG_GROWTH'),    // GROWTH: 8GB, 4 CPU, 50GB
@@ -235,11 +237,11 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
   },
   ORG_PRO: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,
+    workflowRunsPerMonth: null,  // Unlimited in workspace mode
     sharedGateways: 50,
     sharedPlugins: 150,
     sharedWorkflows: 250,
-    sharedAiTokensPerMonth: 10000000,
+    sharedCreditsPerMonth: 100000,
     seats: { included: 40, extraPricePerSeat: 500 },    // $5/seat
     departments: 25,
     pool: getIncludedOrgWorkspacePool('ORG_PRO'),       // PRO: 16GB, 8 CPU, 100GB
@@ -259,11 +261,11 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
   },
   ORG_BUSINESS: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,
+    workflowRunsPerMonth: null,  // Unlimited in workspace mode
     sharedGateways: 150,
     sharedPlugins: 500,
     sharedWorkflows: 1000,
-    sharedAiTokensPerMonth: 50000000,
+    sharedCreditsPerMonth: 500000,
     seats: { included: 100, extraPricePerSeat: 300 },   // $3/seat
     departments: null,      // Unlimited
     pool: getIncludedOrgWorkspacePool('ORG_BUSINESS'),  // BUSINESS: 32GB, 16 CPU, 250GB
@@ -283,11 +285,11 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
   },
   ORG_ENTERPRISE: {
     executionMode: 'WORKSPACE',
-    executionsPerMonth: null,
+    workflowRunsPerMonth: null,  // Unlimited in workspace mode
     sharedGateways: -1,     // Unlimited
     sharedPlugins: -1,
     sharedWorkflows: -1,
-    sharedAiTokensPerMonth: -1,
+    sharedCreditsPerMonth: -1,
     seats: { included: -1, extraPricePerSeat: 0 },
     departments: null,      // Unlimited
     pool: getIncludedOrgWorkspacePool('ORG_ENTERPRISE'), // CUSTOM: negotiated
@@ -563,4 +565,12 @@ export function getAllOrgPlansForDisplay(): OrgPlanDisplayData[] {
  */
 export function getOrgUpgradePlansForDisplay(): OrgPlanDisplayData[] {
   return getAllOrgPlansForDisplay();
+}
+
+/**
+ * Get the display name for an org plan
+ * Single source of truth for org plan display names
+ */
+export function getOrgPlanDisplayName(plan: OrgPlanType): string {
+  return ORG_PLAN_LIMITS[plan].displayName;
 }

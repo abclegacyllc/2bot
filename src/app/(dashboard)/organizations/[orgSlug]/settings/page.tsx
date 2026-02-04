@@ -40,8 +40,10 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
+import { getOrgPlanDisplayName, type OrgPlanType } from "@/shared/constants/org-plans";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AlertTriangle, Building2, Loader2, Users } from "lucide-react";
 import Link from "next/link";
@@ -70,7 +72,7 @@ interface OrganizationInfo {
   id: string;
   name: string;
   slug: string;
-  plan: "FREE" | "PRO" | "ENTERPRISE";
+  plan: OrgPlanType;
   memberCount: number;
   maxMembers: number | null;
   createdAt: string;
@@ -142,8 +144,10 @@ function OrganizationSettingsContent() {
     }
   }, [isFound, orgId, token, form]);
 
-  const canEdit = orgRole === "ORG_OWNER" || orgRole === "ORG_ADMIN";
-  const isOwner = orgRole === "ORG_OWNER";
+  // Use org-permissions hook for permission checks
+  const { can, role } = useOrgPermissions();
+  const canEdit = can('org:settings:update');
+  const isOwner = role === 'ORG_OWNER';
 
   const onSubmit = async (data: UpdateOrgInput) => {
     if (!orgId || !token) return;
@@ -302,10 +306,10 @@ function OrganizationSettingsContent() {
                   <div>
                     <p className="text-sm text-muted-foreground">Plan</p>
                     <Badge
-                      variant={org?.plan === "FREE" ? "secondary" : "default"}
+                      variant={org?.plan === "ORG_FREE" ? "secondary" : "default"}
                       className="mt-1"
                     >
-                      {org?.plan}
+                      {org?.plan ? getOrgPlanDisplayName(org.plan as OrgPlanType) : "Org Free"}
                     </Badge>
                   </div>
                   <div>

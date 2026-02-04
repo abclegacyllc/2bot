@@ -10,17 +10,20 @@ import {
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
+import { twoBotAIRouter } from "./2bot-ai";
 import { adminRouter } from "./admin";
+import { aiUsageRouter } from "./ai-usage";
 import { alertRouter } from "./alerts";
 import { authRouter } from "./auth";
 import { billingRouter } from "./billing";
+import { creditsRouter } from "./credits";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
 import { invitesRouter } from "./invites";
 import { organizationRouter } from "./organization";
 import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
-import { quotaRouter } from "./quota";
+import { quotaRouter, resourcesRouter } from "./resources";
 import { usageRouter } from "./usage";
 import { userRouter } from "./user";
 import { webhookRouter } from "./webhook";
@@ -84,8 +87,14 @@ router.use("/webhooks", webhookRouter);
 router.use("/plugins", pluginRouter);
 
 /**
- * Quota routes (Phase 4)
- * Resource quota status, limits, and management
+ * Resources routes (Phase B - Renamed from quota)
+ * Resource allocation status, limits, and management
+ */
+router.use("/resources", resourcesRouter);
+
+/**
+ * Legacy quota routes (deprecated alias for /resources)
+ * @deprecated Use /api/resources instead
  */
 router.use("/quota", quotaRouter);
 
@@ -112,6 +121,24 @@ router.use("/billing", billingRouter);
  * Platform administration and monitoring
  */
 router.use("/admin", adminRouter);
+
+/**
+ * 2Bot AI routes
+ * AI service using platform API keys (users pay with credits)
+ */
+router.use("/2bot-ai", twoBotAIRouter);
+
+/**
+ * Credits routes
+ * Credit balance, history, and purchases for 2Bot AI
+ */
+router.use("/credits", creditsRouter);
+
+/**
+ * AI Usage routes
+ * AI usage statistics, token tracking, and plan limit checking
+ */
+router.use("/ai/usage", aiUsageRouter);
 
 /**
  * API info endpoint

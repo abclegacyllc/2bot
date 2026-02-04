@@ -341,3 +341,93 @@ adminRouter.get(
     res.json({ success: true, data: { gateways: adminGateways, total } });
   })
 );
+
+// ===========================================
+// Credit Budget Reset Endpoints
+// ===========================================
+
+import { budgetResetService } from "@/modules/resource/budget-reset.service";
+
+/**
+ * POST /api/admin/credits/reset
+ * Reset all credit budgets (for monthly cron job)
+ * 
+ * Can be called by:
+ * - External cron service (Vercel Cron, Railway, etc.)
+ * - Admin manual trigger
+ */
+adminRouter.post(
+  "/credits/reset",
+  asyncHandler(async (req: Request, res: Response<ApiResponse<{ 
+    organizations: number; 
+    departments: number; 
+    members: number; 
+  }>>) => {
+    // Optional: Verify cron secret if called externally
+    const cronSecret = req.headers["x-cron-secret"] as string | undefined;
+    const expectedSecret = process.env.CRON_SECRET;
+    
+    // If CRON_SECRET is set, verify it (allows both admin auth and cron secret)
+    if (expectedSecret && cronSecret !== expectedSecret && !req.user) {
+      throw new BadRequestError("Invalid cron secret");
+    }
+    
+    const result = await budgetResetService.resetAllCredits();
+    
+    res.json({ 
+      success: true, 
+      data: result,
+    });
+  })
+);
+
+/**
+ * POST /api/admin/credits/reset/:orgId
+ * Reset credit budgets for a specific organization
+ */
+adminRouter.post(
+  "/credits/reset/:orgId",
+  asyncHandler(async (req: Request, res: Response<ApiResponse<{
+    departments: { count: number; skipped: number };
+    members: { count: number; skipped: number };
+  }>>) => {
+    const orgId = req.params.orgId as string;
+    
+    if (!orgId) {
+      throw new BadRequestError("Missing organization ID");
+    }
+    
+    // Verify org exists
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      select: { id: true },
+    });
+    
+    if (!org) {
+      throw new BadRequestError(`Organization not found: ${orgId}`);
+    }
+    
+    const result = await budgetResetService.resetAllOrgCredits(orgId);
+    
+    res.json({ 
+      success: true, 
+      data: result,
+    });
+  })
+);
+
+/**
+ * GET /api/admin/credits/reset/status
+ * Check if any credit resets are pending
+ */
+adminRouter.get(
+  "/credits/reset/status",
+  asyncHandler(async (req: Request, res: Response<ApiResponse<{ hasPendingResets: boolean }>>) => {
+    const hasPendingResets = await budgetResetService.hasPendingResets();
+    
+    res.json({ 
+      success: true, 
+      data: { hasPendingResets },
+    });
+  })
+);

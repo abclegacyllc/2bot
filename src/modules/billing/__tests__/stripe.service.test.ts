@@ -248,7 +248,7 @@ describe('stripeService.getSubscriptionInfo', () => {
     expect(info.limits).toBeDefined();
     expect(info.limits.gateways).toBeDefined();
     expect(info.limits.plugins).toBeDefined();
-    expect(info.limits.executionsPerMonth).toBeDefined();
+    expect(info.limits.workflowRunsPerMonth).toBeDefined();
   });
 
   it('returns cancelAtPeriodEnd when subscription is being cancelled', async () => {

@@ -160,7 +160,7 @@ function EmptyState() {
         <p className="text-muted-foreground mb-4 max-w-sm mx-auto">
           Connect your first gateway to start automating with Telegram bots and AI providers.
         </p>
-        <Link href="/gateways/new">
+        <Link href="/gateways/create">
           <Button className="bg-blue-600 hover:bg-blue-700">
             <PlusIcon />
             <span className="ml-2">Add Gateway</span>
@@ -250,7 +250,7 @@ function GatewaysContent() {
               Manage your Telegram bots and AI provider connections
             </p>
           </div>
-          <Link href="/gateways/new">
+          <Link href="/gateways/create">
             <Button className="bg-blue-600 hover:bg-blue-700">
               <PlusIcon />
               <span className="ml-2">Add Gateway</span>

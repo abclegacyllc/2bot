@@ -31,9 +31,8 @@ export { departmentService } from "./department.service";
 export type {
     AddDeptMemberRequest,
     CreateDeptRequest,
+    DepartmentWithMemberCount,
     DeptMemberWithUser,
-    DeptQuotas,
-    MemberQuotas,
     SafeDepartment,
     UpdateDeptMemberRequest,
     UpdateDeptRequest
@@ -41,9 +40,12 @@ export type {
 export {
     addDeptMemberSchema,
     createDeptSchema,
-    deptQuotasSchema,
-    memberQuotasSchema,
     updateDeptMemberSchema,
     updateDeptSchema
 } from "./department.validation";
+
+// NOTE: DeptQuotas, MemberQuotas, deptQuotasSchema, memberQuotasSchema have been removed.
+// Use the new 3-pool resource system instead:
+//   import { setDeptAllocationSchema, setMemberAllocationSchema } from '@/modules/resource';
+//   import type { DeptAllocationInput, MemberAllocationInput } from '@/modules/resource';
 
