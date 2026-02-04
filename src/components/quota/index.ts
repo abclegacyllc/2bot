@@ -1,24 +1,19 @@
 /**
  * Quota Components
  *
- * Re-exports all quota-related UI components for
- * usage tracking, warnings, and upgrade prompts.
+ * Re-exports quota-related UI components.
+ * Most components archived - only UsageProgressBar remains in use.
  *
  * @module components/quota
  */
 
-export { LimitReachedModal } from "./limit-reached-modal";
-export {
-    PlanComparisonMini,
-    buildComparisonFeatures
-} from "./plan-comparison-mini";
-export { ResourceUsageCard } from "./resource-usage-card";
-export { UpgradePrompt } from "./upgrade-prompt";
-export {
-    UsageHistoryChart,
-    generateMockUsageData
-} from "./usage-history-chart";
-export { UsageOverview } from "./usage-overview";
 export { UsageProgressBar, type ProgressBarSize } from "./usage-progress-bar";
-export { UsageWarningBanner } from "./usage-warning-banner";
 
+// Archived components (no longer imported anywhere):
+// - limit-reached-modal.tsx
+// - plan-comparison-mini.tsx
+// - resource-usage-card.tsx
+// - upgrade-prompt.tsx
+// - usage-history-chart.tsx
+// - usage-overview.tsx
+// - usage-warning-banner.tsx
