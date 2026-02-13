@@ -14,7 +14,7 @@ import type { IsolationLevel } from '../types/context';
 
 // Import workspace specs - single source of truth for workspace resources
 // This import creates a dependency, but it's intentional for DRY principle
-import { WORKSPACE_SPECS, type WorkspaceAddonTier } from './workspace-addons';
+import { WORKSPACE_ADDONS, WORKSPACE_SPECS, type WorkspaceAddonTier } from './workspace-addons';
 
 // ===========================================
 // Plan Type Definitions
@@ -22,6 +22,14 @@ import { WORKSPACE_SPECS, type WorkspaceAddonTier } from './workspace-addons';
 
 export type PlanType = 'FREE' | 'STARTER' | 'PRO' | 'BUSINESS' | 'ENTERPRISE';
 export type ExecutionMode = 'SERVERLESS' | 'WORKSPACE';
+
+/**
+ * How credits are distributed to users each billing period.
+ * - 'daily': User must manually claim credits each day (engagement driver)
+ * - 'monthly': Credits auto-granted at billing period start (convenience)
+ * - 'none': Unlimited credits, no distribution needed
+ */
+export type CreditClaimType = 'daily' | 'monthly' | 'none';
 
 // ===========================================
 // Plan Type Arrays (for iteration/validation)
@@ -148,11 +156,17 @@ export interface PlanLimits {
   workflowSteps: number;
   plugins: number;            // -1 = unlimited
   creditsPerMonth: number;    // -1 = unlimited
+  creditClaimType: CreditClaimType;  // How credits are distributed
+  dailyCreditClaim: number;   // Credits per daily claim (for 'daily' type)
+  monthlyClaimCap: number;    // Max credits claimable per month (for 'daily' type)
   historyDays: number;
   
   // Organization limits (for org owners)
   maxDepartments: number;
   maxMembers: number;
+  
+  // Support
+  supportTickets: boolean;       // Whether plan includes support ticket access
   
   // Database isolation
   isolationLevel: IsolationLevel;
@@ -186,9 +200,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     workflowSteps: 5,
     plugins: 3,
     creditsPerMonth: 100,
+    creditClaimType: 'daily',
+    dailyCreditClaim: 3.3,
+    monthlyClaimCap: 100,
     historyDays: 7,
     maxDepartments: 1,
     maxMembers: 3,
+    supportTickets: false,
     isolationLevel: 'SHARED' as IsolationLevel,
     dedicatedDb: false,
     canUpgradeToIsolated: false,
@@ -205,10 +223,14 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     workflows: 10,
     workflowSteps: 10,
     plugins: 10,
-    creditsPerMonth: 1000,
+    creditsPerMonth: 500,
+    creditClaimType: 'daily',
+    dailyCreditClaim: 17,
+    monthlyClaimCap: 500,
     historyDays: 30,
     maxDepartments: 3,
     maxMembers: 5,
+    supportTickets: false,
     isolationLevel: 'SHARED' as IsolationLevel,
     dedicatedDb: false,
     canUpgradeToIsolated: false,
@@ -225,10 +247,14 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     workflows: 50,
     workflowSteps: 15,
     plugins: 25,
-    creditsPerMonth: 5000,
+    creditsPerMonth: 2000,
+    creditClaimType: 'monthly',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     historyDays: 90,
     maxDepartments: 5,
     maxMembers: 10,
+    supportTickets: true,
     isolationLevel: 'SHARED' as IsolationLevel,
     dedicatedDb: false,
     canUpgradeToIsolated: true,
@@ -245,10 +271,14 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     workflows: 200,
     workflowSteps: 25,
     plugins: 100,
-    creditsPerMonth: 20000,
+    creditsPerMonth: 6000,
+    creditClaimType: 'monthly',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     historyDays: 365,
     maxDepartments: 20,
     maxMembers: 50,
+    supportTickets: true,
     isolationLevel: 'SHARED' as IsolationLevel,
     dedicatedDb: false,
     canUpgradeToIsolated: true,
@@ -266,9 +296,13 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     workflowSteps: 30,
     plugins: -1,
     creditsPerMonth: -1,
+    creditClaimType: 'none',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     historyDays: 365,
     maxDepartments: -1,
     maxMembers: -1,
+    supportTickets: true,
     isolationLevel: 'DEDICATED' as IsolationLevel,
     dedicatedDb: true,
     canUpgradeToIsolated: true,
@@ -439,25 +473,32 @@ export function getPlanFeatures(plan: PlanType): string[] {
   
   // Workspace resources (for workspace plans)
   if (limits.workspace) {
-    if (limits.workspace.ramMb === -1) {
-      features.push('Custom RAM allocation');
-    } else {
-      const ram = limits.workspace.ramMb >= 1024 
-        ? `${(limits.workspace.ramMb / 1024).toFixed(0)}GB` 
-        : `${limits.workspace.ramMb}MB`;
-      features.push(`${ram} RAM workspace`);
+    const tier = INCLUDED_WORKSPACE_TIER[plan];
+    if (tier === 'CUSTOM') {
+      features.push('Custom Workspace');
+    } else if (tier && tier !== null) {
+      features.push(`${WORKSPACE_ADDONS[tier].displayName} Workspace`);
     }
   }
   
   // AI tokens
   if (limits.creditsPerMonth === -1) {
     features.push('Unlimited AI credits');
+  } else if (limits.creditClaimType === 'daily') {
+    features.push(`~${limits.dailyCreditClaim} credits/day (${limits.creditsPerMonth}/mo)`);
   } else if (limits.creditsPerMonth >= 10000) {
     features.push(`${(limits.creditsPerMonth / 1000).toFixed(0)}K credits/month`);
   } else if (limits.creditsPerMonth >= 1000) {
     features.push(`${(limits.creditsPerMonth / 1000).toFixed(1)}K credits/month`);
   } else {
     features.push(`${limits.creditsPerMonth} credits/month`);
+  }
+  
+  // Support
+  if (limits.supportTickets) {
+    features.push('Support tickets included');
+  } else {
+    features.push('Email support only');
   }
   
   // History

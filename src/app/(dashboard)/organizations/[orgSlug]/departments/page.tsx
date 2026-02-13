@@ -44,7 +44,7 @@ interface Department {
 export default function OrganizationDepartmentsPage() {
   const router = useRouter();
   const { token } = useAuth();
-  const { orgId, orgSlug, orgName, isFound, isLoading: orgLoading } = useOrganization();
+  const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
   
   const { can } = useOrgPermissions();
@@ -109,7 +109,7 @@ export default function OrganizationDepartmentsPage() {
           <CardContent className="py-12 text-center">
             <h3 className="text-lg font-medium text-foreground mb-2">Organization not found</h3>
             <p className="text-muted-foreground mb-4">
-              The organization you're looking for doesn't exist or you don't have access to it.
+              The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access to it.
             </p>
             <Link href="/">
               <Button variant="outline" className="border-border">
@@ -173,14 +173,12 @@ export default function OrganizationDepartmentsPage() {
             Manage organization departments and their resources
           </p>
         </div>
-        {canCreateDepartment && (
-          <Link href={buildOrgUrl("/departments/create")}>
+        {canCreateDepartment ? <Link href={buildOrgUrl("/departments/create")}>
             <Button className="bg-purple-600 hover:bg-purple-700">
               <Plus className="mr-2 h-4 w-4" />
               Create Department
             </Button>
-          </Link>
-        )}
+          </Link> : null}
       </div>
 
       {/* Departments List */}
@@ -196,14 +194,12 @@ export default function OrganizationDepartmentsPage() {
                 ? "Create departments to organize your team members"
                 : "No departments have been created yet"}
             </p>
-            {canCreateDepartment && (
-              <Link href={buildOrgUrl("/departments/create")}>
+            {canCreateDepartment ? <Link href={buildOrgUrl("/departments/create")}>
                 <Button className="bg-purple-600 hover:bg-purple-700">
                   <Plus className="mr-2 h-4 w-4" />
                   Create First Department
                 </Button>
-              </Link>
-            )}
+              </Link> : null}
           </CardContent>
         </Card>
       ) : (
@@ -224,11 +220,9 @@ export default function OrganizationDepartmentsPage() {
                       {dept.isActive ? "Active" : "Inactive"}
                     </Badge>
                   </div>
-                  {dept.description && (
-                    <CardDescription className="text-muted-foreground">
+                  {dept.description ? <CardDescription className="text-muted-foreground">
                       {dept.description}
-                    </CardDescription>
-                  )}
+                    </CardDescription> : null}
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-4 text-sm text-muted-foreground">

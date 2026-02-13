@@ -116,9 +116,7 @@ export function DeptUsageBreakdown({
                     {dept.executions.current.toLocaleString()} /{" "}
                     {dept.executions.allocated?.toLocaleString() ?? "∞"}
                   </span>
-                  {dept.executions.allocated && (
-                    <span>{Math.round(percentage)}%</span>
-                  )}
+                  {dept.executions.allocated ? <span>{Math.round(percentage)}%</span> : null}
                 </div>
               </div>
             </Link>

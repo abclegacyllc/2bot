@@ -10,16 +10,17 @@
  */
 
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { CreditUsageCategory } from "@/modules/credits";
+import { formatCredits } from "@/shared/lib/format";
 import { Bot, PieChart, ShoppingBag, Sparkles, Zap } from "lucide-react";
 
 export interface UsageBreakdown {
@@ -65,19 +66,6 @@ function getCapabilityLabel(capability: string): string {
     vision: "Vision",
   };
   return labels[capability] || capability.charAt(0).toUpperCase() + capability.slice(1).replace(/-/g, " ");
-}
-
-/**
- * Format credits for display
- */
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${(credits / 1_000).toFixed(1)}K`;
-  }
-  return credits.toLocaleString();
 }
 
 /**
@@ -166,7 +154,6 @@ function BreakdownBar({
             <Progress
               value={percent}
               className="h-2"
-              // @ts-ignore - custom color prop
               indicatorClassName={color}
             />
           </div>
@@ -272,8 +259,7 @@ export function CreditsUsageBreakdown({
       </Card>
 
       {/* AI Usage Breakdown (if available) */}
-      {data.aiUsage && (
-        <Card>
+      {data.aiUsage ? <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Bot className="h-4 w-4" />
@@ -312,8 +298,7 @@ export function CreditsUsageBreakdown({
               />
             </div>
           </CardContent>
-        </Card>
-      )}
+        </Card> : null}
     </div>
   );
 }

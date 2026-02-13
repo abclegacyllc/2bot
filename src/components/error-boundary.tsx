@@ -104,15 +104,12 @@ export function ErrorFallback({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error && process.env.NODE_ENV === "development" && (
-            <div className="p-3 rounded-lg bg-card/50 border border-border">
+          {error && process.env.NODE_ENV === "development" ? <div className="p-3 rounded-lg bg-card/50 border border-border">
               <p className="text-xs font-mono text-red-400 break-all">
                 {error.message}
               </p>
-            </div>
-          )}
-          {reset && (
-            <div className="flex justify-center">
+            </div> : null}
+          {reset ? <div className="flex justify-center">
               <Button
                 onClick={reset}
                 variant="outline"
@@ -121,8 +118,7 @@ export function ErrorFallback({
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Try Again
               </Button>
-            </div>
-          )}
+            </div> : null}
         </CardContent>
       </Card>
     </div>
@@ -143,16 +139,14 @@ export function InlineError({
     <div className="flex items-center gap-3 p-4 rounded-lg bg-red-900/10 border border-red-800/30">
       <AlertTriangle className="h-5 w-5 text-red-400 flex-shrink-0" />
       <p className="text-sm text-red-400 flex-1">{message}</p>
-      {onRetry && (
-        <Button
+      {onRetry ? <Button
           onClick={onRetry}
           variant="ghost"
           size="sm"
           className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
         >
           <RefreshCw className="h-4 w-4" />
-        </Button>
-      )}
+        </Button> : null}
     </div>
   );
 }

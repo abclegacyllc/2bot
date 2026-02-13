@@ -122,7 +122,7 @@ billingRouter.post(
     }
 
     // Create checkout session
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dash.2bot.org';
     const successUrl = `${baseUrl}/billing?success=true`;
     const cancelUrl = `${baseUrl}/billing?canceled=true`;
 
@@ -157,7 +157,7 @@ billingRouter.post(
       }
     }
 
-    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/billing`;
+    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://dash.2bot.org'}/billing`;
     const url = await stripeService.createPortalSession(ctx, returnUrl);
 
     res.json({

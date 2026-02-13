@@ -50,7 +50,7 @@ export function TwoBotAIAssistantWidget({
 
   // Get plan from current context (personal or organization)
   const currentPlan = context.plan || "FREE";
-  const isPro = ["PRO", "ENTERPRISE", "ORG_PRO", "ORG_BUSINESS", "ORG_ENTERPRISE"].includes(currentPlan as string);
+  const _isPro = ["PRO", "BUSINESS", "ENTERPRISE", "ORG_GROWTH", "ORG_PRO", "ORG_BUSINESS", "ORG_ENTERPRISE"].includes(currentPlan as string);
   const contextLabel = context.type === "organization" ? "Organization" : "Personal";
 
   // Fetch credit usage on mount and when auth changes
@@ -142,23 +142,18 @@ export function TwoBotAIAssistantWidget({
         >
           <Bot className="h-6 w-6" />
           {/* Credit usage warning - show when above 80% */}
-          {isLowCredits && (
-            <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs px-1.5 py-0.5 rounded-full">
+          {isLowCredits ? <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs px-1.5 py-0.5 rounded-full">
               {Math.round(creditUsage?.percentUsed || 0)}%
-            </span>
-          )}
+            </span> : null}
           {/* Context indicator (Personal/Organization) */}
-          {context.type && (
-            <span className="absolute -bottom-1 -right-1 bg-primary text-primary-foreground text-[10px] px-1 py-0.5 rounded-full">
+          {context.type ? <span className="absolute -bottom-1 -right-1 bg-primary text-primary-foreground text-[10px] px-1 py-0.5 rounded-full">
               {context.type === "organization" ? "ORG" : "P"}
-            </span>
-          )}
+            </span> : null}
         </Button>
       )}
 
       {/* Expanded: Chat panel */}
-      {isOpen && (
-        <div
+      {isOpen ? <div
           className={`fixed ${positionClasses} w-[400px] h-[600px] shadow-2xl z-50 flex flex-col bg-background border rounded-lg overflow-hidden`}
           role="dialog"
           aria-label="2Bot AI Assistant"
@@ -206,8 +201,7 @@ export function TwoBotAIAssistantWidget({
               />
             )}
           </div>
-        </div>
-      )}
+        </div> : null}
     </>
   );
 }

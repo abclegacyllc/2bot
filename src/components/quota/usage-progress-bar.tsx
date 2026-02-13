@@ -14,6 +14,7 @@
  */
 
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/shared/lib/format";
 
 type WarningLevel = "none" | "warning" | "critical" | "blocked";
 
@@ -67,13 +68,6 @@ function getSizeClasses(size: "sm" | "md" | "lg"): {
   }
 }
 
-// Format number for display
-function formatNumber(num: number): string {
-  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-  if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-  return num.toString();
-}
-
 export function UsageProgressBar({
   label,
   current,
@@ -90,9 +84,8 @@ export function UsageProgressBar({
   return (
     <div className={cn("space-y-1.5", className)}>
       {/* Label and value */}
-      {(label || showPercentage) && (
-        <div className={cn("flex items-center justify-between", sizeClasses.text)}>
-          {label && <span className="font-medium text-foreground">{label}</span>}
+      {(label || showPercentage) ? <div className={cn("flex items-center justify-between", sizeClasses.text)}>
+          {label ? <span className="font-medium text-foreground">{label}</span> : null}
           <span className="text-muted-foreground">
             {isUnlimited ? (
               <>
@@ -102,16 +95,13 @@ export function UsageProgressBar({
             ) : (
               <>
                 {formatNumber(current)} / {formatNumber(limit)}
-                {showPercentage && (
-                  <span className="ml-1 text-muted-foreground/70">
+                {showPercentage ? <span className="ml-1 text-muted-foreground/70">
                     ({Math.round(percentage)}%)
-                  </span>
-                )}
+                  </span> : null}
               </>
             )}
           </span>
-        </div>
-      )}
+        </div> : null}
 
       {/* Progress bar */}
       <div

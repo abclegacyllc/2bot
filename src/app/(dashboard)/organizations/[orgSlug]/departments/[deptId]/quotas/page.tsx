@@ -11,43 +11,44 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { DeptResourceView } from "@/components/resources";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import {
-    Form,
-    FormControl,
-    FormDescription,
-    FormField,
-    FormItem,
-    FormLabel,
-    FormMessage,
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import {
-    AlertTriangle,
-    ArrowLeft,
-    Bot,
-    Cpu,
-    Database,
-    GitBranch,
-    HardDrive,
-    Loader2,
-    MemoryStick,
-    Save,
-    Server,
-    Users,
+  AlertTriangle,
+  ArrowLeft,
+  Bot,
+  Cpu,
+  Database,
+  GitBranch,
+  HardDrive,
+  Loader2,
+  MemoryStick,
+  Save,
+  Server,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -99,7 +100,7 @@ function DeptAllocationContent() {
   const params = useParams();
   const router = useRouter();
   const { token } = useAuth();
-  const { orgId, orgRole, isFound, isLoading: orgLoading } = useOrganization();
+  const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
 
   const departmentId = params.deptId as string;
@@ -296,30 +297,26 @@ function DeptAllocationContent() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button asChild variant="ghost" size="icon">
-          <Link href={buildOrgUrl("/resources")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold">{department?.name} Allocation</h1>
-          <p className="text-muted-foreground">
-            Configure resource limits for this department
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline">
-            <Users className="mr-1 h-3 w-3" />
-            {department?.memberCount ?? 0} members
-          </Badge>
-          {department && !department.isActive ? <Badge variant="destructive">Stopped</Badge> : null}
-        </div>
-      </div>
+      <PageHeader
+        title={`${department?.name} Allocation`}
+        description="Configure resource limits for this department"
+        breadcrumbs={[
+          { label: "Departments", href: buildOrgUrl("/departments") },
+          { label: department?.name ?? "Department", href: buildOrgUrl(`/departments/${departmentId}`) },
+        ]}
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">
+              <Users className="mr-1 h-3 w-3" />
+              {department?.memberCount ?? 0} members
+            </Badge>
+            {department && !department.isActive ? <Badge variant="destructive">Stopped</Badge> : null}
+          </div>
+        }
+      />
 
       {/* Current Status - Shows what's allocated and used */}
-      {orgId && departmentId && (
-        <Card className="border-border bg-card/50">
+      {orgId && departmentId ? <Card className="border-border bg-card/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Server className="h-5 w-5 text-purple-400" />
@@ -336,8 +333,7 @@ function DeptAllocationContent() {
               compact
             />
           </CardContent>
-        </Card>
-      )}
+        </Card> : null}
 
       {/* Automation Allocation */}
       <Card>

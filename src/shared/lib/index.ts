@@ -5,5 +5,6 @@
  */
 
 export * from './data-client';
+export * from './format';
 export * from './tenant-helpers';
 

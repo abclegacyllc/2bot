@@ -9,6 +9,7 @@
  * @module app/(dashboard)/organizations/[orgSlug]/departments/create/page
  */
 
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,15 +25,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
-import { ArrowLeft, Layers, Loader2 } from "lucide-react";
+import { Layers, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { useEffect, useState } from "react";
 
 export default function CreateDepartmentPage() {
   const router = useRouter();
   const { token } = useAuth();
-  const { orgId, orgSlug, isFound, isLoading: orgLoading } = useOrganization();
+  const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
   const { can } = useOrgPermissions();
 
@@ -108,7 +110,7 @@ export default function CreateDepartmentPage() {
         <CardHeader>
           <CardTitle className="text-red-400">Organization Not Found</CardTitle>
           <CardDescription>
-            The organization you're looking for doesn't exist or you don't have access.
+            The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -117,23 +119,12 @@ export default function CreateDepartmentPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link href={buildOrgUrl("/departments")}>
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
-            <Layers className="h-8 w-8" />
-            Create Department
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Add a new department to organize your team
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Create Department"
+        description="Add a new department to organize your team"
+        icon={<Layers className="h-8 w-8" />}
+        breadcrumbs={[{ label: "Departments", href: buildOrgUrl("/departments") }]}
+      />
 
       {/* Form */}
       <Card className="border-border bg-card/50">
@@ -177,11 +168,9 @@ export default function CreateDepartmentPage() {
             </div>
 
             {/* Error */}
-            {error && (
-              <div className="p-3 rounded-md bg-red-950/20 border border-red-900">
+            {error ? <div className="p-3 rounded-md bg-red-950/20 border border-red-900">
                 <p className="text-sm text-red-400">{error}</p>
-              </div>
-            )}
+              </div> : null}
 
             {/* Actions */}
             <div className="flex items-center gap-3 pt-4">

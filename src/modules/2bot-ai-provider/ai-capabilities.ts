@@ -49,7 +49,11 @@ export type AICapability =
   // Agent capabilities (future-ready)
   | "tool-use"             // Function calling, MCP tools
   | "web-browsing"         // Web search, browsing
-  | "file-processing";     // Document parsing, file manipulation
+  | "file-processing"      // Document parsing, file manipulation
+
+  // Search & Safety capabilities
+  | "rerank"              // Rerank search results for relevance
+  | "moderation";         // Content safety and moderation
 
 /**
  * Capability categories for grouping in UI
@@ -60,7 +64,9 @@ export type AICapabilityCategory =
   | "audio"
   | "video"
   | "code"
-  | "agent";
+  | "agent"
+  | "search"
+  | "safety";
 
 
 
@@ -150,7 +156,7 @@ export const CAPABILITY_INFO: Record<AICapability, CapabilityInfo> = {
     category: "video",
     inputType: "mixed",
     outputType: "video",
-    commonlySupported: false,
+    commonlySupported: true,
   },
   "video-understanding": {
     capability: "video-understanding",
@@ -206,6 +212,24 @@ export const CAPABILITY_INFO: Record<AICapability, CapabilityInfo> = {
     outputType: "text",
     commonlySupported: false,
   },
+  "rerank": {
+    capability: "rerank",
+    displayName: "Rerank",
+    description: "Rerank search results for improved relevance",
+    category: "search",
+    inputType: "text",
+    outputType: "text",
+    commonlySupported: true,
+  },
+  "moderation": {
+    capability: "moderation",
+    displayName: "Moderation",
+    description: "Content safety classification and moderation",
+    category: "safety",
+    inputType: "mixed",
+    outputType: "text",
+    commonlySupported: true,
+  },
 };
 
 // ===========================================
@@ -255,7 +279,7 @@ export function isValidCapability(capability: string): capability is AICapabilit
 // Provider Capability Support Matrix
 // ===========================================
 
-export type ProviderName = "openai" | "anthropic" | "google" | "azure" | "huggingface" | "local";
+export type ProviderName = "openai" | "anthropic" | "together" | "google" | "azure" | "huggingface" | "local";
 
 /**
  * Which capabilities each provider supports
@@ -274,6 +298,14 @@ export const PROVIDER_CAPABILITIES: Record<ProviderName, AICapability[]> = {
   anthropic: [
     "text-generation",
     "image-understanding",
+    "tool-use",
+  ],
+  together: [
+    "text-generation",
+    "text-embedding",
+    "image-generation",
+    "image-understanding",
+    // NOTE: speech-recognition and video-generation removed — no adapters implemented yet
     "tool-use",
   ],
   google: [

@@ -16,7 +16,7 @@ import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
 import type { ServiceContext } from '@/shared/types/context';
-import { AllocationMode } from '@prisma/client';
+import type { AllocationMode } from '@prisma/client';
 import { ResourceAllocationMode, type DeptAllocationInput, type MemberAllocationInput } from './resource.types';
 
 const log = logger.child({ module: 'resource-allocation' });
@@ -416,21 +416,21 @@ class AllocationServiceImpl {
       }
     }
     
-    if (input.ramMb && limits.pool.ramMb) {
-      if (totalRam + input.ramMb > limits.pool.ramMb) {
-        errors.push(`RAM: ${totalRam + input.ramMb}MB exceeds pool of ${limits.pool.ramMb}MB`);
+    if (input.ramMb && limits.workspace.ramMb) {
+      if (totalRam + input.ramMb > limits.workspace.ramMb) {
+        errors.push(`RAM: ${totalRam + input.ramMb}MB exceeds pool of ${limits.workspace.ramMb}MB`);
       }
     }
     
-    if (input.cpuCores && limits.pool.cpuCores) {
-      if (totalCpu + input.cpuCores > limits.pool.cpuCores) {
-        errors.push(`CPU: ${totalCpu + input.cpuCores} exceeds pool of ${limits.pool.cpuCores}`);
+    if (input.cpuCores && limits.workspace.cpuCores) {
+      if (totalCpu + input.cpuCores > limits.workspace.cpuCores) {
+        errors.push(`CPU: ${totalCpu + input.cpuCores} exceeds pool of ${limits.workspace.cpuCores}`);
       }
     }
     
-    if (input.storageMb && limits.pool.storageMb) {
-      if (totalStorage + input.storageMb > limits.pool.storageMb) {
-        errors.push(`Storage: ${totalStorage + input.storageMb}MB exceeds pool of ${limits.pool.storageMb}MB`);
+    if (input.storageMb && limits.workspace.storageMb) {
+      if (totalStorage + input.storageMb > limits.workspace.storageMb) {
+        errors.push(`Storage: ${totalStorage + input.storageMb}MB exceeds pool of ${limits.workspace.storageMb}MB`);
       }
     }
     

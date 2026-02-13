@@ -27,25 +27,27 @@ const productionOrigins = [
   `https://www.${ROOT_DOMAIN}`,
   
   // Enterprise Subdomains
-  `https://dash.${ROOT_DOMAIN}`,     // Dashboard (:3000)
-  `https://api.${ROOT_DOMAIN}`,      // API (:3001) - for internal calls
-  `https://admin.${ROOT_DOMAIN}`,    // Admin panel (:3003)
-  `https://support.${ROOT_DOMAIN}`,  // Support team (:3004) - Phase 7
-  `https://docs.${ROOT_DOMAIN}`,     // Documentation (:3005)
-  `https://dev.${ROOT_DOMAIN}`,      // Developer portal (:3006)
+  `https://dash.${ROOT_DOMAIN}`,      // Dashboard (:3001)
+  `https://api.${ROOT_DOMAIN}`,       // API (:3002)
+  `https://admin.${ROOT_DOMAIN}`,     // Admin panel (:3007)
+  `https://support.${ROOT_DOMAIN}`,   // Support team (:3008)
+  `https://docs.${ROOT_DOMAIN}`,      // Documentation (:3003)
+  `https://dev.${ROOT_DOMAIN}`,       // Dev frontend (:3005)
+  `https://dev-api.${ROOT_DOMAIN}`,   // Dev API (:3006)
 ];
 
 /**
  * Development origins (only in development mode)
  */
 const developmentOrigins = [
-  "http://localhost:3000",   // Dashboard (Next.js)
-  "http://localhost:3001",   // API (Express)
-  "http://localhost:3002",   // Main/Landing site
-  "http://localhost:3003",   // Admin panel
-  "http://localhost:3004",   // Support team (Phase 7)
-  "http://localhost:3005",   // Documentation
-  "http://localhost:3006",   // Developer portal
+  "http://localhost:3000",   // Landing/Main site
+  "http://localhost:3001",   // Dashboard (Next.js prod)
+  "http://localhost:3002",   // API (Express prod)
+  "http://localhost:3003",   // Documentation
+  "http://localhost:3005",   // Dev Frontend (Next.js)
+  "http://localhost:3006",   // Dev API (Express)
+  "http://localhost:3007",   // Admin panel
+  "http://localhost:3008",   // Support team
 ];
 
 /**
@@ -110,7 +112,7 @@ export const corsOptions: CorsOptions = {
       // Allow all origins in development
       callback(null, true);
     } else {
-      console.log(`CORS blocked origin: ${origin}`);
+      console.warn(`CORS blocked origin: ${origin}`);
       callback(new Error("Not allowed by CORS"));
     }
   },

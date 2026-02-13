@@ -130,31 +130,23 @@ export function ResourcePoolCard({
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            {Icon && (
-              <div className={cn(
+            {Icon ? <div className={cn(
                 "flex h-10 w-10 items-center justify-center rounded-lg",
                 iconBgClass
               )}>
                 <Icon className="h-5 w-5" />
-              </div>
-            )}
+              </div> : null}
             <div>
               <div className="flex items-center gap-2">
                 <CardTitle className="text-lg">{title}</CardTitle>
-                {badge && (
-                  <Badge variant={badgeVariant} className="text-xs">
+                {badge ? <Badge variant={badgeVariant} className="text-xs">
                     {badge}
-                  </Badge>
-                )}
+                  </Badge> : null}
               </div>
-              {description && (
-                <CardDescription className="mt-0.5">{description}</CardDescription>
-              )}
+              {description ? <CardDescription className="mt-0.5">{description}</CardDescription> : null}
             </div>
           </div>
-          {actions && (
-            <div className="flex items-center gap-2">{actions}</div>
-          )}
+          {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
         </div>
       </CardHeader>
 

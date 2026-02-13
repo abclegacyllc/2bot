@@ -161,6 +161,57 @@ async function validateAnthropicKey(): Promise<{ valid: boolean; error?: string;
   }
 }
 
+/**
+ * Validate Together AI API key by making a real API call
+ */
+async function validateTogetherKey(): Promise<{ valid: boolean; error?: string; latencyMs: number }> {
+  const apiKey = process.env.TWOBOT_TOGETHER_API_KEY;
+
+  if (!apiKey) {
+    return { valid: false, error: "TWOBOT_TOGETHER_API_KEY not set", latencyMs: 0 };
+  }
+
+  if (apiKey.length < 20) {
+    return { valid: false, error: "Invalid Together AI API key format", latencyMs: 0 };
+  }
+
+  const startTime = Date.now();
+  try {
+    // Use models.list endpoint as a lightweight validation call
+    const response = await fetch("https://api.together.xyz/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const latencyMs = Date.now() - startTime;
+
+    if (response.status === 401) {
+      log.error("Together AI API key is invalid");
+      return { valid: false, error: "Invalid API key - authentication failed", latencyMs };
+    }
+
+    if (response.status === 429) {
+      log.warn("Together AI rate limited, but key is valid");
+      return { valid: true, latencyMs };
+    }
+
+    if (!response.ok) {
+      return { valid: false, error: `Together AI API returned ${response.status}`, latencyMs };
+    }
+
+    log.info({ latencyMs }, "Together AI API key validated successfully");
+    return { valid: true, latencyMs };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    if (error instanceof Error && error.name === "AbortError") {
+      log.error("Together AI validation timed out");
+      return { valid: false, error: "Connection timed out", latencyMs };
+    }
+    log.error({ error }, "Together AI validation failed with unknown error");
+    return { valid: false, error: `Validation failed: ${error}`, latencyMs };
+  }
+}
+
 // ===========================================
 // Public Health Check API
 // ===========================================
@@ -201,6 +252,9 @@ export async function checkProviderHealth(provider: TwoBotAIProvider): Promise<P
     case "anthropic":
       result = await validateAnthropicKey();
       break;
+    case "together":
+      result = await validateTogetherKey();
+      break;
     default:
       result = { valid: false, error: `Unknown provider: ${provider}`, latencyMs: 0 };
   }
@@ -226,7 +280,7 @@ export async function checkProviderHealth(provider: TwoBotAIProvider): Promise<P
  * Check all providers and return their health status
  */
 export async function checkAllProviders(): Promise<ProviderHealthStatus[]> {
-  const providers: TwoBotAIProvider[] = ["openai", "anthropic"];
+  const providers: TwoBotAIProvider[] = ["openai", "anthropic", "together"];
   const results: ProviderHealthStatus[] = [];
 
   for (const provider of providers) {

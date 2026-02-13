@@ -31,7 +31,7 @@ function getWarningLevel(
   used: number,
   limit: number | null
 ): WarningLevel {
-  // Check balance first (thresholds scaled for 1 credit = $0.001)
+  // Check balance first (thresholds scaled for 1 credit = $0.01)
   if (balance <= 0) {
     return "exceeded";
   }
@@ -129,29 +129,25 @@ export function CreditsLimitWarning({
       <Icon className="h-4 w-4" />
       <AlertTitle className="flex items-center justify-between">
         <span>{config.title}</span>
-        {dismissable && onDismiss && (
-          <Button
+        {dismissable && onDismiss ? <Button
             variant="ghost"
             size="sm"
             className="h-6 px-2 -mr-2"
             onClick={onDismiss}
           >
             Dismiss
-          </Button>
-        )}
+          </Button> : null}
       </AlertTitle>
       <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span>{config.description(currentBalance, monthlyUsed, monthlyLimit)}</span>
-        {onBuyCredits && (
-          <Button
+        {onBuyCredits ? <Button
             size="sm"
             variant={level === "exceeded" ? "default" : "outline"}
             onClick={onBuyCredits}
             className="shrink-0"
           >
             Buy Credits
-          </Button>
-        )}
+          </Button> : null}
       </AlertDescription>
     </Alert>
   );

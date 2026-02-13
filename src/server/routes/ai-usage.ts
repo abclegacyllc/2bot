@@ -19,6 +19,7 @@ import {
     twoBotAIUsageService
 } from "@/modules/2bot-ai-provider";
 import type { ApiResponse } from "@/shared/types";
+import { BadRequestError } from "@/shared/errors";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
@@ -70,7 +71,8 @@ interface UsageStatsResponse {
 aiUsageRouter.get(
   "/stats",
   asyncHandler(async (req: Request, res: Response<ApiResponse<UsageStatsResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const period = (req.query.period as string) || getCurrentBillingPeriod();
 
     // 2Bot AI service only returns 2Bot usage (no source filter needed)
@@ -120,7 +122,8 @@ interface TokenUsageResponse {
 aiUsageRouter.get(
   "/tokens",
   asyncHandler(async (req: Request, res: Response<ApiResponse<TokenUsageResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     
     const usage = await twoBotAIMetricsService.getTokenUsage(userId);
 
@@ -170,7 +173,8 @@ interface TokenCheckResponse {
 aiUsageRouter.get(
   "/tokens/check",
   asyncHandler(async (req: Request, res: Response<ApiResponse<TokenCheckResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const estimate = parseInt(req.query.estimate as string) || 0;
     
     const check = await twoBotAIMetricsService.checkPlanLimit(userId, estimate);
@@ -210,7 +214,8 @@ interface TokenBreakdownResponse {
 aiUsageRouter.get(
   "/tokens/breakdown",
   asyncHandler(async (req: Request, res: Response<ApiResponse<TokenBreakdownResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const period = (req.query.period as string) || getCurrentBillingPeriod();
     
     const breakdown = await twoBotAIMetricsService.getTokenBreakdown(userId, period);

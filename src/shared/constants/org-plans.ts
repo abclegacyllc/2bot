@@ -6,13 +6,16 @@
  * 
  * All org plans use WORKSPACE execution mode with unlimited executions.
  * 
- * WORKSPACE POOL NOTE:
- * - Pool specs are defined in ORG_WORKSPACE_POOL_SPECS (easy to change)
- * - Change INCLUDED_ORG_WORKSPACE_POOL to update which pool an org plan includes
- * - Organizations can purchase add-ons to expand their pool (STACKING mode)
+ * WORKSPACE NOTE:
+ * - Workspace specs are defined in ORG_WORKSPACE_SPECS (easy to change)
+ * - Workspace display names are derived from ORG_WORKSPACE_ADDONS (org-workspace-addons.ts)
+ * - Change INCLUDED_ORG_WORKSPACE to update which workspace an org plan includes
+ * - Organizations can purchase add-ons to expand their workspace (STACKING mode)
  */
 
-import type { ExecutionMode } from './plans';
+import type { OrgWorkspaceAddonTier } from './org-workspace-addons';
+import { ORG_WORKSPACE_ADDONS } from './org-workspace-addons';
+import type { CreditClaimType, ExecutionMode } from './plans';
 
 // ===========================================
 // Org Plan Type Definitions
@@ -27,45 +30,60 @@ export type OrgPlanType =
   | 'ORG_ENTERPRISE';
 
 // ===========================================
-// Org Workspace Pool Tiers (Easy to Change!)
+// Org Workspace Tiers (Easy to Change!)
 // ===========================================
-// Define workspace pool specs for each org plan tier.
+// Organizations include a shared workspace in their plan.
+// Workspace tiers reuse OrgWorkspaceAddonTier + NONE/CUSTOM.
 // These are K8s-optimized (power-of-2 RAM) for efficient scheduling.
-// To change specs, update these values - all org plans will use them.
 
-export type OrgWorkspacePoolTier = 'NONE' | 'TEAM' | 'GROWTH' | 'PRO' | 'BUSINESS' | 'CUSTOM';
+export type OrgWorkspaceTier = 'NONE' | OrgWorkspaceAddonTier | 'CUSTOM';
 
-export interface OrgWorkspacePoolSpecs {
+/** Get display name for an org workspace tier — derived from ORG_WORKSPACE_ADDONS */
+export function getOrgWorkspaceDisplayName(tier: OrgWorkspaceTier): string {
+  if (tier === 'NONE') return 'No workspace';
+  if (tier === 'CUSTOM') return 'Custom Workspace';
+  // Direct lookup - tier names now match addon names
+  const addonKey = tier as keyof typeof ORG_WORKSPACE_ADDONS;
+  const addon = ORG_WORKSPACE_ADDONS[addonKey];
+  return addon ? `${addon.displayName} Workspace` : tier;
+}
+
+export interface OrgWorkspaceSpecs {
   ramMb: number | null;       // null = custom/negotiated
   cpuCores: number | null;
   storageMb: number | null;
 }
 
-export const ORG_WORKSPACE_POOL_SPECS: Record<OrgWorkspacePoolTier, OrgWorkspacePoolSpecs> = {
+export const ORG_WORKSPACE_SPECS: Record<OrgWorkspaceTier, OrgWorkspaceSpecs> = {
   NONE: {
-    ramMb: null,        // No pool - serverless only
+    ramMb: null,        // No workspace - serverless only
     cpuCores: null,
     storageMb: null,
   },
-  TEAM: {
+  ORG_SMALL: {
     ramMb: 4096,        // 4GB - small team
     cpuCores: 2,
     storageMb: 20480,   // 20GB
   },
-  GROWTH: {
+  ORG_MEDIUM: {
     ramMb: 8192,        // 8GB - growing team
     cpuCores: 4,
     storageMb: 51200,   // 50GB
   },
-  PRO: {
+  ORG_LARGE: {
     ramMb: 16384,       // 16GB - professional
     cpuCores: 8,
     storageMb: 102400,  // 100GB
   },
-  BUSINESS: {
+  ORG_XLARGE: {
     ramMb: 32768,       // 32GB - business
     cpuCores: 16,
     storageMb: 256000,  // 250GB
+  },
+  ORG_MICRO: {
+    ramMb: 2048,        // 2GB - micro (not typically offered as included)
+    cpuCores: 1,
+    storageMb: 10240,   // 10GB
   },
   CUSTOM: {
     ramMb: null,        // Custom/negotiated
@@ -75,26 +93,30 @@ export const ORG_WORKSPACE_POOL_SPECS: Record<OrgWorkspacePoolTier, OrgWorkspace
 };
 
 // ===========================================
-// Included Workspace Pool per Org Plan
+// Included Workspace per Org Plan
 // ===========================================
-// Maps which workspace pool tier is included with each org plan.
-// To change what pool an org plan includes, just update this mapping.
+// Maps which workspace tier is included with each org plan.
+// To change what workspace an org plan includes, just update this mapping.
 
-export const INCLUDED_ORG_WORKSPACE_POOL: Record<OrgPlanType, OrgWorkspacePoolTier> = {
-  ORG_FREE: 'NONE',         // No pool - serverless with limits
-  ORG_STARTER: 'TEAM',      // 4GB, 2 CPU, 20GB
-  ORG_GROWTH: 'GROWTH',     // 8GB, 4 CPU, 50GB
-  ORG_PRO: 'PRO',           // 16GB, 8 CPU, 100GB
-  ORG_BUSINESS: 'BUSINESS', // 32GB, 16 CPU, 250GB
+export const INCLUDED_ORG_WORKSPACE: Record<OrgPlanType, OrgWorkspaceTier> = {
+  ORG_FREE: 'NONE',         // No workspace - serverless with limits
+  ORG_STARTER: 'ORG_SMALL', // 4GB, 2 CPU, 20GB
+  ORG_GROWTH: 'ORG_MEDIUM', // 8GB, 4 CPU, 50GB
+  ORG_PRO: 'ORG_LARGE',     // 16GB, 8 CPU, 100GB
+  ORG_BUSINESS: 'ORG_XLARGE', // 32GB, 16 CPU, 250GB
   ORG_ENTERPRISE: 'CUSTOM', // Custom negotiated
 };
 
 /**
- * Get the workspace pool specs for an org plan
+ * Get the workspace specs for an org plan
  */
-export function getIncludedOrgWorkspacePool(plan: OrgPlanType): OrgWorkspacePoolSpecs {
-  const tier = INCLUDED_ORG_WORKSPACE_POOL[plan];
-  return ORG_WORKSPACE_POOL_SPECS[tier];
+export function getIncludedOrgWorkspace(plan: OrgPlanType): OrgWorkspaceSpecs {
+  const tier = INCLUDED_ORG_WORKSPACE[plan];
+  const specs = ORG_WORKSPACE_SPECS[tier];
+  if (!specs) {
+    throw new Error(`No workspace specs found for tier: ${tier}`);
+  }
+  return specs;
 }
 
 // ===========================================
@@ -106,7 +128,7 @@ export interface OrgPlanSeats {
   extraPricePerSeat: number;    // cents/month for additional seats
 }
 
-export interface OrgPlanPool {
+export interface OrgPlanWorkspace {
   ramMb: number | null;         // null = custom/negotiated
   cpuCores: number | null;
   storageMb: number | null;
@@ -116,6 +138,7 @@ export interface OrgPlanFeatures {
   sso: boolean;
   customBranding: boolean;
   prioritySupport: boolean;
+  supportTickets: boolean;
   auditLogs: boolean;
   apiAccess: boolean;
   dedicatedDatabase: boolean;
@@ -134,12 +157,17 @@ export interface OrgPlanLimits {
   sharedWorkflows: number;
   sharedCreditsPerMonth: number;
   
+  // Credit claim configuration
+  creditClaimType: CreditClaimType;  // How credits are distributed
+  dailyCreditClaim: number;          // Credits per daily claim (for 'daily' type)
+  monthlyClaimCap: number;           // Max credits claimable per month (for 'daily' type)
+  
   // Seats
   seats: OrgPlanSeats;
   departments: number | null;     // null = unlimited
   
   // Shared workspace pool
-  pool: OrgPlanPool;
+  workspace: OrgPlanWorkspace;
   
   // Features
   features: OrgPlanFeatures;
@@ -159,8 +187,8 @@ export interface OrgPlanLimits {
 // ===========================================
 // Org Plan Limits Configuration
 // ===========================================
-// NOTE: Workspace pool specs come from ORG_WORKSPACE_POOL_SPECS via getIncludedOrgWorkspacePool().
-// To change what workspace pool an org plan includes, update INCLUDED_ORG_WORKSPACE_POOL.
+// NOTE: Workspace specs come from ORG_WORKSPACE_SPECS via getIncludedOrgWorkspace().
+// To change what workspace an org plan includes, update INCLUDED_ORG_WORKSPACE.
 
 export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
   ORG_FREE: {
@@ -169,15 +197,17 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
     sharedGateways: 2,
     sharedPlugins: 5,
     sharedWorkflows: 5,
-    sharedCreditsPerMonth: 500,
+    sharedCreditsPerMonth: 100,
+    creditClaimType: 'daily',
+    dailyCreditClaim: 3.3,
+    monthlyClaimCap: 100,
     seats: { included: 3, extraPricePerSeat: 0 },  // Can't add more on free
     departments: 1,
-    pool: getIncludedOrgWorkspacePool('ORG_FREE'),  // NONE - no workspace pool
+    workspace: getIncludedOrgWorkspace('ORG_FREE'),  // NONE - no workspace
     features: { 
       sso: false, 
       customBranding: false, 
-      prioritySupport: false,
-      auditLogs: false,
+      prioritySupport: false,      supportTickets: false,      auditLogs: false,
       apiAccess: false,
       dedicatedDatabase: false,
     },
@@ -193,14 +223,18 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
     sharedGateways: 5,
     sharedPlugins: 20,
     sharedWorkflows: 25,
-    sharedCreditsPerMonth: 5000,
+    sharedCreditsPerMonth: 2500,
+    creditClaimType: 'monthly',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     seats: { included: 5, extraPricePerSeat: 1000 },    // $10/seat
     departments: 3,
-    pool: getIncludedOrgWorkspacePool('ORG_STARTER'),   // TEAM: 4GB, 2 CPU, 20GB
+    workspace: getIncludedOrgWorkspace('ORG_STARTER'),   // ORG_SMALL: 4GB, 2 CPU, 20GB
     features: { 
       sso: false, 
       customBranding: false, 
       prioritySupport: false,
+      supportTickets: false,
       auditLogs: true,
       apiAccess: true,
       dedicatedDatabase: false,
@@ -217,14 +251,18 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
     sharedGateways: 15,
     sharedPlugins: 50,
     sharedWorkflows: 75,
-    sharedCreditsPerMonth: 20000,
+    sharedCreditsPerMonth: 10000,
+    creditClaimType: 'monthly',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     seats: { included: 15, extraPricePerSeat: 700 },    // $7/seat
     departments: 10,
-    pool: getIncludedOrgWorkspacePool('ORG_GROWTH'),    // GROWTH: 8GB, 4 CPU, 50GB
+    workspace: getIncludedOrgWorkspace('ORG_GROWTH'),    // ORG_MEDIUM: 8GB, 4 CPU, 50GB
     features: { 
       sso: false, 
       customBranding: true, 
       prioritySupport: false,
+      supportTickets: false,
       auditLogs: true,
       apiAccess: true,
       dedicatedDatabase: false,
@@ -241,14 +279,18 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
     sharedGateways: 50,
     sharedPlugins: 150,
     sharedWorkflows: 250,
-    sharedCreditsPerMonth: 100000,
+    sharedCreditsPerMonth: 50000,
+    creditClaimType: 'monthly',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     seats: { included: 40, extraPricePerSeat: 500 },    // $5/seat
     departments: 25,
-    pool: getIncludedOrgWorkspacePool('ORG_PRO'),       // PRO: 16GB, 8 CPU, 100GB
+    workspace: getIncludedOrgWorkspace('ORG_PRO'),       // ORG_LARGE: 16GB, 8 CPU, 100GB
     features: { 
       sso: true, 
       customBranding: true, 
       prioritySupport: true,
+      supportTickets: true,
       auditLogs: true,
       apiAccess: true,
       dedicatedDatabase: false,
@@ -265,14 +307,18 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
     sharedGateways: 150,
     sharedPlugins: 500,
     sharedWorkflows: 1000,
-    sharedCreditsPerMonth: 500000,
+    sharedCreditsPerMonth: 100000,
+    creditClaimType: 'monthly',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     seats: { included: 100, extraPricePerSeat: 300 },   // $3/seat
     departments: null,      // Unlimited
-    pool: getIncludedOrgWorkspacePool('ORG_BUSINESS'),  // BUSINESS: 32GB, 16 CPU, 250GB
+    workspace: getIncludedOrgWorkspace('ORG_BUSINESS'),  // ORG_XLARGE: 32GB, 16 CPU, 250GB
     features: { 
       sso: true, 
       customBranding: true, 
       prioritySupport: true,
+      supportTickets: true,
       auditLogs: true,
       apiAccess: true,
       dedicatedDatabase: true,
@@ -290,13 +336,17 @@ export const ORG_PLAN_LIMITS: Record<OrgPlanType, OrgPlanLimits> = {
     sharedPlugins: -1,
     sharedWorkflows: -1,
     sharedCreditsPerMonth: -1,
+    creditClaimType: 'none',
+    dailyCreditClaim: 0,
+    monthlyClaimCap: 0,
     seats: { included: -1, extraPricePerSeat: 0 },
     departments: null,      // Unlimited
-    pool: getIncludedOrgWorkspacePool('ORG_ENTERPRISE'), // CUSTOM: negotiated
+    workspace: getIncludedOrgWorkspace('ORG_ENTERPRISE'), // CUSTOM: negotiated
     features: { 
       sso: true, 
       customBranding: true, 
       prioritySupport: true,
+      supportTickets: true,
       auditLogs: true,
       apiAccess: true,
       dedicatedDatabase: true,
@@ -446,20 +496,20 @@ export function calculateExtraSeatsPrice(
 }
 
 /**
- * Format org plan pool resources for display
+ * Format org plan workspace resources for display
  */
-export function formatOrgPoolResources(pool: OrgPlanPool): string {
-  if (pool.ramMb === null || pool.cpuCores === null || pool.storageMb === null) {
+export function formatOrgWorkspaceResources(workspace: OrgPlanWorkspace): string {
+  if (workspace.ramMb === null || workspace.cpuCores === null || workspace.storageMb === null) {
     return 'Custom resources';
   }
   
-  const ram = pool.ramMb >= 1024 
-    ? `${(pool.ramMb / 1024).toFixed(0)}GB RAM`
-    : `${pool.ramMb}MB RAM`;
-  const cpu = `${pool.cpuCores} CPU${pool.cpuCores > 1 ? 's' : ''}`;
-  const storage = pool.storageMb >= 1024
-    ? `${(pool.storageMb / 1024).toFixed(0)}GB Storage`
-    : `${pool.storageMb}MB Storage`;
+  const ram = workspace.ramMb >= 1024 
+    ? `${(workspace.ramMb / 1024).toFixed(0)}GB RAM`
+    : `${workspace.ramMb}MB RAM`;
+  const cpu = `${workspace.cpuCores} CPU${workspace.cpuCores > 1 ? 's' : ''}`;
+  const storage = workspace.storageMb >= 1024
+    ? `${(workspace.storageMb / 1024).toFixed(0)}GB Storage`
+    : `${workspace.storageMb}MB Storage`;
   
   return `${ram}, ${cpu}, ${storage}`;
 }
@@ -505,13 +555,9 @@ export function getOrgPlanFeatures(plan: OrgPlanType): string[] {
   }
   
   // Pool resources
-  if (limits.pool.ramMb === null) {
-    features.push('Custom RAM pool');
-  } else {
-    const ram = limits.pool.ramMb >= 1024 
-      ? `${(limits.pool.ramMb / 1024).toFixed(0)}GB` 
-      : `${limits.pool.ramMb}MB`;
-    features.push(`${ram} RAM pool`);
+  const workspaceTier = INCLUDED_ORG_WORKSPACE[plan];
+  if (workspaceTier !== 'NONE') {
+    features.push(getOrgWorkspaceDisplayName(workspaceTier));
   }
   
   // Features
@@ -523,6 +569,16 @@ export function getOrgPlanFeatures(plan: OrgPlanType): string[] {
   }
   if (limits.features.prioritySupport) {
     features.push('Priority support');
+  }
+  if (limits.features.supportTickets) {
+    features.push('Support tickets included');
+  } else {
+    features.push('Email support only');
+  }
+  if (limits.features.supportTickets) {
+    features.push('Support tickets included');
+  } else {
+    features.push('Email support only');
   }
   if (limits.features.auditLogs) {
     features.push('Audit logs');

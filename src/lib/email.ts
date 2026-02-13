@@ -65,15 +65,22 @@ export async function sendEmail(options: EmailOptions): Promise<EmailResult> {
       },
       "[DEV EMAIL] Would send email (no RESEND_API_KEY)"
     );
-    console.log("\n" + "=".repeat(60));
-    console.log("📧 EMAIL (Development Mode - No API Key)");
-    console.log("=".repeat(60));
-    console.log(`To: ${to}`);
-    console.log(`From: ${getEmailConfig().from}`);
-    console.log(`Subject: ${subject}`);
-    console.log("-".repeat(60));
-    console.log(text || html.replace(/<[^>]*>/g, ""));
-    console.log("=".repeat(60) + "\n");
+    // eslint-disable-next-line no-console
+    console.log(
+      [
+        "",
+        "=".repeat(60),
+        "📧 EMAIL (Development Mode - No API Key)",
+        "=".repeat(60),
+        `To: ${to}`,
+        `From: ${getEmailConfig().from}`,
+        `Subject: ${subject}`,
+        "-".repeat(60),
+        text || html.replace(/<[^>]*>/g, ""),
+        "=".repeat(60),
+        "",
+      ].join("\n"),
+    );
 
     return {
       success: true,

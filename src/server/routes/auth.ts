@@ -195,10 +195,11 @@ authRouter.get(
   requireAuth,
   asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUser>>) => {
     // User is attached by requireAuth middleware
-    const user = req.user!;
+    if (!req.user) throw new UnauthorizedError("Not authenticated");
+    const user = req.user;
 
     // Return safe user (without password)
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     const { passwordHash, ...safeUser } = user;
 
     res.json({

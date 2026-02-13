@@ -18,17 +18,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiUrl } from "@/shared/config/urls";
+import { adminApiUrl } from "@/shared/config/urls";
 import {
     AlertTriangle,
     Calendar,
     ChevronLeft,
     ChevronRight,
+    Edit,
+    Eye,
     Mail,
     Search,
     Shield,
     Users,
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 interface AdminUser {
@@ -41,16 +44,6 @@ interface AdminUser {
   lastLoginAt: string | null;
   gatewayCount: number;
   organizationCount: number;
-}
-
-interface UsersResponse {
-  users: AdminUser[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
 }
 
 function UserRowSkeleton() {
@@ -70,6 +63,15 @@ function UserRowSkeleton() {
       </td>
       <td className="px-4 py-3">
         <Skeleton className="h-5 w-24 bg-muted" />
+      </td>
+      <td className="px-4 py-3">
+        <Skeleton className="h-5 w-24 bg-muted" />
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex justify-end gap-2">
+          <Skeleton className="h-8 w-8 bg-muted" />
+          <Skeleton className="h-8 w-8 bg-muted" />
+        </div>
       </td>
     </tr>
   );
@@ -138,7 +140,7 @@ export default function AdminUsersPage() {
       if (search) params.set("search", search);
       if (planFilter) params.set("plan", planFilter);
 
-      const response = await fetch(apiUrl(`/admin/users?${params}`), {
+      const response = await fetch(adminApiUrl(`/users?${params}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) {
@@ -269,6 +271,9 @@ export default function AdminUsersPage() {
                   <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">
                     Last Login
                   </th>
+                  <th className="px-4 py-3 text-right text-sm font-medium text-muted-foreground">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -282,7 +287,7 @@ export default function AdminUsersPage() {
                   </>
                 ) : users.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No users found
                     </td>
                   </tr>
@@ -320,6 +325,32 @@ export default function AdminUsersPage() {
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-sm">
                         {formatDate(user.lastLoginAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            asChild
+                            className="h-8 w-8 p-0"
+                          >
+                            <Link href={`/admin/users/${user.id}`}>
+                              <Eye className="h-4 w-4" />
+                              <span className="sr-only">View user</span>
+                            </Link>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            asChild
+                            className="h-8 w-8 p-0"
+                          >
+                            <Link href={`/admin/users/${user.id}`}>
+                              <Edit className="h-4 w-4" />
+                              <span className="sr-only">Edit user</span>
+                            </Link>
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))

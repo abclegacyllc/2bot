@@ -15,6 +15,8 @@ import { CircuitOpenError } from "@/lib/circuit-breaker";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
+import type { GatewayType } from "@prisma/client";
+
 import {
     executePluginWithCircuit,
     getPluginCircuitStats,
@@ -129,9 +131,9 @@ async function executeInWorker(
 
     // Handle messages from worker (storage, gateway requests)
     worker.on("message", async (message: WorkerMessage) => {
-      if (message.type === "result") {
+      if (message.type === "result" && message.result) {
         clearTimeout(timeout);
-        resolve(message.result!);
+        resolve(message.result);
         return;
       }
 
@@ -406,7 +408,7 @@ export class PluginExecutor {
         // If the plugin returned failure, we should throw to trigger circuit breaker
         if (!innerResult.success) {
           const error = new Error(innerResult.error ?? "Plugin execution failed");
-          (error as any).pluginResult = innerResult;
+          (error as Error & { pluginResult?: PluginExecutionResult }).pluginResult = innerResult;
           throw error;
         }
 
@@ -452,7 +454,7 @@ export class PluginExecutor {
       }
 
       // Check if error contains a plugin result (plugin returned failure)
-      const pluginResult = (error as any)?.pluginResult as PluginExecutionResult | undefined;
+      const pluginResult = (error as Error & { pluginResult?: PluginExecutionResult })?.pluginResult;
       if (pluginResult) {
         await this.recordExecution(
           context.userPluginId,
@@ -675,7 +677,7 @@ export function createGatewayAccessor(
     getById(id) {
       const gateway = gateways.find((g) => g.id === id);
       // Type assertion needed because gateways array has string type, not GatewayType
-      return gateway ? { id: gateway.id, name: gateway.name, type: gateway.type as any } : undefined;
+      return gateway ? { id: gateway.id, name: gateway.name, type: gateway.type as GatewayType } : undefined;
     },
 
     async execute<TResult = unknown>(
@@ -696,7 +698,7 @@ export function createGatewayAccessor(
       return gateways.map((g) => ({
         id: g.id,
         name: g.name,
-        type: g.type as any,
+        type: g.type as GatewayType,
       }));
     },
   };

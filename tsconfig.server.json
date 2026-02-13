@@ -33,6 +33,8 @@
     "**/*.test.ts",
     "**/*.spec.ts",
     "src/components/**/*",
-    "src/app/**/*"
+    "src/app/**/*",
+    "src/lib/api-client.ts",
+    "src/hooks/**/*"
   ]
 }

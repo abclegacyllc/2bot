@@ -16,7 +16,7 @@ import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getCurrentBillingPeriod } from "./ai-usage.service";
 
-const log = logger.child({ module: "byok-metrics" });
+const _log = logger.child({ module: "byok-metrics" });
 
 // ===========================================
 // Types

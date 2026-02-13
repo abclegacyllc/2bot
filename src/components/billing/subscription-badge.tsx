@@ -95,14 +95,12 @@ export function SubscriptionBadge({
     >
       <Icon className="h-3 w-3" />
       {subscription.plan}
-      {showStatus && subscription.status !== "none" && (
-        <span
+      {showStatus && subscription.status !== "none" ? <span
           className={cn(
             "ml-1 h-2 w-2 rounded-full",
             statusColors[subscription.status]
           )}
-        />
-      )}
+        /> : null}
     </Badge>
   );
 }

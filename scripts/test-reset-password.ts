@@ -79,13 +79,17 @@ async function testResetPassword() {
   // 7. Test expired token
   console.log('\n7️⃣ Testing expired token...');
   const newToken = await authService.requestPasswordReset(testEmail);
+  if (!newToken) {
+    console.error('❌ Token should not be null');
+    process.exit(1);
+  }
   // Manually expire the token
   await prisma.passwordResetToken.updateMany({
-    where: { token: newToken! },
+    where: { token: newToken },
     data: { expiresAt: new Date(Date.now() - 1000) } // 1 second ago
   });
   try {
-    await authService.resetPassword(newToken!, 'ExpiredPass123');
+    await authService.resetPassword(newToken, 'ExpiredPass123');
     console.error('❌ Expired token should be rejected');
     process.exit(1);
   } catch (error) {

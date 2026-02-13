@@ -3,15 +3,15 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { serviceUrl } from "@/shared/config/urls";
 import { getAllPlansForDisplay } from "@/shared/constants/plans";
 import {
-  ArrowRight,
-  Bot,
-  Check,
-  LineChart,
-  MessageSquare,
-  Plug,
-  Rocket,
-  Shield,
-  Sparkles
+    ArrowRight,
+    Bot,
+    Check,
+    LineChart,
+    MessageSquare,
+    Plug,
+    Rocket,
+    Shield,
+    Sparkles
 } from "lucide-react";
 import Link from "next/link";
 
@@ -124,7 +124,7 @@ const features = [
   {
     name: "AI-Powered Automation",
     description:
-      "Leverage OpenAI, Claude, and other AI providers to create intelligent responses and automate conversations.",
+      "Leverage OpenAI, Claude, and 100+ open-source models to create intelligent responses and automate conversations.",
     icon: Sparkles,
     color: "text-purple-400",
     bgColor: "bg-purple-400/10",
@@ -241,13 +241,11 @@ function PricingSection() {
                   : ""
               }`}
             >
-              {plan.popular && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+              {plan.popular ? <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                   <span className="rounded-full bg-purple-600 px-3 py-1 text-xs font-semibold text-foreground">
                     Most Popular
                   </span>
-                </div>
-              )}
+                </div> : null}
               <CardHeader className="text-center">
                 <CardTitle className="text-foreground">{plan.name}</CardTitle>
                 <CardDescription className="text-muted-foreground">

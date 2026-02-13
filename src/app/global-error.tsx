@@ -42,18 +42,14 @@ export default function GlobalError({
               </p>
             </div>
 
-            {process.env.NODE_ENV === "development" && error && (
-              <div className="p-4 rounded-lg bg-card border border-border text-left">
+            {process.env.NODE_ENV === "development" && error ? <div className="p-4 rounded-lg bg-card border border-border text-left">
                 <p className="text-xs font-mono text-red-400 break-all">
                   {error.message}
                 </p>
-                {error.digest && (
-                  <p className="text-xs font-mono text-muted-foreground mt-2">
+                {error.digest ? <p className="text-xs font-mono text-muted-foreground mt-2">
                     Digest: {error.digest}
-                  </p>
-                )}
-              </div>
-            )}
+                  </p> : null}
+              </div> : null}
 
             <button
               onClick={reset}

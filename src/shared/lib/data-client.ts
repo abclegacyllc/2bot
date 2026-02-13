@@ -38,15 +38,17 @@ const connectionPool = new Map<string, PrismaClient>();
  * Note: Requires dynamic datasource support in production
  */
 function getOrCreateConnection(tenantId: string, _databaseUrl: string): PrismaClient {
-  if (!connectionPool.has(tenantId)) {
-    // FUTURE: Use databaseUrl when Prisma supports dynamic datasources
-    // For now, we log a warning and use the default connection
-    console.warn(
-      `[DataClient] Isolated database requested for ${tenantId} but dynamic datasources not yet implemented. Using default.`
-    );
-    connectionPool.set(tenantId, prisma);
+  const existing = connectionPool.get(tenantId);
+  if (existing) {
+    return existing;
   }
-  return connectionPool.get(tenantId)!;
+  // FUTURE: Use databaseUrl when Prisma supports dynamic datasources
+  // For now, we log a warning and use the default connection
+  console.warn(
+    `[DataClient] Isolated database requested for ${tenantId} but dynamic datasources not yet implemented. Using default.`
+  );
+  connectionPool.set(tenantId, prisma);
+  return prisma;
 }
 
 /**

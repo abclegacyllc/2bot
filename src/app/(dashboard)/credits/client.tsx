@@ -17,14 +17,16 @@ import { apiUrl } from "@/shared/config/urls";
 import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import type { ClaimStatus } from "@/components/credits";
 import {
-    BuyCreditsModal,
-    CreditsBalanceCard,
-    CreditsLimitWarning,
-    CreditsPurchasePackages,
-    CreditsTransactionHistory,
-    CreditsUsageBreakdown,
-    CreditsUsageChart,
+  BuyCreditsModal,
+  CreditsBalanceCard,
+  CreditsClaimCard,
+  CreditsLimitWarning,
+  CreditsPurchasePackages,
+  CreditsTransactionHistory,
+  CreditsUsageBreakdown,
+  CreditsUsageChart,
 } from "@/components/credits";
 import type { CreditPackage } from "@/components/credits/credits-purchase-packages";
 import type { Transaction } from "@/components/credits/credits-transaction-history";
@@ -61,7 +63,8 @@ interface HistoryData {
 }
 
 // ===========================================
-// Credit Packages
+// Credit Packages — $1 = 100 credits
+// Base rate: $10 per 1K. Larger packages include volume bonuses.
 // ===========================================
 
 const CREDIT_PACKAGES: CreditPackage[] = [
@@ -111,6 +114,8 @@ export function CreditsDashboardClient() {
   const [historyPage, setHistoryPage] = useState(1);
   const [historyType, setHistoryType] = useState<string | undefined>();
   const [usagePeriod, setUsagePeriod] = useState<"7d" | "30d" | "90d">("30d");
+  const [claimStatus, setClaimStatus] = useState<ClaimStatus | null>(null);
+  const [claiming, setClaiming] = useState(false);
 
   // Auth headers helper
   const getAuthHeaders = useCallback((): HeadersInit => {
@@ -121,8 +126,9 @@ export function CreditsDashboardClient() {
     return headers;
   }, [token]);
 
-  // Monthly limit (from user plan - null for unlimited)
-  const monthlyLimit: number | null = null; // Personal wallets typically have no hard limit
+  // No monthly spending cap — wallet balance is the only limit.
+  // Credits pages show usage for informational purposes only.
+  const monthlyLimit: number | null = null;
   const monthlyUsed = usage?.totalCredits || 0;
 
   // ===========================================
@@ -168,6 +174,44 @@ export function CreditsDashboardClient() {
     [getAuthHeaders]
   );
 
+  const fetchClaimStatus = useCallback(async () => {
+    try {
+      const response = await fetch(apiUrl("/credits/claim-status"), {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data.data as ClaimStatus;
+    } catch {
+      return null;
+    }
+  }, [getAuthHeaders]);
+
+  const handleClaim = useCallback(async () => {
+    setClaiming(true);
+    try {
+      const response = await fetch(apiUrl("/credits/claim"), {
+        method: "POST",
+        credentials: "include",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error?.message || "Failed to claim credits");
+      }
+      // Refresh balance and claim status
+      const [balanceData, newClaimStatus] = await Promise.all([
+        fetchBalance(),
+        fetchClaimStatus(),
+      ]);
+      setBalance(balanceData);
+      setClaimStatus(newClaimStatus);
+    } finally {
+      setClaiming(false);
+    }
+  }, [getAuthHeaders, fetchBalance, fetchClaimStatus]);
+
   const fetchAll = useCallback(async () => {
     if (!user) return;
 
@@ -175,22 +219,24 @@ export function CreditsDashboardClient() {
       setLoading(true);
       setError(null);
 
-      const [balanceData, usageData, historyData] = await Promise.all([
+      const [balanceData, usageData, historyData, claimData] = await Promise.all([
         fetchBalance(),
         fetchUsage(),
         fetchHistory(1),
+        fetchClaimStatus(),
       ]);
 
       setBalance(balanceData);
       setUsage(usageData);
       setHistory(historyData);
+      setClaimStatus(claimData);
     } catch (err) {
       console.error("Error fetching credits data:", err);
       setError("Failed to load credits data. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, [user, fetchBalance, fetchUsage, fetchHistory]);
+  }, [user, fetchBalance, fetchUsage, fetchHistory, fetchClaimStatus]);
 
   useEffect(() => {
     if (user) {
@@ -279,25 +325,34 @@ export function CreditsDashboardClient() {
       </div>
 
       {/* Warning Banner */}
-      {balance && (
-        <CreditsLimitWarning
+      {balance ? <CreditsLimitWarning
           currentBalance={balance.balance}
           monthlyUsed={monthlyUsed}
           monthlyLimit={monthlyLimit}
           dismissable
-        />
-      )}
+        /> : null}
 
-      {/* Balance Card */}
-      {balance && (
-        <CreditsBalanceCard
-          balance={balance.balance}
-          monthlyUsed={monthlyUsed}
-          planLimit={monthlyLimit}
-          lifetime={balance.lifetime}
+      {/* Claim Card + Balance Card */}
+      <div className={`grid gap-4 ${claimStatus?.creditClaimType === 'daily' ? 'md:grid-cols-2' : ''}`}>
+        {/* Daily Claim Card (only shows for FREE/STARTER) */}
+        <CreditsClaimCard
+          claimStatus={claimStatus}
           loading={loading}
+          claiming={claiming}
+          onClaim={handleClaim}
         />
-      )}
+
+        {/* Balance Card */}
+        {balance ? <CreditsBalanceCard
+            balance={balance.balance}
+            monthlyUsed={monthlyUsed}
+            planLimit={monthlyLimit}
+            lifetime={balance.lifetime}
+            loading={loading}
+            monthlyGrantDate={claimStatus?.monthlyGrantDate}
+            monthlyGrantAmount={claimStatus?.monthlyGrantAmount}
+          /> : null}
+      </div>
 
       {/* Tabs for different views */}
       <Tabs defaultValue="usage" className="space-y-4">
@@ -319,16 +374,13 @@ export function CreditsDashboardClient() {
             />
 
             {/* Usage Breakdown */}
-            {breakdownData && (
-              <CreditsUsageBreakdown data={breakdownData} loading={loading} />
-            )}
+            {breakdownData ? <CreditsUsageBreakdown data={breakdownData} loading={loading} /> : null}
           </div>
         </TabsContent>
 
         {/* History Tab */}
         <TabsContent value="history" className="space-y-4">
-          {history && (
-            <CreditsTransactionHistory
+          {history ? <CreditsTransactionHistory
               transactions={history.transactions}
               total={history.total}
               page={historyPage}
@@ -336,8 +388,7 @@ export function CreditsDashboardClient() {
               onPageChange={handleHistoryPageChange}
               onTypeFilter={handleHistoryTypeFilter}
               loading={loading}
-            />
-          )}
+            /> : null}
         </TabsContent>
 
         {/* Purchase Tab */}

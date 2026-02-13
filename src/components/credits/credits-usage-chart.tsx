@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { formatCredits } from "@/shared/lib/format";
 import { BarChart3 } from "lucide-react";
 
 export interface DailyUsage {
@@ -38,19 +39,6 @@ export interface CreditsUsageChartProps {
   period?: string;
   onPeriodChange?: (period: string) => void;
   className?: string;
-}
-
-/**
- * Format credits for display
- */
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${(credits / 1_000).toFixed(1)}K`;
-  }
-  return credits.toString();
 }
 
 /**
@@ -151,8 +139,7 @@ export function CreditsUsageChart({
             Total this period: {formatCredits(totalUsage)} credits
           </CardDescription>
         </div>
-        {onPeriodChange && (
-          <Select value={period} onValueChange={onPeriodChange}>
+        {onPeriodChange ? <Select value={period} onValueChange={onPeriodChange}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Select period" />
             </SelectTrigger>
@@ -163,8 +150,7 @@ export function CreditsUsageChart({
                 </SelectItem>
               ))}
             </SelectContent>
-          </Select>
-        )}
+          </Select> : null}
       </CardHeader>
       <CardContent>
         <SimpleBarChart data={data} />

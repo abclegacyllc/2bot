@@ -10,6 +10,7 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -25,17 +26,16 @@ import {
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
-import { INCLUDED_ORG_WORKSPACE_POOL, ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
+import { INCLUDED_ORG_WORKSPACE, ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
 import {
-    ALL_ORG_BOOSTER_TIERS,
-    ALLOWED_ORG_BOOSTERS_BY_PLAN,
-    getMinRequiredPlanForBooster,
-    ORG_WORKSPACE_BOOSTERS,
-    type OrgWorkspaceBoosterTier,
+    ALL_ORG_ADDON_TIERS,
+    ALLOWED_ORG_ADDONS_BY_PLAN,
+    getMinRequiredPlanForAddon,
+    ORG_WORKSPACE_ADDONS,
+    type OrgWorkspaceAddonTier,
 } from "@/shared/constants/org-workspace-addons";
 import {
     AlertCircle,
-    ArrowLeft,
     Check,
     Cpu,
     HardDrive,
@@ -73,7 +73,7 @@ function formatPrice(cents: number): string {
  */
 function WorkspaceBoosterCard({
   tier,
-  currentOrgPlan,
+  currentOrgPlan: _currentOrgPlan,
   isCurrent,
   isAllowed,
   onPurchase,
@@ -81,19 +81,19 @@ function WorkspaceBoosterCard({
   billingCycle = "monthly",
   canManageBilling,
 }: {
-  tier: OrgWorkspaceBoosterTier;
+  tier: OrgWorkspaceAddonTier;
   currentOrgPlan: OrgPlanType;
   isCurrent: boolean;
   isAllowed: boolean;
-  onPurchase: (tier: OrgWorkspaceBoosterTier) => void;
+  onPurchase: (tier: OrgWorkspaceAddonTier) => void;
   loading: boolean;
   billingCycle?: "monthly" | "yearly";
   canManageBilling: boolean;
 }) {
-  const booster = ORG_WORKSPACE_BOOSTERS[tier];
+  const booster = ORG_WORKSPACE_ADDONS[tier];
   const isLocked = !isAllowed && !isCurrent;
   const price = billingCycle === "yearly" ? booster.priceYearly : booster.priceMonthly;
-  const minRequiredPlan = getMinRequiredPlanForBooster(tier);
+  const minRequiredPlan = getMinRequiredPlanForAddon(tier);
 
   // Format specs for display
   const ramGb = booster.ramMb >= 1024 ? (booster.ramMb / 1024).toFixed(0) : `${booster.ramMb / 1024}`;
@@ -107,20 +107,16 @@ function WorkspaceBoosterCard({
         isLocked && "opacity-60"
       )}
     >
-      {isCurrent && (
-        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+      {isCurrent ? <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
           <Badge className="bg-green-600 text-white">Owned</Badge>
-        </div>
-      )}
+        </div> : null}
 
-      {isLocked && minRequiredPlan && (
-        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+      {isLocked && minRequiredPlan ? <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
           <Badge variant="outline" className="border-muted-foreground text-muted-foreground">
             <Lock className="h-3 w-3 mr-1" />
             Requires {ORG_PLAN_LIMITS[minRequiredPlan].displayName}+
           </Badge>
-        </div>
-      )}
+        </div> : null}
 
       <CardHeader className="text-center pt-8">
         <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-purple-600/20 flex items-center justify-center">
@@ -213,7 +209,7 @@ function OrgWorkspaceContent() {
   const { token, context } = useAuth();
   const router = useRouter();
   const { can } = useOrgPermissions();
-  const [purchasing, setPurchasing] = useState<OrgWorkspaceBoosterTier | null>(null);
+  const [purchasing, setPurchasing] = useState<OrgWorkspaceAddonTier | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly");
 
@@ -247,15 +243,15 @@ function OrgWorkspaceContent() {
   }
 
   const currentOrgPlan = (subData?.data?.plan as OrgPlanType) || "ORG_FREE";
-  const currentBooster = subData?.data?.workspaceBooster as OrgWorkspaceBoosterTier | undefined;
+  const currentBooster = subData?.data?.workspaceBooster as OrgWorkspaceAddonTier | undefined;
   const planLimits = ORG_PLAN_LIMITS[currentOrgPlan] || ORG_PLAN_LIMITS.ORG_FREE;
-  const poolTier = INCLUDED_ORG_WORKSPACE_POOL[currentOrgPlan] || "NONE";
-  const hasIncludedPool = poolTier !== "NONE" && planLimits.pool?.ramMb !== null;
+  const poolTier = INCLUDED_ORG_WORKSPACE[currentOrgPlan] || "NONE";
+  const hasIncludedPool = poolTier !== "NONE" && planLimits.workspace?.ramMb !== null;
 
   // Get allowed boosters for current plan
-  const allowedBoosters = ALLOWED_ORG_BOOSTERS_BY_PLAN[currentOrgPlan] ?? [];
+  const allowedBoosters = ALLOWED_ORG_ADDONS_BY_PLAN[currentOrgPlan] ?? [];
 
-  const handlePurchase = async (tier: OrgWorkspaceBoosterTier) => {
+  const handlePurchase = async (tier: OrgWorkspaceAddonTier) => {
     if (!canManageBilling) return;
 
     setPurchasing(tier);
@@ -303,27 +299,12 @@ function OrgWorkspaceContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-6xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
-              <Server className="h-8 w-8 text-purple-400" />
-              Organization Workspace Pool
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Add shared compute resources for {orgName}
-            </p>
-          </div>
-          <Link href="/organizations/billing">
-            <Button
-              variant="outline"
-              className="border-border text-foreground hover:bg-muted"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Billing
-            </Button>
-          </Link>
-        </div>
+        <PageHeader
+          title="Organization Workspace Pool"
+          description={`Add shared compute resources for ${orgName}`}
+          icon={<Server className="h-8 w-8 text-purple-400" />}
+          breadcrumbs={[{ label: "Billing", href: "/organizations/billing" }]}
+        />
 
         {/* Permission Warning */}
         {!canManageBilling && (
@@ -337,15 +318,13 @@ function OrgWorkspaceContent() {
         )}
 
         {/* Error */}
-        {error && (
-          <Alert variant="destructive">
+        {error ? <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>
               {error}
             </AlertDescription>
-          </Alert>
-        )}
+          </Alert> : null}
 
         {/* Current Plan Info */}
         <Alert className="border-border bg-muted/30">
@@ -381,9 +360,9 @@ function OrgWorkspaceContent() {
                       <span>Total RAM</span>
                     </div>
                     <span className="font-bold text-foreground">
-                      {planLimits.pool.ramMb && planLimits.pool.ramMb >= 1024
-                        ? `${(planLimits.pool.ramMb / 1024).toFixed(0)}GB`
-                        : `${planLimits.pool.ramMb}MB`}
+                      {planLimits.workspace.ramMb && planLimits.workspace.ramMb >= 1024
+                        ? `${(planLimits.workspace.ramMb / 1024).toFixed(0)}GB`
+                        : `${planLimits.workspace.ramMb}MB`}
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground">
@@ -399,7 +378,7 @@ function OrgWorkspaceContent() {
                       <span>Total CPU</span>
                     </div>
                     <span className="font-bold text-foreground">
-                      {planLimits.pool.cpuCores} {planLimits.pool.cpuCores === 1 ? "Core" : "Cores"}
+                      {planLimits.workspace.cpuCores} {planLimits.workspace.cpuCores === 1 ? "Core" : "Cores"}
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground">
@@ -415,9 +394,9 @@ function OrgWorkspaceContent() {
                       <span>Total Storage</span>
                     </div>
                     <span className="font-bold text-foreground">
-                      {planLimits.pool.storageMb && planLimits.pool.storageMb >= 1024
-                        ? `${(planLimits.pool.storageMb / 1024).toFixed(0)}GB`
-                        : `${planLimits.pool.storageMb}MB`}
+                      {planLimits.workspace.storageMb && planLimits.workspace.storageMb >= 1024
+                        ? `${(planLimits.workspace.storageMb / 1024).toFixed(0)}GB`
+                        : `${planLimits.workspace.storageMb}MB`}
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground">
@@ -448,12 +427,12 @@ function OrgWorkspaceContent() {
           </h2>
           <p className="text-muted-foreground mb-6">
             All boosters add to your shared pool resources.{" "}
-            {allowedBoosters.length < ALL_ORG_BOOSTER_TIERS.length && (
+            {allowedBoosters.length < ALL_ORG_ADDON_TIERS.length && (
               <Link href="/organizations/billing/upgrade" className="text-purple-400 hover:underline">
                 Upgrade your plan
               </Link>
             )}{" "}
-            {allowedBoosters.length < ALL_ORG_BOOSTER_TIERS.length && "to unlock more options."}
+            {allowedBoosters.length < ALL_ORG_ADDON_TIERS.length && "to unlock more options."}
           </p>
 
           {/* Billing Cycle Toggle */}
@@ -478,7 +457,7 @@ function OrgWorkspaceContent() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
-            {ALL_ORG_BOOSTER_TIERS.map((tier) => {
+            {ALL_ORG_ADDON_TIERS.map((tier) => {
               const isCurrent = currentBooster === tier;
               const isAllowed = allowedBoosters.includes(tier);
 

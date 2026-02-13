@@ -13,15 +13,17 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
+import { useOrganization } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import { ArrowLeft, RefreshCw, Shield } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import type { ClaimStatus } from "@/components/credits";
 import {
     BuyCreditsModal,
     CreditsBalanceCard,
+    CreditsClaimCard,
     CreditsLimitWarning,
     CreditsPurchasePackages,
     CreditsTransactionHistory,
@@ -63,36 +65,38 @@ interface HistoryData {
 }
 
 // ===========================================
-// Credit Packages (same as personal but for org)
+// Org Credit Packages — $1 = 100 credits (with org volume bonus)
+// IDs must match server-side ORG_CREDIT_PACKAGES keys
+// Base rate: $8 per 1K (org discount). Larger packages include volume bonuses.
 // ===========================================
 
 const CREDIT_PACKAGES: CreditPackage[] = [
   {
-    id: "small",
-    name: "Starter",
-    credits: 500,
-    price: 5,
-    popular: false,
-  },
-  {
-    id: "medium",
-    name: "Standard",
-    credits: 1_250,
-    price: 10,
-    popular: true,
-  },
-  {
-    id: "large",
-    name: "Pro",
-    credits: 3_000,
+    id: "org_small",
+    name: "Org Starter",
+    credits: 2_500,
     price: 20,
     popular: false,
   },
   {
-    id: "xlarge",
-    name: "Enterprise",
-    credits: 10_000,
-    price: 50,
+    id: "org_medium",
+    name: "Org Standard",
+    credits: 6_250,
+    price: 40,
+    popular: true,
+  },
+  {
+    id: "org_large",
+    name: "Org Pro",
+    credits: 15_000,
+    price: 80,
+    popular: false,
+  },
+  {
+    id: "org_xlarge",
+    name: "Org Enterprise",
+    credits: 50_000,
+    price: 200,
     popular: false,
   },
 ];
@@ -104,7 +108,6 @@ const CREDIT_PACKAGES: CreditPackage[] = [
 export function OrgCreditsDashboardClient() {
   const { user, token, isLoading: authLoading } = useAuth();
   const { orgId, orgName, isFound, isLoading: orgLoading, orgRole } = useOrganization();
-  const { buildOrgUrl } = useOrgUrls();
 
   // State
   const [balance, setBalance] = useState<BalanceData | null>(null);
@@ -115,6 +118,8 @@ export function OrgCreditsDashboardClient() {
   const [historyPage, setHistoryPage] = useState(1);
   const [historyType, setHistoryType] = useState<string | undefined>();
   const [usagePeriod, setUsagePeriod] = useState<"7d" | "30d" | "90d">("30d");
+  const [claimStatus, setClaimStatus] = useState<ClaimStatus | null>(null);
+  const [claiming, setClaiming] = useState(false);
 
   // Auth headers helper
   const getAuthHeaders = useCallback((): HeadersInit => {
@@ -125,8 +130,9 @@ export function OrgCreditsDashboardClient() {
     return headers;
   }, [token]);
 
-  // Monthly limit (from org plan)
-  const monthlyLimit: number | null = null; // TODO: Get from org subscription
+  // No monthly spending cap — wallet balance is the only limit.
+  // Credits pages show usage for informational purposes only.
+  const monthlyLimit: number | null = null;
   const monthlyUsed = usage?.totalCredits || 0;
 
   // Check if user is admin
@@ -178,6 +184,45 @@ export function OrgCreditsDashboardClient() {
     [orgId, getAuthHeaders]
   );
 
+  const fetchClaimStatus = useCallback(async () => {
+    if (!orgId) return null;
+    try {
+      const response = await fetch(apiUrl(`/orgs/${orgId}/credits/claim-status`), {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data.data as ClaimStatus;
+    } catch {
+      return null;
+    }
+  }, [orgId, getAuthHeaders]);
+
+  const handleClaim = useCallback(async () => {
+    if (!orgId) return;
+    setClaiming(true);
+    try {
+      const response = await fetch(apiUrl(`/orgs/${orgId}/credits/claim`), {
+        method: "POST",
+        credentials: "include",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error?.message || "Failed to claim credits");
+      }
+      const [balanceData, newClaimStatus] = await Promise.all([
+        fetchBalance(),
+        fetchClaimStatus(),
+      ]);
+      if (balanceData) setBalance(balanceData);
+      setClaimStatus(newClaimStatus);
+    } finally {
+      setClaiming(false);
+    }
+  }, [orgId, getAuthHeaders, fetchBalance, fetchClaimStatus]);
+
   const fetchAll = useCallback(async () => {
     if (!user || !orgId) return;
 
@@ -185,22 +230,24 @@ export function OrgCreditsDashboardClient() {
       setLoading(true);
       setError(null);
 
-      const [balanceData, usageData, historyData] = await Promise.all([
+      const [balanceData, usageData, historyData, claimData] = await Promise.all([
         fetchBalance(),
         fetchUsage(),
         fetchHistory(1),
+        fetchClaimStatus(),
       ]);
 
       if (balanceData) setBalance(balanceData);
       if (usageData) setUsage(usageData);
       if (historyData) setHistory(historyData);
+      setClaimStatus(claimData);
     } catch (err) {
       console.error("Error fetching org credits data:", err);
       setError("Failed to load credits data. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, [user, orgId, fetchBalance, fetchUsage, fetchHistory]);
+  }, [user, orgId, fetchBalance, fetchUsage, fetchHistory, fetchClaimStatus]);
 
   useEffect(() => {
     if (user && orgId && isFound) {
@@ -300,55 +347,60 @@ export function OrgCreditsDashboardClient() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-3xl font-bold tracking-tight">Credits</h1>
-            {isAdmin && (
-              <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+            {isAdmin ? <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
                 <Shield className="h-3 w-3" />
                 Admin
-              </span>
-            )}
+              </span> : null}
           </div>
           <p className="text-muted-foreground">
             {orgName}&apos;s universal currency for AI, marketplace, and premium features.
           </p>
         </div>
-        {isAdmin && (
-          <BuyCreditsModal
+        {isAdmin ? <BuyCreditsModal
             packages={CREDIT_PACKAGES}
             variant="organization"
             organizationId={orgId}
             onPurchaseComplete={fetchAll}
-          />
-        )}
+          /> : null}
       </div>
 
       {/* Warning Banner */}
-      {balance && (
-        <CreditsLimitWarning
+      {balance ? <CreditsLimitWarning
           currentBalance={balance.balance}
           monthlyUsed={monthlyUsed}
           monthlyLimit={monthlyLimit}
           dismissable
-        />
-      )}
+        /> : null}
 
-      {/* Balance Card */}
-      {balance && (
-        <CreditsBalanceCard
-          balance={balance.balance}
-          monthlyUsed={monthlyUsed}
-          planLimit={monthlyLimit}
-          lifetime={balance.lifetime}
-          loading={loading}
-          variant="organization"
-        />
-      )}
+      {/* Claim Card + Balance Card */}
+      <div className={`grid gap-4 ${claimStatus?.creditClaimType === 'daily' ? 'md:grid-cols-2' : ''}`}>
+        {/* Daily Claim Card (only shows for ORG_FREE) */}
+        {isAdmin ? <CreditsClaimCard
+            claimStatus={claimStatus}
+            loading={loading}
+            claiming={claiming}
+            onClaim={handleClaim}
+          /> : null}
+
+        {/* Balance Card */}
+        {balance ? <CreditsBalanceCard
+            balance={balance.balance}
+            monthlyUsed={monthlyUsed}
+            planLimit={monthlyLimit}
+            lifetime={balance.lifetime}
+            loading={loading}
+            variant="organization"
+            monthlyGrantDate={claimStatus?.monthlyGrantDate}
+            monthlyGrantAmount={claimStatus?.monthlyGrantAmount}
+          /> : null}
+      </div>
 
       {/* Tabs for different views */}
       <Tabs defaultValue="usage" className="space-y-4">
         <TabsList>
           <TabsTrigger value="usage">Usage</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
-          {isAdmin && <TabsTrigger value="purchase">Buy Credits</TabsTrigger>}
+          {isAdmin ? <TabsTrigger value="purchase">Buy Credits</TabsTrigger> : null}
         </TabsList>
 
         {/* Usage Tab */}
@@ -363,16 +415,13 @@ export function OrgCreditsDashboardClient() {
             />
 
             {/* Usage Breakdown */}
-            {breakdownData && (
-              <CreditsUsageBreakdown data={breakdownData} loading={loading} />
-            )}
+            {breakdownData ? <CreditsUsageBreakdown data={breakdownData} loading={loading} /> : null}
           </div>
         </TabsContent>
 
         {/* History Tab */}
         <TabsContent value="history" className="space-y-4">
-          {history && (
-            <CreditsTransactionHistory
+          {history ? <CreditsTransactionHistory
               transactions={history.transactions}
               total={history.total}
               page={historyPage}
@@ -380,13 +429,11 @@ export function OrgCreditsDashboardClient() {
               onPageChange={handleHistoryPageChange}
               onTypeFilter={handleHistoryTypeFilter}
               loading={loading}
-            />
-          )}
+            /> : null}
         </TabsContent>
 
         {/* Purchase Tab - Admin only */}
-        {isAdmin && (
-          <TabsContent value="purchase" className="space-y-4">
+        {isAdmin ? <TabsContent value="purchase" className="space-y-4">
             <CreditsPurchasePackages
               packages={CREDIT_PACKAGES}
               loading={false}
@@ -406,8 +453,7 @@ export function OrgCreditsDashboardClient() {
                 }
               }}
             />
-          </TabsContent>
-        )}
+          </TabsContent> : null}
       </Tabs>
     </div>
   );

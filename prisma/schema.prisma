@@ -149,6 +149,12 @@ model User {
   memberAllocsSetBy   MemberAllocation[] @relation("MemberAllocSetBy")
   orgInvitesSent      OrgInvite[]
 
+  // Support relations (Phase 7)
+  supportTickets       SupportTicket[]  @relation("UserTickets")
+  assignedTickets      SupportTicket[]  @relation("AssignedTickets")
+  ticketMessages       TicketMessage[]  @relation("TicketMessageSender")
+  kbArticles           KBArticle[]      @relation("KBArticleAuthor")
+
   @@index([email])
   @@index([stripeCustomerId])
   @@index([deletedAt])
@@ -253,9 +259,9 @@ model Organization {
   usedSeats        Int          @default(0) @map("used_seats")
   
   // Shared workspace pool resources (from org plan)
-  poolRamMb        Int          @default(4096) @map("pool_ram_mb")
-  poolCpuCores     Float        @default(2) @map("pool_cpu_cores")
-  poolStorageMb    Int          @default(20480) @map("pool_storage_mb")
+  workspacePoolRamMb        Int          @default(4096) @map("workspace_pool_ram_mb")
+  workspacePoolCpuCores     Float        @default(2) @map("workspace_pool_cpu_cores")
+  workspacePoolStorageMb    Int          @default(20480) @map("workspace_pool_storage_mb")
   
   // Database Isolation (Future-Ready)
   // See Phase 1.5 for architecture details
@@ -752,6 +758,10 @@ model CreditWallet {
   monthlyUsed       Int    @default(0)   @map("monthly_used")
   allocationResetAt DateTime? @map("allocation_reset_at")
   
+  // Daily credit claims (FREE/STARTER = daily, PRO+ = monthly auto-grant)
+  lastClaimedAt       DateTime?  @map("last_claimed_at")
+  monthlyClaimedTotal Int        @default(0)  @map("monthly_claimed_total")
+  
   // Settings (auto-topup, notifications, etc.)
   settings        Json     @default("{}")
   
@@ -1131,9 +1141,9 @@ model CreditRate {
   // Credit rates (only one applies based on capability type)
   creditsPerInputToken   Float?   @map("credits_per_input_token")   // Chat input (per token)
   creditsPerOutputToken  Float?   @map("credits_per_output_token")  // Chat output (per token)
-  creditsPerImage        Int?     @map("credits_per_image")         // Image generation
+  creditsPerImage        Float?   @map("credits_per_image")         // Image generation
   creditsPerChar         Float?   @map("credits_per_char")          // TTS (per character)
-  creditsPerMinute       Int?     @map("credits_per_minute")        // STT
+  creditsPerMinute       Float?   @map("credits_per_minute")        // STT
   
   // Your actual cost (for margin tracking - admin only)
   yourCostPer1kInput     Decimal? @map("your_cost_per_1k_input") @db.Decimal(10, 6)
@@ -1150,4 +1160,178 @@ model CreditRate {
   @@unique([capability, model])
   @@index([isActive])
   @@map("credit_rates")
+}
+
+// ===========================================
+// Knowledge Base Article (Phase 7: Support)
+// ===========================================
+model KBArticle {
+  id              String    @id @default(cuid())
+  slug            String    @unique
+  title           String
+  content         String    @db.Text    // Markdown content
+  excerpt         String?               // Short summary for list view
+  category        String                // getting_started, gateways, plugins, billing, troubleshooting
+
+  // Search & Discovery
+  tags            String[]              // Array of tags for filtering
+  viewCount       Int       @default(0) @map("view_count")
+  helpfulCount    Int       @default(0) @map("helpful_count")
+  notHelpfulCount Int       @default(0) @map("not_helpful_count")
+
+  // Status
+  isPublished     Boolean   @default(false) @map("is_published")
+
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  publishedAt     DateTime? @map("published_at")
+
+  // Author (support/admin user)
+  authorId        String    @map("author_id")
+  author          User      @relation("KBArticleAuthor", fields: [authorId], references: [id])
+
+  @@index([slug])
+  @@index([category])
+  @@index([isPublished])
+  @@index([viewCount])
+  @@map("kb_articles")
+}
+
+// ===========================================
+// Support Ticket (Phase 7: Support)
+// ===========================================
+model SupportTicket {
+  id              String    @id @default(cuid())
+  ticketNumber    String    @unique @map("ticket_number") // TICKET-0001
+  userId          String    @map("user_id")
+
+  // Ticket Info
+  type            String    // bug, question, billing, feature_request, other
+  category        String    // gateway, plugin, billing, account, other
+  severity        String    @default("medium") // low, medium, high, critical
+  title           String
+  description     String    @db.Text
+
+  // Auto-captured Context (JSON)
+  contextData     Json      @default("{}") @map("context_data")
+  // Structure: { url, browser, os, screenSize, recentActions, gatewayStatus, errorLogs }
+
+  // AI Chat History (JSON) - conversation that led to ticket creation
+  aiChatHistory   Json      @default("[]") @map("ai_chat_history")
+
+  // Status & Assignment
+  status          String    @default("open") // open, in_progress, waiting_user, resolved, closed
+  priority        Int       @default(0)      // For queue ordering (higher = more urgent)
+  assignedToId    String?   @map("assigned_to_id")
+
+  // Resolution
+  resolution      String?   @db.Text
+  resolvedAt      DateTime? @map("resolved_at")
+
+  // Linked Resources
+  relatedArticleId String? @map("related_article_id")
+
+  // SLA tracking (for future premium support tiers)
+  firstResponseAt  DateTime? @map("first_response_at")
+
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user            User      @relation("UserTickets", fields: [userId], references: [id])
+  assignedTo      User?     @relation("AssignedTickets", fields: [assignedToId], references: [id])
+  messages        TicketMessage[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([type])
+  @@index([priority])
+  @@index([createdAt])
+  @@map("support_tickets")
+}
+
+// ===========================================
+// Ticket Message (Conversation Thread)
+// ===========================================
+model TicketMessage {
+  id              String    @id @default(cuid())
+  ticketId        String    @map("ticket_id")
+  senderId        String    @map("sender_id")
+
+  content         String    @db.Text
+  isInternal      Boolean   @default(false) @map("is_internal") // Internal notes (support only)
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  ticket          SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender          User          @relation("TicketMessageSender", fields: [senderId], references: [id])
+
+  @@index([ticketId])
+  @@index([senderId])
+  @@map("ticket_messages")
+}
+
+// ===========================================
+// Quick Issue Templates (Phase 7: Support)
+// ===========================================
+model QuickIssue {
+  id                String    @id @default(cuid())
+  title             String    // "Gateway not connecting"
+  description       String?   // Brief help text
+
+  // Auto-fill values
+  suggestedType     String    @map("suggested_type")     // bug, question, etc.
+  suggestedCategory String    @map("suggested_category") // gateway, billing, etc.
+
+  // Link to KB Article (if exists)
+  articleSlug       String?   @map("article_slug")
+
+  // Usage tracking
+  useCount          Int       @default(0) @map("use_count")
+
+  // Display
+  icon              String?   // Emoji or icon name
+  sortOrder         Int       @default(0) @map("sort_order")
+  isActive          Boolean   @default(true) @map("is_active")
+
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("quick_issues")
+}
+
+// ===========================================
+// Support AI Cost Tracking (Phase 7: Support)
+// ===========================================
+model SupportAICost {
+  id              String    @id @default(cuid())
+
+  // Who triggered the cost
+  userId          String?   @map("user_id")  // User who asked (null = anonymous)
+
+  // AI usage details
+  model           String    // Provider model ID used (e.g. "claude-3-5-haiku-20241022")
+  provider        String    // "openai", "anthropic", "together"
+  inputTokens     Int       @map("input_tokens")
+  outputTokens    Int       @map("output_tokens")
+
+  // Cost tracking (real API cost, NO margin)
+  apiCostUsd      Float     @map("api_cost_usd")   // Actual API cost in USD
+  creditsCharged  Float     @map("credits_charged") // Credits that would be charged (with margin)
+
+  // Billing period for aggregation
+  billingPeriod   String    @map("billing_period") // "2026-02" format
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([billingPeriod])
+  @@index([createdAt])
+  @@index([userId])
+  @@map("support_ai_costs")
 }

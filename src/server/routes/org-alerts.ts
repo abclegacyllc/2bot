@@ -183,7 +183,8 @@ orgAlertsRouter.post(
       throw new BadRequestError("Alert ID required");
     }
 
-    await alertService.acknowledgeAlert(alertId, req.user!.id);
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    await alertService.acknowledgeAlert(alertId, req.user.id);
 
     const response: ApiResponse<{ acknowledged: boolean }> = {
       success: true,

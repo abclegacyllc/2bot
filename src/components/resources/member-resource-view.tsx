@@ -245,15 +245,13 @@ export function MemberResourceView({
         items={usageItems}
       />
 
-      {workspace && (
-        <ResourcePoolCard
+      {workspace ? <ResourcePoolCard
           title="Your Workspace"
           description="Compute resources allocated to you"
           icon={Server}
           items={workspaceItems}
           columns={3}
-        />
-      )}
+        /> : null}
     </div>
   );
 }

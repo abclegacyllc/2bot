@@ -96,12 +96,12 @@ function parseNumber(val: string | undefined): number | null {
   return isNaN(num) ? null : num;
 }
 
-function formatNumber(num: number | null): string {
+function formatNumberForInput(num: number | null): string {
   if (num === null) return "";
   return num.toString();
 }
 
-function formatLimit(num: number | null): string {
+function formatLimitDisplay(num: number | null): string {
   if (num === null) return "Unlimited";
   if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
   if (num >= 1000) return `${(num / 1000).toFixed(0)}K`;
@@ -117,7 +117,7 @@ export function DeptAllocationForm({
   token,
   departments,
   existingAllocation,
-  orgLimits,
+  orgLimits: _orgLimits,
   unallocated,
   onSaved,
   onCancel,
@@ -131,10 +131,10 @@ export function DeptAllocationForm({
     resolver: zodResolver(formSchema),
     defaultValues: {
       departmentId: existingAllocation?.departmentId ?? "",
-      maxGateways: formatNumber(existingAllocation?.maxGateways ?? null),
-      maxWorkflows: formatNumber(existingAllocation?.maxWorkflows ?? null),
-      maxPlugins: formatNumber(existingAllocation?.maxPlugins ?? null),
-      creditBudget: formatNumber(existingAllocation?.creditBudget ?? null),
+      maxGateways: formatNumberForInput(existingAllocation?.maxGateways ?? null),
+      maxWorkflows: formatNumberForInput(existingAllocation?.maxWorkflows ?? null),
+      maxPlugins: formatNumberForInput(existingAllocation?.maxPlugins ?? null),
+      creditBudget: formatNumberForInput(existingAllocation?.creditBudget ?? null),
       allocMode: (existingAllocation?.allocMode as FormValues["allocMode"]) ?? "SOFT_CAP",
     },
   });
@@ -193,11 +193,9 @@ export function DeptAllocationForm({
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <CardContent className="space-y-4">
-            {error && (
-              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+            {error ? <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
                 {error}
-              </div>
-            )}
+              </div> : null}
 
             {/* Department Select (only for new allocation) */}
             {!isEditing && (
@@ -247,7 +245,7 @@ export function DeptAllocationForm({
                       />
                     </FormControl>
                     <FormDescription>
-                      Available: {formatLimit(unallocated.gateways)}
+                      Available: {formatLimitDisplay(unallocated.gateways)}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -269,7 +267,7 @@ export function DeptAllocationForm({
                       />
                     </FormControl>
                     <FormDescription>
-                      Available: {formatLimit(unallocated.workflows)}
+                      Available: {formatLimitDisplay(unallocated.workflows)}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -291,7 +289,7 @@ export function DeptAllocationForm({
                       />
                     </FormControl>
                     <FormDescription>
-                      Available: {formatLimit(unallocated.plugins)}
+                      Available: {formatLimitDisplay(unallocated.plugins)}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -313,7 +311,7 @@ export function DeptAllocationForm({
                       />
                     </FormControl>
                     <FormDescription>
-                      Available: {formatLimit(unallocated.creditBudget)}
+                      Available: {formatLimitDisplay(unallocated.creditBudget)}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -366,9 +364,7 @@ export function DeptAllocationForm({
               Cancel
             </Button>
             <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+              {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isEditing ? "Update Allocation" : "Create Allocation"}
             </Button>
           </CardFooter>

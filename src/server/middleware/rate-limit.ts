@@ -27,16 +27,19 @@ const limiters = new Map<string, RateLimiterRedis>();
  * Get or create a rate limiter for the given config
  */
 function getLimiter(key: string, config: RateLimitConfig): RateLimiterRedis {
-  if (!limiters.has(key)) {
-    limiters.set(key, new RateLimiterRedis({
-      storeClient: redis,
-      keyPrefix: `ratelimit:${key}`,
-      points: config.points,
-      duration: config.duration,
-      blockDuration: config.blockDuration,
-    }));
+  const existing = limiters.get(key);
+  if (existing) {
+    return existing;
   }
-  return limiters.get(key)!;
+  const limiter = new RateLimiterRedis({
+    storeClient: redis,
+    keyPrefix: `ratelimit:${key}`,
+    points: config.points,
+    duration: config.duration,
+    blockDuration: config.blockDuration,
+  });
+  limiters.set(key, limiter);
+  return limiter;
 }
 
 /**
@@ -82,7 +85,11 @@ export function rateLimitMiddleware() {
     const endpointKey = `${req.method}:${req.path}`;
 
     // Get config for this endpoint, or use default
-    const config = IP_RATE_LIMITS[endpointKey] ?? IP_RATE_LIMITS.default!;
+    const defaultConfig = IP_RATE_LIMITS.default;
+    if (!defaultConfig) {
+      throw new Error('Default rate limit config is missing');
+    }
+    const config = IP_RATE_LIMITS[endpointKey] ?? defaultConfig;
     const limiterKey = IP_RATE_LIMITS[endpointKey] ? endpointKey : 'default';
 
     try {

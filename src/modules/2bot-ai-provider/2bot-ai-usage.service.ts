@@ -275,7 +275,7 @@ class TwoBotAIUsageService {
       byModel[model].credits += record.creditsUsed;
 
       // By day (with credits)
-      const day = record.createdAt.toISOString().split("T")[0]!;
+      const day = record.createdAt.toISOString().split("T")[0] ?? "";
       if (!byDay[day]) {
         byDay[day] = { requests: 0, credits: 0 };
       }

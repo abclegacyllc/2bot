@@ -15,14 +15,15 @@ import { useEffect, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { GatewayStatusIndicator } from "@/components/gateways/gateway-status";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,12 +31,6 @@ import type { SafeGateway } from "@/modules/gateway/gateway.types";
 import { apiUrl } from "@/shared/config/urls";
 
 // Icons
-const ArrowLeftIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-  </svg>
-);
-
 const TrashIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -374,24 +369,12 @@ function GatewayDetailContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-2xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-start gap-4">
-          <Link
-            href="/gateways"
-            className="mt-1 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeftIcon />
-          </Link>
-          <div className="flex items-center gap-4 flex-grow">
-            <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center text-muted-foreground">
-              {getGatewayIcon(gateway.type)}
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">{gateway.name}</h1>
-              <p className="text-muted-foreground">{getGatewayTypeName(gateway.type)}</p>
-            </div>
-          </div>
-        </div>
+        <PageHeader
+          title={gateway.name}
+          description={getGatewayTypeName(gateway.type)}
+          icon={<div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center text-muted-foreground">{getGatewayIcon(gateway.type)}</div>}
+          breadcrumbs={[{ label: "Gateways", href: "/gateways" }]}
+        />
 
         {/* Status Card */}
         <Card className="border-border bg-card/50">
@@ -518,16 +501,6 @@ function GatewayDetailContent() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Back link */}
-        <div className="pt-4">
-          <Link
-            href="/gateways"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            ← Back to Gateways
-          </Link>
-        </div>
       </div>
 
       {/* Delete confirmation dialog */}

@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -474,7 +475,15 @@ function AddGatewayContent() {
 
   return (
     <div className="min-h-screen bg-background p-8">
-      <div className="max-w-lg mx-auto">
+      <div className="max-w-lg mx-auto space-y-6">
+        <PageHeader
+          title={step === "type" ? "Add Gateway" : `Configure ${selectedType === "TELEGRAM_BOT" ? "Telegram Bot" : "AI Provider"}`}
+          description={step === "type"
+            ? "Connect a new Telegram bot or AI provider"
+            : "Enter your credentials and configuration"
+          }
+          breadcrumbs={[{ label: "Gateways", href: "/gateways" }]}
+        />
         <Card className="border-border bg-card/50">
           <CardContent className="p-6">
             {step === "type" && <TypeSelector onSelect={handleTypeSelect} />}

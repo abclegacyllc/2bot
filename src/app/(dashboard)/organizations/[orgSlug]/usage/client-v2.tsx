@@ -29,7 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
-import { AlertCircle, ArrowLeft, RefreshCw, Settings, Zap } from "lucide-react";
+import { AlertCircle, RefreshCw, Settings, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -212,7 +212,7 @@ export function OrgUsageDashboardV2Client() {
       <div className="flex h-[400px] flex-col items-center justify-center text-center">
         <p className="text-lg font-medium text-foreground">Organization not found</p>
         <p className="text-muted-foreground mt-2">
-          The organization you're looking for doesn't exist or you don't have access.
+          The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access.
         </p>
         <Button variant="outline" className="mt-4" asChild>
           <Link href="/">Back to Dashboard</Link>
@@ -226,19 +226,12 @@ export function OrgUsageDashboardV2Client() {
     return (
       <div className="space-y-8">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href={buildOrgUrl("/")}>
-              <Button variant="ghost" size="icon">
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-            </Link>
-            <div>
-              <h1 className="text-3xl font-bold flex items-center gap-3">
-                <Zap className="h-8 w-8 text-purple-400" />
-                {orgName || "Organization"}
-              </h1>
-              <p className="text-muted-foreground">Resource usage and allocation</p>
-            </div>
+          <div>
+            <h1 className="text-3xl font-bold flex items-center gap-3">
+              <Zap className="h-8 w-8 text-purple-400" />
+              {orgName || "Organization"}
+            </h1>
+            <p className="text-muted-foreground">Resource usage and allocation</p>
           </div>
         </div>
         <ErrorDisplay error={statusError} onRetry={handleRefresh} />
@@ -253,23 +246,16 @@ export function OrgUsageDashboardV2Client() {
     <div className="space-y-8">
       {/* Page header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href={buildOrgUrl("/")}>
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-3">
-              <Zap className="h-8 w-8 text-purple-400" />
-              {orgName || "Organization"}
-            </h1>
-            <p className="text-muted-foreground">
-              Resource usage and allocation
-              {" • "}
-              <span className="text-purple-400">{planName} Plan</span>
-            </p>
-          </div>
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-3">
+            <Zap className="h-8 w-8 text-purple-400" />
+            {orgName || "Organization"}
+          </h1>
+          <p className="text-muted-foreground">
+            Resource usage and allocation
+            {" \u2022 "}
+            <span className="text-purple-400">{planName} Plan</span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" onClick={handleRefresh}>

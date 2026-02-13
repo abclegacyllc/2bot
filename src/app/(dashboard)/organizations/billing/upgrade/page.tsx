@@ -10,6 +10,7 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +26,7 @@ import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { apiUrl } from "@/shared/config/urls";
 import {
     ALL_ORG_PLAN_TYPES,
-    INCLUDED_ORG_WORKSPACE_POOL,
+    INCLUDED_ORG_WORKSPACE,
     ORG_PLAN_LIMITS,
     ORG_PLAN_ORDER,
     type OrgPlanType,
@@ -33,7 +34,6 @@ import {
 import type { LucideIcon } from "lucide-react";
 import {
     AlertCircle,
-    ArrowLeft,
     Building2,
     Check,
     Crown,
@@ -43,9 +43,8 @@ import {
     Sparkles,
     Star,
     Users,
-    Zap,
+    Zap
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
@@ -165,27 +164,12 @@ function OrgUpgradeContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-5xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
-              <Building2 className="h-8 w-8 text-purple-400" />
-              Upgrade Organization Plan
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Choose the best plan for {orgName}
-            </p>
-          </div>
-          <Link href="/organizations/billing">
-            <Button
-              variant="outline"
-              className="border-border text-foreground hover:bg-muted"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Billing
-            </Button>
-          </Link>
-        </div>
+        <PageHeader
+          title="Upgrade Organization Plan"
+          description={`Choose the best plan for ${orgName}`}
+          icon={<Building2 className="h-8 w-8 text-purple-400" />}
+          breadcrumbs={[{ label: "Billing", href: "/organizations/billing" }]}
+        />
 
         {/* Permission Warning */}
         {!canManageBilling && (
@@ -199,15 +183,13 @@ function OrgUpgradeContent() {
         )}
 
         {/* Error */}
-        {error && (
-          <Alert variant="destructive">
+        {error ? <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>
               {error}
             </AlertDescription>
-          </Alert>
-        )}
+          </Alert> : null}
 
         {/* Billing Cycle Toggle */}
         <div className="flex justify-center gap-2 p-1 bg-muted/30 rounded-lg w-fit mx-auto">
@@ -245,8 +227,8 @@ function OrgUpgradeContent() {
           {ALL_ORG_PLAN_TYPES.map((planId) => {
             const plan = ORG_PLAN_LIMITS[planId];
             const Icon = ORG_PLAN_ICONS[planId];
-            const poolTier = INCLUDED_ORG_WORKSPACE_POOL[planId];
-            const hasPool = poolTier !== "NONE" && plan.pool.ramMb !== null;
+            const poolTier = INCLUDED_ORG_WORKSPACE[planId];
+            const hasPool = poolTier !== "NONE" && plan.workspace.ramMb !== null;
             const isCurrent = isCurrentOrgPlan(planId);
             const price = billingCycle === "yearly" ? plan.priceYearly : plan.priceMonthly;
             const isPopular = planId === "ORG_PRO";
@@ -258,16 +240,12 @@ function OrgUpgradeContent() {
                   isPopular ? "border-purple-500 ring-1 ring-purple-500" : ""
                 } ${isCurrent ? "border-green-500" : ""}`}
               >
-                {isPopular && !isCurrent && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                {isPopular && !isCurrent ? <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                     <Badge className="bg-purple-600">Most Popular</Badge>
-                  </div>
-                )}
-                {isCurrent && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                  </div> : null}
+                {isCurrent ? <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                     <Badge className="bg-green-600">Current Plan</Badge>
-                  </div>
-                )}
+                  </div> : null}
                 <CardHeader className="text-center pt-8">
                   <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-purple-600/20 flex items-center justify-center">
                     <Icon className="h-6 w-6 text-purple-400" />
@@ -311,9 +289,9 @@ function OrgUpgradeContent() {
                     {hasPool ? (
                       <li className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Sparkles className="h-4 w-4 text-purple-400" />
-                        {plan.pool.ramMb && plan.pool.ramMb >= 1024 
-                          ? `${(plan.pool.ramMb / 1024).toFixed(0)}GB` 
-                          : `${plan.pool.ramMb}MB`} shared RAM pool
+                        {plan.workspace.ramMb && plan.workspace.ramMb >= 1024 
+                          ? `${(plan.workspace.ramMb / 1024).toFixed(0)}GB` 
+                          : `${plan.workspace.ramMb}MB`} shared RAM pool
                       </li>
                     ) : (
                       <li className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -331,8 +309,7 @@ function OrgUpgradeContent() {
                     </li>
                   </ul>
 
-                  {canManageBilling && (
-                    <Button
+                  {canManageBilling ? <Button
                       className={`w-full ${
                         isCurrent
                           ? "bg-green-600 hover:bg-green-700"
@@ -359,8 +336,7 @@ function OrgUpgradeContent() {
                       ) : (
                         "Downgrade"
                       )}
-                    </Button>
-                  )}
+                    </Button> : null}
                 </CardContent>
               </Card>
             );

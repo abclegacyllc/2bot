@@ -20,7 +20,7 @@ import {
     TrendingUp,
     Users,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -237,7 +237,7 @@ export function AnalyticsWidget({
   const [error, setError] = useState<string | null>(null);
 
   // Fetch analytics data
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -258,11 +258,11 @@ export function AnalyticsWidget({
     } finally {
       setLoading(false);
     }
-  };
+  }, [userPluginId]);
 
   useEffect(() => {
     fetchData();
-  }, [userPluginId]);
+  }, [fetchData]);
 
   // Calculate trend for today
   const getTrend = (): { trend: "up" | "down" | "neutral"; label: string } => {

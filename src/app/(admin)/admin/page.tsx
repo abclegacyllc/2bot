@@ -16,7 +16,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiUrl } from "@/shared/config/urls";
+import { adminApiUrl } from "@/shared/config/urls";
 import {
     AlertTriangle,
     Bot,
@@ -76,9 +76,7 @@ function StatCard({
       </CardHeader>
       <CardContent>
         <div className="text-2xl font-bold text-foreground">{value}</div>
-        {subValue && (
-          <p className="text-xs text-muted-foreground mt-1">{subValue}</p>
-        )}
+        {subValue ? <p className="text-xs text-muted-foreground mt-1">{subValue}</p> : null}
       </CardContent>
     </Card>
   );
@@ -109,7 +107,7 @@ export default function AdminOverviewPage() {
     const fetchStats = async () => {
       if (!token) return;
       try {
-        const response = await fetch(apiUrl("/admin/stats"), {
+        const response = await fetch(adminApiUrl("/stats"), {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) {
@@ -196,8 +194,7 @@ export default function AdminOverviewPage() {
       </div>
 
       {/* Detailed breakdown */}
-      {stats && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {stats ? <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Subscription breakdown */}
           <Card className="bg-card border-border">
             <CardHeader>
@@ -307,8 +304,7 @@ export default function AdminOverviewPage() {
               </div>
             </CardContent>
           </Card>
-        </div>
-      )}
+        </div> : null}
     </div>
   );
 }

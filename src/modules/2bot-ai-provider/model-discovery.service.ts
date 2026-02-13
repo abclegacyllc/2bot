@@ -15,18 +15,28 @@ import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import {
-  ANTHROPIC_TEXT_GENERATION_PRICING,
-  OPENAI_IMAGE_GENERATION_PRICING,
-  OPENAI_SPEECH_RECOGNITION_PRICING,
-  OPENAI_SPEECH_SYNTHESIS_PRICING,
-  OPENAI_TEXT_GENERATION_PRICING
+    ANTHROPIC_TEXT_GENERATION_PRICING,
+    OPENAI_IMAGE_GENERATION_PRICING,
+    OPENAI_SPEECH_RECOGNITION_PRICING,
+    OPENAI_SPEECH_SYNTHESIS_PRICING,
+    OPENAI_TEXT_GENERATION_PRICING,
+    TOGETHER_IMAGE_GENERATION_PRICING,
+    TOGETHER_TEXT_EMBEDDING_PRICING,
+    TOGETHER_TEXT_GENERATION_PRICING,
 } from "./model-pricing";
 import type { AICapability, ModelCapabilities, ModelInfo } from "./types";
 
 const log = logger.child({ module: "model-discovery" });
 
-// ===========================================
-// Model Metadata Registry
+/**
+ * Type-safe pricing lookup — throws at startup if a model key is missing.
+ */
+function getPricing<T>(table: Record<string, T>, key: string): T {
+  const entry = table[key];
+  if (!entry) throw new Error(`Missing pricing entry for model: ${key}`);
+  return entry;
+}
+
 // ===========================================
 
 /**
@@ -108,8 +118,8 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     tier: 1,
     badge: "FAST",
     capabilities: { ...VISION_CAPABILITIES, reasoning: "medium", speed: "high", creativity: "medium" },
-    creditsPerInputToken: OPENAI_TEXT_GENERATION_PRICING["gpt-4o-mini"]!.creditsPerInputToken,
-    creditsPerOutputToken: OPENAI_TEXT_GENERATION_PRICING["gpt-4o-mini"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "gpt-4o-mini").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "gpt-4o-mini").creditsPerOutputToken,
     maxTokens: 16384,
     contextWindow: 128000,
   },
@@ -120,8 +130,8 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     capability: "text-generation",
     tier: 2,
     capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "high" },
-    creditsPerInputToken: OPENAI_TEXT_GENERATION_PRICING["gpt-4o"]!.creditsPerInputToken,
-    creditsPerOutputToken: OPENAI_TEXT_GENERATION_PRICING["gpt-4o"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "gpt-4o").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "gpt-4o").creditsPerOutputToken,
     maxTokens: 16384,
     contextWindow: 128000,
   },
@@ -133,8 +143,8 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     tier: 3,
     badge: "REASONING",
     capabilities: { ...VISION_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "medium" },
-    creditsPerInputToken: OPENAI_TEXT_GENERATION_PRICING["o1"]!.creditsPerInputToken,
-    creditsPerOutputToken: OPENAI_TEXT_GENERATION_PRICING["o1"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "o1").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "o1").creditsPerOutputToken,
     maxTokens: 100000,
     contextWindow: 200000,
   },
@@ -146,8 +156,8 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     tier: 2,
     badge: "REASONING",
     capabilities: { ...CHAT_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "medium" },
-    creditsPerInputToken: OPENAI_TEXT_GENERATION_PRICING["o1-mini"]!.creditsPerInputToken,
-    creditsPerOutputToken: OPENAI_TEXT_GENERATION_PRICING["o1-mini"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "o1-mini").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "o1-mini").creditsPerOutputToken,
     maxTokens: 65536,
     contextWindow: 128000,
   },
@@ -159,8 +169,8 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     tier: 2,
     badge: "NEW",
     capabilities: { ...CHAT_CAPABILITIES, reasoning: "highest", speed: "medium", creativity: "medium" },
-    creditsPerInputToken: OPENAI_TEXT_GENERATION_PRICING["o3-mini"]!.creditsPerInputToken,
-    creditsPerOutputToken: OPENAI_TEXT_GENERATION_PRICING["o3-mini"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "o3-mini").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "o3-mini").creditsPerOutputToken,
     maxTokens: 100000,
     contextWindow: 200000,
   },
@@ -173,8 +183,8 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     deprecated: true,
     deprecationMessage: "Consider using GPT-4o for better performance",
     capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "high" },
-    creditsPerInputToken: OPENAI_TEXT_GENERATION_PRICING["gpt-4-turbo"]!.creditsPerInputToken,
-    creditsPerOutputToken: OPENAI_TEXT_GENERATION_PRICING["gpt-4-turbo"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "gpt-4-turbo").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(OPENAI_TEXT_GENERATION_PRICING, "gpt-4-turbo").creditsPerOutputToken,
     maxTokens: 4096,
     contextWindow: 128000,
   },
@@ -185,7 +195,7 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     capability: "image-generation",
     tier: 1,
     capabilities: IMAGE_GEN_CAPABILITIES,
-    creditsPerImage: OPENAI_IMAGE_GENERATION_PRICING["dall-e-3"]!.creditsPerImage,
+    creditsPerImage: getPricing(OPENAI_IMAGE_GENERATION_PRICING, "dall-e-3").creditsPerImage,
   },
   // TTS
   "tts-1": {
@@ -194,7 +204,7 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     capability: "speech-synthesis",
     tier: 1,
     capabilities: TTS_CAPABILITIES,
-    creditsPerChar: OPENAI_SPEECH_SYNTHESIS_PRICING["tts-1"]!.creditsPerChar,
+    creditsPerChar: getPricing(OPENAI_SPEECH_SYNTHESIS_PRICING, "tts-1").creditsPerChar,
   },
   "tts-1-hd": {
     displayName: "TTS HD",
@@ -203,7 +213,7 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     tier: 2,
     badge: "HD",
     capabilities: TTS_CAPABILITIES,
-    creditsPerChar: OPENAI_SPEECH_SYNTHESIS_PRICING["tts-1-hd"]!.creditsPerChar,
+    creditsPerChar: getPricing(OPENAI_SPEECH_SYNTHESIS_PRICING, "tts-1-hd").creditsPerChar,
   },
   // Whisper
   "whisper-1": {
@@ -212,7 +222,7 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
     capability: "speech-recognition",
     tier: 1,
     capabilities: STT_CAPABILITIES,
-    creditsPerMinute: OPENAI_SPEECH_RECOGNITION_PRICING["whisper-1"]!.creditsPerMinute,
+    creditsPerMinute: getPricing(OPENAI_SPEECH_RECOGNITION_PRICING, "whisper-1").creditsPerMinute,
   },
 };
 
@@ -222,29 +232,42 @@ const OPENAI_MODEL_METADATA: Record<string, ModelMetadata> = {
  * Pricing is imported from model-pricing.ts (single source of truth)
  */
 const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
-  // Claude 4 Opus (claude-sonnet-4-20250514 is latest opus-class)
-  "claude-sonnet-4-20250514": {
-    displayName: "Claude Sonnet 4",
-    description: "Most capable Claude model for complex analysis",
+  // Claude Opus 4.6 (newest, best value premium)
+  "claude-opus-4-6-20260131": {
+    displayName: "Claude Opus 4.6",
+    description: "Most intelligent Claude model — 3x cheaper than Opus 4",
     capability: "text-generation",
     tier: 3,
     badge: "BEST",
-    capabilities: { ...VISION_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "highest" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-sonnet-4-20250514"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-sonnet-4-20250514"]!.creditsPerOutputToken,
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "highest", speed: "medium", creativity: "highest" },
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-opus-4-6-20260131").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-opus-4-6-20260131").creditsPerOutputToken,
     maxTokens: 8192,
     contextWindow: 200000,
   },
-  // Claude Opus 4.5
-  "claude-opus-4-20250514": {
-    displayName: "Claude Opus 4.5",
-    description: "Most intelligent Claude model",
+  // Claude Sonnet 4.5 (latest balanced)
+  "claude-sonnet-4-5-20251022": {
+    displayName: "Claude Sonnet 4.5",
+    description: "Latest balanced model — best value for most tasks",
     capability: "text-generation",
-    tier: 3,
+    tier: 2,
     badge: "BEST",
-    capabilities: { ...VISION_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "highest" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-opus-4-20250514"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-opus-4-20250514"]!.creditsPerOutputToken,
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "highest", speed: "high", creativity: "highest" },
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-sonnet-4-5-20251022").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-sonnet-4-5-20251022").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 200000,
+  },
+  // Claude Haiku 4.5 (latest fast)
+  "claude-haiku-4-5-20251022": {
+    displayName: "Claude Haiku 4.5",
+    description: "Latest fast model with improved intelligence",
+    capability: "text-generation",
+    tier: 1,
+    badge: "FAST",
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "highest", creativity: "high" },
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-haiku-4-5-20251022").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-haiku-4-5-20251022").creditsPerOutputToken,
     maxTokens: 8192,
     contextWindow: 200000,
   },
@@ -255,8 +278,8 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     capability: "text-generation",
     tier: 2,
     capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "high", creativity: "high" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-sonnet-20241022"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-sonnet-20241022"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-sonnet-20241022").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-sonnet-20241022").creditsPerOutputToken,
     maxTokens: 8192,
     contextWindow: 200000,
   },
@@ -266,8 +289,8 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     capability: "text-generation",
     tier: 2,
     capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "high", creativity: "high" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-sonnet-20241022"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-sonnet-20241022"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-sonnet-20241022").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-sonnet-20241022").creditsPerOutputToken,
     maxTokens: 8192,
     contextWindow: 200000,
   },
@@ -279,8 +302,8 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     tier: 1,
     badge: "FAST",
     capabilities: { ...VISION_CAPABILITIES, reasoning: "medium", speed: "highest", creativity: "medium" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-haiku-20241022"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-haiku-20241022"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-haiku-20241022").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-haiku-20241022").creditsPerOutputToken,
     maxTokens: 8192,
     contextWindow: 200000,
   },
@@ -291,8 +314,8 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     tier: 1,
     badge: "FAST",
     capabilities: { ...VISION_CAPABILITIES, reasoning: "medium", speed: "highest", creativity: "medium" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-haiku-20241022"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-haiku-20241022"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-haiku-20241022").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-haiku-20241022").creditsPerOutputToken,
     maxTokens: 8192,
     contextWindow: 200000,
   },
@@ -305,8 +328,8 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     deprecated: true,
     deprecationMessage: "Consider using Claude 3.5 Sonnet for better value",
     capabilities: { ...VISION_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "highest" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-opus-20240229"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-opus-20240229"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-opus-20240229").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-opus-20240229").creditsPerOutputToken,
     maxTokens: 4096,
     contextWindow: 200000,
   },
@@ -316,8 +339,8 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     capability: "text-generation",
     tier: 3,
     capabilities: { ...VISION_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "highest" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-opus-20240229"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-opus-20240229"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-opus-20240229").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-opus-20240229").creditsPerOutputToken,
     maxTokens: 4096,
     contextWindow: 200000,
   },
@@ -330,8 +353,8 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     deprecated: true,
     deprecationMessage: "Upgrade to Claude 3.5 Sonnet",
     capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "high" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-sonnet-20241022"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-5-sonnet-20241022"]!.creditsPerOutputToken,
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-sonnet-20241022").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-5-sonnet-20241022").creditsPerOutputToken,
     maxTokens: 4096,
     contextWindow: 200000,
   },
@@ -341,11 +364,365 @@ const ANTHROPIC_MODEL_METADATA: Record<string, ModelMetadata> = {
     description: "Fast and affordable (previous gen)",
     capability: "text-generation",
     tier: 1,
-    capabilities: { ...CHAT_CAPABILITIES, reasoning: "medium", speed: "highest", creativity: "medium" },
-    creditsPerInputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-haiku-20240307"]!.creditsPerInputToken,
-    creditsPerOutputToken: ANTHROPIC_TEXT_GENERATION_PRICING["claude-3-haiku-20240307"]!.creditsPerOutputToken,
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "medium", speed: "highest", creativity: "medium" },
+    creditsPerInputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-haiku-20240307").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(ANTHROPIC_TEXT_GENERATION_PRICING, "claude-3-haiku-20240307").creditsPerOutputToken,
     maxTokens: 4096,
     contextWindow: 200000,
+  },
+};
+
+// ===========================================
+// Together AI Model Metadata Registry
+// ===========================================
+
+const TOGETHER_MODEL_METADATA: Record<string, ModelMetadata> = {
+  // ---- FREE ----
+  "togethercomputer/MoA-1": {
+    displayName: "MoA-1",
+    description: "Free mixture-of-agents ensemble model",
+    capability: "text-generation",
+    tier: 1,
+    badge: "FREE",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "medium", speed: "medium", creativity: "medium" },
+    creditsPerInputToken: 0,
+    creditsPerOutputToken: 0,
+    maxTokens: 4096,
+    contextWindow: 32768,
+  },
+  "ServiceNow-AI/Apriel-1.6-15b-Thinker": {
+    displayName: "Apriel 1.6 Thinker",
+    description: "Free thinking model by ServiceNow",
+    capability: "text-generation",
+    tier: 1,
+    badge: "FREE",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "medium" },
+    creditsPerInputToken: 0,
+    creditsPerOutputToken: 0,
+    maxTokens: 4096,
+    contextWindow: 32768,
+  },
+  // ---- LITE ----
+  "google/gemma-3n-E4B-it": {
+    displayName: "Gemma 3n E4B",
+    description: "Google's efficient small model",
+    capability: "text-generation",
+    tier: 1,
+    badge: "FAST",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "medium", speed: "highest", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "google/gemma-3n-E4B-it").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "google/gemma-3n-E4B-it").creditsPerOutputToken,
+    maxTokens: 4096,
+    contextWindow: 32768,
+  },
+  "arcee-ai/trinity-mini": {
+    displayName: "Trinity Mini",
+    description: "Efficient small model by Arcee AI",
+    capability: "text-generation",
+    tier: 1,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "medium", speed: "highest", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "arcee-ai/trinity-mini").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "arcee-ai/trinity-mini").creditsPerOutputToken,
+    maxTokens: 4096,
+    contextWindow: 32768,
+  },
+  "openai/gpt-oss-20b": {
+    displayName: "GPT-OSS 20B",
+    description: "OpenAI open-source 20B model",
+    capability: "text-generation",
+    tier: 1,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "medium", speed: "high", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "openai/gpt-oss-20b").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "openai/gpt-oss-20b").creditsPerOutputToken,
+    maxTokens: 4096,
+    contextWindow: 32768,
+  },
+  "nvidia/NVIDIA-Nemotron-Nano-9B-v2": {
+    displayName: "Nemotron Nano 9B",
+    description: "NVIDIA's efficient 9B model",
+    capability: "text-generation",
+    tier: 1,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "medium", speed: "high", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "nvidia/NVIDIA-Nemotron-Nano-9B-v2").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "nvidia/NVIDIA-Nemotron-Nano-9B-v2").creditsPerOutputToken,
+    maxTokens: 4096,
+    contextWindow: 32768,
+  },
+  "meta-llama/Llama-3.2-3B-Instruct-Turbo": {
+    displayName: "Llama 3.2 3B Turbo",
+    description: "Meta's fast lightweight model",
+    capability: "text-generation",
+    tier: 1,
+    badge: "FAST",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "medium", speed: "highest", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "meta-llama/Llama-3.2-3B-Instruct-Turbo").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "meta-llama/Llama-3.2-3B-Instruct-Turbo").creditsPerOutputToken,
+    maxTokens: 4096,
+    contextWindow: 131072,
+  },
+  // ---- PRO ----
+  "Qwen/Qwen3-Next-80B-A3B-Instruct": {
+    displayName: "Qwen3 Next 80B",
+    description: "Qwen's efficient MoE model",
+    capability: "text-generation",
+    tier: 2,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "high", speed: "high", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-Next-80B-A3B-Instruct").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-Next-80B-A3B-Instruct").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 32768,
+  },
+  "openai/gpt-oss-120b": {
+    displayName: "GPT-OSS 120B",
+    description: "OpenAI open-source 120B model",
+    capability: "text-generation",
+    tier: 2,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "openai/gpt-oss-120b").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "openai/gpt-oss-120b").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 32768,
+  },
+  "meta-llama/Llama-4-Scout-17B-16E-Instruct": {
+    displayName: "Llama 4 Scout",
+    description: "Meta's efficient scout model with 1M context and vision",
+    capability: "text-generation",
+    tier: 2,
+    badge: "VISION",
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "high", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "meta-llama/Llama-4-Scout-17B-16E-Instruct").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "meta-llama/Llama-4-Scout-17B-16E-Instruct").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 1048576,
+  },
+  "Qwen/Qwen3-VL-8B-Instruct": {
+    displayName: "Qwen3 VL 8B",
+    description: "Qwen's vision-language model",
+    capability: "text-generation",
+    tier: 2,
+    badge: "VISION",
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "high", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-VL-8B-Instruct").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-VL-8B-Instruct").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 32768,
+  },
+  "mistralai/Ministral-3-14B-Instruct-2512": {
+    displayName: "Ministral 3 14B",
+    description: "Mistral's balanced 14B model",
+    capability: "text-generation",
+    tier: 2,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "high", speed: "high", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "mistralai/Ministral-3-14B-Instruct-2512").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "mistralai/Ministral-3-14B-Instruct-2512").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 131072,
+  },
+  "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": {
+    displayName: "Llama 4 Maverick",
+    description: "Meta's large MoE model with 1M context and vision",
+    capability: "text-generation",
+    tier: 2,
+    badge: "VISION",
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 1048576,
+  },
+  "Qwen/Qwen3-Coder-Next-FP8": {
+    displayName: "Qwen3 Coder Next",
+    description: "Qwen's code-specialized model",
+    capability: "text-generation",
+    tier: 2,
+    badge: "CODE",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "medium" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-Coder-Next-FP8").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-Coder-Next-FP8").creditsPerOutputToken,
+    maxTokens: 16384,
+    contextWindow: 131072,
+  },
+  "moonshotai/Kimi-K2.5": {
+    displayName: "Kimi K2.5",
+    description: "Moonshot's multimodal model with vision",
+    capability: "text-generation",
+    tier: 2,
+    badge: "VISION",
+    capabilities: { ...VISION_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "moonshotai/Kimi-K2.5").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "moonshotai/Kimi-K2.5").creditsPerOutputToken,
+    maxTokens: 8192,
+    contextWindow: 131072,
+  },
+  "deepseek-ai/DeepSeek-V3.1": {
+    displayName: "DeepSeek V3.1",
+    description: "DeepSeek's powerful general model",
+    capability: "text-generation",
+    tier: 2,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "high", speed: "medium", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "deepseek-ai/DeepSeek-V3.1").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "deepseek-ai/DeepSeek-V3.1").creditsPerOutputToken,
+    maxTokens: 16384,
+    contextWindow: 131072,
+  },
+  // ---- ULTRA (reasoning) ----
+  "Qwen/Qwen3-235B-A22B-Thinking-2507": {
+    displayName: "Qwen3 235B Thinking",
+    description: "Qwen's largest reasoning MoE model",
+    capability: "text-generation",
+    tier: 3,
+    badge: "REASONING",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-235B-A22B-Thinking-2507").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "Qwen/Qwen3-235B-A22B-Thinking-2507").creditsPerOutputToken,
+    maxTokens: 16384,
+    contextWindow: 131072,
+  },
+  "moonshotai/Kimi-K2-Thinking": {
+    displayName: "Kimi K2 Thinking",
+    description: "Moonshot's advanced reasoning model",
+    capability: "text-generation",
+    tier: 3,
+    badge: "REASONING",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "moonshotai/Kimi-K2-Thinking").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "moonshotai/Kimi-K2-Thinking").creditsPerOutputToken,
+    maxTokens: 16384,
+    contextWindow: 131072,
+  },
+  "deepcogito/cogito-v2-1-671b": {
+    displayName: "Cogito V2.1 671B",
+    description: "Deep Cogito's massive 671B model",
+    capability: "text-generation",
+    tier: 3,
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "highest" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "deepcogito/cogito-v2-1-671b").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "deepcogito/cogito-v2-1-671b").creditsPerOutputToken,
+    maxTokens: 16384,
+    contextWindow: 131072,
+  },
+  "deepseek-ai/DeepSeek-R1": {
+    displayName: "DeepSeek R1",
+    description: "DeepSeek's top reasoning model",
+    capability: "text-generation",
+    tier: 3,
+    badge: "REASONING",
+    capabilities: { ...CHAT_CAPABILITIES, reasoning: "highest", speed: "low", creativity: "high" },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "deepseek-ai/DeepSeek-R1").creditsPerInputToken,
+    creditsPerOutputToken: getPricing(TOGETHER_TEXT_GENERATION_PRICING, "deepseek-ai/DeepSeek-R1").creditsPerOutputToken,
+    maxTokens: 16384,
+    contextWindow: 131072,
+  },
+  // ---- IMAGE GENERATION ----
+  "black-forest-labs/FLUX.1-schnell": {
+    displayName: "FLUX.1 Schnell",
+    description: "Fast image generation",
+    capability: "image-generation",
+    tier: 1,
+    badge: "FAST",
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "black-forest-labs/FLUX.1-schnell").creditsPerImage,
+  },
+  "black-forest-labs/FLUX.2-dev": {
+    displayName: "FLUX.2 Dev",
+    description: "FLUX 2 development model",
+    capability: "image-generation",
+    tier: 2,
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "black-forest-labs/FLUX.2-dev").creditsPerImage,
+  },
+  "black-forest-labs/FLUX.2-pro": {
+    displayName: "FLUX.2 Pro",
+    description: "FLUX 2 production-quality images",
+    capability: "image-generation",
+    tier: 3,
+    badge: "BEST",
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "black-forest-labs/FLUX.2-pro").creditsPerImage,
+  },
+  "google/imagen-4.0-preview": {
+    displayName: "Imagen 4.0 Preview",
+    description: "Google Imagen 4 preview generation",
+    capability: "image-generation",
+    tier: 2,
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "google/imagen-4.0-preview").creditsPerImage,
+  },
+  "google/imagen-4.0-fast": {
+    displayName: "Imagen 4.0 Fast",
+    description: "Google Imagen 4 fast generation",
+    capability: "image-generation",
+    tier: 1,
+    badge: "FAST",
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "google/imagen-4.0-fast").creditsPerImage,
+  },
+  "google/imagen-4.0-ultra": {
+    displayName: "Imagen 4.0 Ultra",
+    description: "Google Imagen 4 ultra quality",
+    capability: "image-generation",
+    tier: 3,
+    badge: "HD",
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "google/imagen-4.0-ultra").creditsPerImage,
+  },
+  "ideogram/ideogram-3.0": {
+    displayName: "Ideogram 3.0",
+    description: "Ideogram's text-in-image specialist",
+    capability: "image-generation",
+    tier: 3,
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "ideogram/ideogram-3.0").creditsPerImage,
+  },
+  "ByteDance-Seed/Seedream-4.0": {
+    displayName: "Seedream 4.0",
+    description: "ByteDance Seedream image model",
+    capability: "image-generation",
+    tier: 2,
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "ByteDance-Seed/Seedream-4.0").creditsPerImage,
+  },
+  "stabilityai/stable-diffusion-3-medium": {
+    displayName: "Stable Diffusion 3",
+    description: "Stability AI's latest diffusion model",
+    capability: "image-generation",
+    tier: 2,
+    capabilities: IMAGE_GEN_CAPABILITIES,
+    creditsPerImage: getPricing(TOGETHER_IMAGE_GENERATION_PRICING, "stabilityai/stable-diffusion-3-medium").creditsPerImage,
+  },
+  // ---- EMBEDDING ----
+  "BAAI/bge-large-en-v1.5": {
+    displayName: "BGE Large EN",
+    description: "BAAI general embedding model (large)",
+    capability: "text-embedding",
+    tier: 2,
+    capabilities: { inputTypes: ["text"], outputTypes: ["text"], supportsStreaming: false },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_EMBEDDING_PRICING, "BAAI/bge-large-en-v1.5").creditsPerInputToken,
+  },
+  "BAAI/bge-base-en-v1.5": {
+    displayName: "BGE Base EN",
+    description: "BAAI general embedding model (base)",
+    capability: "text-embedding",
+    tier: 1,
+    badge: "FAST",
+    capabilities: { inputTypes: ["text"], outputTypes: ["text"], supportsStreaming: false },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_EMBEDDING_PRICING, "BAAI/bge-base-en-v1.5").creditsPerInputToken,
+  },
+  "Alibaba-NLP/gte-modernbert-base": {
+    displayName: "GTE ModernBERT",
+    description: "Alibaba GTE ModernBERT embedding model",
+    capability: "text-embedding",
+    tier: 2,
+    capabilities: { inputTypes: ["text"], outputTypes: ["text"], supportsStreaming: false },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_EMBEDDING_PRICING, "Alibaba-NLP/gte-modernbert-base").creditsPerInputToken,
+  },
+  "intfloat/multilingual-e5-large-instruct": {
+    displayName: "Multilingual E5 Large",
+    description: "Multilingual E5 embedding model",
+    capability: "text-embedding",
+    tier: 2,
+    capabilities: { inputTypes: ["text"], outputTypes: ["text"], supportsStreaming: false },
+    creditsPerInputToken: getPricing(TOGETHER_TEXT_EMBEDDING_PRICING, "intfloat/multilingual-e5-large-instruct").creditsPerInputToken,
   },
 };
 
@@ -506,6 +883,72 @@ export async function discoverAnthropicModels(): Promise<ModelInfo[]> {
 }
 
 // ===========================================
+// Together AI Model Discovery
+// ===========================================
+
+/**
+ * Discover available models from Together AI
+ *
+ * Together AI has a /v1/models API endpoint.
+ * We validate the API key and return our curated model list.
+ */
+export async function discoverTogetherModels(): Promise<ModelInfo[]> {
+  const apiKey = process.env.TWOBOT_TOGETHER_API_KEY;
+  if (!apiKey) {
+    log.warn("Together AI API key not set, skipping discovery");
+    return [];
+  }
+
+  try {
+    // Validate the API key with a models.list call
+    const response = await fetch("https://api.together.xyz/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Together API returned ${response.status}`);
+    }
+
+    log.info("Together AI API key validated");
+
+    // Return our curated model list (not the full 125+ models from the API)
+    const discoveredModels: ModelInfo[] = [];
+
+    for (const [modelId, metadata] of Object.entries(TOGETHER_MODEL_METADATA)) {
+      discoveredModels.push({
+        id: modelId,
+        name: metadata.displayName,
+        provider: "together",
+        capability: metadata.capability,
+        description: metadata.description,
+        creditsPerInputToken: metadata.creditsPerInputToken,
+        creditsPerOutputToken: metadata.creditsPerOutputToken,
+        creditsPerImage: metadata.creditsPerImage,
+        creditsPerMinute: metadata.creditsPerMinute,
+        maxTokens: metadata.maxTokens,
+        contextWindow: metadata.contextWindow,
+        tier: metadata.tier,
+        badge: metadata.badge,
+        deprecated: metadata.deprecated,
+        deprecationMessage: metadata.deprecationMessage,
+        capabilities: metadata.capabilities,
+      });
+    }
+
+    log.info(
+      { count: discoveredModels.length, models: discoveredModels.map((m) => m.id) },
+      "Discovered Together AI models"
+    );
+
+    return discoveredModels;
+  } catch (error) {
+    log.error({ error }, "Failed to discover Together AI models");
+    return [];
+  }
+}
+
+// ===========================================
 // Combined Model Discovery
 // ===========================================
 
@@ -531,12 +974,13 @@ export async function discoverAllModels(forceRefresh = false): Promise<ModelInfo
 
   log.info("Discovering models from all providers...");
 
-  const [openaiModels, anthropicModels] = await Promise.all([
+  const [openaiModels, anthropicModels, togetherModels] = await Promise.all([
     discoverOpenAIModels(),
     discoverAnthropicModels(),
+    discoverTogetherModels(),
   ]);
 
-  const allModels = [...openaiModels, ...anthropicModels];
+  const allModels = [...openaiModels, ...anthropicModels, ...togetherModels];
 
   // Sort by provider, then by tier
   allModels.sort((a, b) => {
@@ -553,8 +997,9 @@ export async function discoverAllModels(forceRefresh = false): Promise<ModelInfo
     const defaultModelId = chatModels[0]?.id;
     if (defaultModelId) {
       const idx = allModels.findIndex((m) => m.id === defaultModelId);
-      if (idx >= 0 && allModels[idx]) {
-        const model = allModels[idx]!;
+      const found = idx >= 0 ? allModels[idx] : undefined;
+      if (found) {
+        const model = found;
         allModels[idx] = {
           id: model.id,
           name: model.name,
@@ -588,6 +1033,7 @@ export async function discoverAllModels(forceRefresh = false): Promise<ModelInfo
       total: allModels.length,
       openai: openaiModels.length,
       anthropic: anthropicModels.length,
+      together: togetherModels.length,
     },
     "Model discovery complete"
   );

@@ -9,6 +9,7 @@ import {
 } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
+import { adminGuard } from "../middleware/admin-guard";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
 import { twoBotAIRouter } from "./2bot-ai";
 import { adminRouter } from "./admin";
@@ -20,15 +21,36 @@ import { creditsRouter } from "./credits";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
 import { invitesRouter } from "./invites";
+import { kbRouter } from "./kb";
 import { organizationRouter } from "./organization";
 import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
 import { quotaRouter, resourcesRouter } from "./resources";
+import { supportRouter } from "./support";
+import { ticketsRouter } from "./tickets";
 import { usageRouter } from "./usage";
 import { userRouter } from "./user";
 import { webhookRouter } from "./webhook";
 
+/**
+ * Route mode detection:
+ * 
+ * Production (api.2bot.org / port 3002):
+ *   - All user-facing routes
+ *   - NO admin routes (admin uses dev-api.2bot.org)
+ * 
+ * Development (dev-api.2bot.org / port 3006):
+ *   - All user-facing routes (same as production)
+ *   - Admin routes mounted under /admin prefix
+ *   - Used by BOTH dev.2bot.org and admin.2bot.org
+ */
+const isDevMode = process.env.NODE_ENV !== 'production';
+
 export const router = Router();
+
+// ===========================================
+// ALWAYS AVAILABLE ROUTES
+// ===========================================
 
 /**
  * Health check routes
@@ -36,35 +58,31 @@ export const router = Router();
 router.use("/health", healthRouter);
 
 /**
- * Auth routes
+ * Auth routes (needed for login on all modes)
  */
 router.use("/auth", authRouter);
 
+// ===========================================
+// USER-FACING ROUTES (always mounted)
+// ===========================================
+
 /**
  * User routes (Phase 6.7) - Personal resources
- * /api/user/* for authenticated user's personal resources
- * Follows GitHub API pattern where /user/* = personal, /orgs/:id/* = organization
  */
 router.use("/user", userRouter);
 
 /**
  * Organization routes (Phase 6.7) - Org resources by ID
- * /api/orgs/:orgId/* for organization-specific resources
- * Uses plural "orgs" to match GitHub API convention
  */
 router.use("/orgs", orgsRouter);
 
 /**
  * Invites routes (Public)
- * /api/invites/:token for public invite access
- * Used directly by nginx in production
  */
 router.use("/invites", invitesRouter);
 
 /**
  * Organization routes (Phase 4) - Legacy
- * Organizations, members, invites, departments
- * Note: Consider migrating to /api/orgs/:orgId/* pattern
  */
 router.use("/organizations", organizationRouter);
 
@@ -75,81 +93,96 @@ router.use("/gateways", gatewayRouter);
 
 /**
  * Webhook routes (Phase 2)
- * Note: No auth required - webhook auth is via gatewayId + optional secret
  */
 router.use("/webhooks", webhookRouter);
 
 /**
  * Plugin routes (Phase 3)
- * /api/plugins - Public catalog
- * /api/plugins/user/* - User plugin management (auth required)
  */
 router.use("/plugins", pluginRouter);
 
 /**
- * Resources routes (Phase B - Renamed from quota)
- * Resource allocation status, limits, and management
+ * Resources routes (Phase B)
  */
 router.use("/resources", resourcesRouter);
 
 /**
- * Legacy quota routes (deprecated alias for /resources)
+ * Legacy quota routes
  * @deprecated Use /api/resources instead
  */
 router.use("/quota", quotaRouter);
 
 /**
  * Usage routes (Phase 6.8)
- * Dashboard usage data and history
  */
 router.use("/usage", usageRouter);
 
 /**
  * Alert routes (Phase 4)
- * Alert configuration, history, and acknowledgements
  */
 router.use("/alerts", alertRouter);
 
 /**
  * Billing routes (Phase 5)
- * Checkout, portal, subscription status
  */
 router.use("/billing", billingRouter);
 
 /**
- * Admin routes (Phase 6)
- * Platform administration and monitoring
- */
-router.use("/admin", adminRouter);
-
-/**
  * 2Bot AI routes
- * AI service using platform API keys (users pay with credits)
  */
 router.use("/2bot-ai", twoBotAIRouter);
 
 /**
  * Credits routes
- * Credit balance, history, and purchases for 2Bot AI
  */
 router.use("/credits", creditsRouter);
 
 /**
  * AI Usage routes
- * AI usage statistics, token tracking, and plan limit checking
  */
 router.use("/ai/usage", aiUsageRouter);
 
 /**
+ * Knowledge Base routes (public - no auth required for reading)
+ */
+router.use("/kb", kbRouter);
+
+/**
+ * Ticket routes (user-facing - auth required)
+ */
+router.use("/tickets", ticketsRouter);
+
+/**
+ * Support routes (AI chat + admin management)
+ */
+router.use("/support", supportRouter);
+
+// ===========================================
+// ADMIN ROUTES (dev mode only, under /admin prefix)
+// ===========================================
+
+if (isDevMode) {
+  /**
+   * Admin routes mounted at /admin prefix (dev-api.2bot.org only)
+   * Protected by adminGuard: only requests from admin.2bot.org allowed.
+   * 
+   * Paths: /admin/stats, /admin/users, /admin/organizations,
+   *        /admin/gateways, /admin/audit-logs, /admin/credits/*, /admin/ai-usage
+   */
+  router.use("/admin", adminGuard, adminRouter);
+}
+
+/**
  * API info endpoint
  */
-router.get("/", (_req: Request, res: Response<ApiResponse<{ name: string; version: string; apiVersion: string }>>) => {
+router.get("/", (_req: Request, res: Response<ApiResponse<{ name: string; version: string; apiVersion: string; mode: string }>>) => {
   res.json({
     success: true,
     data: {
       name: APP_CONFIG.name,
       version: APP_CONFIG.version,
       apiVersion: APP_CONFIG.apiVersion,
+      mode: isDevMode ? 'development' : 'production',
     },
   });
 });

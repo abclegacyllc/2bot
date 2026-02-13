@@ -1,16 +1,16 @@
 /**
- * Organization Workspace Pool Boosters Configuration
+ * Organization Workspace Pool Addons Configuration
  * 
- * Kubernetes-optimized org pool boosters with separated pricing.
+ * Kubernetes-optimized org pool addons with separated pricing.
  * These are 2x the specs of user add-ons at 2x the price, with 3x storage.
  * 
  * Organizations use these to expand their shared workspace pool.
- * All boosters stack on top of the org plan's included pool.
+ * All addons stack on top of the org plan's included pool.
  * 
  * PRICING NOTES:
  * - Prices are in CENTS (e.g., 1000 = $10.00)
  * - Yearly price = monthly * 10 (2 months free)
- * - Formula: User add-on price * 2 = Org booster price
+ * - Formula: User add-on price * 2 = Org addon price
  * - Specs: 2x RAM, 2x CPU, 3x Storage vs user add-ons
  * 
  * K8s OPTIMIZATION:
@@ -24,7 +24,7 @@ import type { OrgPlanType } from './org-plans';
 // Type Definitions
 // ===========================================
 
-export type OrgWorkspaceBoosterTier = 'ORG_MICRO' | 'ORG_SMALL' | 'ORG_MEDIUM' | 'ORG_LARGE' | 'ORG_XLARGE';
+export type OrgWorkspaceAddonTier = 'ORG_MICRO' | 'ORG_SMALL' | 'ORG_MEDIUM' | 'ORG_LARGE' | 'ORG_XLARGE';
 
 export interface OrgWorkspaceSpecs {
   ramMb: number;
@@ -37,8 +37,8 @@ export interface OrgWorkspacePricing {
   priceYearly: number;   // cents
 }
 
-export interface OrgWorkspaceBooster extends OrgWorkspaceSpecs, OrgWorkspacePricing {
-  tier: OrgWorkspaceBoosterTier;
+export interface OrgWorkspaceAddon extends OrgWorkspaceSpecs, OrgWorkspacePricing {
+  tier: OrgWorkspaceAddonTier;
   description: string;
   displayName: string;
 }
@@ -50,7 +50,7 @@ export interface OrgWorkspaceBooster extends OrgWorkspaceSpecs, OrgWorkspacePric
 // 2x RAM, 2x CPU, 3x Storage vs user add-ons
 // These specs are infrastructure-aligned, change rarely
 
-export const ORG_WORKSPACE_SPECS: Record<OrgWorkspaceBoosterTier, OrgWorkspaceSpecs> = {
+export const ORG_WORKSPACE_SPECS: Record<OrgWorkspaceAddonTier, OrgWorkspaceSpecs> = {
   ORG_MICRO: {
     ramMb: 2048,       // 2GB (2x user MICRO 1GB)
     cpuCores: 1,       // 1 core (2x user MICRO 0.5)
@@ -81,11 +81,11 @@ export const ORG_WORKSPACE_SPECS: Record<OrgWorkspaceBoosterTier, OrgWorkspaceSp
 // ===========================================
 // PRICING CONFIGURATION (Easy to Change!)
 // ===========================================
-// Formula: User add-on price * 2 = Org booster price
+// Formula: User add-on price * 2 = Org addon price
 // Yearly = Monthly * 10 (gives 2 months free)
 // Adjust these prices based on your infrastructure costs
 
-export const ORG_WORKSPACE_PRICING: Record<OrgWorkspaceBoosterTier, OrgWorkspacePricing> = {
+export const ORG_WORKSPACE_PRICING: Record<OrgWorkspaceAddonTier, OrgWorkspacePricing> = {
   ORG_MICRO: {
     priceMonthly: 1000,   // $10/mo (2x user MICRO $5)
     priceYearly: 10000,   // $100/yr
@@ -111,9 +111,9 @@ export const ORG_WORKSPACE_PRICING: Record<OrgWorkspaceBoosterTier, OrgWorkspace
 // ===========================================
 // TIER RESTRICTIONS BY ORG PLAN
 // ===========================================
-// Controls which boosters each org plan can purchase
+// Controls which addons each org plan can purchase
 
-export const ALLOWED_ORG_BOOSTERS_BY_PLAN: Record<OrgPlanType, OrgWorkspaceBoosterTier[]> = {
+export const ALLOWED_ORG_ADDONS_BY_PLAN: Record<OrgPlanType, OrgWorkspaceAddonTier[]> = {
   ORG_FREE: ['ORG_MICRO', 'ORG_SMALL'],                                       // Micro + Small for free orgs
   ORG_STARTER: ['ORG_MICRO', 'ORG_SMALL'],                                    // Limited options
   ORG_GROWTH: ['ORG_MICRO', 'ORG_SMALL', 'ORG_MEDIUM'],                       // More options
@@ -123,11 +123,11 @@ export const ALLOWED_ORG_BOOSTERS_BY_PLAN: Record<OrgPlanType, OrgWorkspaceBoost
 };
 
 // ===========================================
-// COMBINED BOOSTER DATA
+// COMBINED ADDON DATA
 // ===========================================
 // Merges specs, pricing, and metadata for each tier
 
-export const ORG_WORKSPACE_BOOSTERS: Record<OrgWorkspaceBoosterTier, OrgWorkspaceBooster> = {
+export const ORG_WORKSPACE_ADDONS: Record<OrgWorkspaceAddonTier, OrgWorkspaceAddon> = {
   ORG_MICRO: {
     tier: 'ORG_MICRO',
     displayName: 'Org Micro',
@@ -169,7 +169,7 @@ export const ORG_WORKSPACE_BOOSTERS: Record<OrgWorkspaceBoosterTier, OrgWorkspac
 // ALL TIERS (Ordered for display)
 // ===========================================
 
-export const ALL_ORG_BOOSTER_TIERS: OrgWorkspaceBoosterTier[] = [
+export const ALL_ORG_ADDON_TIERS: OrgWorkspaceAddonTier[] = [
   'ORG_MICRO',
   'ORG_SMALL',
   'ORG_MEDIUM',
@@ -185,12 +185,12 @@ export const ALL_ORG_BOOSTER_TIERS: OrgWorkspaceBoosterTier[] = [
 const ORG_PLAN_ORDER: OrgPlanType[] = ['ORG_FREE', 'ORG_STARTER', 'ORG_GROWTH', 'ORG_PRO', 'ORG_BUSINESS', 'ORG_ENTERPRISE'];
 
 /**
- * Get the minimum required plan for a specific booster tier
+ * Get the minimum required plan for a specific addon tier
  * Returns null if available to all plans (including ORG_FREE)
  */
-export function getMinRequiredPlanForBooster(tier: OrgWorkspaceBoosterTier): OrgPlanType | null {
+export function getMinRequiredPlanForAddon(tier: OrgWorkspaceAddonTier): OrgPlanType | null {
   for (const plan of ORG_PLAN_ORDER) {
-    if (ALLOWED_ORG_BOOSTERS_BY_PLAN[plan]?.includes(tier)) {
+    if (ALLOWED_ORG_ADDONS_BY_PLAN[plan]?.includes(tier)) {
       return plan === 'ORG_FREE' ? null : plan;
     }
   }
@@ -198,40 +198,40 @@ export function getMinRequiredPlanForBooster(tier: OrgWorkspaceBoosterTier): Org
 }
 
 /**
- * Check if an org plan can purchase a specific booster tier
+ * Check if an org plan can purchase a specific addon tier
  */
-export function canOrgPurchaseBooster(plan: OrgPlanType, tier: OrgWorkspaceBoosterTier): boolean {
-  return ALLOWED_ORG_BOOSTERS_BY_PLAN[plan]?.includes(tier) ?? false;
+export function canOrgPurchaseAddon(plan: OrgPlanType, tier: OrgWorkspaceAddonTier): boolean {
+  return ALLOWED_ORG_ADDONS_BY_PLAN[plan]?.includes(tier) ?? false;
 }
 
 /**
- * Calculate total pool resources from base pool + purchased boosters
+ * Calculate total pool resources from base pool + purchased addons
  */
 export function calculateTotalOrgPool(
   basePool: { ramMb: number | null; cpuCores: number | null; storageMb: number | null },
-  purchasedBoosters: OrgWorkspaceBoosterTier[]
+  purchasedAddons: OrgWorkspaceAddonTier[]
 ): { ramMb: number; cpuCores: number; storageMb: number } {
   const baseRam = basePool.ramMb ?? 0;
   const baseCpu = basePool.cpuCores ?? 0;
   const baseStorage = basePool.storageMb ?? 0;
 
-  const boosterRam = purchasedBoosters.reduce(
+  const addonRam = purchasedAddons.reduce(
     (sum, tier) => sum + ORG_WORKSPACE_SPECS[tier].ramMb,
     0
   );
-  const boosterCpu = purchasedBoosters.reduce(
+  const addonCpu = purchasedAddons.reduce(
     (sum, tier) => sum + ORG_WORKSPACE_SPECS[tier].cpuCores,
     0
   );
-  const boosterStorage = purchasedBoosters.reduce(
+  const addonStorage = purchasedAddons.reduce(
     (sum, tier) => sum + ORG_WORKSPACE_SPECS[tier].storageMb,
     0
   );
 
   return {
-    ramMb: baseRam + boosterRam,
-    cpuCores: baseCpu + boosterCpu,
-    storageMb: baseStorage + boosterStorage,
+    ramMb: baseRam + addonRam,
+    cpuCores: baseCpu + addonCpu,
+    storageMb: baseStorage + addonStorage,
   };
 }
 
@@ -247,6 +247,6 @@ export function formatOrgWorkspaceResources(specs: OrgWorkspaceSpecs): string {
 /**
  * Format price for display
  */
-export function formatOrgBoosterPrice(cents: number): string {
+export function formatOrgAddonPrice(cents: number): string {
   return `$${(cents / 100).toFixed(0)}`;
 }

@@ -216,7 +216,7 @@ export async function openaiImageGeneration(request: ImageGenerationRequest): Pr
     });
 
     const images = (response.data || []).map((img: { url?: string; revised_prompt?: string }) => ({
-      url: img.url!,
+      url: img.url ?? "",
       revisedPrompt: img.revised_prompt,
     }));
 

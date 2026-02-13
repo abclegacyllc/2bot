@@ -2,6 +2,8 @@
  * Organization Permissions - Unit Tests
  */
 import { describe, expect, it } from 'vitest';
+import type {
+    OrgPermission} from '../org-permissions';
 import {
     ORG_PERMISSION_GROUPS,
     ORG_PERMISSION_LABELS,
@@ -9,7 +11,6 @@ import {
     ORG_ROLES,
     ORG_ROLE_DISPLAY_NAMES,
     ORG_ROLE_HIERARCHY,
-    OrgPermission,
     canModifyUserRole,
     canRemoveMember,
     getAssignableRoles,

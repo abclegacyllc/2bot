@@ -30,7 +30,7 @@ import {
     Zap
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 // ===========================================
@@ -306,13 +306,17 @@ function DashboardContent() {
   const { status, isLoading: statusLoading } = useResourceStatus();
 
   // Redirect to org dashboard when in org context
+  // Guard: only redirect if we're not already navigating to personal
+  // (pathname check prevents the race where switchContext sets personal
+  // but this effect fires before URL updates)
+  const pathname = usePathname();
   useEffect(() => {
-    if (isOrgContext && orgId) {
+    if (isOrgContext && orgId && pathname !== "/") {
       const currentOrg = availableOrgs.find(o => o.id === orgId);
       const orgSlug = currentOrg?.slug || orgId;
       router.replace(`/organizations/${orgSlug}`);
     }
-  }, [isOrgContext, orgId, availableOrgs, router]);
+  }, [isOrgContext, orgId, availableOrgs, router, pathname]);
 
   // Fetch gateways separately (not part of resource status)
   useEffect(() => {
@@ -371,7 +375,7 @@ function DashboardContent() {
       </div>
 
       {/* Upgrade Banner for FREE users */}
-      {showUpgradeBanner && <UpgradeBanner />}
+      {showUpgradeBanner ? <UpgradeBanner /> : null}
 
         {/* Stats Cards */}
         {isLoading ? (

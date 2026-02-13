@@ -19,16 +19,25 @@
 import { apiUrl } from "@/shared/config/urls";
 import { usePathname, useRouter } from "next/navigation";
 import type {
-  ReactNode
+    ReactNode
 } from "react";
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useRef,
+    useState,
 } from "react";
+
+// User plan types
+type UserPlanType = "FREE" | "STARTER" | "PRO" | "BUSINESS" | "ENTERPRISE";
+
+// Organization plan types
+type OrgPlanType = "ORG_FREE" | "ORG_STARTER" | "ORG_GROWTH" | "ORG_PRO" | "ORG_BUSINESS" | "ORG_ENTERPRISE";
+
+// Combined plan type for context
+type ContextPlan = UserPlanType | OrgPlanType;
 
 // User type (matches backend response)
 interface User {
@@ -36,7 +45,7 @@ interface User {
   email: string;
   name: string | null;
   role: "MEMBER" | "OWNER" | "DEVELOPER" | "SUPPORT" | "ADMIN" | "SUPER_ADMIN";
-  plan: "FREE" | "PRO" | "ENTERPRISE";
+  plan: UserPlanType;
   emailVerified: string | null;
   image: string | null;
   isActive: boolean;
@@ -52,7 +61,7 @@ interface ActiveContext {
   organizationSlug?: string;
   organizationName?: string;
   orgRole?: "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER";
-  plan: "FREE" | "PRO" | "ENTERPRISE";
+  plan: ContextPlan;
 }
 
 // Available organization for switching
@@ -61,6 +70,7 @@ interface AvailableOrg {
   name: string;
   slug: string;
   role: "ORG_OWNER" | "ORG_ADMIN" | "ORG_MEMBER";
+  plan: OrgPlanType;
 }
 
 // Auth context interface
@@ -120,7 +130,7 @@ function decodeTokenPayload(token: string): Record<string, unknown> | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    const payload = atob(parts[1]!);
+    const payload = atob(parts[1] ?? "");
     return JSON.parse(payload);
   } catch {
     return null;
@@ -128,11 +138,11 @@ function decodeTokenPayload(token: string): Record<string, unknown> | null {
 }
 
 // Phase 6.7: Extract user plan from token (context no longer in token)
-function getUserPlanFromToken(token: string | null): "FREE" | "PRO" | "ENTERPRISE" {
+function getUserPlanFromToken(token: string | null): UserPlanType {
   if (!token) return "FREE";
   const payload = decodeTokenPayload(token);
   if (!payload) return "FREE";
-  return (payload.plan as "FREE" | "PRO" | "ENTERPRISE") || "FREE";
+  return (payload.plan as UserPlanType) || "FREE";
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
@@ -166,7 +176,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           organizationSlug: org.slug,
           organizationName: org.name,
           orgRole: org.role,
-          plan: currentUser?.plan || "FREE", // Org plan context uses user's personal plan as fallback
+          plan: org.plan || "ORG_FREE", // Use organization's plan for tier access
         };
       }
     }
@@ -241,7 +251,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setContext(urlContext);
   }, [fetchUser, fetchAvailableOrgs, pathname, detectContextFromUrl]);
 
-  // Initialize auth state on mount
+  // Initialize auth state on mount only (not on pathname change)
   useEffect(() => {
     async function initAuth() {
       setIsLoading(true);
@@ -257,14 +267,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
         
         // Phase 6.7: Set context based on current URL, not default personal
-        const urlContext = detectContextFromUrl(pathname, orgs, userData);
+        const urlContext = detectContextFromUrl(window.location.pathname, orgs, userData);
         setContext(urlContext);
       } finally {
         setIsLoading(false);
       }
     }
     initAuth();
-  }, [fetchUser, fetchAvailableOrgs, pathname, detectContextFromUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount - pathname sync handled by separate effect
 
   // Sync context when URL changes (e.g., user navigates between personal and org)
   useEffect(() => {
@@ -382,9 +393,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       // Phase 6.7: UI-only context switching via navigation
-      // Just navigate - the URL sync effect will update context automatically
+      // Set context state BEFORE navigation to prevent race conditions.
+      // Without this, the target page may mount with stale context and redirect back.
       if (type === "personal") {
-        // Navigate to personal dashboard
+        // Update context immediately so dashboard page doesn't bounce back to org
+        setContext({ type: "personal", plan: user?.plan || "FREE" });
         router.push("/");
       } else if (type === "organization" && orgId) {
         // Find the org in available orgs
@@ -392,13 +405,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (!org) {
           throw new Error("Organization not found");
         }
-        // Navigate to organization dashboard using slug for clean URLs
+        // Update context immediately
+        setContext({
+          type: "organization",
+          organizationId: org.id,
+          organizationSlug: org.slug,
+          organizationName: org.name,
+          plan: org.plan || "FREE",
+        });
         router.push(`/organizations/${org.slug}`);
       } else {
         throw new Error("Invalid context switch parameters");
       }
     },
-    [router, availableOrgs]
+    [router, availableOrgs, user]
   );
 
   // Refresh available organizations

@@ -16,14 +16,13 @@ export { ResourcePoolCard } from './resource-pool-card';
 export { DeptResourceView } from './dept-resource-view';
 export { MemberResourceView } from './member-resource-view';
 
-// Context & Hooks
-export { ResourceContext, ResourceProvider, useResourceContext } from './resource-context';
+// Hooks
 export { isOrgDeptStatus, isOrgMemberStatus, isOrgStatus, isPersonalStatus, useResourceStatus } from './use-resource-status';
 
 // Types
 export type { DeptResourceViewProps } from './dept-resource-view';
 export type { MemberResourceViewProps } from './member-resource-view';
-export type { ResourceContextValue, ResourceStatus } from './resource-context';
+export type { ResourceContextValue, ResourceStatus } from './resource-context'; // Types still used by useResourceStatus + ResourceOverview
 export type { ResourceItemBarProps, WarningLevel } from './resource-item-bar';
 export type { ResourceOverviewProps } from './resource-overview';
 export type { ResourcePoolCardProps, ResourcePoolItem } from './resource-pool-card';

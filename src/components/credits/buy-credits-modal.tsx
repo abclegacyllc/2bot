@@ -19,8 +19,10 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { useState } from "react";
+import type {
+    CreditPackage
+} from "./credits-purchase-packages";
 import {
-    CreditPackage,
     CreditsPurchasePackages,
 } from "./credits-purchase-packages";
 
@@ -38,7 +40,7 @@ export function BuyCreditsModal({
   loading = false,
   variant = "personal",
   organizationId,
-  onPurchaseComplete,
+  onPurchaseComplete: _onPurchaseComplete,
   trigger,
 }: BuyCreditsModalProps) {
   const [open, setOpen] = useState(false);
@@ -103,11 +105,9 @@ export function BuyCreditsModal({
           </DialogDescription>
         </DialogHeader>
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+        {error ? <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
             {error}
-          </div>
-        )}
+          </div> : null}
 
         <CreditsPurchasePackages
           packages={packages}

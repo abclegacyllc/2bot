@@ -18,11 +18,13 @@
 import { logger } from "@/lib/logger";
 import { getCurrentBillingPeriod } from "@/modules/2bot-ai-provider";
 import {
+    creditService,
     twoBotAICreditService,
     type CreditUsageCategory,
     type WalletType
 } from "@/modules/credits";
 import { BadRequestError } from "@/shared/errors";
+import { formatCredits } from "@/shared/lib/format";
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
@@ -52,7 +54,8 @@ interface CreditsBalanceResponse {
 creditsRouter.get(
   "/",
   asyncHandler(async (req: Request, res: Response<ApiResponse<CreditsBalanceResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const balance = await twoBotAICreditService.getBalance(userId);
 
     res.json({
@@ -89,28 +92,23 @@ interface TokenUsageResponse {
 creditsRouter.get(
   "/tokens",
   asyncHandler(async (req: Request, res: Response<ApiResponse<TokenUsageResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const balance = await twoBotAICreditService.getBalance(userId);
-    
-    // Get plan limit from wallet service
-    const { creditWalletService } = await import("@/modules/credits/wallet.service");
-    const planLimit = await creditWalletService.getUserPlanLimit(userId);
     
     // Include pending credits for accurate usage display
     // monthlyUsed = whole credits deducted, pendingCredits = accumulated fractional credits
     const used = balance.monthlyUsed + (balance.pendingCredits ?? 0);
-    const limit = planLimit;
-    const remaining = limit === -1 ? null : Math.max(0, limit - used);
-    const percentUsed = limit === -1 ? null : Math.min(100, (used / limit) * 100);
-    const exceeded = limit !== -1 && used >= limit;
+    // No monthly spending cap — wallet balance is the only limit
+    const exceeded = balance.balance <= 0;
 
     res.json({
       success: true,
       data: {
         used,
-        limit,
-        remaining,
-        percentUsed,
+        limit: -1, // No monthly cap
+        remaining: null,
+        percentUsed: null,
         exceeded,
         balance: balance.balance,
       },
@@ -151,7 +149,8 @@ interface CreditsHistoryResponse {
 creditsRouter.get(
   "/history",
   asyncHandler(async (req: Request, res: Response<ApiResponse<CreditsHistoryResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = Math.min(parseInt(req.query.pageSize as string) || 20, 100);
     const type = req.query.type as string | undefined;
@@ -166,7 +165,7 @@ creditsRouter.get(
     });
 
     // Filter by category if specified (from metadata)
-    let filteredTransactions = result.transactions;
+    const filteredTransactions = result.transactions;
     if (category) {
       // Note: In future, move this to service layer for better performance
       // For now, metadata-based filtering works for moderate transaction counts
@@ -216,7 +215,8 @@ interface CreditsUsageResponse {
 creditsRouter.get(
   "/usage",
   asyncHandler(async (req: Request, res: Response<ApiResponse<CreditsUsageResponse>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const period = req.query.period as string | undefined;
     const category = (req.query.category as string) || "all";
 
@@ -301,12 +301,13 @@ interface PurchaseResponse {
   sessionId: string;
 }
 
-// Credit packages
+// Credit packages — $1 = 100 credits
+// Base rate: $10 per 1K credits. Larger packages include volume bonuses.
 const CREDIT_PACKAGES = {
-  small: { credits: 50000, price: 5, name: "50K Credits" },
-  medium: { credits: 125000, price: 10, name: "125K Credits" },
-  large: { credits: 300000, price: 20, name: "300K Credits" },
-  xlarge: { credits: 1000000, price: 50, name: "1M Credits" },
+  small: { credits: 500, price: 5, name: "500 Credits" },
+  medium: { credits: 1250, price: 10, name: "1.25K Credits" },
+  large: { credits: 3000, price: 20, name: "3K Credits" },
+  xlarge: { credits: 10000, price: 50, name: "10K Credits" },
 };
 
 /**
@@ -320,8 +321,9 @@ creditsRouter.post(
   "/purchase",
   asyncHandler(async (req: Request, res: Response<ApiResponse<PurchaseResponse>>) => {
     const log = logger.child({ module: "credits-route", action: "purchase" });
-    const userId = req.user!.id;
-    const userEmail = req.user!.email;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
+    const userEmail = req.user.email;
     const body = req.body as PurchaseRequestBody;
 
     // Validate package
@@ -332,7 +334,8 @@ creditsRouter.post(
 
     // Create Stripe checkout session
     const stripe = (await import("stripe")).default;
-    const stripeClient = new stripe(process.env.STRIPE_SECRET_KEY!);
+    if (!process.env.STRIPE_SECRET_KEY) throw new BadRequestError("Stripe is not configured");
+    const stripeClient = new stripe(process.env.STRIPE_SECRET_KEY);
 
     const session = await stripeClient.checkout.sessions.create({
       mode: "payment",
@@ -370,7 +373,7 @@ creditsRouter.post(
     res.json({
       success: true,
       data: {
-        checkoutUrl: session.url!,
+        checkoutUrl: session.url ?? "",
         sessionId: session.id,
       },
     });
@@ -420,13 +423,58 @@ creditsRouter.get(
 // Helpers
 // ===========================================
 
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${(credits / 1_000).toFixed(1)}K`;
-  }
-  return credits.toString();
-}
+// ===========================================
+// POST /api/credits/claim
+// ===========================================
+
+/**
+ * POST /api/credits/claim
+ *
+ * Claim daily credits for personal wallet.
+ * Only available for FREE and STARTER plans.
+ */
+creditsRouter.post(
+  "/claim",
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
+
+    try {
+      const result = await creditService.claimPersonalDailyCredits(userId);
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to claim credits";
+      throw new BadRequestError(message);
+    }
+  })
+);
+
+// ===========================================
+// GET /api/credits/claim-status
+// ===========================================
+
+/**
+ * GET /api/credits/claim-status
+ *
+ * Get claim status for personal wallet.
+ * Returns whether daily claim is available, next claim time, monthly progress.
+ */
+creditsRouter.get(
+  "/claim-status",
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
+
+    const status = await creditService.getPersonalClaimStatus(userId);
+
+    res.json({
+      success: true,
+      data: status,
+    });
+  })
+);
 

@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { MessageSquare, Plus, Trash2, X } from "lucide-react";
-import { ChatSession } from "./chat-storage";
+import type { ChatSession } from "./chat-storage";
 
 // Helper for date formatting
 function formatDate(timestamp: number): string {

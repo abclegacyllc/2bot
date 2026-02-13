@@ -171,11 +171,9 @@ function InvitesContent() {
           </p>
         </div>
 
-        {error && (
-          <div className="bg-destructive/10 border border-destructive text-destructive px-4 py-3 rounded-md">
+        {error ? <div className="bg-destructive/10 border border-destructive text-destructive px-4 py-3 rounded-md">
             {error}
-          </div>
-        )}
+          </div> : null}
 
         {invites.length === 0 ? (
           <Card className="bg-muted/50 border-border">

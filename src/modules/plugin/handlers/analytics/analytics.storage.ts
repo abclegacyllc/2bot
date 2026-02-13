@@ -33,7 +33,7 @@ const analyticsLogger = logger.child({ module: "analytics" });
  * Get date string in YYYY-MM-DD format
  */
 function getDateString(date: Date = new Date()): string {
-  return date.toISOString().split("T")[0]!;
+  return date.toISOString().split("T")[0] ?? "";
 }
 
 /**
@@ -314,8 +314,8 @@ export class AnalyticsStorage {
 
     const users: UserStats[] = [];
     for (let i = 0; i < topUserIds.length; i += 2) {
-      const telegramUserId = parseInt(topUserIds[i]!, 10);
-      const messageCount = parseInt(topUserIds[i + 1]!, 10);
+      const telegramUserId = parseInt(topUserIds[i] ?? "0", 10);
+      const messageCount = parseInt(topUserIds[i + 1] ?? "0", 10);
 
       const userDetailKey = ANALYTICS_KEYS.userDetail(this.userPluginId, telegramUserId);
       const details = await redis.hgetall(userDetailKey);
@@ -343,8 +343,8 @@ export class AnalyticsStorage {
 
     const chats: ChatStats[] = [];
     for (let i = 0; i < topChatIds.length; i += 2) {
-      const chatId = parseInt(topChatIds[i]!, 10);
-      const messageCount = parseInt(topChatIds[i + 1]!, 10);
+      const chatId = parseInt(topChatIds[i] ?? "0", 10);
+      const messageCount = parseInt(topChatIds[i + 1] ?? "0", 10);
 
       const chatDetailKey = ANALYTICS_KEYS.chatDetail(this.userPluginId, chatId);
       const details = await redis.hgetall(chatDetailKey);

@@ -15,11 +15,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent
+  Card,
+  CardContent
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -398,7 +399,7 @@ function AIProviderForm({
 function AddGatewayContent() {
   const router = useRouter();
   const { token } = useAuth();
-  const { orgId, orgSlug, isFound, isLoading: orgLoading } = useOrganization();
+  const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
   const { can } = useOrgPermissions();
   
@@ -507,7 +508,7 @@ function AddGatewayContent() {
         <CardContent className="p-6">
           <h2 className="text-lg font-semibold text-red-400">Organization Not Found</h2>
           <p className="text-muted-foreground mt-2">
-            The organization you're looking for doesn't exist or you don't have access.
+            The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access.
           </p>
         </CardContent>
       </Card>
@@ -516,7 +517,12 @@ function AddGatewayContent() {
 
   return (
     <div className="min-h-screen bg-background p-8">
-      <div className="max-w-lg mx-auto">
+      <div className="max-w-lg mx-auto space-y-6">
+        <PageHeader
+          title={step === "type" ? "Add Gateway" : `Configure ${selectedType === "TELEGRAM_BOT" ? "Telegram Bot" : "AI Provider"}`}
+          description={step === "type" ? "Connect a new Telegram bot or AI provider" : "Enter your credentials and configuration"}
+          breadcrumbs={[{ label: "Gateways", href: buildOrgUrl("/gateways") }]}
+        />
         <Card className="border-border bg-card/50">
           <CardContent className="p-6">
             {step === "type" && <TypeSelector onSelect={handleTypeSelect} />}

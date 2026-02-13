@@ -1,10 +1,8 @@
-"use client";
-
 /**
- * Resource Context
+ * Resource Types
  * 
- * React context for sharing resource status across components.
- * Provides the current resource status and refresh function.
+ * Shared type definitions for resource status.
+ * Used by useResourceStatus hook and ResourceOverview component.
  * 
  * @module components/resources/resource-context
  */
@@ -15,7 +13,6 @@ import type {
     OrgResourceStatus,
     PersonalResourceStatus,
 } from "@/shared/types/resources";
-import { createContext, useContext, type ReactNode } from "react";
 
 /**
  * Union of all resource status types
@@ -27,7 +24,7 @@ export type ResourceStatus =
   | OrgMemberResourceStatus;
 
 /**
- * Resource context value
+ * Resource context value — return type for useResourceStatus hook
  */
 export interface ResourceContextValue {
   /** Current resource status (null while loading) */
@@ -38,40 +35,4 @@ export interface ResourceContextValue {
   error: Error | null;
   /** Refresh the resource status */
   refresh: () => Promise<void>;
-}
-
-/**
- * Resource context
- */
-export const ResourceContext = createContext<ResourceContextValue | null>(null);
-
-/**
- * Hook to access resource context
- * @throws Error if used outside ResourceProvider
- */
-export function useResourceContext(): ResourceContextValue {
-  const context = useContext(ResourceContext);
-  if (!context) {
-    throw new Error("useResourceContext must be used within a ResourceProvider");
-  }
-  return context;
-}
-
-/**
- * Resource provider props
- */
-export interface ResourceProviderProps {
-  children: ReactNode;
-  value: ResourceContextValue;
-}
-
-/**
- * Resource provider component
- */
-export function ResourceProvider({ children, value }: ResourceProviderProps) {
-  return (
-    <ResourceContext.Provider value={value}>
-      {children}
-    </ResourceContext.Provider>
-  );
 }

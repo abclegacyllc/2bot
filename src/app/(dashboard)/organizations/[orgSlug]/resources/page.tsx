@@ -13,46 +13,47 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import {
-    isOrgStatus,
-    ResourceOverview,
-    useResourceStatus,
+  isOrgStatus,
+  ResourceOverview,
+  useResourceStatus,
 } from "@/components/resources";
 import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import {
-    Activity,
-    AlertTriangle,
-    Building2,
-    Download,
-    Loader2,
-    OctagonX,
-    Pause,
-    Puzzle,
-    Users,
-    Workflow,
+  Activity,
+  AlertTriangle,
+  Building2,
+  Download,
+  Loader2,
+  OctagonX,
+  Pause,
+  Puzzle,
+  Users,
+  Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -88,8 +89,8 @@ interface OrganizationInfo {
 
 function OwnerDashboardContent() {
   const router = useRouter();
-  const { context, token } = useAuth();
-  const { orgId, orgRole, isFound, isLoading: orgLoading } = useOrganization();
+  const { token } = useAuth();
+  const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
 
   const [org, setOrg] = useState<OrganizationInfo | null>(null);
@@ -279,13 +280,6 @@ function OwnerDashboardContent() {
     }
   };
 
-  // Helper to format numbers
-  const formatNumber = (num: number): string => {
-    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-    return num.toString();
-  };
-
   if (!isOwner) {
     return null;
   }
@@ -317,12 +311,10 @@ function OwnerDashboardContent() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Resource Dashboard</h1>
-          <p className="text-muted-foreground">
-            Monitor and manage organization resources
-          </p>
-        </div>
+        <PageHeader
+          title="Resource Dashboard"
+          description="Monitor and manage organization resources"
+        />
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-sm">
             <Building2 className="mr-1 h-3 w-3" />
@@ -333,8 +325,7 @@ function OwnerDashboardContent() {
       </div>
 
       {/* Organization-wide Usage */}
-      {resourceStatus && isOrgStatus(resourceStatus) && (
-        <Card>
+      {resourceStatus && isOrgStatus(resourceStatus) ? <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5" />
@@ -347,8 +338,7 @@ function OwnerDashboardContent() {
           <CardContent className="space-y-4">
             <ResourceOverview status={resourceStatus} />
           </CardContent>
-        </Card>
-      )}
+        </Card> : null}
 
       {/* Department Breakdown */}
       <Card>
@@ -417,15 +407,13 @@ function OwnerDashboardContent() {
                   </div>
 
                   <div className="flex gap-2">
-                    {canUpdateQuotas && (
-                      <Button asChild variant="outline" size="sm">
+                    {canUpdateQuotas ? <Button asChild variant="outline" size="sm">
                         <Link
                           href={buildOrgUrl(`/departments/${dept.id}/quotas`)}
                         >
                           Edit Allocation
                         </Link>
-                      </Button>
-                    )}
+                      </Button> : null}
 
                     {canEmergencyStop && dept.isActive ? <AlertDialog>
                         <AlertDialogTrigger asChild>
@@ -495,8 +483,7 @@ function OwnerDashboardContent() {
           Export Report
         </Button>
 
-        {canEmergencyStop && (
-          <AlertDialog>
+        {canEmergencyStop ? <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" disabled={isEmergencyStopping}>
                 {isEmergencyStopping ? (
@@ -534,8 +521,7 @@ function OwnerDashboardContent() {
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
-          </AlertDialog>
-        )}
+          </AlertDialog> : null}
       </div>
     </div>
   );

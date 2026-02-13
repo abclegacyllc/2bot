@@ -82,7 +82,7 @@ afterEach(() => {
 /**
  * Mock Express request/response for testing routes
  */
-function createMockRequest(options: {
+function _createMockRequest(options: {
   userId: string;
   plan: PlanType;
   organizationId?: string;
@@ -103,7 +103,7 @@ function createMockRequest(options: {
   } as any;
 }
 
-function createMockResponse(): Response {
+function _createMockResponse(): Response {
   const res: any = {
     json: vi.fn().mockReturnThis(),
     status: vi.fn().mockReturnThis(),

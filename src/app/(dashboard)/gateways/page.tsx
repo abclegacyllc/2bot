@@ -283,16 +283,6 @@ function GatewaysContent() {
             ))}
           </div>
         )}
-
-        {/* Back link */}
-        <div className="pt-4">
-          <Link
-            href="/"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            ← Back to Dashboard
-          </Link>
-        </div>
       </div>
     </div>
   );

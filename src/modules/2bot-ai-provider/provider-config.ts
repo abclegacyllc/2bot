@@ -88,39 +88,98 @@ const STT_CAPABILITIES: ModelCapabilities = {
 // ===========================================
 
 /**
+ * Common placeholder patterns that look valid but aren't real keys
+ */
+const PLACEHOLDER_PATTERNS = [
+  /^sk-your-/i,           // sk-your-openai-key-here
+  /^sk-xxx/i,             // sk-xxxx
+  /^sk-test/i,            // sk-test-key
+  /^sk-placeholder/i,     // sk-placeholder
+  /^sk-fake/i,            // sk-fake-key
+  /^sk-example/i,         // sk-example-key
+  /^sk-demo/i,            // sk-demo-key
+  /key-here$/i,           // ends with key-here
+  /your.*key/i,           // contains "your" and "key"
+];
+
+/**
+ * Check if an API key looks like a placeholder
+ */
+function isPlaceholderKey(key: string): boolean {
+  return PLACEHOLDER_PATTERNS.some(pattern => pattern.test(key));
+}
+
+/**
  * Check if a provider has a valid API key configured
  *
  * This does a basic format check for quick responses.
  * For real validation (actual API call), use provider-health.service.ts
  *
  * Logic:
- * 1. If provider was validated by health service, use that result
- * 2. Otherwise, fall back to basic format check
+ * 1. If provider was validated by health service, use that result (true/false)
+ * 2. Otherwise, fall back to basic format check WITH placeholder detection
  */
 export function isProviderConfigured(provider: TwoBotAIProvider): boolean {
   // Check if health service has validated this provider
   const validated = isProviderValidated(provider);
   if (validated !== undefined) {
+    // Health service has checked - use definitive result
     return validated;
   }
 
   // Fall back to basic format check (before health service runs)
+  // BUT also detect placeholder keys to avoid false positives
   switch (provider) {
-    case "openai":
+    case "openai": {
       const openaiKey = process.env.TWOBOT_OPENAI_API_KEY;
-      const openaiValid = !!(openaiKey && openaiKey.startsWith("sk-") && openaiKey.length > 20);
-      if (!openaiValid) {
-        log.debug("OpenAI: No valid API key format detected (will verify with health check)");
+      if (!openaiKey) {
+        log.debug("OpenAI: No API key set");
+        return false;
       }
-      return openaiValid;
+      if (!openaiKey.startsWith("sk-") || openaiKey.length < 20) {
+        log.debug("OpenAI: Invalid API key format");
+        return false;
+      }
+      if (isPlaceholderKey(openaiKey)) {
+        log.warn("OpenAI: API key looks like a placeholder - will verify with health check");
+        return false; // Don't trust placeholder keys
+      }
+      return true;
+    }
 
-    case "anthropic":
+    case "anthropic": {
       const anthropicKey = process.env.TWOBOT_ANTHROPIC_API_KEY;
-      const anthropicValid = !!(anthropicKey && anthropicKey.startsWith("sk-ant-") && anthropicKey.length > 20);
-      if (!anthropicValid) {
-        log.debug("Anthropic: No valid API key format detected (will verify with health check)");
+      if (!anthropicKey) {
+        log.debug("Anthropic: No API key set");
+        return false;
       }
-      return anthropicValid;
+      if (!anthropicKey.startsWith("sk-ant-") || anthropicKey.length < 20) {
+        log.debug("Anthropic: Invalid API key format");
+        return false;
+      }
+      if (isPlaceholderKey(anthropicKey)) {
+        log.warn("Anthropic: API key looks like a placeholder - will verify with health check");
+        return false; // Don't trust placeholder keys
+      }
+      return true;
+    }
+
+    case "together": {
+      const togetherKey = process.env.TWOBOT_TOGETHER_API_KEY;
+      if (!togetherKey) {
+        log.debug("Together AI: No API key set");
+        return false;
+      }
+      if (togetherKey.length < 20) {
+        log.debug("Together AI: Invalid API key format");
+        return false;
+      }
+      if (isPlaceholderKey(togetherKey)) {
+        log.warn("Together AI: API key looks like a placeholder - will verify with health check");
+        return false;
+      }
+      return true;
+    }
 
     default:
       return false;
@@ -147,6 +206,13 @@ export function getConfiguredProviders(): TwoBotAIProvider[] {
     log.warn("Anthropic provider NOT configured - TWOBOT_ANTHROPIC_API_KEY missing or invalid");
   }
 
+  if (isProviderConfigured("together")) {
+    providers.push("together");
+    log.info("Together AI provider is configured and ready");
+  } else {
+    log.warn("Together AI provider NOT configured - TWOBOT_TOGETHER_API_KEY missing or invalid");
+  }
+
   return providers;
 }
 
@@ -170,8 +236,8 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "text-generation",
     description: "Fast, affordable model for everyday tasks",
-    creditsPerInputToken: 0.15,
-    creditsPerOutputToken: 0.6,
+    creditsPerInputToken: 0.000045,
+    creditsPerOutputToken: 0.00018,
     maxTokens: 16384,
     contextWindow: 128000,
     tier: 1,
@@ -189,8 +255,8 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "text-generation",
     description: "Most capable OpenAI model for complex tasks",
-    creditsPerInputToken: 2.5,
-    creditsPerOutputToken: 10,
+    creditsPerInputToken: 0.00075,
+    creditsPerOutputToken: 0.003,
     maxTokens: 16384,
     contextWindow: 128000,
     tier: 2,
@@ -207,8 +273,8 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "text-generation",
     description: "Latest reasoning model with improved performance",
-    creditsPerInputToken: 1.1,
-    creditsPerOutputToken: 4.4,
+    creditsPerInputToken: 0.00033,
+    creditsPerOutputToken: 0.00132,
     maxTokens: 100000,
     contextWindow: 200000,
     tier: 2,
@@ -226,8 +292,8 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "text-generation",
     description: "Fast reasoning model, good for coding",
-    creditsPerInputToken: 3,
-    creditsPerOutputToken: 12,
+    creditsPerInputToken: 0.0009,
+    creditsPerOutputToken: 0.0036,
     maxTokens: 65536,
     contextWindow: 128000,
     tier: 2,
@@ -245,8 +311,8 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "text-generation",
     description: "Previous generation high-performance model",
-    creditsPerInputToken: 10,
-    creditsPerOutputToken: 30,
+    creditsPerInputToken: 0.003,
+    creditsPerOutputToken: 0.009,
     maxTokens: 4096,
     contextWindow: 128000,
     tier: 3,
@@ -269,7 +335,7 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "image-generation",
     description: "Generate stunning images from text",
-    creditsPerImage: 10000,
+    creditsPerImage: 12,
     tier: 1,
     capabilities: IMAGE_GEN_CAPABILITIES,
   },
@@ -279,7 +345,7 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "image-generation",
     description: "Higher quality image generation",
-    creditsPerImage: 20000,
+    creditsPerImage: 24,
     tier: 2,
     badge: "HD",
     capabilities: IMAGE_GEN_CAPABILITIES,
@@ -294,7 +360,7 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "speech-synthesis",
     description: "Text-to-speech, optimized for speed",
-    creditsPerChar: 500,
+    creditsPerChar: 0.0045,
     tier: 1,
     capabilities: TTS_CAPABILITIES,
   },
@@ -304,7 +370,7 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "speech-synthesis",
     description: "Text-to-speech, optimized for quality",
-    creditsPerChar: 1000,
+    creditsPerChar: 0.009,
     tier: 2,
     badge: "HD",
     capabilities: TTS_CAPABILITIES,
@@ -319,7 +385,7 @@ export const ALL_MODELS: ModelInfo[] = [
     provider: "openai",
     capability: "speech-recognition",
     description: "Transcribe audio to text",
-    creditsPerMinute: 200,
+    creditsPerMinute: 1.8,
     tier: 1,
     capabilities: STT_CAPABILITIES,
   },
@@ -328,18 +394,78 @@ export const ALL_MODELS: ModelInfo[] = [
   // Anthropic Chat Models
   // IDs must match Anthropic's actual model names
   // =====================================
+
+  // --- Latest Generation ---
+  {
+    id: "claude-opus-4-6-20260131",
+    name: "Claude Opus 4.6",
+    provider: "anthropic",
+    capability: "text-generation",
+    description: "Most intelligent Claude model — 3x cheaper than Opus 4",
+    creditsPerInputToken: 0.0015,
+    creditsPerOutputToken: 0.0075,
+    maxTokens: 8192,
+    contextWindow: 200000,
+    tier: 3,
+    badge: "BEST",
+    capabilities: {
+      ...VISION_MODEL_CAPABILITIES,
+      reasoning: "highest",
+      speed: "medium",
+      creativity: "highest",
+    },
+  },
+  {
+    id: "claude-sonnet-4-5-20251022",
+    name: "Claude Sonnet 4.5",
+    provider: "anthropic",
+    capability: "text-generation",
+    description: "Latest balanced model — best value for most tasks",
+    creditsPerInputToken: 0.0009,
+    creditsPerOutputToken: 0.0045,
+    maxTokens: 8192,
+    contextWindow: 200000,
+    tier: 2,
+    badge: "BEST",
+    capabilities: {
+      ...VISION_MODEL_CAPABILITIES,
+      reasoning: "highest",
+      speed: "high",
+      creativity: "highest",
+    },
+  },
+  {
+    id: "claude-haiku-4-5-20251022",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    capability: "text-generation",
+    description: "Latest fast model with improved intelligence",
+    creditsPerInputToken: 0.0003,
+    creditsPerOutputToken: 0.0015,
+    maxTokens: 8192,
+    contextWindow: 200000,
+    tier: 1,
+    badge: "FAST",
+    capabilities: {
+      ...VISION_MODEL_CAPABILITIES,
+      reasoning: "high",
+      speed: "highest",
+      creativity: "high",
+    },
+  },
+
+  // --- Previous Generation (Haiku 3.5 kept as fallback) ---
   {
     id: "claude-3-5-haiku-20241022",
     name: "Claude 3.5 Haiku",
     provider: "anthropic",
     capability: "text-generation",
     description: "Fast and efficient for simple tasks",
-    creditsPerInputToken: 0.8,
-    creditsPerOutputToken: 4,
+    creditsPerInputToken: 0.00024,
+    creditsPerOutputToken: 0.0012,
     maxTokens: 8192,
     contextWindow: 200000,
     tier: 1,
-    badge: "FAST",
     capabilities: {
       ...VISION_MODEL_CAPABILITIES,
       reasoning: "medium",
@@ -347,17 +473,41 @@ export const ALL_MODELS: ModelInfo[] = [
       creativity: "medium",
     },
   },
+
+  // =====================================
+  // Together AI Chat Models
+  // =====================================
   {
-    id: "claude-3-haiku-20240307",
-    name: "Claude 3 Haiku",
-    provider: "anthropic",
+    id: "togethercomputer/MoA-1",
+    name: "MoA-1",
+    provider: "together",
     capability: "text-generation",
-    description: "Fast and affordable (previous gen)",
-    creditsPerInputToken: 0.25,
-    creditsPerOutputToken: 1.25,
+    description: "Free mixture-of-agents ensemble model",
+    creditsPerInputToken: 0,
+    creditsPerOutputToken: 0,
     maxTokens: 4096,
-    contextWindow: 200000,
+    contextWindow: 32768,
     tier: 1,
+    badge: "FREE",
+    capabilities: {
+      ...CHAT_MODEL_CAPABILITIES,
+      reasoning: "medium",
+      speed: "medium",
+      creativity: "medium",
+    },
+  },
+  {
+    id: "google/gemma-3n-E4B-it",
+    name: "Gemma 3n E4B",
+    provider: "together",
+    capability: "text-generation",
+    description: "Google's efficient small model",
+    creditsPerInputToken: 0.000006,
+    creditsPerOutputToken: 0.000012,
+    maxTokens: 4096,
+    contextWindow: 32768,
+    tier: 1,
+    badge: "FAST",
     capabilities: {
       ...CHAT_MODEL_CAPABILITIES,
       reasoning: "medium",
@@ -366,60 +516,123 @@ export const ALL_MODELS: ModelInfo[] = [
     },
   },
   {
-    id: "claude-3-5-sonnet-20241022",
-    name: "Claude 3.5 Sonnet",
-    provider: "anthropic",
+    id: "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+    name: "Llama 3.2 3B Turbo",
+    provider: "together",
     capability: "text-generation",
-    description: "Best balance of intelligence and speed",
-    creditsPerInputToken: 3,
-    creditsPerOutputToken: 15,
+    description: "Meta's fast lightweight model",
+    creditsPerInputToken: 0.000018,
+    creditsPerOutputToken: 0.000018,
+    maxTokens: 4096,
+    contextWindow: 131072,
+    tier: 1,
+    badge: "FAST",
+    capabilities: {
+      ...CHAT_MODEL_CAPABILITIES,
+      reasoning: "medium",
+      speed: "highest",
+      creativity: "medium",
+    },
+  },
+  {
+    id: "Qwen/Qwen3-Next-80B-A3B-Instruct",
+    name: "Qwen3 Next 80B",
+    provider: "together",
+    capability: "text-generation",
+    description: "Qwen's efficient MoE model",
+    creditsPerInputToken: 0.000045,
+    creditsPerOutputToken: 0.00045,
     maxTokens: 8192,
-    contextWindow: 200000,
+    contextWindow: 32768,
     tier: 2,
     capabilities: {
-      ...VISION_MODEL_CAPABILITIES,
+      ...CHAT_MODEL_CAPABILITIES,
       reasoning: "high",
       speed: "high",
       creativity: "high",
     },
   },
   {
-    id: "claude-sonnet-4-20250514",
-    name: "Claude Sonnet 4",
-    provider: "anthropic",
+    id: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+    name: "Llama 4 Maverick",
+    provider: "together",
     capability: "text-generation",
-    description: "Most capable Claude model for complex analysis",
-    creditsPerInputToken: 3,
-    creditsPerOutputToken: 15,
+    description: "Meta's large MoE model with 1M context and vision",
+    creditsPerInputToken: 0.000081,
+    creditsPerOutputToken: 0.000255,
     maxTokens: 8192,
-    contextWindow: 200000,
-    tier: 3,
-    badge: "BEST",
+    contextWindow: 1048576,
+    tier: 2,
+    badge: "VISION",
     capabilities: {
       ...VISION_MODEL_CAPABILITIES,
-      reasoning: "highest",
-      speed: "low",
-      creativity: "highest",
+      reasoning: "high",
+      speed: "medium",
+      creativity: "high",
     },
   },
   {
-    id: "claude-opus-4-20250514",
-    name: "Claude Opus 4.5",
-    provider: "anthropic",
+    id: "deepseek-ai/DeepSeek-V3.1",
+    name: "DeepSeek V3.1",
+    provider: "together",
     capability: "text-generation",
-    description: "Most intelligent Claude model",
-    creditsPerInputToken: 15,
-    creditsPerOutputToken: 75,
-    maxTokens: 8192,
-    contextWindow: 200000,
-    tier: 3,
-    badge: "BEST",
+    description: "DeepSeek's powerful general model",
+    creditsPerInputToken: 0.00018,
+    creditsPerOutputToken: 0.00051,
+    maxTokens: 16384,
+    contextWindow: 131072,
+    tier: 2,
     capabilities: {
-      ...VISION_MODEL_CAPABILITIES,
+      ...CHAT_MODEL_CAPABILITIES,
+      reasoning: "high",
+      speed: "medium",
+      creativity: "high",
+    },
+  },
+  {
+    id: "deepseek-ai/DeepSeek-R1",
+    name: "DeepSeek R1",
+    provider: "together",
+    capability: "text-generation",
+    description: "DeepSeek's top reasoning model",
+    creditsPerInputToken: 0.0009,
+    creditsPerOutputToken: 0.0021,
+    maxTokens: 16384,
+    contextWindow: 131072,
+    tier: 3,
+    badge: "REASONING",
+    capabilities: {
+      ...CHAT_MODEL_CAPABILITIES,
       reasoning: "highest",
       speed: "low",
-      creativity: "highest",
+      creativity: "high",
     },
+  },
+
+  // =====================================
+  // Together AI Image Models
+  // =====================================
+  {
+    id: "black-forest-labs/FLUX.1-schnell",
+    name: "FLUX.1 Schnell",
+    provider: "together",
+    capability: "image-generation",
+    description: "Fast image generation",
+    creditsPerImage: 0.9,
+    tier: 1,
+    badge: "FAST",
+    capabilities: IMAGE_GEN_CAPABILITIES,
+  },
+  {
+    id: "black-forest-labs/FLUX.2-pro",
+    name: "FLUX.2 Pro",
+    provider: "together",
+    capability: "image-generation",
+    description: "FLUX 2 production-quality images",
+    creditsPerImage: 12,
+    tier: 3,
+    badge: "BEST",
+    capabilities: IMAGE_GEN_CAPABILITIES,
   },
 ];
 
@@ -525,10 +738,10 @@ export function getModelIfAvailable(modelId: string): ModelInfo | undefined {
 // ===========================================
 
 /**
- * Check if image generation is available (requires OpenAI)
+ * Check if image generation is available (requires OpenAI or Together)
  */
 export function isImageGenerationAvailable(): boolean {
-  return isProviderConfigured("openai");
+  return isProviderConfigured("openai") || isProviderConfigured("together");
 }
 
 /**
@@ -560,7 +773,15 @@ export function isVisionAvailable(modelId?: string): boolean {
 }
 
 /**
- * Get available features based on configured providers
+ * Get available features based on which 2Bot models can actually be resolved.
+ * 
+ * This checks the model resolver to see if at least one model for each capability
+ * has a configured provider — much more accurate than just checking provider flags.
+ * 
+ * For example, if only Together AI is configured:
+ * - imageGeneration = true (Together has FLUX models mapped)
+ * - speechSynthesis = false (voice models only map to OpenAI)
+ * - speechRecognition = false (transcribe models only map to OpenAI)
  */
 export function getAvailableFeatures(): {
   textGeneration: boolean;
@@ -571,13 +792,29 @@ export function getAvailableFeatures(): {
 } {
   const hasOpenAI = isProviderConfigured("openai");
   const hasAnthropic = isProviderConfigured("anthropic");
+  const hasTogether = isProviderConfigured("together");
+
+  // For text, image analysis: any provider works
+  const hasTextProvider = hasOpenAI || hasAnthropic || hasTogether;
+
+  // For image generation: check if image model mappings have a configured provider
+  // Image models map to: OpenAI (DALL-E) and Together (FLUX)
+  const hasImageProvider = hasOpenAI || hasTogether;
+
+  // For speech synthesis: currently ONLY OpenAI has TTS adapters
+  // Voice models (2bot-ai-voice-pro/ultra) only map to OpenAI TTS
+  const hasTTSProvider = hasOpenAI;
+
+  // For speech recognition: currently ONLY OpenAI has STT adapters (Whisper)
+  // Transcribe model (2bot-ai-transcribe-lite) only maps to OpenAI Whisper
+  const hasSTTProvider = hasOpenAI;
 
   return {
-    textGeneration: hasOpenAI || hasAnthropic,
-    imageGeneration: hasOpenAI,
-    imageAnalysis: hasOpenAI || hasAnthropic, // Both support vision
-    speechSynthesis: hasOpenAI,
-    speechRecognition: hasOpenAI,
+    textGeneration: hasTextProvider,
+    imageGeneration: hasImageProvider,
+    imageAnalysis: hasTextProvider, // Vision is available on all text providers
+    speechSynthesis: hasTTSProvider,
+    speechRecognition: hasSTTProvider,
   };
 }
 
@@ -614,6 +851,16 @@ export function getProvidersStatus(): ProviderStatus[] {
         ? ALL_MODELS.filter((m) => m.provider === "anthropic").map((m) => m.id)
         : [],
       features: isProviderConfigured("anthropic") ? ["text-generation", "image-understanding"] : [],
+    },
+    {
+      provider: "together",
+      configured: isProviderConfigured("together"),
+      models: isProviderConfigured("together")
+        ? ALL_MODELS.filter((m) => m.provider === "together").map((m) => m.id)
+        : [],
+      features: isProviderConfigured("together")
+        ? ["text-generation", "text-embedding", "image-generation", "image-understanding"]
+        : [],
     },
   ];
 }

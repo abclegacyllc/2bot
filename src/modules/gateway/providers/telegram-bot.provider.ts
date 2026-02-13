@@ -70,7 +70,7 @@ interface TelegramMessage {
 /**
  * Telegram WebhookInfo
  */
-interface TelegramWebhookInfo {
+interface _TelegramWebhookInfo {
   url: string;
   has_custom_certificate: boolean;
   pending_update_count: number;

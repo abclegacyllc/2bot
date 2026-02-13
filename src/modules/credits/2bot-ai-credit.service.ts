@@ -20,25 +20,26 @@
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import type {
-    AICapability,
-    TwoBotImageGenerationUsageData as ImageGenerationUsageData,
-    RecordTwoBotUsageData,
-    TwoBotSpeechRecognitionUsageData as SpeechRecognitionUsageData,
-    TwoBotSpeechSynthesisUsageData as SpeechSynthesisUsageData,
-    TwoBotTextGenerationUsageData as TextGenerationUsageData,
+  AICapability,
+  TwoBotImageGenerationUsageData as ImageGenerationUsageData,
+  RecordTwoBotUsageData,
+  TwoBotSpeechRecognitionUsageData as SpeechRecognitionUsageData,
+  TwoBotSpeechSynthesisUsageData as SpeechSynthesisUsageData,
+  TwoBotTextGenerationUsageData as TextGenerationUsageData,
 } from "@/modules/2bot-ai-provider";
 import {
-    calculateCreditsForUsageByCapability,
-    getModelPricingByCapability,
-    twoBotAIUsageService,
-    type ImageGenerationModelPricing,
-    type SpeechRecognitionModelPricing,
-    type SpeechSynthesisModelPricing,
-    type TextEmbeddingModelPricing,
-    type TextGenerationModelPricing
+  calculateCreditsForUsageByCapability,
+  getModelPricingByCapability,
+  twoBotAIUsageService,
+  type ImageGenerationModelPricing,
+  type SpeechRecognitionModelPricing,
+  type SpeechSynthesisModelPricing,
+  type TextEmbeddingModelPricing,
+  type TextGenerationModelPricing
 } from "@/modules/2bot-ai-provider";
-import { allocationService } from "@/modules/resource";
+import { allocationService, usageTracker } from "@/modules/resource";
 import { BadRequestError } from "@/shared/errors";
+import { createServiceContext, type TokenPayloadForContext } from "@/shared/types/context";
 import { creditService, type CreditCheckResult } from "./credit.service";
 import { creditWalletService, type WalletType } from "./wallet.service";
 
@@ -346,19 +347,12 @@ class TwoBotAICreditService {
     const fractionalCredits = await this.calculateCredits(data);
     const wallet = await creditWalletService.getOrCreatePersonalWallet(data.userId);
 
-    // Check balance and plan limit (estimate worst case: 1 credit could be deducted)
-    const planLimit = await creditWalletService.getUserPlanLimit(data.userId);
+    // Check balance (estimate worst case: 1 credit could be deducted)
     const potentialDeduction = Math.ceil(wallet.pendingCredits + fractionalCredits);
     
     if (wallet.balance < potentialDeduction) {
       throw new BadRequestError(
         `Insufficient credits. Available: ${wallet.balance}, Pending: ${wallet.pendingCredits.toFixed(4)}`
-      );
-    }
-
-    if (wallet.monthlyUsed + potentialDeduction > planLimit) {
-      throw new BadRequestError(
-        `Monthly credit limit reached. Limit: ${planLimit}, Used: ${wallet.monthlyUsed}`
       );
     }
 
@@ -375,6 +369,25 @@ class TwoBotAICreditService {
 
     // Record precise fractional usage for analytics
     const usageId = await twoBotAIUsageService.recordUsage(data, fractionalCredits);
+
+    // Track usage in Redis for real-time billing pool display
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: data.userId },
+        select: { role: true, plan: true },
+      });
+      if (user) {
+        const tokenPayload: TokenPayloadForContext = {
+          userId: data.userId,
+          role: user.role as "MEMBER" | "DEVELOPER" | "SUPPORT" | "ADMIN" | "SUPER_ADMIN",
+          plan: user.plan as "FREE" | "PRO" | "ENTERPRISE",
+        };
+        const ctx = createServiceContext(tokenPayload, undefined, { contextType: 'personal' });
+        await usageTracker.trackCreditUsage(ctx, fractionalCredits, 'ai');
+      }
+    } catch (err) {
+      creditLogger.warn({ err, userId: data.userId }, "Failed to track credit usage in Redis");
+    }
 
     creditLogger.info(
       {
@@ -412,19 +425,12 @@ class TwoBotAICreditService {
     const fractionalCredits = await this.calculateCredits(data);
     const wallet = await creditWalletService.getOrCreateOrgWallet(organizationId);
 
-    // Check balance and plan limit (estimate worst case: 1 credit could be deducted)
-    const planLimit = await creditWalletService.getOrgPlanLimit(organizationId);
+    // Check balance (estimate worst case: 1 credit could be deducted)
     const potentialDeduction = Math.ceil(wallet.pendingCredits + fractionalCredits);
     
     if (wallet.balance < potentialDeduction) {
       throw new BadRequestError(
         `Insufficient organization credits. Available: ${wallet.balance}, Pending: ${wallet.pendingCredits.toFixed(4)}`
-      );
-    }
-
-    if (wallet.monthlyUsed + potentialDeduction > planLimit) {
-      throw new BadRequestError(
-        `Organization monthly credit limit reached. Limit: ${planLimit}, Used: ${wallet.monthlyUsed}`
       );
     }
 
@@ -445,6 +451,28 @@ class TwoBotAICreditService {
       { ...data, organizationId },
       fractionalCredits
     );
+
+    // Track usage in Redis for real-time billing pool display
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: data.userId },
+        select: { role: true, plan: true },
+      });
+      if (user) {
+        const tokenPayload: TokenPayloadForContext = {
+          userId: data.userId,
+          role: user.role as "MEMBER" | "DEVELOPER" | "SUPPORT" | "ADMIN" | "SUPER_ADMIN",
+          plan: user.plan as "FREE" | "PRO" | "ENTERPRISE",
+        };
+        const ctx = createServiceContext(tokenPayload, undefined, {
+          contextType: 'organization',
+          organizationId,
+        });
+        await usageTracker.trackCreditUsage(ctx, fractionalCredits, 'ai');
+      }
+    } catch (err) {
+      creditLogger.warn({ err, organizationId, userId: data.userId }, "Failed to track org credit usage in Redis");
+    }
 
     creditLogger.info(
       {
@@ -496,19 +524,12 @@ class TwoBotAICreditService {
     const fractionalCredits = await this.calculateCredits(data);
     const wallet = await creditWalletService.getOrCreateOrgWallet(organizationId);
 
-    // Check org wallet balance and plan limit (estimate worst case)
-    const planLimit = await creditWalletService.getOrgPlanLimit(organizationId);
+    // Check org wallet balance (estimate worst case)
     const potentialDeduction = Math.ceil(wallet.pendingCredits + fractionalCredits);
     
     if (wallet.balance < potentialDeduction) {
       throw new BadRequestError(
         `Insufficient organization credits. Available: ${wallet.balance}, Pending: ${wallet.pendingCredits.toFixed(4)}`
-      );
-    }
-
-    if (wallet.monthlyUsed + potentialDeduction > planLimit) {
-      throw new BadRequestError(
-        `Organization monthly credit limit reached. Limit: ${planLimit}, Used: ${wallet.monthlyUsed}`
       );
     }
 
@@ -624,11 +645,10 @@ class TwoBotAICreditService {
     walletType: WalletType;
   }> {
     const balance = await creditService.getPersonalBalance(userId);
-    const planLimit = await creditWalletService.getUserPlanLimit(userId);
 
     return {
       ...balance,
-      planLimit,
+      planLimit: -1, // No monthly spending cap
     };
   }
 
@@ -649,7 +669,7 @@ class TwoBotAICreditService {
       return null;
     }
 
-    const planLimit = await creditWalletService.getOrgPlanLimit(organizationId);
+    const planLimit = -1; // No monthly spending cap
 
     return {
       ...balance,

@@ -10,6 +10,7 @@
 import type { GatewayType, Plugin, Prisma, UserPlugin } from "@prisma/client";
 
 import { auditActions, type AuditContext } from "@/lib/audit";
+import { decryptJson, encrypt } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { enforcePluginLimit } from "@/lib/plan-limits";
 import { prisma } from "@/lib/prisma";
@@ -170,7 +171,10 @@ class PluginService {
       orderBy: { createdAt: "desc" },
     });
 
-    return userPlugins.map(toSafeUserPlugin);
+    return userPlugins.map((up) => {
+      const decrypted = { ...up, config: this.decryptConfig(up.config) };
+      return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
+    });
   }
 
   /**
@@ -189,7 +193,10 @@ class PluginService {
     // Check ownership
     this.checkOwnership(ctx, userPlugin);
 
-    return toSafeUserPlugin(userPlugin);
+    // Decrypt config
+    const decrypted = { ...userPlugin, config: this.decryptConfig(userPlugin.config) };
+
+    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
   }
 
   /**
@@ -286,12 +293,14 @@ class PluginService {
     }
 
     // Create user plugin
+    const encryptedConfig = { _encrypted: encrypt(data.config ?? {}) };
+    
     const userPlugin = await prisma.userPlugin.create({
       data: {
         userId: ctx.userId,
         pluginId: pluginId,
         organizationId: ctx.organizationId ?? null,
-        config: (data.config ?? {}) as object,
+        config: encryptedConfig,
         gatewayId: data.gatewayId ?? null,
         isEnabled: true,
       },
@@ -306,7 +315,9 @@ class PluginService {
       "Plugin installed"
     );
 
-    return toSafeUserPlugin(userPlugin as UserPluginWithPlugin);
+    // Return with original (unencrypted) config
+    const decrypted = { ...userPlugin, config: data.config ?? {} };
+    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
   }
 
   /**
@@ -369,8 +380,10 @@ class PluginService {
     }
 
     // Build update data
+    const encryptedConfig = { _encrypted: encrypt(data.config) };
+    
     const updateData: Prisma.UserPluginUpdateInput = {
-      config: data.config as object,
+      config: encryptedConfig,
     };
 
     // Update gateway binding if provided
@@ -410,7 +423,9 @@ class PluginService {
       "Plugin config updated"
     );
 
-    return toSafeUserPlugin(updated as UserPluginWithPlugin);
+    // Return with original (unencrypted) config (we know it's data.config)
+    const decrypted = { ...updated, config: data.config };
+    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
   }
 
   /**
@@ -444,7 +459,8 @@ class PluginService {
       `Plugin ${enabled ? "enabled" : "disabled"}`
     );
 
-    return toSafeUserPlugin(updated as UserPluginWithPlugin);
+    const decrypted = { ...updated, config: this.decryptConfig(updated.config) };
+    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
   }
 
   // ===========================================
@@ -510,6 +526,26 @@ class PluginService {
     if (userPlugin.userId !== ctx.userId || userPlugin.organizationId !== null) {
       throw new PluginOwnershipError();
     }
+  }
+
+  /**
+   * Decrypt plugin configuration if encrypted
+   */
+  private decryptConfig(config: unknown): Record<string, unknown> {
+    if (
+      typeof config === "object" &&
+      config !== null &&
+      "_encrypted" in config &&
+      typeof (config as Record<string, unknown>)._encrypted === "string"
+    ) {
+      try {
+        return decryptJson((config as Record<string, unknown>)._encrypted as string);
+      } catch (error) {
+        pluginLogger.error({ error }, "Failed to decrypt plugin config");
+        return {}; // Return empty config on error to prevent UI crash
+      }
+    }
+    return (config ?? {}) as Record<string, unknown>;
   }
 }
 

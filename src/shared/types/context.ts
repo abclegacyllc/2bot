@@ -138,7 +138,8 @@ export function createServiceContext(
     },
 
     getOwnerId() {
-      return this.isOrgContext() ? (this.organizationId ?? null) : null;
+      // Return organizationId for org context, userId for personal context
+      return this.isOrgContext() ? (this.organizationId ?? null) : this.userId;
     },
 
     canDo(permission: Permission) {
@@ -183,7 +184,7 @@ export function createSystemContext(requestId?: string): ServiceContext {
     },
 
     getOwnerId() {
-      return null;
+      return 'system';
     },
 
     canDo() {

@@ -263,15 +263,13 @@ export function DeptResourceView({
         items={usageItems}
       />
 
-      {workspace && (
-        <ResourcePoolCard
+      {workspace ? <ResourcePoolCard
           title="Workspace Allocation"
           description="Compute resources for this department"
           icon={Server}
           items={workspaceItems}
           columns={3}
-        />
-      )}
+        /> : null}
 
       <ResourcePoolCard
         title="Member Distribution"

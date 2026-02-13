@@ -142,5 +142,9 @@ export function addEndpointRateLimit(endpoint: string, config: RateLimitConfig):
  */
 export function getRateLimitConfig(method: string, path: string): RateLimitConfig {
   const endpointKey = `${method}:${path}`;
-  return IP_RATE_LIMITS[endpointKey] ?? IP_RATE_LIMITS.default!;
+  const defaultConfig = IP_RATE_LIMITS.default;
+  if (!defaultConfig) {
+    throw new Error('Default rate limit config is missing');
+  }
+  return IP_RATE_LIMITS[endpointKey] ?? defaultConfig;
 }

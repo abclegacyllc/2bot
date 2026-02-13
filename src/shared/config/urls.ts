@@ -1,131 +1,94 @@
 /**
- * URL Configuration for Enterprise Subdomain Support
+ * URL Configuration for 2Bot.org Subdomain Architecture
  * 
- * Phase 6.9.1.2: Dual-mode URL configuration
+ * All services use *.2bot.org subdomains. The server is remote —
+ * localhost is NEVER used by frontend or API redirect URLs.
+ * Localhost ports are only used internally by nginx reverse proxy on the server.
  * 
- * - Production: Defaults to enterprise subdomains (api.2bot.org, dash.2bot.org, etc.)
- * - Development: Defaults to localhost ports (3000, 3001, etc.)
- * 
- * This module provides environment-based URL configuration for all 2bot services.
- * Supports both single-domain (legacy) and multi-subdomain (enterprise) deployments.
+ * Architecture (nginx internal proxy):
+ *   api.2bot.org     → :3002 (production API)
+ *   dev-api.2bot.org → :3006 (development/admin API)
+ *   dash.2bot.org    → :3001 (dashboard)
+ *   www.2bot.org     → :3000 (landing/marketing)
+ *   dev.2bot.org     → :3005 (dev frontend)
+ *   admin.2bot.org   → :3007 (admin panel)
+ *   docs.2bot.org    → :3003 (documentation)
+ *   support.2bot.org → :3008 (support dashboard)
  * 
  * @module shared/config/urls
  */
 
 /**
- * Check if we're in production mode
- * 
- * IMPORTANT: Next.js requires direct access to process.env.NEXT_PUBLIC_* 
- * for client-side code. Using a function to wrap it won't work.
- */
-const isProduction = process.env.NODE_ENV === 'production';
-
-/**
  * Check if running in browser environment
  */
-const isBrowser = typeof window !== 'undefined';
+const isBrowser = typeof globalThis !== 'undefined' && 'window' in globalThis;
 
 /**
  * Service URLs configuration
  * 
- * IMPORTANT: We must use process.env.NEXT_PUBLIC_* directly (not through a function)
- * because Next.js inlines these at build time by looking for literal references.
- * 
- * Port assignment:
- * - :3000 - Dashboard (Next.js main app)
- * - :3001 - API Server (Express)
- * - :3002 - Main/Landing site (static or minimal Next.js)
- * - :3003 - Admin panel
- * - :3004 - Support team dashboard (Phase 7)
- * - :3005 - Public documentation
- * - :3006 - Developer portal
+ * All URLs point to *.2bot.org subdomains.
+ * Environment variables can override for custom domain deployments.
  */
 export const URLS = {
-  /**
-   * API Server (Express :3001)
-   * In enterprise mode: api.2bot.org
-   * In single-domain mode: 2bot.org/api (via proxy)
-   */
-  api: process.env.NEXT_PUBLIC_API_URL || 
-       (isProduction 
-         ? 'https://api.2bot.org' 
-         : 'http://localhost:3001'),
+  /** Production API: api.2bot.org (nginx → :3002) */
+  api: process.env.NEXT_PUBLIC_API_URL || 'https://api.2bot.org',
   
-  /**
-   * Dashboard (Next.js :3000)
-   * Main application for authenticated users
-   */
-  dashboard: process.env.NEXT_PUBLIC_DASHBOARD_URL || 
-             (isProduction 
-               ? 'https://dash.2bot.org' 
-               : 'http://localhost:3000'),
+  /** Dashboard: dash.2bot.org (nginx → :3001) */
+  dashboard: process.env.NEXT_PUBLIC_DASHBOARD_URL || 'https://dash.2bot.org',
   
-  /**
-   * Main site (:3002)
-   * Landing pages, marketing, public content
-   */
-  main: process.env.NEXT_PUBLIC_APP_URL || 
-        (isProduction 
-          ? 'https://www.2bot.org' 
-          : 'http://localhost:3002'),
+  /** Landing/Marketing: www.2bot.org (nginx → :3000) */
+  main: process.env.NEXT_PUBLIC_APP_URL || 'https://www.2bot.org',
   
-  /**
-   * Admin panel (:3003)
-   * Platform administration (ADMIN role only)
-   */
-  admin: process.env.NEXT_PUBLIC_ADMIN_URL || 
-         (isProduction 
-           ? 'https://admin.2bot.org' 
-           : 'http://localhost:3003'),
+  /** Admin panel: admin.2bot.org (nginx → :3007) */
+  admin: process.env.NEXT_PUBLIC_ADMIN_URL || 'https://admin.2bot.org',
   
-  /**
-   * Support team dashboard (:3004) - Phase 7
-   * Customer support and ticket management
-   */
-  support: process.env.NEXT_PUBLIC_SUPPORT_URL || 
-           (isProduction 
-             ? 'https://support.2bot.org' 
-             : 'http://localhost:3004'),
+  /** Admin/Dev API: dev-api.2bot.org (nginx → :3006) */
+  adminApi: process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://dev-api.2bot.org',
   
-  /**
-   * Public documentation (:3005)
-   * API docs, guides, tutorials
-   */
-  docs: process.env.NEXT_PUBLIC_DOCS_URL || 
-        (isProduction 
-          ? 'https://docs.2bot.org' 
-          : 'http://localhost:3005'),
+  /** Support dashboard: support.2bot.org (nginx → :3008) */
+  support: process.env.NEXT_PUBLIC_SUPPORT_URL || 'https://support.2bot.org',
   
-  /**
-   * Developer portal (:3006)
-   * Marketplace publishing, analytics, SDK downloads
-   */
-  dev: process.env.NEXT_PUBLIC_DEV_URL || 
-       (isProduction 
-         ? 'https://dev.2bot.org' 
-         : 'http://localhost:3006'),
+  /** Documentation: docs.2bot.org (nginx → :3003) */
+  docs: process.env.NEXT_PUBLIC_DOCS_URL || 'https://docs.2bot.org',
+  
+  /** Dev frontend: dev.2bot.org (nginx → :3005) */
+  dev: process.env.NEXT_PUBLIC_DEV_URL || 'https://dev.2bot.org',
 } as const;
 
 /**
  * Build API URL for a given path
  * 
- * Production-like development: Same URL structure in dev and prod.
- * Only the base URL differs (localhost:3001 vs api.2bot.org).
+ * Always uses api.2bot.org (production API).
  * 
  * @example
- * // Development:
- * apiUrl('/user/gateways') → 'http://localhost:3001/user/gateways'
- * 
- * // Production:
  * apiUrl('/user/gateways') → 'https://api.2bot.org/user/gateways'
  * 
  * @param path - API endpoint path (e.g., '/user/gateways')
  * @returns Full API URL
  */
 export function apiUrl(path: string): string {
-  const baseUrl = URLS.api.replace(/\/$/, ''); // Remove trailing slash
+  const baseUrl = URLS.api.replace(/\/$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${baseUrl}${normalizedPath}`;
+}
+
+/**
+ * Build Admin API URL for a given path
+ * 
+ * Admin API uses dev-api.2bot.org (not production api.2bot.org).
+ * Admin routes are mounted under /admin prefix on the dev API server.
+ * 
+ * @example
+ * adminApiUrl('/users') → 'https://dev-api.2bot.org/admin/users'
+ * adminApiUrl('/stats') → 'https://dev-api.2bot.org/admin/stats'
+ * 
+ * @param path - API endpoint path (e.g., '/users', '/stats')
+ * @returns Full Admin API URL with /admin prefix
+ */
+export function adminApiUrl(path: string): string {
+  const baseUrl = URLS.adminApi.replace(/\/$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${baseUrl}/admin${normalizedPath}`;
 }
 
 /**
@@ -150,10 +113,10 @@ export function serviceUrl(
 
 /**
  * Check if running in production environment
- * @deprecated Use isProduction constant instead - no longer need "enterprise mode" distinction
+ * @deprecated All environments use production subdomains now
  */
 export function isEnterpriseMode(): boolean {
-  return isProduction;
+  return true;
 }
 
 /**
@@ -167,23 +130,12 @@ export function getCurrentService(): keyof typeof URLS | 'unknown' {
   const hostname = win.location.hostname;
   
   if (hostname.includes('dash.')) return 'dashboard';
+  if (hostname.includes('dev-api.')) return 'adminApi';
   if (hostname.includes('api.')) return 'api';
   if (hostname.includes('admin.')) return 'admin';
   if (hostname.includes('support.')) return 'support';
   if (hostname.includes('docs.')) return 'docs';
   if (hostname.includes('dev.')) return 'dev';
-  if (hostname.includes('localhost')) {
-    const port = win.location.port;
-    switch (port) {
-      case '3000': return 'dashboard';
-      case '3001': return 'api';
-      case '3002': return 'main';
-      case '3003': return 'admin';
-      case '3004': return 'support';
-      case '3005': return 'docs';
-      case '3006': return 'dev';
-    }
-  }
   return 'main';
 }
 
@@ -191,13 +143,13 @@ export function getCurrentService(): keyof typeof URLS | 'unknown' {
  * Subdomain to port mapping reference
  */
 export const SUBDOMAIN_PORTS = {
-  dashboard: 3000,
-  api: 3001,
-  main: 3002,
-  admin: 3003,
-  support: 3004,
-  docs: 3005,
-  dev: 3006,
+  main: 3000,
+  dashboard: 3001,
+  api: 3002,
+  docs: 3003,
+  dev: 3005,
+  admin: 3007,
+  support: 3008,
 } as const;
 
 /**

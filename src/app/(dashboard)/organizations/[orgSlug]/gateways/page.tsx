@@ -163,14 +163,12 @@ function EmptyState({ orgSlug, canCreate }: { orgSlug: string; canCreate: boolea
             ? "Connect your first gateway to start automating with Telegram bots and AI providers."
             : "No gateways have been set up for this organization yet."}
         </p>
-        {canCreate && (
-          <Link href={`/organizations/${orgSlug}/gateways/create`}>
+        {canCreate ? <Link href={`/organizations/${orgSlug}/gateways/create`}>
             <Button className="bg-blue-600 hover:bg-blue-700">
               <PlusIcon />
               <span className="ml-2">Add Gateway</span>
             </Button>
-          </Link>
-        )}
+          </Link> : null}
       </CardContent>
     </Card>
   );
@@ -210,7 +208,7 @@ function OrgNotFound() {
           <CardContent className="py-12 text-center">
             <h3 className="text-lg font-medium text-foreground mb-2">Organization not found</h3>
             <p className="text-muted-foreground mb-4">
-              The organization you're looking for doesn't exist or you don't have access to it.
+              The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access to it.
             </p>
             <Link href="/">
               <Button variant="outline" className="border-border">
@@ -295,14 +293,12 @@ function GatewaysContent() {
               Manage {orgName ? `${orgName}'s` : "organization"} Telegram bots and AI provider connections
             </p>
           </div>
-          {canCreateGateway && (
-            <Link href={buildOrgUrl("/gateways/create")}>
+          {canCreateGateway ? <Link href={buildOrgUrl("/gateways/create")}>
               <Button className="bg-blue-600 hover:bg-blue-700">
                 <PlusIcon />
                 <span className="ml-2">Add Gateway</span>
               </Button>
-            </Link>
-          )}
+            </Link> : null}
         </div>
 
         {/* Content */}
@@ -330,16 +326,6 @@ function GatewaysContent() {
             ))}
           </div>
         )}
-
-        {/* Back link */}
-        <div className="pt-4">
-          <Link
-            href={buildOrgUrl("/")}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            ← Back to Organization
-          </Link>
-        </div>
       </div>
     </div>
   );

@@ -16,9 +16,10 @@ import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
 import { PLAN_LIMITS, type PlanType } from "@/shared/constants/plans";
+import { formatNumber, formatCredits as sharedFormatCredits } from "@/shared/lib/format";
 import { getCurrentBillingPeriod } from "./2bot-ai-usage.service";
 
-const log = logger.child({ module: "2bot-ai-metrics" });
+const _log = logger.child({ module: "2bot-ai-metrics" });
 
 // ===========================================
 // Types
@@ -134,7 +135,7 @@ class TwoBotAIMetricsService {
 
     // Determine which limit applies
     const userPlan = (user.plan || "FREE") as PlanType;
-    const userLimit = PLAN_LIMITS[userPlan]?.creditsPerMonth ?? 100;
+    const userLimit = PLAN_LIMITS[userPlan]?.creditsPerMonth ?? 15;
 
     // Check if user is in an organization with a higher limit
     let effectiveLimit = userLimit;
@@ -352,7 +353,7 @@ class TwoBotAIMetricsService {
 
     const orgPlan = (org.plan || "ORG_FREE") as OrgPlanType;
     const orgLimits = ORG_PLAN_LIMITS[orgPlan];
-    const limit = orgLimits?.sharedCreditsPerMonth ?? 5000;
+    const limit = orgLimits?.sharedCreditsPerMonth ?? 100;
 
     // Get total 2Bot AI usage for all org members
     const usage = await this.getMonthlyTokens("", period, organizationId);
@@ -408,9 +409,7 @@ class TwoBotAIMetricsService {
    */
   formatTokens(tokens: number): string {
     if (tokens === -1) return "Unlimited";
-    if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
-    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
-    return tokens.toString();
+    return formatNumber(tokens);
   }
 
   /**
@@ -418,18 +417,16 @@ class TwoBotAIMetricsService {
    */
   formatTokensFull(tokens: number): string {
     if (tokens === -1) return "Unlimited";
-    const formatted = this.formatTokens(tokens);
+    const formatted = formatNumber(tokens);
     const full = tokens.toLocaleString();
     return `${formatted} (${full})`;
   }
 
   /**
-   * Format credits for display
+   * Format credits for display — delegates to shared formatCredits
    */
   formatCredits(credits: number): string {
-    if (credits >= 1000000) return `${(credits / 1000000).toFixed(1)}M`;
-    if (credits >= 1000) return `${(credits / 1000).toFixed(1)}K`;
-    return credits.toString();
+    return sharedFormatCredits(credits);
   }
 
   /**

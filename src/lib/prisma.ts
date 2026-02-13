@@ -20,7 +20,7 @@ function getConnectionString(): string {
   if (!connStr) {
     console.error("❌ DATABASE_URL is not set! Using fallback (this may fail)");
     console.error("   Make sure dotenv is loaded before importing prisma");
-    return "postgresql://postgres:postgres@localhost:5432/2bot_dev?schema=public";
+    return "postgresql://postgres:postgres@localhost:5432/2bot_production?schema=public";
   }
   return connStr;
 }
@@ -30,6 +30,7 @@ function createPrismaClient(): PrismaClient {
   
   // Debug log (only in development)
   if (process.env.NODE_ENV === "development") {
+    // eslint-disable-next-line no-console
     console.log(`🔗 Prisma connecting to: ${connectionString.replace(/:[^:@]+@/, ':***@')}`);
   }
   

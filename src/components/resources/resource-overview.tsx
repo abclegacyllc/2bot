@@ -16,25 +16,25 @@
  */
 
 import type {
-  OrgDeptResourceStatus,
-  OrgMemberResourceStatus,
-  OrgResourceStatus,
-  PersonalResourceStatus,
+    OrgDeptResourceStatus,
+    OrgMemberResourceStatus,
+    OrgResourceStatus,
+    PersonalResourceStatus,
 } from "@/shared/types/resources";
 import {
-  Bot,
-  Cpu,
-  CreditCard,
-  Database,
-  FolderTree,
-  GitBranch,
-  HardDrive,
-  ImageIcon,
-  MemoryStick,
-  MessageSquare,
-  Server,
-  Users,
-  Zap
+    Bot,
+    Cpu,
+    CreditCard,
+    Database,
+    FolderTree,
+    GitBranch,
+    HardDrive,
+    ImageIcon,
+    MemoryStick,
+    MessageSquare,
+    Server,
+    Users,
+    Zap
 } from "lucide-react";
 import type { ResourceStatus } from "./resource-context";
 import { ResourcePoolCard, type ResourcePoolItem } from "./resource-pool-card";
@@ -478,15 +478,13 @@ function DeptOverview({ status }: { status: OrgDeptResourceStatus }) {
         items={usageItems}
       />
       
-      {workspace && (
-        <ResourcePoolCard
+      {workspace ? <ResourcePoolCard
           title="Workspace Allocation"
           description="Compute resources for this department"
           icon={Server}
           items={workspaceItems}
           columns={3}
-        />
-      )}
+        /> : null}
     </div>
   );
 }
@@ -581,15 +579,13 @@ function MemberOverview({ status }: { status: OrgMemberResourceStatus }) {
         items={usageItems}
       />
       
-      {workspace && (
-        <ResourcePoolCard
+      {workspace ? <ResourcePoolCard
           title="Workspace"
           description="Your compute resources"
           icon={Server}
           items={workspaceItems}
           columns={3}
-        />
-      )}
+        /> : null}
     </div>
   );
 }
@@ -598,7 +594,7 @@ function MemberOverview({ status }: { status: OrgMemberResourceStatus }) {
 // Main Component
 // =============================================
 
-export function ResourceOverview({ status, className }: ResourceOverviewProps) {
+export function ResourceOverview({ status, className: _className }: ResourceOverviewProps) {
   if (isPersonal(status)) {
     return <PersonalOverview status={status} />;
   }

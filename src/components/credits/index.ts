@@ -28,5 +28,9 @@ export type { BuyCreditsModalProps } from "./buy-credits-modal";
 export { CreditsLimitWarning } from "./credits-limit-warning";
 export type { CreditsLimitWarningProps } from "./credits-limit-warning";
 
+export { CreditsClaimCard } from "./credits-claim-card";
+export type { ClaimStatus, CreditsClaimCardProps } from "./credits-claim-card";
+
 export { CreditsBalanceDisplay } from "./credits-balance-display";
 export type { CreditsBalanceDisplayProps } from "./credits-balance-display";
+

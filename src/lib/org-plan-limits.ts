@@ -193,7 +193,10 @@ export async function enforceOrgGatewayLimit(ctx: ServiceContext): Promise<void>
   const limit = await checkOrgGatewayLimit(ctx);
 
   if (!limit.allowed) {
-    const plan = await getOrgPlan(ctx.organizationId!);
+    if (!ctx.organizationId) {
+      throw new Error("Organization context required");
+    }
+    const _plan = await getOrgPlan(ctx.organizationId);
     throw new OrgPlanLimitError(
       `Organization gateway limit reached (${limit.current}/${limit.max}). Upgrade your organization plan to create more gateways.`,
       "gateways",
@@ -210,7 +213,10 @@ export async function enforceOrgPluginLimit(ctx: ServiceContext): Promise<void> 
   const limit = await checkOrgPluginLimit(ctx);
 
   if (!limit.allowed) {
-    const plan = await getOrgPlan(ctx.organizationId!);
+    if (!ctx.organizationId) {
+      throw new Error("Organization context required");
+    }
+    const _plan = await getOrgPlan(ctx.organizationId);
     throw new OrgPlanLimitError(
       `Organization plugin limit reached (${limit.current}/${limit.max}). Upgrade your organization plan to install more plugins.`,
       "plugins",
@@ -227,7 +233,10 @@ export async function enforceOrgWorkflowLimit(ctx: ServiceContext): Promise<void
   const limit = await checkOrgWorkflowLimit(ctx);
 
   if (!limit.allowed) {
-    const plan = await getOrgPlan(ctx.organizationId!);
+    if (!ctx.organizationId) {
+      throw new Error("Organization context required");
+    }
+    const _plan = await getOrgPlan(ctx.organizationId);
     throw new OrgPlanLimitError(
       `Workflow limit reached (${limit.current}/${limit.max}). Upgrade your organization plan to create more workflows.`,
       "workflows",

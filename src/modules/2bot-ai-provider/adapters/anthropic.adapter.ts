@@ -10,9 +10,9 @@
 import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -47,9 +47,14 @@ function getAnthropicClient(): Anthropic {
 // - Sonnet: Balanced performance/cost (most tasks)
 // - Haiku: Fastest, cheapest (simple tasks)
 const MODEL_MAP: Record<string, string> = {
-  // Claude 4 models (latest)
-  "claude-4-opus": "claude-opus-4-20250514",      // Fixed: opus → opus (not sonnet!)
-  "claude-4-sonnet": "claude-sonnet-4-20250514",  // sonnet → sonnet
+  // Claude 4.6 (newest, best value)
+  "claude-4.6-opus": "claude-opus-4-6-20260131",
+  "claude-opus-4.6": "claude-opus-4-6-20260131",
+  // Claude 4.5 models
+  "claude-4.5-sonnet": "claude-sonnet-4-5-20251022",
+  "claude-sonnet-4.5": "claude-sonnet-4-5-20251022",
+  "claude-4.5-haiku": "claude-haiku-4-5-20251022",
+  "claude-haiku-4.5": "claude-haiku-4-5-20251022",
   // Claude 3.5 models
   "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
   "claude-3.5-haiku": "claude-3-5-haiku-20241022",
@@ -61,6 +66,62 @@ const MODEL_MAP: Record<string, string> = {
 
 function mapModelId(model: string): string {
   return MODEL_MAP[model] || model;
+}
+
+// ===========================================
+// Message Formatting (Multimodal / Vision)
+// ===========================================
+
+/**
+ * Convert TextGenerationMessage to Anthropic format, handling multimodal content (vision).
+ * Anthropic uses a different image format than OpenAI:
+ * - OpenAI: { type: "image_url", image_url: { url: "data:image/png;base64,..." } }
+ * - Anthropic: { type: "image", source: { type: "base64", media_type: "image/png", data: "..." } }
+ */
+function formatMessageForAnthropic(m: TextGenerationRequest["messages"][0]): {
+  role: "user" | "assistant";
+  content: string | Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } }>;
+} {
+  // If message has multimodal parts, convert to Anthropic format
+  if (m.parts && m.parts.length > 0) {
+    const content = m.parts
+      .map((part) => {
+        if (part.type === "text") {
+          return { type: "text" as const, text: part.text || "" };
+        } else if (part.type === "image_url" && part.image_url) {
+          // Parse data URL: "data:image/png;base64,iVBOR..." → media_type + data
+          const url = part.image_url.url;
+          const dataUrlMatch = url.match(/^data:([^;]+);base64,(.+)$/);
+          if (dataUrlMatch && dataUrlMatch[1] && dataUrlMatch[2]) {
+            return {
+              type: "image" as const,
+              source: {
+                type: "base64" as const,
+                media_type: dataUrlMatch[1],
+                data: dataUrlMatch[2],
+              },
+            };
+          }
+          // If it's a regular URL (not base64), Anthropic also supports URL source
+          // but base64 is more reliable. Log warning for non-base64 URLs.
+          logger.warn({ url: url.substring(0, 50) }, "Non-base64 image URL sent to Anthropic - skipping");
+          return { type: "text" as const, text: "[Image could not be processed]" };
+        }
+        return { type: "text" as const, text: "" };
+      })
+      .filter((p) => p.type === "text" ? p.text !== "" : true);
+
+    return {
+      role: m.role as "user" | "assistant",
+      content,
+    };
+  }
+
+  // Standard text message
+  return {
+    role: m.role as "user" | "assistant",
+    content: m.content,
+  };
 }
 
 // ===========================================
@@ -76,13 +137,13 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
     const systemMessage = request.messages.find((m) => m.role === "system");
     const conversationMessages = request.messages.filter((m) => m.role !== "system");
 
+    // Check if any message has images (for logging)
+    const hasImages = request.messages.some((m) => m.parts?.some((p) => p.type === "image_url"));
+
     const response = await client.messages.create({
       model: mapModelId(request.model),
       system: systemMessage?.content,
-      messages: conversationMessages.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      })),
+      messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
     });
@@ -94,6 +155,7 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
       model: request.model,
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
+      hasImages,
     }, "Anthropic text generation completed");
 
     return {
@@ -133,10 +195,7 @@ export async function* anthropicTextGenerationStream(
     const stream = await client.messages.stream({
       model: mapModelId(request.model),
       system: systemMessage?.content,
-      messages: conversationMessages.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      })),
+      messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
     });

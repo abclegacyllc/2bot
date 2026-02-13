@@ -143,12 +143,10 @@ function RegisterForm() {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             {/* Invite Notice */}
-            {inviteToken && (
-              <div className="p-3 text-sm text-blue-400 bg-blue-950/50 border border-blue-900 rounded-md">
+            {inviteToken ? <div className="p-3 text-sm text-blue-400 bg-blue-950/50 border border-blue-900 rounded-md">
                 You&apos;re registering to accept an organization invitation.
-                {inviteEmail && <> Please use the email: <strong>{inviteEmail}</strong></>}
-              </div>
-            )}
+                {inviteEmail ? <> Please use the email: <strong>{inviteEmail}</strong></> : null}
+              </div> : null}
 
             {/* Global Error */}
             {error ? <div className="p-3 text-sm text-red-400 bg-red-950/50 border border-red-900 rounded-md">

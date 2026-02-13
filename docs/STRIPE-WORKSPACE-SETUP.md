@@ -379,7 +379,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 | LARGE | 8 GB | 4 | 80 GB | $29 | $290 |
 | XLARGE | 16 GB | 8 | 150 GB | $49 | $490 |
 
-### Organization Pool Boosters (Synced with org-workspace-addons.ts)
+### Organization Pool Addons (Synced with org-workspace-addons.ts)
 
 Formula: 2x RAM, 2x CPU, 3x Storage, 2x Cost compared to user add-ons.
 

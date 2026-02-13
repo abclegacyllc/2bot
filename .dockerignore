@@ -9,6 +9,7 @@ node_modules
 
 # Build outputs
 .next
+.next-admin
 dist
 build
 out

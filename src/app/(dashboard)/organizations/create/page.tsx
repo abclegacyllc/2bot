@@ -10,6 +10,7 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,8 +32,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { apiUrl } from "@/shared/config/urls";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Building2, Loader2 } from "lucide-react";
-import Link from "next/link";
+import { Building2, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -138,26 +138,11 @@ function CreateOrganizationContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-md mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <Link href="/">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">
-              Create Organization
-            </h1>
-            <p className="text-muted-foreground">
-              Set up a new organization for your team
-            </p>
-          </div>
-        </div>
+        <PageHeader
+          title="Create Organization"
+          description="Set up a new organization for your team"
+          breadcrumbs={[{ label: "Home", href: "/" }]}
+        />
 
         {error ? <div className="bg-destructive/10 border border-destructive text-destructive px-4 py-3 rounded-md">
             {error}

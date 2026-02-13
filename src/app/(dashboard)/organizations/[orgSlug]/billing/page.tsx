@@ -11,45 +11,44 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import {
-    isOrgStatus,
-    ResourcePoolCard,
-    useResourceStatus,
-    type ResourcePoolItem,
+  isOrgStatus,
+  ResourcePoolCard,
+  useResourceStatus,
+  type ResourcePoolItem,
 } from "@/components/resources";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
-import { INCLUDED_ORG_WORKSPACE_POOL, ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
+import { INCLUDED_ORG_WORKSPACE, ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
 import {
-    AlertCircle,
-    ArrowLeft,
-    Bot,
-    Building2,
-    Cpu,
-    CreditCard,
-    Database,
-    FolderTree,
-    GitBranch,
-    HardDrive,
-    Loader2,
-    MemoryStick,
-    Server,
-    Settings,
-    Sparkles,
-    Users,
-    Zap
+  AlertCircle,
+  Building2,
+  Cpu,
+  CreditCard,
+  Database,
+  FolderTree,
+  GitBranch,
+  HardDrive,
+  Loader2,
+  MemoryStick,
+  Server,
+  Settings,
+  Sparkles,
+  Users,
+  Zap
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -97,7 +96,7 @@ function formatDate(dateString: string): string {
 function OrgBillingContent() {
   const { token } = useAuth();
   const router = useRouter();
-  const { orgId, orgName: hookOrgName, orgRole, isFound, isLoading: orgLoading } = useOrganization();
+  const { orgId, orgName: hookOrgName, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
   const { can } = useOrgPermissions();
 
@@ -166,8 +165,8 @@ function OrgBillingContent() {
   // Get plan limits from centralized constants
   const currentOrgPlan = (subscription?.plan as OrgPlanType) || "ORG_FREE";
   const planLimits = ORG_PLAN_LIMITS[currentOrgPlan] || ORG_PLAN_LIMITS.ORG_FREE;
-  const poolTier = INCLUDED_ORG_WORKSPACE_POOL[currentOrgPlan];
-  const hasWorkspacePool = poolTier !== "NONE" && planLimits.pool.ramMb !== null;
+  const workspaceTier = INCLUDED_ORG_WORKSPACE[currentOrgPlan];
+  const hasWorkspacePool = workspaceTier !== "NONE" && planLimits.workspace.ramMb !== null;
 
   // Extract usage from new resource status
   const orgStatus = resourceStatus && isOrgStatus(resourceStatus) ? resourceStatus : null;
@@ -220,27 +219,11 @@ function OrgBillingContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-4xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
-              <Building2 className="h-8 w-8 text-purple-400" />
-              Organization Billing
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Manage {orgName}&apos;s subscription and billing
-            </p>
-          </div>
-          <Link href="/">
-            <Button
-              variant="outline"
-              className="border-border text-foreground hover:bg-muted"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Dashboard
-            </Button>
-          </Link>
-        </div>
+        <PageHeader
+          title="Organization Billing"
+          description={`Manage ${orgName}'s subscription and billing`}
+          icon={<Building2 className="h-8 w-8 text-purple-400" />}
+        />
 
         {/* Permission Warning */}
         {!canManageBilling && (
@@ -265,8 +248,7 @@ function OrgBillingContent() {
         )}
 
         {/* Cancellation Alert */}
-        {subscription?.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
-          <Alert className="border-yellow-500/50 bg-yellow-500/10">
+        {subscription?.cancelAtPeriodEnd && subscription.currentPeriodEnd ? <Alert className="border-yellow-500/50 bg-yellow-500/10">
             <AlertCircle className="h-4 w-4 text-yellow-500" />
             <AlertTitle className="text-yellow-500">Subscription Ending</AlertTitle>
             <AlertDescription className="text-yellow-400/80">
@@ -274,19 +256,16 @@ function OrgBillingContent() {
               {formatDate(subscription.currentPeriodEnd)}. You can resume your
               subscription from the billing portal.
             </AlertDescription>
-          </Alert>
-        )}
+          </Alert> : null}
 
         {/* Error */}
-        {error && (
-          <Alert variant="destructive">
+        {error ? <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>
               {error.message}
             </AlertDescription>
-          </Alert>
-        )}
+          </Alert> : null}
 
         {/* Current Plan Card */}
         <Card className="border-border bg-card/50">
@@ -312,20 +291,15 @@ function OrgBillingContent() {
                   {planLimits.description}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {subscription?.currentPeriodEnd && !subscription.cancelAtPeriodEnd && (
-                    <span>Renews on {formatDate(subscription.currentPeriodEnd)}</span>
-                  )}
-                  {subscription?.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
-                    <span className="text-yellow-400">
+                  {subscription?.currentPeriodEnd && !subscription.cancelAtPeriodEnd ? <span>Renews on {formatDate(subscription.currentPeriodEnd)}</span> : null}
+                  {subscription?.cancelAtPeriodEnd && subscription.currentPeriodEnd ? <span className="text-yellow-400">
                       Access until {formatDate(subscription.currentPeriodEnd)}
-                    </span>
-                  )}
+                    </span> : null}
                 </p>
               </div>
 
               <div className="flex flex-col gap-2">
-                {canManageBilling && (
-                  <div className="flex gap-3">
+                {canManageBilling ? <div className="flex gap-3">
                     <Link href={buildOrgUrl("/billing/upgrade")}>
                       <Button className={currentOrgPlan === "ORG_FREE" ? "bg-purple-600 hover:bg-purple-700" : "border-border text-foreground hover:bg-muted"} variant={currentOrgPlan === "ORG_FREE" ? "default" : "outline"}>
                         {currentOrgPlan === "ORG_FREE" ? (
@@ -341,8 +315,7 @@ function OrgBillingContent() {
                         )}
                       </Button>
                     </Link>
-                  </div>
-                )}
+                  </div> : null}
               </div>
             </div>
           </CardContent>
@@ -429,21 +402,6 @@ function OrgBillingContent() {
           ] satisfies ResourcePoolItem[]}
         />
 
-        {/* Billing Pool */}
-        <ResourcePoolCard
-          title="Billing Pool"
-          description="Organization credits"
-          icon={Bot}
-          items={[
-            {
-              label: "Credits/Month",
-              icon: Bot,
-              current: usage.creditsThisMonth,
-              limit: planLimits.sharedCreditsPerMonth,
-            },
-          ] satisfies ResourcePoolItem[]}
-        />
-
         {/* Workspace Pool Section */}
         {hasWorkspacePool ? (
           <ResourcePoolCard
@@ -456,21 +414,21 @@ function OrgBillingContent() {
                 label: "RAM Pool",
                 icon: MemoryStick,
                 current: orgStatus?.workspace?.compute?.ram?.allocated ?? 0,
-                limit: planLimits.pool.ramMb,
+                limit: planLimits.workspace.ramMb,
                 unit: "MB",
               },
               {
                 label: "CPU Pool",
                 icon: Cpu,
                 current: orgStatus?.workspace?.compute?.cpu?.allocated ?? 0,
-                limit: planLimits.pool.cpuCores,
+                limit: planLimits.workspace.cpuCores,
                 unit: "cores",
               },
               {
                 label: "Storage Pool",
                 icon: HardDrive,
                 current: orgStatus?.workspace?.storage?.allocation?.allocated ?? 0,
-                limit: planLimits.pool.storageMb,
+                limit: planLimits.workspace.storageMb,
                 unit: "MB",
               },
             ] satisfies ResourcePoolItem[]}
@@ -504,14 +462,12 @@ function OrgBillingContent() {
                   <p className="text-sm text-muted-foreground mt-1 mb-4">
                     Your plan uses serverless execution with {planLimits.workflowRunsPerMonth?.toLocaleString()} monthly workflow runs.
                   </p>
-                  {canManageBilling && (
-                    <Link href={buildOrgUrl("/billing/workspace")}>
+                  {canManageBilling ? <Link href={buildOrgUrl("/billing/workspace")}>
                       <Button className="bg-purple-600 hover:bg-purple-700">
                         <Sparkles className="mr-2 h-4 w-4" />
                         Get Workspace Pool
                       </Button>
-                    </Link>
-                  )}
+                    </Link> : null}
                 </div>
                 <p className="text-xs text-center text-muted-foreground">
                   Add a workspace pool to unlock unlimited executions for your organization.
@@ -522,8 +478,7 @@ function OrgBillingContent() {
         )}
 
         {/* Upgrade CTA for free orgs */}
-        {currentOrgPlan === "ORG_FREE" && canManageBilling && (
-          <Card className="border-purple-500/30 bg-gradient-to-r from-purple-900/20 to-background/50">
+        {currentOrgPlan === "ORG_FREE" && canManageBilling ? <Card className="border-purple-500/30 bg-gradient-to-r from-purple-900/20 to-background/50">
             <CardContent className="py-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -541,8 +496,7 @@ function OrgBillingContent() {
                 </Link>
               </div>
             </CardContent>
-          </Card>
-        )}
+          </Card> : null}
       </div>
     </div>
   );

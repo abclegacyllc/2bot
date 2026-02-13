@@ -241,8 +241,8 @@ async function loadPluginModule(code: string): Promise<{
   // The code string would be the module path
   if (code.startsWith("@builtin/")) {
     const modulePath = code.replace("@builtin/", "");
-    const module = await import(modulePath);
-    return module.default ?? module;
+    const pluginModule = await import(modulePath);
+    return pluginModule.default ?? pluginModule;
   }
 
   // For dynamic plugins, we would use vm2 or isolated-vm

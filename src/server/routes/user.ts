@@ -14,9 +14,9 @@ import { organizationService } from "@/modules/organization";
 import { pluginService } from "@/modules/plugin";
 import type { SafeUserPlugin } from "@/modules/plugin/plugin.types";
 import {
-  installPluginSchema,
-  togglePluginSchema,
-  updatePluginConfigSchema,
+    installPluginSchema,
+    togglePluginSchema,
+    updatePluginConfigSchema,
 } from "@/modules/plugin/plugin.validation";
 import { resourceService, type PersonalResourceStatus } from "@/modules/resource";
 import { BadRequestError, ValidationError } from "@/shared/errors";
@@ -318,7 +318,7 @@ userRouter.get(
     try {
       const initialStatus = await resourceService.getResourceStatus(ctx);
       res.write(`data: ${JSON.stringify(initialStatus)}\n\n`);
-    } catch (error) {
+    } catch (_error) {
       res.write(`data: ${JSON.stringify({ error: "Failed to fetch resource status" })}\n\n`);
     }
 
@@ -356,7 +356,8 @@ userRouter.get(
 userRouter.get(
   "/organizations",
   asyncHandler(async (req: Request, res: Response<ApiResponse<OrgWithRole[]>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
 
     const orgs = await organizationService.getUserOrganizations(userId);
 
@@ -381,7 +382,8 @@ userRouter.get(
 userRouter.get(
   "/invites",
   asyncHandler(async (req: Request, res: Response<ApiResponse<PendingInvite[]>>) => {
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
 
     const invites = await organizationService.getUserPendingInvites(userId);
 

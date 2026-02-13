@@ -2,7 +2,7 @@
  * 2Bot AI Assistant Widget - Chat Interface
  *
  * Main chat component with inline multimodal capabilities.
- * Supports chat, image generation, TTS, and STT all within the same interface.
+ * Supports text generation, image generation, speech synthesis, and speech recognition.
  * 
  * Receives auth token from parent widget to make authenticated API calls.
  * Respects user plan for feature gating.
@@ -13,35 +13,47 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
 import {
-  History,
-  ImageIcon,
-  Loader2,
-  Mic,
-  MicOff,
-  Send,
-  Sparkles,
-  StopCircle,
-  Volume2,
-  X,
+    Brain,
+    History,
+    ImageIcon,
+    Loader2,
+    MessageSquare,
+    Mic,
+    MicOff,
+    Paperclip,
+    Send,
+    StopCircle,
+    Video,
+    Volume2,
+    X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TwoBotAIChatMessage, type ChatMessageData } from "./2bot-ai-chat-message";
 import { ChatHistoryList } from "./chat-history-list";
 import { chatStorage, type ChatSession } from "./chat-storage";
-import { ModelSelector, type ModelOption } from "./model-selector";
+import {
+    AUTO_MODE_VALUE,
+    ModelSelector,
+    type LegacyModelOption,
+    type ModelOption,
+    type TwoBotAIModelOption,
+} from "./model-selector";
+
+// Type guard for 2Bot AI models
+function isTwoBotAIModel(model: ModelOption): model is TwoBotAIModelOption {
+  return 'tierInfo' in model && 'displayName' in model;
+}
 
 interface TwoBotAIChatProps {
   onTokenUsage?: (tokensUsed: number) => void;
@@ -52,6 +64,14 @@ interface TwoBotAIChatProps {
 }
 
 type InputMode = "chat" | "image" | "recording";
+
+// Capability mode - which type of AI models to show
+type CapabilityMode = "text" | "image" | "video";
+
+// Image attachment limits
+const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB max
+const MAX_IMAGES = 5; // Max 5 images per message
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 // Available features from API
 interface AvailableFeatures {
@@ -74,6 +94,16 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  
+  // Capability mode - which type of models to show (text/image/video)
+  const [capabilityMode, setCapabilityMode] = useState<CapabilityMode>("text");
+  
+  // Clear attached images when switching away from text mode (attachment only works with vision models)
+  useEffect(() => {
+    if (capabilityMode !== "text") {
+      setAttachedImages([]);
+    }
+  }, [capabilityMode]);
   
   // History Management
   const [showHistory, setShowHistory] = useState(false);
@@ -146,14 +176,33 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
     setCurrentSessionId(null);
     setError(null);
     setShowHistory(false);
+    setAttachedImages([]);
   }, []);
   
-  // Smart Routing - automatically use cheaper model for simple queries
-  const [smartRouting, setSmartRouting] = useState(true); // ON by default to save user credits
+  // Smart Routing - derived from selectedModel being "auto"
+  const smartRouting = selectedModel === AUTO_MODE_VALUE;
+  
+  // Reasoning mode - use extended thinking models when enabled
+  const [reasoningEnabled, setReasoningEnabled] = useState(false);
+  
+  // Auto-disable reasoning when in auto mode or switching to lite tier (no reasoning-lite exists)
+  useEffect(() => {
+    if (smartRouting) {
+      // Reasoning not available in auto mode
+      if (reasoningEnabled) setReasoningEnabled(false);
+      return;
+    }
+    const currentModel = models.find(m => m.id === selectedModel);
+    const currentTier = currentModel && isTwoBotAIModel(currentModel) ? currentModel.tier : 'lite';
+    if (currentTier === 'lite' && reasoningEnabled) {
+      setReasoningEnabled(false);
+    }
+  }, [selectedModel, models, reasoningEnabled, smartRouting]);
 
-  const handleClearChat = useCallback(() => {
+  const _handleClearChat = useCallback(() => {
     setMessages([]);
     setError(null);
+    setAttachedImages([]);
   }, []);
   
   // Available features based on configured providers
@@ -171,6 +220,10 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Image attachments for vision-capable models
+  const [attachedImages, setAttachedImages] = useState<Array<{ id: string; base64: string; name: string; size: number }>>([]);
 
   // Helper to get auth headers
   const getAuthHeaders = useCallback((): HeadersInit => {
@@ -183,17 +236,139 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
     return headers;
   }, [authToken]);
 
-  // Check if user has access to premium models
-  const isPremiumUser = userPlan === "PRO" || userPlan === "ENTERPRISE";
+  // Handle image file selection for vision analysis
+  const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const remainingSlots = MAX_IMAGES - attachedImages.length;
+    if (remainingSlots <= 0) {
+      setError(`Maximum ${MAX_IMAGES} images allowed per message`);
+      return;
+    }
+
+    const filesToProcess = Array.from(files).slice(0, remainingSlots);
+
+    filesToProcess.forEach((file) => {
+      // Validate file type
+      if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+        setError(`Invalid file type: ${file.name}. Allowed: JPG, PNG, GIF, WebP`);
+        return;
+      }
+
+      // Validate file size
+      if (file.size > MAX_IMAGE_SIZE) {
+        setError(`File too large: ${file.name}. Maximum size is 20MB`);
+        return;
+      }
+
+      // Convert to base64
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        setAttachedImages((prev) => [
+          ...prev,
+          {
+            id: `img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            base64,
+            name: file.name,
+            size: file.size,
+          },
+        ]);
+      };
+      reader.onerror = () => {
+        setError(`Failed to read file: ${file.name}`);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, [attachedImages.length]);
+
+  // Remove an attached image
+  const handleRemoveImage = useCallback((imageId: string) => {
+    setAttachedImages((prev) => prev.filter((img) => img.id !== imageId));
+  }, []);
+
+  // Clear all attached images
+  const clearAttachedImages = useCallback(() => {
+    setAttachedImages([]);
+  }, []);
+
+  /**
+   * Get allowed model tiers based on user or organization plan
+   * 
+   * Tier access rules:
+   * - FREE / ORG_FREE: lite only
+   * - STARTER / ORG_STARTER: lite, pro
+   * - PRO+ / ORG_GROWTH+: lite, pro, ultra (all tiers)
+   */
+  const getAllowedTiers = (plan: string): string[] => {
+    switch (plan) {
+      // Free tier - lite models only
+      case 'FREE':
+      case 'ORG_FREE':
+        return ['lite'];
+      // Starter tier - lite + pro models
+      case 'STARTER':
+      case 'ORG_STARTER':
+        return ['lite', 'pro'];
+      // Pro tier and above - all model tiers
+      case 'PRO':
+      case 'BUSINESS':
+      case 'ENTERPRISE':
+      case 'ORG_GROWTH':
+      case 'ORG_PRO':
+      case 'ORG_BUSINESS':
+      case 'ORG_ENTERPRISE':
+        return ['lite', 'pro', 'ultra'];
+      // Default to free tier limits for unknown plans
+      default:
+        return ['lite'];
+    }
+  };
+
+  // Get allowed tiers for current plan
+  const allowedTiers = getAllowedTiers(userPlan);
 
   // Check if current model supports vision (image input)
-  const currentModelSupportsVision = models.find(m => m.id === selectedModel)?.capabilities?.canAnalyzeImages ?? false;
+  const currentModelSupportsVision = (() => {
+    const model = models.find(m => m.id === selectedModel);
+    if (!model) return false;
+    // Support both 2Bot AI format and legacy format
+    if (isTwoBotAIModel(model)) {
+      return model.features.vision;
+    }
+    return (model as LegacyModelOption).capabilities?.canAnalyzeImages ?? false;
+  })();
 
-  // Fetch available models AND features
+  // Map capability mode to API capability parameter
+  const getApiCapability = (mode: CapabilityMode): string => {
+    switch (mode) {
+      case 'text': return 'text-generation';
+      case 'image': return 'image-generation';
+      case 'video': return 'video-generation';
+      default: return 'text-generation';
+    }
+  };
+
+  // Fetch available models AND features from catalog
   useEffect(() => {
     async function fetchModels() {
+      // Video models don't exist yet - show empty state
+      if (capabilityMode === 'video') {
+        setModels([]);
+        setSelectedModel('');
+        return;
+      }
+      
       try {
-        const res = await fetch(apiUrl("/2bot-ai/models?capability=text-generation"), {
+        // Use /catalog for 2Bot AI branded models (preferred)
+        const capability = getApiCapability(capabilityMode);
+        const res = await fetch(apiUrl(`/2bot-ai/catalog?capability=${capability}`), {
           credentials: "include",
           headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
         });
@@ -204,36 +379,46 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
         if (res.ok) {
           const data = await res.json();
           
-          // Set available features from API
-          if (data.data.features) {
+          // Set available features from API (only on first load / text mode)
+          if (data.data.features && capabilityMode === 'text') {
             setFeatures(data.data.features);
           }
           
           // Filter models based on plan if needed
-          let availableModels = data.data.models;
-          if (!isPremiumUser) {
-            // FREE users only get access to cheaper models (tier 1-2)
-            availableModels = availableModels.filter((m: ModelOption) => 
-              (m.tier || 99) <= 2
-            );
+          let availableModels: TwoBotAIModelOption[] = data.data.models;
+          
+          // Filter out reasoning models from the dropdown - they're accessed via the reasoning toggle
+          // Only applies to text models
+          if (capabilityMode === 'text') {
+            availableModels = availableModels.filter((m) => !m.id.includes('reasoning'));
           }
+          
+          // Filter models based on user's plan tier access
+          availableModels = availableModels.filter((m) => 
+            allowedTiers.includes(m.tier)
+          );
           setModels(availableModels);
           
           // Set default model
-          const defaultModel = availableModels.find((m: ModelOption) => m.isDefault);
-          if (defaultModel) {
-            setSelectedModel(defaultModel.id);
+          // For text mode: default to "auto" (smart routing)
+          // For image mode: default to pro tier
+          if (capabilityMode === 'text') {
+            // Default to Auto Mode for text
+            setSelectedModel(AUTO_MODE_VALUE);
           } else if (availableModels.length > 0) {
-            setSelectedModel(availableModels[0].id);
+            const preferredModel = availableModels.find((m) => m.tier === 'pro');
+            const firstModel = availableModels[0];
+            setSelectedModel(preferredModel?.id || firstModel?.id || "");
           }
         }
-      } catch (err) {
+      } catch (_err) {
         // Model fetch failed - set error state for user feedback
         setError("Failed to load AI models. Please refresh.");
       }
     }
     fetchModels();
-  }, [authToken, isPremiumUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authToken, userPlan, capabilityMode]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -254,39 +439,74 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
 
   // Handle text chat submit
   const handleChatSubmit = useCallback(async () => {
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && attachedImages.length === 0) || isLoading) return;
 
+    // Store images to send (will be cleared from state)
+    const imagesToSend = [...attachedImages];
+    
     const userMessage: ChatMessageData = {
       id: `user-${Date.now()}`,
       role: "user",
       content: input.trim(),
       createdAt: new Date(),
+      // Store image URLs for display in chat history
+      attachedImages: imagesToSend.length > 0 ? imagesToSend.map(img => img.base64) : undefined,
     };
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
+    clearAttachedImages();
     setError(null);
     setIsLoading(true);
     setIsStreaming(true);
 
     // Create assistant message placeholder
     const assistantMessageId = `assistant-${Date.now()}`;
+    
+    // Compute effective model: if reasoning is enabled, use reasoning variant
+    const currentModel = models.find(m => m.id === selectedModel);
+    const currentTier = currentModel && isTwoBotAIModel(currentModel) ? currentModel.tier : 'lite';
+    const canUseReasoning = currentTier === 'pro' || currentTier === 'ultra';
+    const effectiveModel = (reasoningEnabled && canUseReasoning)
+      ? selectedModel.replace('text-', 'reasoning-')
+      : selectedModel;
+    
     const assistantMessage: ChatMessageData = {
       id: assistantMessageId,
       role: "assistant",
       content: "",
       createdAt: new Date(),
-      model: selectedModel,
+      model: effectiveModel,
     };
     setMessages((prev) => [...prev, assistantMessage]);
 
     // Prepare messages for API with System Prompt injection
+    // For messages with images, use multimodal parts format
     const apiMessages = [
       { role: "system", content: "You are 2Bot AI, a helpful and intelligent assistant for the 2Bot Automation Platform. You are NOT Claude, NOT GPT, and NOT any other specific model. You are simply 2Bot AI. Always identify yourself as 2Bot AI if asked." },
-      ...messages.concat(userMessage).map((m) => ({
+      ...messages.map((m) => ({
         role: m.role,
         content: m.content,
-      }))
+        // Include image parts if the message had attached images
+        parts: m.attachedImages?.map(imgUrl => ({
+          type: "image_url" as const,
+          image_url: { url: imgUrl },
+        })),
+      })),
+      // Add the new user message
+      {
+        role: userMessage.role,
+        content: userMessage.content,
+        parts: imagesToSend.length > 0 ? [
+          // Include text as first part if present
+          ...(userMessage.content ? [{ type: "text" as const, text: userMessage.content }] : []),
+          // Include images as subsequent parts
+          ...imagesToSend.map(img => ({
+            type: "image_url" as const,
+            image_url: { url: img.base64 },
+          })),
+        ] : undefined,
+      },
     ];
 
     try {
@@ -298,7 +518,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
         credentials: "include",
         body: JSON.stringify({
           messages: apiMessages,
-          model: selectedModel,
+          model: effectiveModel,
           stream: true,
           smartRouting, // Let server know if we want cost-optimized routing
           organizationId, // Use org credits if in org context
@@ -415,11 +635,15 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [input, isLoading, messages, selectedModel, onTokenUsage, getAuthHeaders]);
+  }, [input, isLoading, messages, selectedModel, onTokenUsage, getAuthHeaders, reasoningEnabled, models, attachedImages, clearAttachedImages, organizationId, smartRouting]);
 
   // Handle image generation
   const handleImageGenerate = useCallback(async () => {
     if (!input.trim() || isLoading) return;
+    if (!selectedModel) {
+      setError("Please select an image model");
+      return;
+    }
 
     const userMessage: ChatMessageData = {
       id: `user-${Date.now()}`,
@@ -430,7 +654,6 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
-    setInputMode("chat");
     setError(null);
     setIsLoading(true);
 
@@ -441,19 +664,25 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       role: "assistant",
       content: "Generating image...",
       createdAt: new Date(),
-      model: "dall-e-3",
+      model: selectedModel,
     };
     setMessages((prev) => [...prev, assistantMessage]);
 
     try {
+      // Determine quality based on model tier (ultra = hd)
+      const currentModel = models.find(m => m.id === selectedModel);
+      const isUltra = currentModel && isTwoBotAIModel(currentModel) && currentModel.tier === 'ultra';
+      
       const res = await fetch(apiUrl("/2bot-ai/image-generation"), {
         method: "POST",
         headers: getAuthHeaders(),
         credentials: "include",
         body: JSON.stringify({
           prompt: input.trim(),
+          model: selectedModel,
           size: "1024x1024",
-          quality: "standard",
+          quality: isUltra ? "hd" : "standard",
+          organizationId,
         }),
       });
 
@@ -472,18 +701,40 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       }
 
       // Update with image
-      setMessages((prev) =>
-        prev.map((m) =>
+      setMessages((prev) => {
+        const updatedMessages = prev.map((m) =>
           m.id === assistantMessageId
             ? {
                 ...m,
-                content: `![Generated Image](${imageUrl})`,
+                content: "Here's your generated image:",
                 creditsUsed,
                 imageUrl,
               }
             : m
-        )
-      );
+        );
+
+        // Explicitly save the session immediately after adding imageUrl
+        // This ensures the image is persisted before any potential navigation/refresh
+        if (userId && currentSessionId) {
+          const firstUserMsg = updatedMessages.find(m => m.role === "user");
+          const title = firstUserMsg 
+            ? firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? "..." : "") 
+            : "New Chat";
+
+          const session: ChatSession = {
+            id: currentSessionId,
+            title,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messages: updatedMessages,
+            model: selectedModel
+          };
+
+          chatStorage.saveSession(session, userId, organizationId);
+        }
+
+        return updatedMessages;
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to generate image";
       setError(errorMessage);
@@ -491,9 +742,9 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
     } finally {
       setIsLoading(false);
     }
-  }, [input, isLoading, onTokenUsage, getAuthHeaders]);
+  }, [input, isLoading, onTokenUsage, getAuthHeaders, selectedModel, models, organizationId, currentSessionId, userId]);
 
-  // Handle voice recording (STT)
+  // Handle voice recording (Speech Recognition)
   const handleStartRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -509,7 +760,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         stream.getTracks().forEach((track) => track.stop());
         
-        // Send to STT API
+        // Send to Speech Recognition API
         setIsLoading(true);
         try {
           const formData = new FormData();
@@ -545,7 +796,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       mediaRecorder.start();
       setIsRecording(true);
       setInputMode("recording");
-    } catch (err) {
+    } catch (_err) {
       setError("Could not access microphone");
     }
   }, [onTokenUsage, authToken]);
@@ -557,7 +808,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
     }
   }, [isRecording]);
 
-  // Handle TTS (text-to-speech)
+  // Handle Speech Synthesis (text-to-speech)
   const handleSpeak = useCallback(async (messageId: string, text: string) => {
     // Stop any current playback
     if (audioRef.current) {
@@ -586,7 +837,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
 
       if (!res.ok) {
         const errorData = await res.json();
-        throw new Error(errorData.error?.message || "TTS failed");
+        throw new Error(errorData.error?.message || "Speech synthesis failed");
       }
 
       const data = await res.json();
@@ -612,7 +863,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
 
       await audio.play();
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "TTS failed";
+      const errorMessage = err instanceof Error ? err.message : "Speech synthesis failed";
       setError(errorMessage);
       setIsSpeaking(false);
       setSpeakingMessageId(null);
@@ -629,41 +880,35 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        if (inputMode === "image") {
+        if (capabilityMode === "image") {
           handleImageGenerate();
         } else {
           handleChatSubmit();
         }
       }
     },
-    [handleChatSubmit, handleImageGenerate, inputMode]
+    [handleChatSubmit, handleImageGenerate, capabilityMode]
   );
 
-  // Handle submit based on mode
+  // Handle submit based on capability mode
   const handleSubmit = useCallback(() => {
-    if (inputMode === "image") {
+    if (capabilityMode === "image") {
       handleImageGenerate();
     } else {
       handleChatSubmit();
     }
-  }, [inputMode, handleChatSubmit, handleImageGenerate]);
+  }, [capabilityMode, handleChatSubmit, handleImageGenerate]);
 
   // Clear chat
-  const handleClear = useCallback(() => {
+  const _handleClear = useCallback(() => {
     setMessages([]);
     setError(null);
-  }, []);
-
-  // Toggle image mode
-  const toggleImageMode = useCallback(() => {
-    setInputMode((prev) => (prev === "image" ? "chat" : "image"));
   }, []);
 
   return (
     <div className="flex flex-col h-full bg-background relative">
       {/* History Overlay */}
-      {showHistory && (
-        <div className="absolute inset-0 z-50 bg-background">
+      {showHistory ? <div className="absolute inset-0 z-50 bg-background">
           <ChatHistoryList
             sessions={sessions}
             currentSessionId={currentSessionId}
@@ -672,8 +917,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
             onNewChat={handleNewChat}
             onClose={() => setShowHistory(false)}
           />
-        </div>
-      )}
+        </div> : null}
 
       {/* Header Controls */}
       <div className="absolute top-2 right-2 z-10 flex gap-2">
@@ -714,9 +958,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
               <TwoBotAIChatMessage
                 key={msg.id}
                 message={msg}
-                isStreaming={isStreaming && msg.role === "assistant" && !msg.creditsUsed}
-                onSpeak={msg.role === "assistant" ? () => handleSpeak(msg.id, msg.content) : undefined}
-                isSpeaking={speakingMessageId === msg.id}
+                isStreaming={isStreaming && msg.role === "assistant" ? !msg.creditsUsed : undefined}
               />
             ))
           )}
@@ -724,8 +966,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       </ScrollArea>
 
       {/* Error */}
-      {error && (
-        <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm flex items-center justify-between">
+      {error ? <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm flex items-center justify-between">
           <span>{error}</span>
           <Button
             variant="ghost"
@@ -735,27 +976,10 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
           >
             <X className="h-3 w-3" />
           </Button>
-        </div>
-      )}
+        </div> : null}
 
       {/* Input area with inline controls */}
       <div className="p-3 border-t">
-        {/* Mode indicator for image */}
-        {inputMode === "image" && (
-          <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
-            <ImageIcon className="h-3 w-3" />
-            <span>Image generation mode</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-5 ml-auto p-0 px-1"
-              onClick={() => setInputMode("chat")}
-            >
-              <X className="h-3 w-3" />
-            </Button>
-          </div>
-        )}
-
         {/* Recording indicator */}
         {inputMode === "recording" && (
           <div className="flex items-center gap-2 mb-2 text-xs bg-destructive/10 text-destructive px-2 py-1 rounded animate-pulse">
@@ -765,6 +989,52 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
         )}
 
         <div className="flex flex-col gap-2">
+          {/* Hidden file input for image attachments */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            multiple
+            className="hidden"
+            onChange={handleImageSelect}
+          />
+          
+          {/* Image attachment preview */}
+          {attachedImages.length > 0 && (
+            <div className="flex flex-wrap gap-2 p-2 bg-muted/50 rounded-lg border border-dashed border-muted-foreground/30">
+              {attachedImages.map((img) => (
+                <div key={img.id} className="relative group">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.base64}
+                    alt={img.name}
+                    className="h-16 w-16 object-cover rounded-md border"
+                  />
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="absolute -top-1.5 -right-1.5 h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => handleRemoveImage(img.id)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                  <span className="absolute bottom-0 left-0 right-0 text-[8px] text-center bg-black/50 text-white truncate px-0.5 rounded-b-md">
+                    {img.name.length > 10 ? img.name.slice(0, 10) + "..." : img.name}
+                  </span>
+                </div>
+              ))}
+              {attachedImages.length < MAX_IMAGES && (
+                <Button
+                  variant="outline"
+                  className="h-16 w-16 border-dashed"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          )}
+          
           {/* Textarea */}
           <Textarea
             ref={textareaRef}
@@ -772,132 +1042,221 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
-              inputMode === "image"
+              capabilityMode === "image"
                 ? "Describe the image you want to generate..."
+                : capabilityMode === "video"
+                ? "Video generation coming soon..."
                 : inputMode === "recording"
                 ? "Recording audio..."
                 : "Type a message..."
             }
             className="min-h-[60px] max-h-[120px] resize-none text-sm"
-            disabled={isLoading || inputMode === "recording"}
+            disabled={isLoading || inputMode === "recording" || capabilityMode === "video"}
           />
 
           {/* Bottom toolbar with model selector and action buttons */}
           <div className="flex items-center justify-between gap-2">
-            {/* Left side: Smart Routing Toggle + Model selector/preview */}
+            {/* Left side: Capability Mode + Model selector/preview */}
             <div className="flex items-center gap-3">
-              {/* Smart Routing Toggle - FIRST */}
-              <TooltipProvider delayDuration={300}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1.5">
-                      <Switch
-                        id="smart-routing"
-                        checked={smartRouting}
-                        onCheckedChange={setSmartRouting}
-                        disabled={isLoading}
-                        className="h-4 w-7 data-[state=checked]:bg-green-500"
-                      />
-                      <Label 
-                        htmlFor="smart-routing" 
-                        className={cn(
-                          "text-[10px] cursor-pointer flex items-center gap-0.5",
-                          smartRouting ? "text-green-600 dark:text-green-400" : "text-muted-foreground"
-                        )}
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        <span>{smartRouting ? "Auto" : "Manual"}</span>
-                      </Label>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-[220px]">
-                    <p className="text-xs font-medium">
-                      {smartRouting ? "🧠 Smart Routing ON" : "Manual Model Selection"}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      {smartRouting 
-                        ? "AI picks the best model based on your message complexity - can save credits on simple queries"
-                        : "You choose which model to use for every message"}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-
-              {/* Model selector (Manual mode) OR Model preview (Auto mode) */}
-              {smartRouting ? (
-                // Auto mode: Show preview of available models (not selectable)
+              {/* Capability Mode Icons - Text/Image/Video */}
+              <div className="flex items-center gap-0.5 p-0.5 bg-muted/50 rounded-md">
                 <TooltipProvider delayDuration={300}>
+                  {/* Text Mode */}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-muted/50 text-[10px] text-muted-foreground">
-                        <span className="opacity-70">Uses:</span>
-                        <span className="font-medium">
-                          {models.length > 0 
-                            ? models.slice(0, 2).map(m => m.name.split(' ').pop()).join(' / ')
-                            : 'Loading...'}
-                        </span>
-                        {models.length > 2 && <span className="opacity-50">+{models.length - 2}</span>}
-                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-6 w-6 transition-all",
+                          capabilityMode === "text"
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                        onClick={() => setCapabilityMode("text")}
+                        disabled={isLoading}
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                      </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-[250px]">
-                      <p className="text-xs font-medium mb-1">Available Models</p>
-                      <div className="text-[10px] text-muted-foreground space-y-0.5">
-                        {models.slice(0, 5).map(m => (
-                          <div key={m.id} className="flex justify-between gap-2">
-                            <span>{m.name}</span>
-                            <span className="opacity-50">{m.badge || (m.tier === 1 ? 'Fast' : m.tier === 3 ? 'Best' : '')}</span>
-                          </div>
-                        ))}
-                        {models.length > 5 && <div className="opacity-50">...and {models.length - 5} more</div>}
-                      </div>
+                    <TooltipContent side="top">
+                      <p className="text-xs font-medium">Text Generation</p>
+                      <p className="text-[10px] text-muted-foreground">Chat, code, analysis</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  
+                  {/* Image Mode */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-6 w-6 transition-all",
+                          capabilityMode === "image"
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                        onClick={() => setCapabilityMode("image")}
+                        disabled={isLoading}
+                      >
+                        <ImageIcon className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs font-medium">Image Generation</p>
+                      <p className="text-[10px] text-muted-foreground">Create images from text</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  
+                  {/* Video Mode */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-6 w-6 transition-all",
+                          capabilityMode === "video"
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground",
+                          "opacity-50 cursor-not-allowed" // Coming soon
+                        )}
+                        onClick={() => setCapabilityMode("video")}
+                        disabled={true} // Video not available yet
+                      >
+                        <Video className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs font-medium">Video Generation</p>
+                      <p className="text-[10px] text-muted-foreground">🚧 Coming Soon</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-              ) : (
-                // Manual mode: Show model selector
+              </div>
+              
+              {/* Model selector for text mode (includes Auto Mode option) */}
+              {capabilityMode === "text" && (
                 <ModelSelector
                   models={models}
                   value={selectedModel}
                   onChange={setSelectedModel}
                   disabled={isLoading}
                   compact
+                  showAutoMode
                 />
               )}
+              
+              {/* Model selector for image mode */}
+              {capabilityMode === "image" && (
+                models.length > 0 ? (
+                  <ModelSelector
+                    models={models}
+                    value={selectedModel}
+                    onChange={setSelectedModel}
+                    disabled={isLoading}
+                    compact
+                  />
+                ) : (
+                  <div className="text-[10px] text-muted-foreground px-2 py-1 bg-muted/50 rounded">
+                    No image models available
+                  </div>
+                )
+              )}
+              
+              {/* Reasoning Toggle Button - only for text mode pro/ultra tiers (not in auto mode) */}
+              {capabilityMode === "text" && !smartRouting && (() => {
+                const currentModel = models.find(m => m.id === selectedModel);
+                const currentTier = currentModel && isTwoBotAIModel(currentModel) ? currentModel.tier : 'lite';
+                const canUseReasoning = currentTier === 'pro' || currentTier === 'ultra';
+                
+                return (
+                  <TooltipProvider delayDuration={300}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "h-7 w-7 transition-all",
+                            reasoningEnabled && canUseReasoning
+                              ? "bg-green-500 hover:bg-green-600 text-white shadow-[0_0_10px_rgba(34,197,94,0.5)]"
+                              : "text-muted-foreground hover:text-foreground",
+                            !canUseReasoning && "opacity-40 cursor-not-allowed"
+                          )}
+                          onClick={() => canUseReasoning && setReasoningEnabled(!reasoningEnabled)}
+                          disabled={isLoading || !canUseReasoning}
+                        >
+                          <Brain className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[200px]">
+                        {canUseReasoning ? (
+                          <>
+                            <p className="text-xs font-medium">
+                              {reasoningEnabled ? "🧠 Reasoning ON" : "Enable Reasoning"}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              {reasoningEnabled 
+                                ? "Extended thinking for complex problems. Click to disable."
+                                : "Enable deep analysis for math, logic, and complex coding tasks."}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-xs font-medium">Reasoning unavailable</p>
+                            <p className="text-[10px] text-muted-foreground mt-1">
+                              Select Pro or Ultra tier to enable reasoning mode.
+                            </p>
+                          </>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                );
+              })()}
             </div>
 
             {/* Right side: Action buttons */}
             <div className="flex items-center gap-1">
               <TooltipProvider delayDuration={300}>
-                {/* Image generation button - only show if OpenAI is configured */}
-                {features.imageGeneration && (
-                  <Tooltip>
+                {/* Image attachment button - only for text mode with vision-capable models */}
+                {capabilityMode === "text" && (currentModelSupportsVision || smartRouting) ? <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
-                        variant={inputMode === "image" ? "default" : "ghost"}
+                        variant={attachedImages.length > 0 ? "default" : "ghost"}
                         size="icon"
-                        className={cn("h-8 w-8", inputMode === "image" && "bg-primary")}
-                        onClick={toggleImageMode}
-                        disabled={isLoading}
+                        className={cn(
+                          "h-8 w-8",
+                          attachedImages.length > 0 && "bg-blue-500 hover:bg-blue-600"
+                        )}
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isLoading || attachedImages.length >= MAX_IMAGES}
                       >
-                        <ImageIcon className="h-4 w-4" />
+                        <Paperclip className="h-4 w-4" />
+                        {attachedImages.length > 0 && (
+                          <span className="absolute -top-1 -right-1 text-[9px] bg-primary text-primary-foreground rounded-full w-4 h-4 flex items-center justify-center">
+                            {attachedImages.length}
+                          </span>
+                        )}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      <p>Generate image (DALL-E 3)</p>
+                      <p>Attach image{attachedImages.length > 0 ? ` (${attachedImages.length}/${MAX_IMAGES})` : ""}</p>
+                      <p className="text-[10px] text-muted-foreground">For vision analysis</p>
                     </TooltipContent>
-                  </Tooltip>
-                )}
-
-                {/* Voice input button - only show if STT is available */}
-                {features.speechRecognition && (
-                  <Tooltip>
+                  </Tooltip> : null}
+                
+                {/* Voice input button - only show if Speech Recognition is available */}
+                {features.speechRecognition ? <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         variant={isRecording ? "destructive" : "ghost"}
                         size="icon"
                         className="h-8 w-8"
                         onClick={isRecording ? handleStopRecording : handleStartRecording}
-                        disabled={isLoading && !isRecording}
+                        disabled={isLoading ? !isRecording : undefined}
                       >
                         {isRecording ? (
                           <MicOff className="h-4 w-4" />
@@ -907,14 +1266,12 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      <p>{isRecording ? "Stop recording" : "Voice input (Whisper)"}</p>
+                      <p>{isRecording ? "Stop recording" : "Voice input"}</p>
                     </TooltipContent>
-                  </Tooltip>
-                )}
+                  </Tooltip> : null}
 
-                {/* TTS button for last assistant message - only show if TTS is available */}
-                {features.speechSynthesis && messages.length > 0 && messages[messages.length - 1]?.role === "assistant" && (
-                  <Tooltip>
+                {/* Speech Synthesis button - only show if available */}
+                {features.speechSynthesis && messages.length > 0 && messages[messages.length - 1]?.role === "assistant" ? <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         variant={isSpeaking ? "default" : "ghost"}
@@ -932,10 +1289,9 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      <p>{isSpeaking ? "Stop speaking" : "Read aloud (TTS)"}</p>
+                      <p>{isSpeaking ? "Stop speaking" : "Read aloud"}</p>
                     </TooltipContent>
-                  </Tooltip>
-                )}
+                  </Tooltip> : null}
 
                 {/* Send/Stop button */}
                 {isStreaming ? (

@@ -9,20 +9,23 @@
 
 import { logger } from "@/lib/logger";
 import {
-  checkAllProviders,
-  getAvailableFeatures,
-  getCachedHealthStatus,
-  getProvidersStatus,
-  TwoBotAIError,
-  twoBotAIProvider,
-  type AICapability,
-  type ImageQuality,
-  type ImageSize,
-  type ImageStyle,
-  type SpeechSynthesisFormat,
-  type SpeechSynthesisVoice,
-  type TextGenerationMessage,
-  type TwoBotAIModel
+    checkAllProviders,
+    getAvailableFeatures,
+    getCachedHealthStatus,
+    getProvidersStatus,
+    isTwoBotAIModelId,
+    TwoBotAIError,
+    twoBotAIProvider,
+    type AICapability,
+    type ImageQuality,
+    type ImageSize,
+    type ImageStyle,
+    type SpeechSynthesisFormat,
+    type SpeechSynthesisVoice,
+    type TextGenerationMessage,
+    type TwoBotAIModel,
+    type TwoBotAIModelId,
+    type TwoBotAIModelInfo
 } from "@/modules/2bot-ai-provider";
 import { BadRequestError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
@@ -51,7 +54,72 @@ function getMimeType(format: string): string {
   return mimeTypes[format] || "audio/mpeg";
 }
 
-// All routes require authentication
+// ===========================================
+// GET /api/2bot-ai/image-proxy
+// Proxies external AI-generated images through our domain.
+// Solves CORS download issues and hides provider URLs from users.
+// No auth required — secured by domain allowlist instead,
+// since <img> tags and download links can't send auth headers.
+// ===========================================
+twoBotAIRouter.get(
+  "/image-proxy",
+  asyncHandler(async (req: Request, res: Response) => {
+    const imageUrl = req.query.url as string;
+    const download = req.query.download === "true";
+
+    if (!imageUrl) {
+      throw new BadRequestError("Missing 'url' query parameter");
+    }
+
+    // Only allow proxying from known AI provider domains
+    const allowedDomains = [
+      "api.together.ai",
+      "api.together.xyz",
+      "oaidalleapiprodscus.blob.core.windows.net", // OpenAI DALL-E
+      "dalleprodsec.blob.core.windows.net",
+    ];
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(imageUrl);
+    } catch {
+      throw new BadRequestError("Invalid URL");
+    }
+
+    if (!allowedDomains.some((d) => parsedUrl.hostname.endsWith(d))) {
+      throw new BadRequestError("URL domain not allowed");
+    }
+
+    logger.info({ domain: parsedUrl.hostname, download }, "Proxying AI image");
+
+    const response = await fetch(imageUrl);
+
+    if (!response.ok) {
+      res.status(502).json({
+        success: false,
+        error: { code: "IMAGE_FETCH_FAILED", message: "Failed to fetch image from provider" },
+      });
+      return;
+    }
+
+    const contentType = response.headers.get("content-type") || "image/png";
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    // Set appropriate headers
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", buffer.length);
+    res.setHeader("Cache-Control", "public, max-age=86400"); // Cache 24h
+
+    if (download) {
+      const ext = contentType.includes("png") ? "png" : contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "png";
+      res.setHeader("Content-Disposition", `attachment; filename="2bot-ai-image-${Date.now()}.${ext}"`);
+    }
+
+    res.send(buffer);
+  })
+);
+
+// All other routes require authentication
 twoBotAIRouter.use(requireAuth);
 
 // ===========================================
@@ -161,6 +229,89 @@ twoBotAIRouter.get(
 );
 
 // ===========================================
+// GET /api/2bot-ai/catalog
+// ===========================================
+
+interface TwoBotAIModelResponse {
+  id: string;
+  displayName: string;
+  description: string;
+  capability: string;
+  tier: string;
+  tierInfo: {
+    displayName: string;
+    description: string;
+    badgeColor: string;
+  };
+  maxContextTokens: number;
+  maxOutputTokens: number;
+  isAvailable: boolean;
+  features: {
+    streaming: boolean;
+    functionCalling: boolean;
+    vision: boolean;
+    jsonMode: boolean;
+    systemMessage: boolean;
+    multiTurn: boolean;
+    reasoning: boolean;
+    codeExecution: boolean;
+  };
+  tags: string[];
+}
+
+interface CatalogResponse {
+  models: TwoBotAIModelResponse[];
+  features: {
+    textGeneration: boolean;
+    imageGeneration: boolean;
+    imageAnalysis: boolean;
+    speechSynthesis: boolean;
+    speechRecognition: boolean;
+  };
+}
+
+/**
+ * GET /api/2bot-ai/catalog
+ *
+ * Get available 2Bot AI models (user-facing, hides provider details)
+ * This is the preferred endpoint for frontend model selection.
+ *
+ * @query {string} [capability] - Filter by capability (text-generation, image-generation, speech-synthesis, speech-recognition)
+ */
+twoBotAIRouter.get(
+  "/catalog",
+  asyncHandler(async (req: Request, res: Response<ApiResponse<CatalogResponse>>) => {
+    const capability = req.query.capability as string | undefined;
+    const models = twoBotAIProvider.getTwoBotAIModels(capability as AICapability | undefined);
+    const features = getAvailableFeatures();
+
+    res.json({
+      success: true,
+      data: {
+        models: models.map((m: TwoBotAIModelInfo) => ({
+          id: m.id,
+          displayName: m.displayName,
+          description: m.description,
+          capability: m.capability,
+          tier: m.tier,
+          tierInfo: {
+            displayName: m.tierInfo.displayName,
+            description: m.tierInfo.description,
+            badgeColor: m.tierInfo.badgeColor,
+          },
+          maxContextTokens: m.maxContextTokens,
+          maxOutputTokens: m.maxOutputTokens,
+          isAvailable: m.isAvailable,
+          features: m.features,
+          tags: m.tags,
+        })),
+        features,
+      },
+    });
+  })
+);
+
+// ===========================================
 // GET /api/2bot-ai/health
 // ===========================================
 
@@ -235,7 +386,7 @@ twoBotAIRouter.get(
 
 interface TextGenerationRequestBody {
   messages: TextGenerationMessage[];
-  model?: TwoBotAIModel;
+  model?: TwoBotAIModel | TwoBotAIModelId; // Accepts both legacy and 2Bot AI model IDs
   temperature?: number;
   maxTokens?: number;
   stream?: boolean;
@@ -256,6 +407,10 @@ interface TextGenerationResponseData {
   };
   creditsUsed: number;
   newBalance: number;
+  /** The 2Bot AI model ID if a catalog model was used */
+  twobotAIModel?: string;
+  /** The resolved provider model (internal, for debugging) */
+  resolvedModel?: string;
 }
 
 /**
@@ -264,7 +419,10 @@ interface TextGenerationResponseData {
  * Text generation with AI models
  *
  * @body {TextGenerationMessage[]} messages - Conversation messages
- * @body {string} [model] - Model to use (default: gpt-4o-mini)
+ * @body {string} [model] - Model to use. Can be:
+ *   - 2Bot AI model ID (e.g., "2bot-ai-text-pro") - RECOMMENDED
+ *   - Legacy provider model (e.g., "gpt-4o-mini") - for backward compatibility
+ *   Default: "2bot-ai-text-lite"
  * @body {number} [temperature] - Creativity (0-2, default: 0.7)
  * @body {number} [maxTokens] - Max response tokens
  * @body {boolean} [stream] - Enable streaming response
@@ -273,7 +431,8 @@ twoBotAIRouter.post(
   "/text-generation",
   asyncHandler(async (req: Request, res: Response<ApiResponse<TextGenerationResponseData>>) => {
     const log = logger.child({ module: "2bot-ai-route", capability: "text-generation" });
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const body = req.body as TextGenerationRequestBody;
 
     // Validate messages
@@ -291,7 +450,31 @@ twoBotAIRouter.post(
       }
     }
 
-    const model = body.model || "gpt-4o-mini";
+    // Resolve model: Support both 2Bot AI model IDs and legacy provider models
+    let model: TwoBotAIModel;
+    let twobotAIModelId: TwoBotAIModelId | undefined;
+    const requestedModel = body.model || "2bot-ai-text-lite";
+
+    if (isTwoBotAIModelId(requestedModel)) {
+      // 2Bot AI model ID - resolve to provider model
+      twobotAIModelId = requestedModel;
+      try {
+        const resolution = twoBotAIProvider.resolveModel(requestedModel);
+        model = resolution.providerModelId as TwoBotAIModel;
+        log.info({
+          twobotAIModel: requestedModel,
+          resolvedModel: model,
+          provider: resolution.provider,
+        }, "Resolved 2Bot AI model to provider model");
+      } catch (error) {
+        throw new BadRequestError(
+          `Model "${requestedModel}" is not available. ${error instanceof Error ? error.message : ""}`
+        );
+      }
+    } else {
+      // Legacy provider model - use directly
+      model = requestedModel as TwoBotAIModel;
+    }
 
     // Streaming response
     if (body.stream) {
@@ -325,12 +508,18 @@ twoBotAIRouter.post(
 
         // Send final message with usage
         const finalResponse = result.value;
-        res.write(`data: ${JSON.stringify({ type: "done", ...finalResponse })}\n\n`);
+        res.write(`data: ${JSON.stringify({ 
+          type: "done", 
+          ...finalResponse,
+          twobotAIModel: twobotAIModelId,
+          resolvedModel: twobotAIModelId ? model : undefined,
+        })}\n\n`);
         res.end();
 
         log.info({
           userId,
           model,
+          twobotAIModel: twobotAIModelId,
           creditsUsed: finalResponse.creditsUsed,
         }, "2Bot AI chat stream completed");
       } catch (error) {
@@ -361,7 +550,11 @@ twoBotAIRouter.post(
 
       res.json({
         success: true,
-        data: response,
+        data: {
+          ...response,
+          twobotAIModel: twobotAIModelId,
+          resolvedModel: twobotAIModelId ? model : undefined,
+        },
       });
     } catch (error) {
       if (error instanceof TwoBotAIError) {
@@ -386,7 +579,8 @@ twoBotAIRouter.post(
 
 interface ImageGenerationRequestBody {
   prompt: string;
-  model?: "dall-e-3" | "dall-e-3-hd";
+  /** 2Bot model ID (e.g. '2bot-ai-image-pro') or raw provider model ID */
+  model?: string;
   size?: ImageSize;
   quality?: ImageQuality;
   style?: ImageStyle;
@@ -418,7 +612,8 @@ twoBotAIRouter.post(
   "/image-generation",
   asyncHandler(async (req: Request, res: Response<ApiResponse<ImageGenerationResponseData>>) => {
     const log = logger.child({ module: "2bot-ai-route", capability: "image-generation" });
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const body = req.body as ImageGenerationRequestBody;
 
     // Validate prompt
@@ -473,7 +668,8 @@ twoBotAIRouter.post(
 
 interface SpeechSynthesisRequestBody {
   text: string;
-  model?: "tts-1" | "tts-1-hd";
+  /** 2Bot model ID (e.g. '2bot-ai-voice-pro') or raw provider model ID */
+  model?: string;
   voice?: SpeechSynthesisVoice;
   format?: SpeechSynthesisFormat;
   speed?: number;
@@ -504,7 +700,8 @@ twoBotAIRouter.post(
   "/speech-synthesis",
   asyncHandler(async (req: Request, res: Response<ApiResponse<SpeechSynthesisResponseData>>) => {
     const log = logger.child({ module: "2bot-ai-route", capability: "speech-synthesis" });
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
     const body = req.body as SpeechSynthesisRequestBody;
 
     // Validate text
@@ -528,7 +725,7 @@ twoBotAIRouter.post(
 
       log.info({
         userId,
-        model: body.model || "tts-1",
+        model: body.model || "(default)",
         characterCount: response.characterCount,
         creditsUsed: response.creditsUsed,
       }, "2Bot AI TTS completed");
@@ -594,7 +791,8 @@ twoBotAIRouter.post(
   upload.single("audio"),
   asyncHandler(async (req: Request, res: Response<ApiResponse<SpeechRecognitionResponseData>>) => {
     const log = logger.child({ module: "2bot-ai-route", capability: "speech-recognition" });
-    const userId = req.user!.id;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
 
     let audioBase64: string;
 
@@ -624,7 +822,7 @@ twoBotAIRouter.post(
 
       log.info({
         userId,
-        model: req.body?.model || "whisper-1",
+        model: req.body?.model || "(default)",
         duration: response.duration,
         creditsUsed: response.creditsUsed,
       }, "2Bot AI STT completed");

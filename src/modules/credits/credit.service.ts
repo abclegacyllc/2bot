@@ -25,8 +25,8 @@
 
 import { logger } from "@/lib/logger";
 import {
-    creditWalletService,
-    type WalletType
+  creditWalletService,
+  type WalletType
 } from "./wallet.service";
 
 const creditLogger = logger.child({ module: "credit" });
@@ -142,20 +142,17 @@ class CreditService {
     requiredCredits: number
   ): Promise<CreditCheckResult> {
     const wallet = await creditWalletService.getOrCreatePersonalWallet(userId);
-    const planLimit = await creditWalletService.getUserPlanLimit(userId);
-
-    const withinPlanLimit = wallet.monthlyUsed + requiredCredits <= planLimit;
 
     return {
-      hasCredits: wallet.balance >= requiredCredits && withinPlanLimit,
+      hasCredits: wallet.balance >= requiredCredits,
       balance: wallet.balance,
       required: requiredCredits,
       remaining: wallet.balance - requiredCredits,
       walletType: "personal",
       walletId: wallet.id,
-      planLimit,
+      planLimit: -1, // No monthly spending cap — wallet balance is the only limit
       monthlyUsed: wallet.monthlyUsed,
-      withinPlanLimit,
+      withinPlanLimit: true, // Always true — no monthly cap enforcement
     };
   }
 
@@ -294,19 +291,16 @@ class CreditService {
   ): Promise<CreditCheckResult | null> {
     const wallet = await creditWalletService.getOrCreateOrgWallet(organizationId);
 
-    const planLimit = await creditWalletService.getOrgPlanLimit(organizationId);
-    const withinPlanLimit = wallet.monthlyUsed + requiredCredits <= planLimit;
-
     return {
-      hasCredits: wallet.balance >= requiredCredits && withinPlanLimit,
+      hasCredits: wallet.balance >= requiredCredits,
       balance: wallet.balance,
       required: requiredCredits,
       remaining: wallet.balance - requiredCredits,
       walletType: "organization",
       walletId: wallet.id,
-      planLimit,
+      planLimit: -1, // No monthly spending cap — wallet balance is the only limit
       monthlyUsed: wallet.monthlyUsed,
-      withinPlanLimit,
+      withinPlanLimit: true, // Always true — no monthly cap enforcement
     };
   }
 
@@ -413,6 +407,41 @@ class CreditService {
       ...result,
       walletType: "organization",
     };
+  }
+  // ===========================================
+  // Daily Credit Claims
+  // ===========================================
+
+  /**
+   * Claim daily credits for a personal wallet.
+   */
+  async claimPersonalDailyCredits(userId: string) {
+    const wallet = await creditWalletService.getOrCreatePersonalWallet(userId);
+    return creditWalletService.claimDailyCredits(wallet.id);
+  }
+
+  /**
+   * Get claim status for a personal wallet.
+   */
+  async getPersonalClaimStatus(userId: string) {
+    const wallet = await creditWalletService.getOrCreatePersonalWallet(userId);
+    return creditWalletService.getClaimStatus(wallet.id);
+  }
+
+  /**
+   * Claim daily credits for an organization wallet.
+   */
+  async claimOrgDailyCredits(organizationId: string) {
+    const wallet = await creditWalletService.getOrCreateOrgWallet(organizationId);
+    return creditWalletService.claimDailyCredits(wallet.id);
+  }
+
+  /**
+   * Get claim status for an organization wallet.
+   */
+  async getOrgClaimStatus(organizationId: string) {
+    const wallet = await creditWalletService.getOrCreateOrgWallet(organizationId);
+    return creditWalletService.getClaimStatus(wallet.id);
   }
 }
 

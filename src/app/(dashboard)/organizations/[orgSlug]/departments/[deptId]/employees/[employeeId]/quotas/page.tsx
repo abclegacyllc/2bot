@@ -11,6 +11,7 @@
  * @module app/(dashboard)/organizations/[orgId]/departments/[deptId]/employees/[employeeId]/quotas/page
  */
 
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { MemberResourceView } from "@/components/resources";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +30,6 @@ import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import {
     AlertCircle,
-    ArrowLeft,
     Bot,
     Cpu,
     GitBranch,
@@ -37,9 +37,8 @@ import {
     Loader2,
     MemoryStick,
     Server,
-    User,
+    User
 } from "lucide-react";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -220,7 +219,7 @@ export default function EmployeeAllocationPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [token, deptId, employeeId, reset]);
+  }, [token, orgId, deptId, employeeId, reset]);
 
   useEffect(() => {
     if (deptId && employeeId) {
@@ -378,42 +377,17 @@ export default function EmployeeAllocationPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-muted-foreground text-sm">
-        <Link href={buildOrgUrl("")} className="hover:text-foreground">
-          Organization
-        </Link>
-        <span>/</span>
-        <Link href={buildOrgUrl("/departments")} className="hover:text-foreground">
-          Departments
-        </Link>
-        <span>/</span>
-        <Link href={backUrl} className="hover:text-foreground">
-          {department?.name}
-        </Link>
-        <span>/</span>
-        <span className="text-foreground">Employee Allocation</span>
-      </div>
-
-      {/* Back Button */}
-      <Button asChild variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-        <Link href={backUrl}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Department
-        </Link>
-      </Button>
-
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-bold text-foreground">Employee Allocation</h1>
-        <p className="text-muted-foreground">
-          Manage resource limits for {employee?.name}
-        </p>
-      </div>
+      <PageHeader
+        title="Employee Allocation"
+        description={`Manage resource limits for ${employee?.name}`}
+        breadcrumbs={[
+          { label: "Departments", href: buildOrgUrl("/departments") },
+          { label: department?.name ?? "Department", href: backUrl },
+        ]}
+      />
 
       {/* Employee Info Card */}
-      {employee && (
-        <Card className="border-border bg-card/50">
+      {employee ? <Card className="border-border bg-card/50">
           <CardContent className="flex items-center gap-4 pt-6">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
               <User className="h-6 w-6 text-foreground" />
@@ -428,12 +402,10 @@ export default function EmployeeAllocationPage() {
               <p className="text-sm text-muted-foreground">{employee.email}</p>
             </div>
           </CardContent>
-        </Card>
-      )}
+        </Card> : null}
 
       {/* Current Status - Shows member's current allocation and usage */}
-      {orgId && deptId && employeeId && (
-        <Card className="border-border bg-card/50">
+      {orgId && deptId && employeeId ? <Card className="border-border bg-card/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-foreground">
               <Server className="h-5 w-5 text-purple-400" />
@@ -451,8 +423,7 @@ export default function EmployeeAllocationPage() {
               compact
             />
           </CardContent>
-        </Card>
-      )}
+        </Card> : null}
 
       {/* Automation Allocation */}
       <Card className="border-border bg-card/50">
@@ -463,28 +434,22 @@ export default function EmployeeAllocationPage() {
           </CardTitle>
           <CardDescription className="text-muted-foreground">
             Set automation limits. Leave empty to inherit from department.
-            {department && (
-              <span className="ml-1">
+            {department ? <span className="ml-1">
                 Department: <strong className="text-foreground">{department.name}</strong>
-              </span>
-            )}
+              </span> : null}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
             {/* Messages */}
-            {error && (
-              <div className="flex items-center gap-2 rounded-md border border-red-800 bg-red-900/20 p-3 text-sm text-red-400">
+            {error ? <div className="flex items-center gap-2 rounded-md border border-red-800 bg-red-900/20 p-3 text-sm text-red-400">
                 <AlertCircle className="h-4 w-4" />
                 {error}
-              </div>
-            )}
+              </div> : null}
 
-            {successMessage && (
-              <div className="rounded-md border border-green-800 bg-green-900/20 p-3 text-sm text-green-400">
+            {successMessage ? <div className="rounded-md border border-green-800 bg-green-900/20 p-3 text-sm text-green-400">
                 {successMessage}
-              </div>
-            )}
+              </div> : null}
 
             <div className="grid gap-6 sm:grid-cols-2">
               {/* Gateways */}
@@ -508,9 +473,7 @@ export default function EmployeeAllocationPage() {
                     getFieldStatus("maxGateways") === "error" ? "border-red-500" : ""
                   }`}
                 />
-                {validationErrors.maxGateways && (
-                  <p className="text-sm text-red-400">{validationErrors.maxGateways}</p>
-                )}
+                {validationErrors.maxGateways ? <p className="text-sm text-red-400">{validationErrors.maxGateways}</p> : null}
               </div>
 
               {/* Workflows */}
@@ -534,9 +497,7 @@ export default function EmployeeAllocationPage() {
                     getFieldStatus("maxWorkflows") === "error" ? "border-red-500" : ""
                   }`}
                 />
-                {validationErrors.maxWorkflows && (
-                  <p className="text-sm text-red-400">{validationErrors.maxWorkflows}</p>
-                )}
+                {validationErrors.maxWorkflows ? <p className="text-sm text-red-400">{validationErrors.maxWorkflows}</p> : null}
               </div>
             </div>
 
@@ -565,9 +526,7 @@ export default function EmployeeAllocationPage() {
                     getFieldStatus("creditBudget") === "error" ? "border-red-500" : ""
                   }`}
                 />
-                {validationErrors.creditBudget && (
-                  <p className="text-sm text-red-400">{validationErrors.creditBudget}</p>
-                )}
+                {validationErrors.creditBudget ? <p className="text-sm text-red-400">{validationErrors.creditBudget}</p> : null}
               </div>
             </div>
 
@@ -599,9 +558,7 @@ export default function EmployeeAllocationPage() {
                       getFieldStatus("ramMb") === "error" ? "border-red-500" : ""
                     }`}
                   />
-                  {validationErrors.ramMb && (
-                    <p className="text-sm text-red-400">{validationErrors.ramMb}</p>
-                  )}
+                  {validationErrors.ramMb ? <p className="text-sm text-red-400">{validationErrors.ramMb}</p> : null}
                 </div>
 
                 {/* CPU */}
@@ -626,9 +583,7 @@ export default function EmployeeAllocationPage() {
                       getFieldStatus("cpuCores") === "error" ? "border-red-500" : ""
                     }`}
                   />
-                  {validationErrors.cpuCores && (
-                    <p className="text-sm text-red-400">{validationErrors.cpuCores}</p>
-                  )}
+                  {validationErrors.cpuCores ? <p className="text-sm text-red-400">{validationErrors.cpuCores}</p> : null}
                 </div>
 
                 {/* Storage */}
@@ -652,9 +607,7 @@ export default function EmployeeAllocationPage() {
                       getFieldStatus("storageMb") === "error" ? "border-red-500" : ""
                     }`}
                   />
-                  {validationErrors.storageMb && (
-                    <p className="text-sm text-red-400">{validationErrors.storageMb}</p>
-                  )}
+                  {validationErrors.storageMb ? <p className="text-sm text-red-400">{validationErrors.storageMb}</p> : null}
                 </div>
               </div>
             </div>

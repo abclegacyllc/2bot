@@ -13,7 +13,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { Coins, TrendingDown, TrendingUp } from "lucide-react";
+import { formatCredits } from "@/shared/lib/format";
+import { CalendarCheck, Coins, TrendingDown, TrendingUp } from "lucide-react";
 
 export interface CreditsBalanceCardProps {
   balance: number;
@@ -23,19 +24,10 @@ export interface CreditsBalanceCardProps {
   loading?: boolean;
   variant?: "personal" | "organization";
   className?: string;
-}
-
-/**
- * Format credits for display (e.g., 125000 -> "125K")
- */
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${(credits / 1_000).toFixed(1)}K`;
-  }
-  return credits.toLocaleString();
+  /** For PRO+ plans: when monthly grant was last applied */
+  monthlyGrantDate?: string | null;
+  /** For PRO+ plans: amount granted */
+  monthlyGrantAmount?: number;
 }
 
 export function CreditsBalanceCard({
@@ -46,6 +38,8 @@ export function CreditsBalanceCard({
   loading = false,
   variant = "personal",
   className,
+  monthlyGrantDate,
+  monthlyGrantAmount,
 }: CreditsBalanceCardProps) {
   if (loading) {
     return (
@@ -94,7 +88,7 @@ export function CreditsBalanceCard({
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>Monthly Usage</span>
             <span>
-              {formatCredits(monthlyUsed)} / {isUnlimited ? "∞" : formatCredits(planLimit)}
+              {formatCredits(monthlyUsed)}{!isUnlimited && ` / ${formatCredits(planLimit)}`}
             </span>
           </div>
           {!isUnlimited && (
@@ -115,13 +109,23 @@ export function CreditsBalanceCard({
             <TrendingUp className="h-3 w-3 text-green-500" />
             <span>Lifetime: {formatCredits(lifetime)}</span>
           </div>
-          {isNearLimit && !isUnlimited && (
-            <div className="flex items-center gap-1 text-amber-500">
+          {isNearLimit && !isUnlimited ? <div className="flex items-center gap-1 text-amber-500">
               <TrendingDown className="h-3 w-3" />
               <span>Near limit</span>
-            </div>
-          )}
+            </div> : null}
         </div>
+
+        {/* Monthly Grant Info (PRO+ plans) */}
+        {monthlyGrantDate && monthlyGrantAmount && monthlyGrantAmount > 0 ? <div className="mt-3 flex items-center gap-1.5 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs text-muted-foreground">
+            <CalendarCheck className="h-3.5 w-3.5 text-primary" />
+            <span>
+              {formatCredits(monthlyGrantAmount)} credits added on{" "}
+              {new Date(monthlyGrantDate).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          </div> : null}
       </CardContent>
     </Card>
   );

@@ -11,6 +11,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { formatNumber } from "@/shared/lib/format";
 import {
     Activity,
     Cloud,
@@ -56,12 +57,6 @@ interface DeptResourceViewProps {
 }
 
 // Helper functions
-function formatNumber(num: number): string {
-  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-  if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-  return num.toString();
-}
-
 function formatStorage(bytes: number): string {
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
   if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(2)} MB`;
@@ -202,25 +197,25 @@ export function DeptResourceView({
         <div className="flex items-center justify-between rounded-lg bg-muted/50 p-2 text-sm">
           <span className="text-muted-foreground">API Usage Trend</span>
           <div className="flex items-center gap-1">
-            {trend!.direction === "up" ? (
+            {trend?.direction === "up" ? (
               <TrendingUp className="h-4 w-4 text-red-500" />
-            ) : trend!.direction === "down" ? (
+            ) : trend?.direction === "down" ? (
               <TrendingDown className="h-4 w-4 text-green-500" />
             ) : (
               <Cloud className="h-4 w-4 text-muted-foreground" />
             )}
             <span
               className={
-                trend!.direction === "up"
+                trend?.direction === "up"
                   ? "text-red-500"
-                  : trend!.direction === "down"
+                  : trend?.direction === "down"
                     ? "text-green-500"
                     : "text-muted-foreground"
               }
             >
-              {trend!.direction === "stable"
+              {trend?.direction === "stable"
                 ? "Stable"
-                : `${trend!.direction === "up" ? "+" : "-"}${Math.abs(trend!.apiCallsChange)}%`}
+                : `${trend?.direction === "up" ? "+" : "-"}${Math.abs(trend?.apiCallsChange ?? 0)}%`}
             </span>
           </div>
         </div>

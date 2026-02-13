@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { CreditUsageCategory } from "@/modules/credits";
+import { formatCreditAmount } from "@/shared/lib/format";
 import {
     ArrowDownRight,
     ArrowUpRight,
@@ -66,20 +67,6 @@ export interface CreditsTransactionHistoryProps {
   typeFilter?: string;
   categoryFilter?: CreditUsageCategory;
   className?: string;
-}
-
-/**
- * Format credits for display
- */
-function formatCredits(credits: number): string {
-  const absCredits = Math.abs(credits);
-  if (absCredits >= 1_000_000) {
-    return `${(absCredits / 1_000_000).toFixed(1)}M`;
-  }
-  if (absCredits >= 1_000) {
-    return `${(absCredits / 1_000).toFixed(1)}K`;
-  }
-  return absCredits.toLocaleString();
 }
 
 /**
@@ -157,8 +144,7 @@ export function CreditsTransactionHistory({
         </div>
         <div className="flex gap-2">
           {/* Type Filter */}
-          {onTypeFilter && (
-            <Select
+          {onTypeFilter ? <Select
               value={typeFilter || "all"}
               onValueChange={(v) => onTypeFilter(v === "all" ? undefined : v)}
             >
@@ -173,11 +159,9 @@ export function CreditsTransactionHistory({
                 <SelectItem value="bonus">Bonus</SelectItem>
                 <SelectItem value="grant">Grant</SelectItem>
               </SelectContent>
-            </Select>
-          )}
+            </Select> : null}
           {/* Category Filter */}
-          {onCategoryFilter && (
-            <Select
+          {onCategoryFilter ? <Select
               value={categoryFilter || "all"}
               onValueChange={(v) =>
                 onCategoryFilter(v === "all" ? undefined : (v as CreditUsageCategory))
@@ -192,8 +176,7 @@ export function CreditsTransactionHistory({
                 <SelectItem value="marketplace">Marketplace</SelectItem>
                 <SelectItem value="premium_feature">Premium</SelectItem>
               </SelectContent>
-            </Select>
-          )}
+            </Select> : null}
         </div>
       </CardHeader>
       <CardContent>
@@ -231,11 +214,9 @@ export function CreditsTransactionHistory({
                       </TableCell>
                       <TableCell>
                         <Badge variant={badge.variant}>{badge.label}</Badge>
-                        {tx.category && (
-                          <span className="ml-2 text-xs text-muted-foreground">
+                        {tx.category ? <span className="ml-2 text-xs text-muted-foreground">
                             {getCategoryLabel(tx.category)}
-                          </span>
-                        )}
+                          </span> : null}
                       </TableCell>
                       <TableCell className="max-w-[200px] truncate">
                         {tx.description || "-"}
@@ -253,11 +234,11 @@ export function CreditsTransactionHistory({
                             <ArrowDownRight className="h-3 w-3" />
                           )}
                           {isPositive ? "+" : "-"}
-                          {formatCredits(tx.amount)}
+                          {formatCreditAmount(tx.amount)}
                         </span>
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
-                        {formatCredits(tx.balanceAfter)}
+                        {formatCreditAmount(tx.balanceAfter)}
                       </TableCell>
                     </TableRow>
                   );
@@ -266,8 +247,7 @@ export function CreditsTransactionHistory({
             </Table>
 
             {/* Pagination */}
-            {totalPages > 1 && onPageChange && (
-              <div className="mt-4 flex items-center justify-between">
+            {totalPages > 1 && onPageChange ? <div className="mt-4 flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
                   Page {page} of {totalPages}
                 </p>
@@ -291,8 +271,7 @@ export function CreditsTransactionHistory({
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>
-              </div>
-            )}
+              </div> : null}
           </>
         )}
       </CardContent>

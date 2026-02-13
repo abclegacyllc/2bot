@@ -102,7 +102,7 @@ function createPersonalContext(userId: string, plan: PlanType) {
 /**
  * Helper to create organization context
  */
-function createOrgContext(userId: string, orgId: string, userPlan: PlanType, orgPlan: OrgPlanType) {
+function createOrgContext(userId: string, orgId: string, userPlan: PlanType, _orgPlan: OrgPlanType) {
   return createServiceContext(
     {
       userId,

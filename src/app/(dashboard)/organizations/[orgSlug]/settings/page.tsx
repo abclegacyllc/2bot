@@ -14,39 +14,38 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-    Form,
-    FormControl,
-    FormDescription,
-    FormField,
-    FormItem,
-    FormLabel,
-    FormMessage,
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
-import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
+import { useOrganization } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import { getOrgPlanDisplayName, type OrgPlanType } from "@/shared/constants/org-plans";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, Building2, Loader2, Users } from "lucide-react";
-import Link from "next/link";
+import { AlertTriangle, Building2, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -80,9 +79,8 @@ interface OrganizationInfo {
 
 function OrganizationSettingsContent() {
   const router = useRouter();
-  const { context, token } = useAuth();
-  const { orgId, orgRole, isFound, isLoading: orgLoading } = useOrganization();
-  const { buildOrgUrl } = useOrgUrls();
+  const { token } = useAuth();
+  const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const [org, setOrg] = useState<OrganizationInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -334,84 +332,6 @@ function OrganizationSettingsContent() {
             </Form>
           </CardContent>
         </Card>
-
-        {/* Members & Departments Quick Links */}
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card className="border-border bg-card/50">
-            <CardHeader>
-              <CardTitle className="text-foreground flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Members
-              </CardTitle>
-              <CardDescription className="text-muted-foreground">
-                {org?.memberCount} member{org?.memberCount !== 1 ? "s" : ""} in this organization
-                {org?.maxMembers ? ` (max ${org.maxMembers})` : null}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href={buildOrgUrl("/members")}>
-                <Button variant="outline" className="w-full border-border text-foreground hover:bg-muted">
-                  Manage Members
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card/50">
-            <CardHeader>
-              <CardTitle className="text-foreground flex items-center gap-2">
-                <Building2 className="h-5 w-5" />
-                Departments
-              </CardTitle>
-              <CardDescription className="text-muted-foreground">
-                Organize your team into departments
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href={buildOrgUrl("/departments")}>
-                <Button variant="outline" className="w-full border-border text-foreground hover:bg-muted">
-                  Manage Departments
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card/50">
-            <CardHeader>
-              <CardTitle className="text-foreground flex items-center gap-2">
-                📊 Resources
-              </CardTitle>
-              <CardDescription className="text-muted-foreground">
-                Manage department quotas and resource limits
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href={buildOrgUrl("/resources")}>
-                <Button variant="outline" className="w-full border-border text-foreground hover:bg-muted">
-                  Manage Resources
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border bg-card/50">
-            <CardHeader>
-              <CardTitle className="text-foreground flex items-center gap-2">
-                📈 Monitoring
-              </CardTitle>
-              <CardDescription className="text-muted-foreground">
-                View organization activity and usage metrics
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href={buildOrgUrl("/monitoring")}>
-                <Button variant="outline" className="w-full border-border text-foreground hover:bg-muted">
-                  View Monitoring
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </div>
 
         {/* Danger Zone - Owner Only */}
         {isOwner ? <>

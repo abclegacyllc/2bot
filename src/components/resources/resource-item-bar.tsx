@@ -16,6 +16,7 @@
  */
 
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/shared/lib/format";
 import type { LucideIcon } from "lucide-react";
 
 export type WarningLevel = "normal" | "warning" | "critical" | "blocked";
@@ -92,13 +93,6 @@ function getSizeClasses(size: "sm" | "md" | "lg"): { bar: string; text: string }
   }
 }
 
-// Format number for display
-function formatNumber(num: number): string {
-  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
-  if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
-  return num.toLocaleString();
-}
-
 // Format reset date
 function formatResetDate(dateStr: string | null | undefined): string | null {
   if (!dateStr) return null;
@@ -142,19 +136,15 @@ export function ResourceItemBar({
       {/* Label and value row */}
       <div className={cn("flex items-center justify-between", sizeClasses.text)}>
         <div className="flex items-center gap-2">
-          {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
+          {Icon ? <Icon className="h-4 w-4 text-muted-foreground" /> : null}
           <span className="font-medium text-foreground">{label}</span>
-          {period && (
-            <span className="text-xs text-muted-foreground">/{period}</span>
-          )}
+          {period ? <span className="text-xs text-muted-foreground">/{period}</span> : null}
         </div>
         <span className={cn("tabular-nums", getTextColorClass(warningLevel))}>
           {displayCurrent} / {displayLimit}
-          {showPercentage && !isUnlimited && (
-            <span className="text-muted-foreground ml-1">
+          {showPercentage && !isUnlimited ? <span className="text-muted-foreground ml-1">
               ({Math.round(percentage)}%)
-            </span>
-          )}
+            </span> : null}
         </span>
       </div>
 
@@ -170,9 +160,7 @@ export function ResourceItemBar({
       </div>
 
       {/* Reset text */}
-      {resetText && (
-        <p className="text-xs text-muted-foreground">{resetText}</p>
-      )}
+      {resetText ? <p className="text-xs text-muted-foreground">{resetText}</p> : null}
     </div>
   );
 }

@@ -15,11 +15,12 @@
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatCredits } from "@/shared/lib/format";
 import { Zap } from "lucide-react";
 
 interface CreditDisplayProps {
@@ -31,12 +32,12 @@ interface CreditDisplayProps {
 }
 
 // Keep old interface for backward compatibility
-export interface CreditsDisplayProps extends CreditDisplayProps {}
+export type CreditsDisplayProps = CreditDisplayProps;
 
 /**
  * Display credit usage (current) or balance (future)
  */
-export function CreditsDisplay({ used = 0, limit = 0, balance, loading, compact }: CreditDisplayProps) {
+export function CreditsDisplay({ used = 0, limit = 0, balance: _balance, loading, compact }: CreditDisplayProps) {
   if (loading) {
     return <Skeleton className="h-6 w-20" />;
   }
@@ -91,16 +92,6 @@ export function CreditsDisplay({ used = 0, limit = 0, balance, loading, compact 
       </span>
     </div>
   );
-}
-
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${(credits / 1_000).toFixed(1)}K`;
-  }
-  return credits.toString();
 }
 
 /**

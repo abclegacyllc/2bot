@@ -20,38 +20,53 @@
 import { logger } from "@/lib/logger";
 import { twoBotAICreditService } from "@/modules/credits";
 import {
-  anthropicTextGeneration,
-  anthropicTextGenerationStream,
-  openaiImageGeneration,
-  openaiSpeechRecognition,
-  openaiSpeechSynthesis,
-  openaiTextGeneration,
-  openaiTextGenerationStream,
+    anthropicTextGeneration,
+    anthropicTextGenerationStream,
+    openaiImageGeneration,
+    openaiSpeechRecognition,
+    openaiSpeechSynthesis,
+    openaiTextGeneration,
+    openaiTextGenerationStream,
+    togetherImageGeneration,
+    togetherTextGeneration,
+    togetherTextGenerationStream,
 } from "./adapters";
 import { aiCacheService } from "./ai-cache.service";
 import type { AICapability } from "./ai-capabilities";
+import {
+    getAvailableTwoBotAIModels,
+    getTwoBotAIModel,
+    getTwoBotAIModelsByCapability,
+    isTwoBotAIModelId,
+    resolveTwoBotAIModel,
+    TWOBOT_AI_MODEL_TIERS,
+    twoBotAIModelResolver,
+    type ModelResolutionResult,
+    type TwoBotAIModelId,
+    type TwoBotAIModelInfo,
+} from "./model-catalog";
 import type { SmartRoutingResult } from "./model-router";
 import { getSmartRoutingDecision, validateModelAvailable } from "./model-router";
 import {
-  getAvailableModels,
-  getConfiguredProviders,
-  getModelIfAvailable,
-  getProvidersStatus,
-  isProviderConfigured
+    getAvailableModels,
+    getConfiguredProviders,
+    getModelIfAvailable,
+    getProvidersStatus,
+    isProviderConfigured
 } from "./provider-config";
 import type {
-  ImageGenerationRequest,
-  ImageGenerationResponse,
-  ModelInfo,
-  SpeechRecognitionRequest,
-  SpeechRecognitionResponse,
-  SpeechSynthesisRequest,
-  SpeechSynthesisResponse,
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk,
-  TwoBotAIModel,
-  TwoBotAIProvider
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    ModelInfo,
+    SpeechRecognitionRequest,
+    SpeechRecognitionResponse,
+    SpeechSynthesisRequest,
+    SpeechSynthesisResponse,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk,
+    TwoBotAIModel,
+    TwoBotAIProvider
 } from "./types";
 import { TwoBotAIError } from "./types";
 
@@ -111,11 +126,115 @@ export const twoBotAIProvider = {
     return getConfiguredProviders();
   },
 
+  // ===========================================
+  // 2Bot AI Model Catalog (User-facing models)
+  // ===========================================
+
+  /**
+   * Get available 2Bot AI models (user-facing, hides provider details)
+   * @param capability - Filter by capability
+   */
+  getTwoBotAIModels(capability?: AICapability): TwoBotAIModelInfo[] {
+    let models = getAvailableTwoBotAIModels();
+    
+    if (capability) {
+      models = getTwoBotAIModelsByCapability(capability);
+    }
+    
+    // Only return models that can be resolved to a configured provider
+    return models
+      .filter((model) => {
+        try {
+          resolveTwoBotAIModel(model.id);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .map((model) => ({
+        id: model.id,
+        displayName: model.displayName,
+        description: model.description,
+        capability: model.capability,
+        tier: model.tier,
+        tierInfo: TWOBOT_AI_MODEL_TIERS[model.tier],
+        maxContextTokens: model.maxContextTokens,
+        maxOutputTokens: model.maxOutputTokens,
+        isAvailable: model.isAvailable,
+        features: model.features,
+        tags: model.tags,
+      }));
+  },
+
+  /**
+   * Get a single 2Bot AI model by ID
+   */
+  getTwoBotAIModel(modelId: TwoBotAIModelId): TwoBotAIModelInfo | undefined {
+    const model = getTwoBotAIModel(modelId);
+    if (!model) return undefined;
+    
+    // Check if it can be resolved
+    try {
+      resolveTwoBotAIModel(modelId);
+    } catch {
+      return undefined;
+    }
+    
+    return {
+      id: model.id,
+      displayName: model.displayName,
+      description: model.description,
+      capability: model.capability,
+      tier: model.tier,
+      tierInfo: TWOBOT_AI_MODEL_TIERS[model.tier],
+      maxContextTokens: model.maxContextTokens,
+      maxOutputTokens: model.maxOutputTokens,
+      isAvailable: model.isAvailable,
+      features: model.features,
+      tags: model.tags,
+    };
+  },
+
+  /**
+   * Resolve a 2Bot AI model ID to provider details (internal use)
+   */
+  resolveModel(modelId: TwoBotAIModelId): ModelResolutionResult {
+    return resolveTwoBotAIModel(modelId);
+  },
+
+  /**
+   * Check if a model ID is a 2Bot AI model
+   */
+  isTwoBotAIModel(modelId: string): modelId is TwoBotAIModelId {
+    return isTwoBotAIModelId(modelId);
+  },
+
   /**
    * Text generation (non-streaming)
    */
   async textGeneration(request: TextGenerationRequest): Promise<TextGenerationResponse> {
     const log = logger.child({ module: "2bot-ai-provider", capability: "text-generation" });
+
+    // 🔄 Resolve 2Bot AI model IDs to provider models (with failover support)
+    let resolution: ModelResolutionResult | null = null;
+    if (isTwoBotAIModelId(request.model as string)) {
+      try {
+        resolution = resolveTwoBotAIModel(request.model as TwoBotAIModelId);
+        log.info({
+          twobotModel: request.model,
+          resolvedProvider: resolution.provider,
+          resolvedModel: resolution.providerModelId,
+          fallbackCount: resolution.fallbackOptions.length,
+        }, "🔄 Resolved 2Bot AI model to provider");
+        request = { ...request, model: resolution.providerModelId as TwoBotAIModel };
+      } catch (err) {
+        throw new TwoBotAIError(
+          `Cannot resolve model "${request.model}": ${err instanceof Error ? err.message : String(err)}`,
+          "MODEL_UNAVAILABLE",
+          400
+        );
+      }
+    }
 
     // ✅ Validate model is available (throws if not)
     validateModelAvailable(request.model);
@@ -201,14 +320,6 @@ export const twoBotAIProvider = {
       }
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Organization monthly limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402,
-            { limit: creditCheck.planLimit, used: creditCheck.monthlyUsed }
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient organization credits. Required: ~${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -224,14 +335,6 @@ export const twoBotAIProvider = {
       );
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Monthly credit limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402,
-            { limit: creditCheck.planLimit, used: creditCheck.monthlyUsed }
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient credits. Required: ~${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -241,12 +344,55 @@ export const twoBotAIProvider = {
       }
     }
 
-    // Make the request
+    // Make the request (with provider failover for 2Bot AI models)
     let response: TextGenerationResponse;
-    if (provider === "openai") {
-      response = await openaiTextGeneration(request);
+    const callProviderAdapter = async (p: TwoBotAIProvider, req: TextGenerationRequest): Promise<TextGenerationResponse> => {
+      if (p === "openai") return openaiTextGeneration(req);
+      if (p === "together") return togetherTextGeneration(req);
+      return anthropicTextGeneration(req);
+    };
+
+    if (resolution) {
+      // 2Bot AI model: try with automatic failover across providers
+      let currentResolution: ModelResolutionResult | null = resolution;
+      let currentProvider = provider;
+      let currentModel = request.model;
+
+      while (true) {
+        try {
+          response = await callProviderAdapter(currentProvider, { ...request, model: currentModel });
+          // Update request model to reflect actual model used (for billing/logging)
+          request = { ...request, model: currentModel };
+          break;
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+
+          // Try next fallback provider
+          if (currentResolution) {
+            const next = twoBotAIModelResolver.getNextFallback(currentResolution);
+            if (next) {
+              log.warn({
+                failedProvider: currentProvider,
+                failedModel: currentModel,
+                error: error.message,
+                nextProvider: next.provider,
+                nextModel: next.providerModelId,
+                remainingFallbacks: next.fallbackOptions.length,
+              }, "⚠️ Provider failed, trying fallback");
+              currentResolution = next;
+              currentProvider = next.provider as TwoBotAIProvider;
+              currentModel = next.providerModelId as TwoBotAIModel;
+              continue;
+            }
+          }
+
+          // No more fallbacks — re-throw
+          throw err;
+        }
+      }
     } else {
-      response = await anthropicTextGeneration(request);
+      // Raw provider model: single attempt (existing behavior)
+      response = await callProviderAdapter(provider, request);
     }
 
     // 💾 Cache the response for future requests (if enabled)
@@ -296,12 +442,31 @@ export const twoBotAIProvider = {
   ): AsyncGenerator<TextGenerationStreamChunk, TextGenerationResponse> {
     const log = logger.child({ module: "2bot-ai-provider", capability: "text-generation" });
 
+    // 🔄 Resolve 2Bot AI model IDs to provider models
+    if (isTwoBotAIModelId(request.model as string)) {
+      try {
+        const resolution = resolveTwoBotAIModel(request.model as TwoBotAIModelId);
+        log.info({
+          twobotModel: request.model,
+          resolvedProvider: resolution.provider,
+          resolvedModel: resolution.providerModelId,
+        }, "🔄 Resolved 2Bot AI model (stream)");
+        request = { ...request, model: resolution.providerModelId as TwoBotAIModel };
+      } catch (err) {
+        throw new TwoBotAIError(
+          `Cannot resolve model "${request.model}": ${err instanceof Error ? err.message : String(err)}`,
+          "MODEL_UNAVAILABLE",
+          400
+        );
+      }
+    }
+
     // ✅ Validate model is available (throws if not)
     validateModelAvailable(request.model);
 
     // 🧠 Smart Model Routing - use cheaper model for simple queries (if enabled)
     const smartRoutingEnabled = request.smartRouting !== false;
-    const originalModel = request.model;
+    const _originalModel = request.model;
     let routingResult: SmartRoutingResult | null = null;
     
     if (smartRoutingEnabled) {
@@ -377,14 +542,6 @@ export const twoBotAIProvider = {
       }
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Organization monthly limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402,
-            { limit: creditCheck.planLimit, used: creditCheck.monthlyUsed }
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient organization credits. Required: ~${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -399,14 +556,6 @@ export const twoBotAIProvider = {
       );
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Monthly credit limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402,
-            { limit: creditCheck.planLimit, used: creditCheck.monthlyUsed }
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient credits. Required: ~${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -420,6 +569,8 @@ export const twoBotAIProvider = {
     let generator: AsyncGenerator<TextGenerationStreamChunk, { inputTokens: number; outputTokens: number }>;
     if (provider === "openai") {
       generator = openaiTextGenerationStream(request);
+    } else if (provider === "together") {
+      generator = togetherTextGenerationStream(request);
     } else {
       generator = anthropicTextGenerationStream(request);
     }
@@ -484,24 +635,63 @@ export const twoBotAIProvider = {
 
   /**
    * Image generation
+   * 
+   * Uses model resolver to route to the best available provider.
+   * Supports 2Bot model IDs (e.g. '2bot-ai-image-pro') and raw provider model IDs.
+   * Automatically falls back to available providers (e.g. Together FLUX when OpenAI is unavailable).
    */
   async imageGeneration(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
     const log = logger.child({ module: "2bot-ai-provider", capability: "image-generation" });
-    const model = request.model || "dall-e-3";
 
-    // ✅ Check if OpenAI is configured (image gen requires OpenAI)
-    if (!isProviderConfigured("openai")) {
-      throw new TwoBotAIError(
-        "Image generation requires OpenAI API. This feature is not currently available.",
-        "MODEL_UNAVAILABLE",
-        503
-      );
+    // Resolve 2Bot model ID to provider model, or use raw model ID
+    let providerModelId: string;
+    let provider: TwoBotAIProvider;
+    const requestModel = request.model || "2bot-ai-image-pro";
+
+    if (isTwoBotAIModelId(requestModel)) {
+      // 2Bot model ID — use resolver to find best available provider
+      try {
+        const resolution = resolveTwoBotAIModel(requestModel as TwoBotAIModelId);
+        providerModelId = resolution.providerModelId;
+        provider = resolution.provider;
+        log.info({
+          twobotModel: requestModel,
+          resolvedProvider: provider,
+          resolvedModel: providerModelId,
+          strategy: resolution.strategyUsed,
+          fallbackCount: resolution.fallbackOptions.length,
+        }, "Image model resolved via catalog");
+      } catch (_error) {
+        throw new TwoBotAIError(
+          "No image generation providers are currently available. Please try again later.",
+          "MODEL_UNAVAILABLE",
+          503
+        );
+      }
+    } else {
+      // Raw provider model ID (e.g. "dall-e-3" or "black-forest-labs/FLUX.1-schnell")
+      const isTogetherModel = requestModel.includes("/");
+      if (isTogetherModel) {
+        provider = "together";
+        providerModelId = requestModel;
+      } else {
+        provider = "openai";
+        providerModelId = requestModel;
+      }
+      // Verify the provider is configured
+      if (!isProviderConfigured(provider)) {
+        throw new TwoBotAIError(
+          `Image generation with ${provider} is not currently available.`,
+          "MODEL_UNAVAILABLE",
+          503
+        );
+      }
     }
 
-    // Calculate estimated credits
+    // Calculate estimated credits using the resolved provider model
     const estimatedCost = await twoBotAICreditService.calculateCreditsByCapability(
       "image-generation",
-      model,
+      providerModelId,
       {
         imageCount: request.n || 1,
       }
@@ -519,13 +709,6 @@ export const twoBotAIProvider = {
       }
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Organization monthly limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient organization credits. Required: ${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -539,13 +722,6 @@ export const twoBotAIProvider = {
       );
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Monthly credit limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient credits. Required: ${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -554,15 +730,18 @@ export const twoBotAIProvider = {
       }
     }
 
-    // Generate image
-    const response = await openaiImageGeneration(request);
+    // Generate image - route to the resolved provider
+    const providerRequest = { ...request, model: providerModelId };
+    const response = provider === "together"
+      ? await togetherImageGeneration(providerRequest)
+      : await openaiImageGeneration(providerRequest);
 
     // Deduct credits based on context
     const usageData = {
       userId: request.userId,
       gatewayId: undefined,
       capability: "image-generation" as const,
-      model: response.model,
+      model: providerModelId,
       source: "2bot" as const,
       imageCount: response.images.length,
     };
@@ -577,7 +756,9 @@ export const twoBotAIProvider = {
     log.info({
       userId: request.userId,
       organizationId: request.organizationId,
-      model: response.model,
+      twobotModel: requestModel,
+      resolvedProvider: provider,
+      resolvedModel: providerModelId,
       imageCount: response.images.length,
       creditsUsed: deduction.creditsUsed,
       walletType: deduction.walletType,
@@ -588,24 +769,53 @@ export const twoBotAIProvider = {
 
   /**
    * Speech synthesis (text-to-speech)
+   * 
+   * Uses model resolver to route to the best available provider.
+   * Currently only OpenAI supports TTS; Together AI does not offer TTS.
+   * If no TTS provider is configured, throws a clear error.
    */
   async speechSynthesis(request: SpeechSynthesisRequest): Promise<SpeechSynthesisResponse> {
     const log = logger.child({ module: "2bot-ai-provider", capability: "speech-synthesis" });
-    const model = request.model || "tts-1";
 
-    // ✅ Check if OpenAI is configured (TTS requires OpenAI)
-    if (!isProviderConfigured("openai")) {
-      throw new TwoBotAIError(
-        "Text-to-speech requires OpenAI API. This feature is not currently available.",
-        "MODEL_UNAVAILABLE",
-        503
-      );
+    // Resolve 2Bot model ID to provider model
+    let providerModelId: string;
+    let provider: TwoBotAIProvider;
+    const requestModel = request.model || "2bot-ai-voice-pro";
+
+    if (isTwoBotAIModelId(requestModel)) {
+      try {
+        const resolution = resolveTwoBotAIModel(requestModel as TwoBotAIModelId);
+        providerModelId = resolution.providerModelId;
+        provider = resolution.provider;
+        log.info({
+          twobotModel: requestModel,
+          resolvedProvider: provider,
+          resolvedModel: providerModelId,
+        }, "TTS model resolved via catalog");
+      } catch {
+        throw new TwoBotAIError(
+          "Text-to-speech is not currently available. No TTS provider is configured.",
+          "MODEL_UNAVAILABLE",
+          503
+        );
+      }
+    } else {
+      // Raw model ID — assume OpenAI for TTS models
+      providerModelId = requestModel;
+      provider = "openai";
+      if (!isProviderConfigured("openai")) {
+        throw new TwoBotAIError(
+          "Text-to-speech is not currently available. No TTS provider is configured.",
+          "MODEL_UNAVAILABLE",
+          503
+        );
+      }
     }
 
     // Calculate estimated credits
     const estimatedCost = await twoBotAICreditService.calculateCreditsByCapability(
       "speech-synthesis",
-      model,
+      providerModelId,
       {
         characterCount: request.text.length,
       }
@@ -623,13 +833,6 @@ export const twoBotAIProvider = {
       }
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Organization monthly limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient organization credits. Required: ${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -643,13 +846,6 @@ export const twoBotAIProvider = {
       );
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Monthly credit limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient credits. Required: ${estimatedCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -658,15 +854,16 @@ export const twoBotAIProvider = {
       }
     }
 
-    // Generate TTS
-    const response = await openaiSpeechSynthesis(request);
+    // Generate TTS using the resolved provider model
+    const providerRequest = { ...request, model: providerModelId };
+    const response = await openaiSpeechSynthesis(providerRequest);
 
     // Deduct credits based on context
     const usageData = {
       userId: request.userId,
       gatewayId: undefined,
       capability: "speech-synthesis" as const,
-      model,
+      model: providerModelId,
       source: "2bot" as const,
       characterCount: response.characterCount,
     };
@@ -681,7 +878,8 @@ export const twoBotAIProvider = {
     log.info({
       userId: request.userId,
       organizationId: request.organizationId,
-      model,
+      twobotModel: requestModel,
+      resolvedModel: providerModelId,
       characterCount: response.characterCount,
       creditsUsed: deduction.creditsUsed,
       walletType: deduction.walletType,
@@ -691,26 +889,56 @@ export const twoBotAIProvider = {
   },
 
   /**
+  /**
    * Speech recognition (speech-to-text)
+   * 
+   * Uses model resolver to route to the best available provider.
+   * Currently only OpenAI supports STT (Whisper). Together AI STT not yet available.
+   * If no STT provider is configured, throws a clear error.
    */
   async speechRecognition(request: SpeechRecognitionRequest): Promise<SpeechRecognitionResponse> {
     const log = logger.child({ module: "2bot-ai-provider", capability: "speech-recognition" });
-    const model = request.model || "whisper-1";
 
-    // ✅ Check if OpenAI is configured (STT requires OpenAI)
-    if (!isProviderConfigured("openai")) {
-      throw new TwoBotAIError(
-        "Speech-to-text requires OpenAI API. This feature is not currently available.",
-        "MODEL_UNAVAILABLE",
-        503
-      );
+    // Resolve 2Bot model ID to provider model
+    let providerModelId: string;
+    let provider: TwoBotAIProvider;
+    const requestModel = request.model || "2bot-ai-transcribe-lite";
+
+    if (isTwoBotAIModelId(requestModel)) {
+      try {
+        const resolution = resolveTwoBotAIModel(requestModel as TwoBotAIModelId);
+        providerModelId = resolution.providerModelId;
+        provider = resolution.provider;
+        log.info({
+          twobotModel: requestModel,
+          resolvedProvider: provider,
+          resolvedModel: providerModelId,
+        }, "STT model resolved via catalog");
+      } catch {
+        throw new TwoBotAIError(
+          "Speech-to-text is not currently available. No STT provider is configured.",
+          "MODEL_UNAVAILABLE",
+          503
+        );
+      }
+    } else {
+      // Raw model ID — assume OpenAI for STT models
+      providerModelId = requestModel;
+      provider = "openai";
+      if (!isProviderConfigured("openai")) {
+        throw new TwoBotAIError(
+          "Speech-to-text is not currently available. No STT provider is configured.",
+          "MODEL_UNAVAILABLE",
+          503
+        );
+      }
     }
 
     // For STT, we can't estimate duration beforehand
     // Check minimum credits (1 minute worth)
     const minCost = await twoBotAICreditService.calculateCreditsByCapability(
       "speech-recognition",
-      model,
+      providerModelId,
       {
         audioSeconds: 60,
       }
@@ -728,13 +956,6 @@ export const twoBotAIProvider = {
       }
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Organization monthly limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient organization credits. Minimum required: ${minCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -748,13 +969,6 @@ export const twoBotAIProvider = {
       );
       
       if (!creditCheck.hasCredits) {
-        if (!creditCheck.withinPlanLimit) {
-          throw new TwoBotAIError(
-            `Monthly credit limit reached. Limit: ${creditCheck.planLimit}, Used: ${creditCheck.monthlyUsed}`,
-            "PLAN_LIMIT_EXCEEDED",
-            402
-          );
-        }
         throw new TwoBotAIError(
           `Insufficient credits. Minimum required: ${minCost}, Available: ${creditCheck.balance}`,
           "INSUFFICIENT_CREDITS",
@@ -763,15 +977,16 @@ export const twoBotAIProvider = {
       }
     }
 
-    // Transcribe
-    const response = await openaiSpeechRecognition(request);
+    // Transcribe using the resolved provider model
+    const providerRequest = { ...request, model: providerModelId };
+    const response = await openaiSpeechRecognition(providerRequest);
 
     // Deduct credits based on actual duration
     const usageData = {
       userId: request.userId,
       gatewayId: undefined,
       capability: "speech-recognition" as const,
-      model,
+      model: providerModelId,
       source: "2bot" as const,
       audioSeconds: Math.ceil(response.duration),
     };
@@ -786,7 +1001,8 @@ export const twoBotAIProvider = {
     log.info({
       userId: request.userId,
       organizationId: request.organizationId,
-      model,
+      twobotModel: requestModel,
+      resolvedModel: providerModelId,
       duration: response.duration,
       creditsUsed: deduction.creditsUsed,
       walletType: deduction.walletType,

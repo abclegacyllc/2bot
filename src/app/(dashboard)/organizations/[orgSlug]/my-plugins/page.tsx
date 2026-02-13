@@ -19,7 +19,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
-import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
+import { useOrganization } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import Link from "next/link";
 
@@ -244,8 +244,7 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating, ca
             </CardDescription>
           </div>
           {/* Enable/Disable Toggle */}
-          {canManagePlugins && (
-            <div className="flex items-center gap-2">
+          {canManagePlugins ? <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">
                 {plugin.isEnabled ? "Enabled" : "Disabled"}
               </span>
@@ -262,8 +261,7 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating, ca
                 }`}
               />
             </button>
-          </div>
-          )}
+          </div> : null}
           {!canManagePlugins && (
             <span className="text-xs text-muted-foreground">
               {plugin.isEnabled ? "Enabled" : "Disabled"}
@@ -304,8 +302,7 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating, ca
         </div>
 
         {/* Action buttons */}
-        {canManagePlugins && (
-          <div className="flex gap-2 pt-2">
+        {canManagePlugins ? <div className="flex gap-2 pt-2">
             <Button
               variant="outline"
               size="sm"
@@ -324,8 +321,7 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating, ca
             >
               Uninstall
             </Button>
-          </div>
-        )}
+          </div> : null}
 
         {/* Install date */}
         <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -344,7 +340,6 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, isUpdating, ca
 function MyPluginsContent() {
   const { token } = useAuth();
   const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
-  const { buildOrgUrl } = useOrgUrls();
   const { can } = useOrgPermissions();
   const [plugins, setPlugins] = useState<UserPlugin[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -496,7 +491,7 @@ function MyPluginsContent() {
           <CardContent className="py-12 text-center">
             <h3 className="text-lg font-medium text-foreground mb-2">Organization not found</h3>
             <p className="text-muted-foreground mb-4">
-              The organization you're looking for doesn't exist or you don't have access.
+              The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access.
             </p>
             <Link href="/">
               <Button variant="outline" className="border-border">

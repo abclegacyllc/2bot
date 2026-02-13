@@ -12,6 +12,7 @@
  * @module app/(dashboard)/organizations/[orgSlug]/quotas/page
  */
 
+import { PageHeader } from "@/components/navigation";
 import { DeptAllocationForm } from "@/components/organization/dept-allocation-form";
 import { DeptAllocationTable } from "@/components/organization/dept-allocation-table";
 import { QuotaUsageBar } from "@/components/organization/quota-usage-bar";
@@ -66,8 +67,8 @@ interface Department {
 
 export default function AllocationManagementPage() {
   const router = useRouter();
-  const { token, context, user } = useAuth();
-  const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
+  const { token } = useAuth();
+  const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const { buildOrgUrl } = useOrgUrls();
   const { can } = useOrgPermissions();
 
@@ -196,7 +197,7 @@ export default function AllocationManagementPage() {
           <CardContent className="pt-6">
             <div className="text-center text-muted-foreground">
               <p className="text-lg font-medium text-foreground">Organization not found</p>
-              <p className="mt-2">The organization you're looking for doesn't exist or you don't have access.</p>
+              <p className="mt-2">The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access.</p>
               <Button className="mt-4" asChild>
                 <Link href="/">Back to Dashboard</Link>
               </Button>
@@ -246,34 +247,20 @@ export default function AllocationManagementPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" asChild>
-            <Link href={buildOrgUrl("/")}>
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back
-            </Link>
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Settings2 className="h-6 w-6" />
-              Resource Allocations
-            </h1>
-            <p className="text-muted-foreground">
-              {org?.name} · <Badge variant="outline">{org?.plan}</Badge>
-            </p>
-          </div>
-        </div>
-        {canAllocateResources && unallocatedDepts.length > 0 && !showAddForm && !editingDept && (
-          <Button onClick={() => setShowAddForm(true)}>
+        <PageHeader
+          title="Resource Allocations"
+          description={<>{org?.name} · <Badge variant="outline">{org?.plan}</Badge></>}
+          icon={<Settings2 className="h-6 w-6" />}
+          breadcrumbs={[{ label: "Resources", href: buildOrgUrl("/resources") }]}
+        />
+        {canAllocateResources && unallocatedDepts.length > 0 && !showAddForm && !editingDept ? <Button onClick={() => setShowAddForm(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Allocate to Department
-          </Button>
-        )}
+          </Button> : null}
       </div>
 
       {/* Organization Pool Usage */}
-      {summary && (
-        <Card>
+      {summary ? <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <PieChart className="h-5 w-5" />
@@ -318,14 +305,12 @@ export default function AllocationManagementPage() {
               />
             </div>
           </CardContent>
-        </Card>
-      )}
+        </Card> : null}
 
       {/* Add/Edit Form */}
-      {canAllocateResources && (showAddForm || editingDept) && summary && (
-        <DeptAllocationForm
+      {canAllocateResources && (showAddForm || editingDept) && summary ? <DeptAllocationForm
           orgId={orgId}
-          token={token!}
+          token={token ?? ""}
           departments={editingDept ? [] : unallocatedDepts}
           existingAllocation={editingDept}
           orgLimits={summary.orgLimits}
@@ -335,8 +320,7 @@ export default function AllocationManagementPage() {
             setShowAddForm(false);
             setEditingDept(null);
           }}
-        />
-      )}
+        /> : null}
 
       {/* Department Allocations Table */}
       <Card>
@@ -355,16 +339,14 @@ export default function AllocationManagementPage() {
               <p className="text-sm mt-1">
                 Departments use the organization pool by default
               </p>
-              {unallocatedDepts.length > 0 && canAllocateResources && (
-                <Button
+              {unallocatedDepts.length > 0 && canAllocateResources ? <Button
                   className="mt-4"
                   variant="outline"
                   onClick={() => setShowAddForm(true)}
                 >
                   <Plus className="mr-2 h-4 w-4" />
                   Create First Allocation
-                </Button>
-              )}
+                </Button> : null}
             </div>
           ) : (
             <DeptAllocationTable

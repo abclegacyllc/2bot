@@ -152,8 +152,7 @@ export function MemberUsageTable({
                   <ArrowUpDown className="ml-2 h-4 w-4" />
                 </Button>
               </TableHead>
-              {showDepartment && (
-                <TableHead>
+              {showDepartment ? <TableHead>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -163,8 +162,7 @@ export function MemberUsageTable({
                     Department
                     <ArrowUpDown className="ml-2 h-4 w-4" />
                   </Button>
-                </TableHead>
-              )}
+                </TableHead> : null}
               <TableHead>Role</TableHead>
               <TableHead className="w-[200px]">
                 <Button
@@ -216,11 +214,9 @@ export function MemberUsageTable({
                       </div>
                     </div>
                   </TableCell>
-                  {showDepartment && (
-                    <TableCell className="text-muted-foreground">
+                  {showDepartment ? <TableCell className="text-muted-foreground">
                       {member.departmentName || "—"}
-                    </TableCell>
-                  )}
+                    </TableCell> : null}
                   <TableCell>
                     <Badge
                       variant="secondary"

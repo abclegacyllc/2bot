@@ -8,10 +8,31 @@ const nextConfig: NextConfig = {
   // Production standalone output for Docker
   output: "standalone",
   
+  // Security headers
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+        ],
+      },
+    ];
+  },
+  
+  // Support separate build directories (e.g., .next-admin for admin panel)
+  // This allows running multiple Next.js dev instances from the same project
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
+  
   // Allow external access in development mode
   allowedDevOrigins: [
     "207.180.226.85",
     "localhost",
+    "dev.2bot.org",
+    "admin.2bot.org",
   ],
 };
 

@@ -3,6 +3,7 @@ import { initializeProviderHealth } from "@/modules/2bot-ai-provider/provider-he
 import cors from "cors";
 import express, { type Express } from "express";
 import helmet from "helmet";
+import { initializeCreditCron } from "./cron/credit-cron";
 import { corsOptions } from "./middleware/cors";
 import { errorHandler } from "./middleware/error-handler";
 import { rateLimitMiddleware } from "./middleware/rate-limit";
@@ -79,7 +80,7 @@ export function createApp(): Express {
  * Server configuration
  */
 export const SERVER_CONFIG = {
-  port: parseInt(process.env.SERVER_PORT || "3001", 10),
+  port: parseInt(process.env.SERVER_PORT || "3002", 10),
   host: process.env.SERVER_HOST || "0.0.0.0",
   apiPrefix: API_PREFIX,
 };
@@ -103,6 +104,9 @@ export function startServer(app: Express): ReturnType<Express['listen']> {
     initializeProviderHealth().catch((err) => {
       serverLogger.error({ err }, "Failed to initialize AI provider health checks");
     });
+
+    // Initialize credit cron (monthly grants + daily claim resets)
+    initializeCreditCron();
   });
 
   return server;

@@ -11,6 +11,7 @@
  * @module app/(dashboard)/organizations/[orgId]/departments/[deptId]/page
  */
 
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import {
     DeptResourceView,
@@ -221,12 +222,6 @@ export default function DepartmentDetailPage() {
     }
   };
 
-  const formatNumber = (num: number): string => {
-    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-    return num.toString();
-  };
-
   if (!canAccess) {
     return null;
   }
@@ -270,47 +265,30 @@ export default function DepartmentDetailPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Breadcrumb & Header */}
+      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
-            <Link href={buildOrgUrl("")} className="hover:text-foreground">
-              Organization
-            </Link>
-            <span>/</span>
-            <Link href={buildOrgUrl("/departments")} className="hover:text-foreground">
-              Departments
-            </Link>
-            <span>/</span>
-            <span className="text-foreground">{department?.name}</span>
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">Department Resources</h1>
-          <p className="text-muted-foreground">
-            Monitor and manage department resources
-          </p>
-        </div>
+        <PageHeader
+          title="Department Resources"
+          description="Monitor and manage department resources"
+          breadcrumbs={[{ label: "Departments", href: buildOrgUrl("/departments") }]}
+        />
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-sm border-border">
             <Building2 className="mr-1 h-3 w-3" />
             {department?.name}
           </Badge>
-          {department && !department.isActive && (
-            <Badge variant="destructive">Stopped</Badge>
-          )}
-          {canUpdateDepartment && (
-            <Link href={buildOrgUrl(`/departments/${deptId}/quotas`)}>
+          {department && !department.isActive ? <Badge variant="destructive">Stopped</Badge> : null}
+          {canUpdateDepartment ? <Link href={buildOrgUrl(`/departments/${deptId}/quotas`)}>
               <Button variant="outline" size="sm" className="border-border">
                 <Settings className="mr-1 h-4 w-4" />
                 Settings
               </Button>
-            </Link>
-          )}
+            </Link> : null}
         </div>
       </div>
 
       {/* Department Usage */}
-      {orgId && deptId && (
-        <Card className="border-border bg-card/50">
+      {orgId && deptId ? <Card className="border-border bg-card/50">
           <CardHeader>
             <CardTitle className="text-foreground flex items-center gap-2">
               <Activity className="h-5 w-5" />
@@ -323,8 +301,7 @@ export default function DepartmentDetailPage() {
           <CardContent>
             <DeptResourceView orgId={orgId} deptId={deptId} />
           </CardContent>
-        </Card>
-      )}
+        </Card> : null}
 
       {/* Employee Breakdown */}
       <Card className="border-border bg-card/50">
@@ -362,11 +339,9 @@ export default function DepartmentDetailPage() {
                             Manager
                           </Badge>
                         )}
-                        {emp.isPaused && (
-                          <Badge variant="destructive" className="text-xs">
+                        {emp.isPaused ? <Badge variant="destructive" className="text-xs">
                             Paused
-                          </Badge>
-                        )}
+                          </Badge> : null}
                       </div>
                       <p className="text-sm text-muted-foreground">{emp.email}</p>
                     </div>
@@ -393,18 +368,15 @@ export default function DepartmentDetailPage() {
                     </div>
 
                     <div className="flex gap-2">
-                      {canUpdateQuotas && (
-                        <Button asChild variant="outline" size="sm" className="border-border">
+                      {canUpdateQuotas ? <Button asChild variant="outline" size="sm" className="border-border">
                           <Link
                             href={buildOrgUrl(`/departments/${deptId}/employees/${emp.id}/quotas`)}
                           >
                             Edit
                           </Link>
-                        </Button>
-                      )}
+                        </Button> : null}
 
-                      {canEmergencyStop && !emp.isPaused && emp.role !== "MANAGER" && (
-                        <AlertDialog>
+                      {canEmergencyStop && !emp.isPaused && emp.role !== "MANAGER" ? <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button
                               variant="ghost"
@@ -449,8 +421,7 @@ export default function DepartmentDetailPage() {
                               </AlertDialogAction>
                             </AlertDialogFooter>
                           </AlertDialogContent>
-                        </AlertDialog>
-                      )}
+                        </AlertDialog> : null}
                     </div>
                   </div>
                 </div>

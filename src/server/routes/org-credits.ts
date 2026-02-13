@@ -12,8 +12,9 @@ import { Router } from "express";
 
 import { logger } from "@/lib/logger";
 import { getCurrentBillingPeriod } from "@/modules/2bot-ai-provider";
-import { twoBotAICreditService, type WalletType } from "@/modules/credits";
+import { creditService, twoBotAICreditService, type WalletType } from "@/modules/credits";
 import { BadRequestError, NotFoundError } from "@/shared/errors";
+import { formatCredits } from "@/shared/lib/format";
 import type { ApiResponse } from "@/shared/types";
 
 import { requireAuth } from "../middleware/auth";
@@ -35,16 +36,6 @@ function getPathParam(req: Request, name: string): string {
     throw new BadRequestError(`Missing path parameter: ${name}`);
   }
   return value;
-}
-
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${(credits / 1_000).toFixed(1)}K`;
-  }
-  return credits.toString();
 }
 
 // ===========================================
@@ -307,7 +298,7 @@ interface OrgPurchaseResponse {
 }
 
 // Organization credit packages (larger than personal)
-// 1 credit = $0.001 USD ($1 = 1,000 credits)
+// $1 = 100 credits — org packages include volume bonus
 const ORG_CREDIT_PACKAGES = {
   org_small: { credits: 2500, price: 20, name: "2.5K Org Credits" },
   org_medium: { credits: 6250, price: 40, name: "6.25K Org Credits" },
@@ -330,8 +321,9 @@ orgCreditsRouter.post(
   asyncHandler(async (req: Request, res: Response<ApiResponse<OrgPurchaseResponse>>) => {
     const log = logger.child({ module: "org-credits-route", action: "purchase" });
     const orgId = getPathParam(req, "orgId");
-    const userId = req.user!.id;
-    const userEmail = req.user!.email;
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
+    const userEmail = req.user.email;
     const body = req.body as OrgPurchaseRequestBody;
 
     // Validate package
@@ -342,7 +334,8 @@ orgCreditsRouter.post(
 
     // Create Stripe checkout session
     const stripe = (await import("stripe")).default;
-    const stripeClient = new stripe(process.env.STRIPE_SECRET_KEY!);
+    if (!process.env.STRIPE_SECRET_KEY) throw new BadRequestError("Stripe is not configured");
+    const stripeClient = new stripe(process.env.STRIPE_SECRET_KEY);
 
     const session = await stripeClient.checkout.sessions.create({
       mode: "payment",
@@ -382,7 +375,7 @@ orgCreditsRouter.post(
     res.json({
       success: true,
       data: {
-        checkoutUrl: session.url!,
+        checkoutUrl: session.url ?? "",
         sessionId: session.id,
       },
     });
@@ -427,6 +420,64 @@ orgCreditsRouter.get(
     res.json({
       success: true,
       data: { packages },
+    });
+  })
+);
+
+// ===========================================
+// POST /api/orgs/:orgId/credits/claim
+// ===========================================
+
+/**
+ * POST /api/orgs/:orgId/credits/claim
+ *
+ * Claim daily credits for organization wallet.
+ * Only available for ORG_FREE plan.
+ * Requires: Org admin access
+ */
+orgCreditsRouter.post(
+  "/claim",
+  requireAuth,
+  requireOrgAdmin,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+
+    try {
+      const result = await creditService.claimOrgDailyCredits(orgId);
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to claim credits";
+      throw new BadRequestError(message);
+    }
+  })
+);
+
+// ===========================================
+// GET /api/orgs/:orgId/credits/claim-status
+// ===========================================
+
+/**
+ * GET /api/orgs/:orgId/credits/claim-status
+ *
+ * Get claim status for organization wallet.
+ * Requires: Org member access
+ */
+orgCreditsRouter.get(
+  "/claim-status",
+  requireAuth,
+  requireOrgMember,
+  asyncHandler(async (req: Request, res: Response) => {
+    const orgId = getPathParam(req, "orgId");
+
+    const status = await creditService.getOrgClaimStatus(orgId);
+
+    res.json({
+      success: true,
+      data: status,
     });
   })
 );

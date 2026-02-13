@@ -10,7 +10,8 @@
 #
 # ===========================================
 
-.PHONY: dev dev-infra dev-frontend dev-backend dev-all stop stop-all logs \
+.PHONY: dev dev-infra dev-frontend dev-backend dev-all stop stop-all stop-dev stop-prod logs \
+        start restart deploy \
         db-setup db-migrate db-seed db-reset db-studio db-generate \
         test test-watch test-coverage lint lint-fix format check typecheck \
         build build-frontend build-backend clean \
@@ -29,23 +30,38 @@ RESET := \033[0m
 # Default target
 .DEFAULT_GOAL := help
 
+# Docker Compose with project name
+DC := docker-compose -p 2bot
+
 # ===========================================
 # STATUS CHECKS
 # ===========================================
 
 check-ports:                ## Check if required ports are available
 	@echo "$(CYAN)Checking port availability...$(RESET)"
-	@if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Port 3000 is in use (Next.js)$(RESET)"; \
-		lsof -Pi :3000 -sTCP:LISTEN | head -3; \
-	else \
-		echo "$(GREEN)✅ Port 3000 is available$(RESET)"; \
-	fi
 	@if lsof -Pi :3001 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Port 3001 is in use (Express API)$(RESET)"; \
+		echo "$(YELLOW)⚠️  Port 3001 is in use (Dashboard prod)$(RESET)"; \
 		lsof -Pi :3001 -sTCP:LISTEN | head -3; \
 	else \
 		echo "$(GREEN)✅ Port 3001 is available$(RESET)"; \
+	fi
+	@if lsof -Pi :3002 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "$(YELLOW)⚠️  Port 3002 is in use (Express API prod)$(RESET)"; \
+		lsof -Pi :3002 -sTCP:LISTEN | head -3; \
+	else \
+		echo "$(GREEN)✅ Port 3002 is available$(RESET)"; \
+	fi
+	@if lsof -Pi :3005 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "$(YELLOW)⚠️  Port 3005 is in use (Dashboard dev)$(RESET)"; \
+		lsof -Pi :3005 -sTCP:LISTEN | head -3; \
+	else \
+		echo "$(GREEN)✅ Port 3005 is available$(RESET)"; \
+	fi
+	@if lsof -Pi :3006 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "$(YELLOW)⚠️  Port 3006 is in use (Express API dev)$(RESET)"; \
+		lsof -Pi :3006 -sTCP:LISTEN | head -3; \
+	else \
+		echo "$(GREEN)✅ Port 3006 is available$(RESET)"; \
 	fi
 	@if lsof -Pi :5432 -sTCP:LISTEN -t >/dev/null 2>&1; then \
 		echo "$(GREEN)✅ Port 5432 is in use (Postgres running)$(RESET)"; \
@@ -83,15 +99,15 @@ status:                     ## Show status of all services
 	@echo "$(CYAN)═══════════════════════════════════════$(RESET)"
 	@echo ""
 	@echo "$(CYAN)Docker Containers:$(RESET)"
-	@docker-compose ps 2>/dev/null || echo "  No containers running"
+	@$(DC) ps 2>/dev/null || echo "  No containers running"
 	@echo ""
 	@echo "$(CYAN)Node Processes:$(RESET)"
-	@if pgrep -f "next dev" >/dev/null 2>&1; then \
-		echo "  $(GREEN)✅ Next.js dev server is running$(RESET)"; \
+	@if pgrep -f "next-server" >/dev/null 2>&1; then \
+		echo "  $(GREEN)✅ Next.js is running$(RESET)"; \
 	else \
-		echo "  $(YELLOW)○  Next.js dev server is not running$(RESET)"; \
+		echo "  $(YELLOW)○  Next.js is not running$(RESET)"; \
 	fi
-	@if pgrep -f "tsx watch.*server" >/dev/null 2>&1; then \
+	@if pgrep -f "tsx.*server" >/dev/null 2>&1; then \
 		echo "  $(GREEN)✅ Express API server is running$(RESET)"; \
 	else \
 		echo "  $(YELLOW)○  Express API server is not running$(RESET)"; \
@@ -102,17 +118,115 @@ status:                     ## Show status of all services
 	@echo ""
 
 # ===========================================
+# PRODUCTION (local process - no Docker)
+# ===========================================
+
+start: check-deps           ## Build and start production servers (no HMR, no auto-refresh)
+	@echo "$(CYAN)Starting 2Bot in production mode...$(RESET)"
+	@# Check if already running
+	@if ss -tlnp 2>/dev/null | grep -q ":3000 " && ss -tlnp 2>/dev/null | grep -q ":3001 " && ss -tlnp 2>/dev/null | grep -q ":3002 "; then \
+		echo "$(YELLOW)⚠️  Production servers are already running!$(RESET)"; \
+		echo "   Landing:   http://localhost:3000  (www.2bot.org)"; \
+		echo "   Dashboard: http://localhost:3001  (dash.2bot.org)"; \
+		echo "   API:       http://localhost:3002  (api.2bot.org)"; \
+		echo "Run 'make stop' first, then 'make start' again."; \
+		exit 0; \
+	fi
+	@# Start infrastructure
+	@make dev-infra
+	@echo ""
+	@# Build frontend for production
+	@echo "$(CYAN)Building Next.js for production (this takes 2-3 minutes)...$(RESET)"
+	@npm run build
+	@echo "$(GREEN)✅ Next.js build complete$(RESET)"
+	@echo ""
+	@# Create log directory
+	@mkdir -p /tmp/2bot-logs
+	@echo "$(CYAN)Starting production servers in background...$(RESET)"
+	@# Start landing/marketing site (port 3000 for www.2bot.org)
+	@echo "Starting Landing site on port 3000..."
+	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.production 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=production nohup npx next start -p 3000 > /tmp/2bot-logs/landing.log 2>&1 & echo $$! > /tmp/2bot-logs/landing.pid'
+	@# Wait for landing to start (up to 10 seconds)
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if ss -tlnp 2>/dev/null | grep -q ":3000 "; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+	@# Verify landing started
+	@if ss -tlnp 2>/dev/null | grep -q ":3000 "; then \
+		echo "$(GREEN)✅ Landing site running on http://localhost:3000$(RESET)"; \
+	else \
+		echo "$(RED)❌ Landing site failed to start. Check /tmp/2bot-logs/landing.log$(RESET)"; \
+		cat /tmp/2bot-logs/landing.log | tail -20; \
+	fi
+	@# Start backend (production mode, port 3002)
+	@echo "Starting Express API server on port 3002..."
+	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.production 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=production SERVER_PORT=3002 nohup npx tsx src/server/start.ts > /tmp/2bot-logs/backend.log 2>&1 & echo $$! > /tmp/2bot-logs/backend.pid'
+	@# Wait for backend to start (up to 10 seconds)
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if ss -tlnp 2>/dev/null | grep -q ":3002 "; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+	@# Verify backend started
+	@if ss -tlnp 2>/dev/null | grep -q ":3002 "; then \
+		echo "$(GREEN)✅ Express API running on http://localhost:3002$(RESET)"; \
+	else \
+		echo "$(RED)❌ Express API failed to start. Check /tmp/2bot-logs/backend.log$(RESET)"; \
+		cat /tmp/2bot-logs/backend.log | tail -20; \
+		exit 1; \
+	fi
+	@# Start frontend in production mode (port 3001)
+	@echo "Starting Next.js (production) on port 3001..."
+	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.production 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=production nohup npx next start -p 3001 > /tmp/2bot-logs/frontend.log 2>&1 & echo $$! > /tmp/2bot-logs/frontend.pid'
+	@# Wait for frontend to start (up to 15 seconds)
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		if ss -tlnp 2>/dev/null | grep -q ":3001 "; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+	@# Verify frontend started
+	@if ss -tlnp 2>/dev/null | grep -q ":3001 "; then \
+		echo "$(GREEN)✅ Next.js (production) running on http://localhost:3001$(RESET)"; \
+	else \
+		echo "$(RED)❌ Next.js failed to start. Check /tmp/2bot-logs/frontend.log$(RESET)"; \
+		cat /tmp/2bot-logs/frontend.log | tail -20; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "$(GREEN)🚀 Production environment started successfully!$(RESET)"
+	@echo ""
+	@echo "   Landing:   http://localhost:3000  → www.2bot.org"
+	@echo "   Dashboard: http://localhost:3001  → dash.2bot.org"
+	@echo "   API:       http://localhost:3002  → api.2bot.org"
+	@echo "   Health:    http://localhost:3002/health"
+	@echo ""
+	@echo "$(CYAN)Note: Admin panel runs only in dev mode (make dev)$(RESET)"
+	@echo ""
+	@echo "   View logs:  make logs-dev"
+	@echo "   Stop all:   make stop"
+	@echo "   Restart:    make restart"
+
+restart: stop-prod start    ## Rebuild and restart production servers (dev stays running)
+
+deploy: restart              ## Alias for restart (build + deploy changes to production)
+
+# ===========================================
 # DEVELOPMENT
 # ===========================================
 
-dev: check-deps             ## Start full dev environment (infra + frontend + backend in background)
+dev: check-deps             ## Start dev environment on dev.2bot.org (ports 3005/3006/3007)
 	@echo "$(CYAN)Starting 2Bot development environment...$(RESET)"
 	@# Check if already running
-	@if ss -tlnp 2>/dev/null | grep -q ":3000 " && ss -tlnp 2>/dev/null | grep -q ":3001 "; then \
+	@if ss -tlnp 2>/dev/null | grep -q ":3005 " && ss -tlnp 2>/dev/null | grep -q ":3006 " && ss -tlnp 2>/dev/null | grep -q ":3007 "; then \
 		echo "$(YELLOW)⚠️  Development servers are already running!$(RESET)"; \
-		echo "   Frontend: http://localhost:3000"; \
-		echo "   Backend:  http://localhost:3001"; \
-		echo "Run 'make status' to check or 'make stop' to stop them."; \
+		echo "   Frontend: http://localhost:3005  (dev.2bot.org)"; \
+		echo "   API:      http://localhost:3006  (dev-api.2bot.org)"; \
+		echo "   Admin:    http://localhost:3007  (admin.2bot.org)"; \
+		echo "Run 'make status' to check or 'make stop-dev' to stop them."; \
 		exit 0; \
 	fi
 	@# Start infrastructure first
@@ -120,59 +234,78 @@ dev: check-deps             ## Start full dev environment (infra + frontend + ba
 	@echo ""
 	@# Create log directory
 	@mkdir -p /tmp/2bot-logs
-	@echo "$(CYAN)Starting application servers in background...$(RESET)"
-	@# Start backend first (it's faster)
-	@echo "Starting Express API server..."
-	@nohup npm run dev:server > /tmp/2bot-logs/backend.log 2>&1 & echo $$! > /tmp/2bot-logs/backend.pid
+	@echo "$(CYAN)Starting dev servers in background...$(RESET)"
+	@# Start dev backend (watch mode, port 3006) - serves ALL routes (user + admin)
+	@echo "Starting Express API dev server on port 3006..."
+	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.development 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=development SERVER_PORT=3006 nohup npm run dev:server > /tmp/2bot-logs/dev-backend.log 2>&1 & echo $$! > /tmp/2bot-logs/dev-backend.pid'
 	@# Wait for backend to start (up to 10 seconds)
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if ss -tlnp 2>/dev/null | grep -q ":3001 "; then \
+		if ss -tlnp 2>/dev/null | grep -q ":3006 "; then \
 			break; \
 		fi; \
 		sleep 1; \
 	done
 	@# Verify backend started
-	@if ss -tlnp 2>/dev/null | grep -q ":3001 "; then \
-		echo "$(GREEN)✅ Express API running on http://localhost:3001$(RESET)"; \
+	@if ss -tlnp 2>/dev/null | grep -q ":3006 "; then \
+		echo "$(GREEN)✅ Express API (dev) running on http://localhost:3006$(RESET)"; \
 	else \
-		echo "$(RED)❌ Express API failed to start. Check /tmp/2bot-logs/backend.log$(RESET)"; \
-		cat /tmp/2bot-logs/backend.log | tail -20; \
+		echo "$(RED)❌ Express API (dev) failed to start. Check /tmp/2bot-logs/dev-backend.log$(RESET)"; \
+		cat /tmp/2bot-logs/dev-backend.log | tail -20; \
 		exit 1; \
 	fi
-	@# Start frontend
-	@echo "Starting Next.js..."
-	@nohup npm run dev > /tmp/2bot-logs/frontend.log 2>&1 & echo $$! > /tmp/2bot-logs/frontend.pid
+	@# Start dev frontend (port 3005) - serves dev.2bot.org
+	@echo "Starting Next.js dev on port 3005..."
+	@nohup npx next dev -p 3005 > /tmp/2bot-logs/dev-frontend.log 2>&1 & echo $$! > /tmp/2bot-logs/dev-frontend.pid
 	@# Wait for frontend to start (up to 30 seconds - Next.js is slower)
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
-		if ss -tlnp 2>/dev/null | grep -q ":3000 "; then \
+		if ss -tlnp 2>/dev/null | grep -q ":3005 "; then \
 			break; \
 		fi; \
 		sleep 1; \
 	done
 	@# Verify frontend started
-	@if ss -tlnp 2>/dev/null | grep -q ":3000 "; then \
-		echo "$(GREEN)✅ Next.js running on http://localhost:3000$(RESET)"; \
+	@if ss -tlnp 2>/dev/null | grep -q ":3005 "; then \
+		echo "$(GREEN)✅ Next.js (dev) running on http://localhost:3005$(RESET)"; \
 	else \
-		echo "$(RED)❌ Next.js failed to start. Check /tmp/2bot-logs/frontend.log$(RESET)"; \
-		cat /tmp/2bot-logs/frontend.log | tail -20; \
+		echo "$(RED)❌ Next.js (dev) failed to start. Check /tmp/2bot-logs/dev-frontend.log$(RESET)"; \
+		cat /tmp/2bot-logs/dev-frontend.log | tail -20; \
+		exit 1; \
+	fi
+	@# Start admin panel (port 3007) - separate instance with own build dir
+	@echo "Starting Admin Panel on port 3007 (isolated instance)..."
+	@NEXT_DIST_DIR=.next-admin nohup npx next dev -p 3007 > /tmp/2bot-logs/dev-admin.log 2>&1 & echo $$! > /tmp/2bot-logs/dev-admin.pid
+	@# Wait for admin to start (up to 30 seconds)
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
+		if ss -tlnp 2>/dev/null | grep -q ":3007 "; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+	@# Verify admin started
+	@if ss -tlnp 2>/dev/null | grep -q ":3007 "; then \
+		echo "$(GREEN)✅ Admin Panel (dev) running on http://localhost:3007$(RESET)"; \
+	else \
+		echo "$(RED)❌ Admin Panel (dev) failed to start. Check /tmp/2bot-logs/dev-admin.log$(RESET)"; \
+		cat /tmp/2bot-logs/dev-admin.log | tail -20; \
 		exit 1; \
 	fi
 	@echo ""
 	@echo "$(GREEN)🚀 Development environment started successfully!$(RESET)"
 	@echo ""
-	@echo "   Frontend: http://localhost:3000"
-	@echo "   Backend:  http://localhost:3001"
-	@echo "   Health:   http://localhost:3001/health"
+	@echo "   Frontend: http://localhost:3005  → dev.2bot.org"
+	@echo "   Admin:    http://localhost:3007  → admin.2bot.org (isolated)"
+	@echo "   API:      http://localhost:3006  → dev-api.2bot.org (user + admin routes)"
+	@echo "   Health:   http://localhost:3006/health"
 	@echo ""
 	@echo "   View logs:  make logs-dev"
-	@echo "   Stop all:   make stop"
+	@echo "   Stop dev:   make stop-dev"
 
 dev-fg: check-deps          ## Start dev environment in foreground (shows logs, Ctrl+C to stop)
 	@echo "$(CYAN)Starting 2Bot development environment (foreground)...$(RESET)"
 	@# Check if already running
-	@if lsof -ti:3000 >/dev/null 2>&1 || lsof -ti:3001 >/dev/null 2>&1; then \
+	@if lsof -ti:3005 >/dev/null 2>&1 || lsof -ti:3006 >/dev/null 2>&1; then \
 		echo "$(YELLOW)⚠️  Development servers are already running!$(RESET)"; \
-		echo "Run 'make stop' first."; \
+		echo "Run 'make stop-dev' first."; \
 		exit 1; \
 	fi
 	@# Start infrastructure first
@@ -181,9 +314,9 @@ dev-fg: check-deps          ## Start dev environment in foreground (shows logs, 
 	@echo "$(CYAN)Starting application servers...$(RESET)"
 	@echo "$(YELLOW)Press Ctrl+C to stop all servers$(RESET)"
 	@echo ""
-	@# Run frontend and backend in parallel
-	@trap 'make stop; exit 0' INT; \
-	(npm run dev &) && (sleep 2 && npm run dev:server)
+	@# Run frontend and backend in parallel on dev ports
+	@trap 'make stop-dev; exit 0' INT; \
+	(npx next dev -p 3005 &) && (sleep 2 && SERVER_PORT=3006 npm run dev:server)
 
 logs-dev:                   ## View development server logs (frontend and backend)
 	@echo "$(CYAN)=== Backend Logs (last 50 lines) ===$(RESET)"
@@ -198,51 +331,51 @@ logs-dev-follow:            ## Follow development server logs in real-time
 
 dev-infra: check-docker     ## Start Postgres + Redis (if not running)
 	@echo "$(CYAN)Starting infrastructure...$(RESET)"
-	@if docker-compose ps postgres 2>/dev/null | grep -q "Up"; then \
+	@if $(DC) ps postgres 2>/dev/null | grep -q "Up"; then \
 		echo "$(GREEN)✅ Postgres already running$(RESET)"; \
 	else \
 		echo "Starting Postgres..."; \
-		docker-compose up -d postgres; \
+		$(DC) up -d postgres; \
 	fi
-	@if docker-compose ps redis 2>/dev/null | grep -q "Up"; then \
+	@if $(DC) ps redis 2>/dev/null | grep -q "Up"; then \
 		echo "$(GREEN)✅ Redis already running$(RESET)"; \
 	else \
 		echo "Starting Redis..."; \
-		docker-compose up -d redis; \
+		$(DC) up -d redis; \
 	fi
 	@echo "$(CYAN)Waiting for services to be healthy...$(RESET)"
 	@sleep 3
-	@docker-compose ps
+	@$(DC) ps
 
-dev-frontend: check-deps    ## Start Next.js dev server only
+dev-frontend: check-deps    ## Start Next.js dev server only (port 3005)
 	@if pgrep -f "next dev" >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Next.js is already running on port 3000$(RESET)"; \
+		echo "$(YELLOW)⚠️  Next.js dev is already running$(RESET)"; \
 		echo "Run 'make stop-frontend' to stop it first."; \
 		exit 1; \
 	fi
-	@if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(RED)❌ Port 3000 is already in use by another process$(RESET)"; \
-		lsof -Pi :3000 -sTCP:LISTEN; \
+	@if lsof -Pi :3005 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "$(RED)❌ Port 3005 is already in use by another process$(RESET)"; \
+		lsof -Pi :3005 -sTCP:LISTEN; \
 		exit 1; \
 	fi
-	@echo "$(CYAN)Starting Next.js dev server on port 3000...$(RESET)"
-	npm run dev
+	@echo "$(CYAN)Starting Next.js dev server on port 3005...$(RESET)"
+	npx next dev -p 3005
 
-dev-backend: check-deps     ## Start Express API server only
+dev-backend: check-deps     ## Start Express API dev server only (port 3006)
 	@if pgrep -f "tsx watch.*server" >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Express API is already running on port 3001$(RESET)"; \
+		echo "$(YELLOW)⚠️  Express API dev is already running$(RESET)"; \
 		echo "Run 'make stop-backend' to stop it first."; \
 		exit 1; \
 	fi
-	@if lsof -Pi :3001 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(RED)❌ Port 3001 is already in use by another process$(RESET)"; \
-		lsof -Pi :3001 -sTCP:LISTEN; \
+	@if lsof -Pi :3006 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+		echo "$(RED)❌ Port 3006 is already in use by another process$(RESET)"; \
+		lsof -Pi :3006 -sTCP:LISTEN; \
 		exit 1; \
 	fi
-	@echo "$(CYAN)Starting Express API server on port 3001...$(RESET)"
-	npm run dev:server
+	@echo "$(CYAN)Starting Express API dev server on port 3006...$(RESET)"
+	SERVER_PORT=3006 npm run dev:server
 
-stop:                       ## Stop all development services
+stop:                       ## Stop all services (dev and production)
 	@echo "$(CYAN)Stopping all services...$(RESET)"
 	@# Get current shell PID to avoid killing ourselves
 	@current_pid=$$$$; \
@@ -255,6 +388,12 @@ stop:                       ## Stop all development services
 		fi; \
 	done; \
 	for pid in $$(pgrep -f "next dev" 2>/dev/null || true); do \
+		if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
+			kill -9 $$pid 2>/dev/null || true; \
+			stopped_next=true; \
+		fi; \
+	done; \
+	for pid in $$(pgrep -f "next start" 2>/dev/null || true); do \
 		if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
 			kill -9 $$pid 2>/dev/null || true; \
 			stopped_next=true; \
@@ -278,7 +417,7 @@ stop:                       ## Stop all development services
 	if [ "$$stopped_tsx" = "true" ]; then \
 		echo "Stopped Express API"; \
 	fi; \
-	for port in 3000 3001; do \
+	for port in 3001 3002 3005 3006 3007; do \
 		for pid in $$(lsof -ti:$$port 2>/dev/null || true); do \
 			if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
 				echo "Killing orphaned process $$pid on port $$port..."; \
@@ -287,35 +426,66 @@ stop:                       ## Stop all development services
 		done; \
 	done; \
 	sleep 1
-	@if lsof -ti:3000 >/dev/null 2>&1 || lsof -ti:3001 >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Some processes may still be running on ports 3000/3001$(RESET)"; \
+	@if lsof -ti:3001 >/dev/null 2>&1 || lsof -ti:3002 >/dev/null 2>&1 || lsof -ti:3005 >/dev/null 2>&1 || lsof -ti:3006 >/dev/null 2>&1 || lsof -ti:3007 >/dev/null 2>&1; then \
+		echo "$(YELLOW)⚠️  Some processes may still be running$(RESET)"; \
 	else \
-		echo "$(GREEN)✅ Application servers stopped$(RESET)"; \
+		echo "$(GREEN)✅ All application servers stopped$(RESET)"; \
 	fi
+
+stop-dev:                   ## Stop only dev servers (ports 3005/3006/3007)
+	@echo "$(CYAN)Stopping dev services...$(RESET)"
+	@current_pid=$$$$; \
+	for port in 3005 3006 3007; do \
+		for pid in $$(lsof -ti:$$port 2>/dev/null || true); do \
+			if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
+				kill -9 $$pid 2>/dev/null || true; \
+			fi; \
+		done; \
+	done; \
+	sleep 1
+	@echo "$(GREEN)✅ Dev servers stopped$(RESET)"
+
+stop-prod:                  ## Stop only production servers (ports 3000/3001/3002)
+	@echo "$(CYAN)Stopping production services...$(RESET)"
+	@# Kill processes by port only (safer than pkill patterns)
+	@for port in 3000 3001 3002; do \
+		if lsof -ti:$$port >/dev/null 2>&1; then \
+			echo "Stopping port $$port..."; \
+			lsof -ti:$$port | xargs -r kill -15 2>/dev/null || true; \
+			sleep 1; \
+			if lsof -ti:$$port >/dev/null 2>&1; then \
+				lsof -ti:$$port | xargs -r kill -9 2>/dev/null || true; \
+			fi; \
+		fi; \
+	done
+	@echo "$(GREEN)✅ Production servers stopped$(RESET)"
 
 stop-all: stop              ## Stop everything including Docker containers
 	@echo "$(CYAN)Stopping Docker containers...$(RESET)"
-	docker-compose down
+	$(DC) down
 	@echo "$(GREEN)✅ All services stopped$(RESET)"
 
-stop-frontend:              ## Stop only Next.js
-	@if pgrep -f "next dev" >/dev/null 2>&1; then \
-		pkill -f "next dev"; \
+stop-frontend:              ## Stop only Next.js (dev or production)
+	@if pgrep -f "next dev" >/dev/null 2>&1 || pgrep -f "next start" >/dev/null 2>&1 || pgrep -f "next-server" >/dev/null 2>&1; then \
+		pkill -f "next dev" 2>/dev/null || true; \
+		pkill -f "next start" 2>/dev/null || true; \
+		pkill -f "next-server" 2>/dev/null || true; \
 		echo "$(GREEN)✅ Next.js stopped$(RESET)"; \
 	else \
 		echo "$(YELLOW)Next.js is not running$(RESET)"; \
 	fi
 
-stop-backend:               ## Stop only Express API
-	@if pgrep -f "tsx watch" >/dev/null 2>&1; then \
-		pkill -f "tsx watch"; \
+stop-backend:               ## Stop only Express API (dev or production)
+	@if pgrep -f "tsx watch" >/dev/null 2>&1 || pgrep -f "tsx.*server" >/dev/null 2>&1; then \
+		pkill -f "tsx watch" 2>/dev/null || true; \
+		pkill -f "tsx.*server" 2>/dev/null || true; \
 		echo "$(GREEN)✅ Express API stopped$(RESET)"; \
 	else \
 		echo "$(YELLOW)Express API is not running$(RESET)"; \
 	fi
 
 logs:                       ## View Docker container logs
-	docker-compose logs -f
+	$(DC) logs -f
 
 # ===========================================
 # DATABASE
@@ -324,7 +494,7 @@ logs:                       ## View Docker container logs
 db-setup: check-deps        ## First-time database setup (generate + push + seed)
 	@echo "$(CYAN)Setting up database...$(RESET)"
 	@# Check if Postgres is running
-	@if ! docker-compose ps postgres 2>/dev/null | grep -q "Up"; then \
+	@if ! $(DC) ps postgres 2>/dev/null | grep -q "Up"; then \
 		echo "$(YELLOW)Postgres not running. Starting...$(RESET)"; \
 		make dev-infra; \
 		sleep 3; \
@@ -335,7 +505,7 @@ db-setup: check-deps        ## First-time database setup (generate + push + seed
 	@echo "$(GREEN)✅ Database setup complete$(RESET)"
 
 db-migrate: check-deps      ## Run database migrations
-	@if ! docker-compose ps postgres 2>/dev/null | grep -q "Up"; then \
+	@if ! $(DC) ps postgres 2>/dev/null | grep -q "Up"; then \
 		echo "$(RED)❌ Postgres is not running. Run 'make dev-infra' first.$(RESET)"; \
 		exit 1; \
 	fi
@@ -345,7 +515,7 @@ db-generate:                ## Generate Prisma client
 	npm run db:generate
 
 db-seed: check-deps         ## Seed database with initial data
-	@if ! docker-compose ps postgres 2>/dev/null | grep -q "Up"; then \
+	@if ! $(DC) ps postgres 2>/dev/null | grep -q "Up"; then \
 		echo "$(RED)❌ Postgres is not running. Run 'make dev-infra' first.$(RESET)"; \
 		exit 1; \
 	fi
@@ -354,7 +524,7 @@ db-seed: check-deps         ## Seed database with initial data
 db-reset: check-deps        ## Reset database (drop + recreate + seed)
 	@echo "$(YELLOW)⚠️  This will DELETE all data in the database!$(RESET)"
 	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
-	@if ! docker-compose ps postgres 2>/dev/null | grep -q "Up"; then \
+	@if ! $(DC) ps postgres 2>/dev/null | grep -q "Up"; then \
 		echo "$(YELLOW)Postgres not running. Starting...$(RESET)"; \
 		make dev-infra; \
 		sleep 3; \
@@ -363,7 +533,7 @@ db-reset: check-deps        ## Reset database (drop + recreate + seed)
 	@echo "$(GREEN)✅ Database reset complete$(RESET)"
 
 db-studio: check-deps       ## Open Prisma Studio (database GUI)
-	@if ! docker-compose ps postgres 2>/dev/null | grep -q "Up"; then \
+	@if ! $(DC) ps postgres 2>/dev/null | grep -q "Up"; then \
 		echo "$(RED)❌ Postgres is not running. Run 'make dev-infra' first.$(RESET)"; \
 		exit 1; \
 	fi
@@ -458,73 +628,73 @@ clean-all: clean            ## Clean everything including node_modules
 	@echo "$(GREEN)✅ Full clean complete. Run 'make install' to reinstall.$(RESET)"
 
 # ===========================================
-# PRODUCTION
+# DOCKER PRODUCTION (full-container deployment)
 # ===========================================
 
 prod-build: check-docker    ## Build production Docker images
 	@echo "$(CYAN)Building production Docker images...$(RESET)"
-	docker-compose -f docker-compose.prod.yml build
+	docker compose build
 	@echo "$(GREEN)✅ Production images built$(RESET)"
 
-prod-up: check-docker       ## Start production stack
+prod-up: check-docker       ## Start production stack (Docker)
 	@echo "$(CYAN)Starting production stack...$(RESET)"
-	@if docker-compose -f docker-compose.prod.yml ps 2>/dev/null | grep -q "Up"; then \
+	@if docker compose ps 2>/dev/null | grep -q "Up"; then \
 		echo "$(YELLOW)⚠️  Production stack is already running$(RESET)"; \
-		docker-compose -f docker-compose.prod.yml ps; \
+		docker compose ps; \
 		exit 0; \
 	fi
-	docker-compose -f docker-compose.prod.yml up -d
+	docker compose up -d
 	@echo "$(GREEN)✅ Production stack started$(RESET)"
 	@make prod-status
 
-prod-down:                  ## Stop production stack
+prod-down:                  ## Stop production stack (Docker)
 	@echo "$(CYAN)Stopping production stack...$(RESET)"
-	docker-compose -f docker-compose.prod.yml down
+	docker compose down
 	@echo "$(GREEN)✅ Production stack stopped$(RESET)"
 
 prod-logs:                  ## View production logs (follow mode)
-	docker-compose -f docker-compose.prod.yml logs -f
+	docker compose logs -f
 
-prod-restart: prod-down prod-up  ## Restart production stack
+prod-restart: prod-down prod-up  ## Restart production stack (Docker)
 
 prod-status:                ## Check production stack status
 	@echo "$(CYAN)Production Stack Status:$(RESET)"
 	@echo ""
-	docker-compose -f docker-compose.prod.yml ps
+	docker compose ps
 	@echo ""
 	@echo "$(CYAN)Health Checks:$(RESET)"
-	@curl -sf http://localhost:3000/ >/dev/null 2>&1 && \
-		echo "  $(GREEN)✅ Frontend (3000): Healthy$(RESET)" || \
-		echo "  $(RED)❌ Frontend (3000): Not responding$(RESET)"
-	@curl -sf http://localhost:3001/health >/dev/null 2>&1 && \
-		echo "  $(GREEN)✅ API (3001): Healthy$(RESET)" || \
-		echo "  $(RED)❌ API (3001): Not responding$(RESET)"
+	@curl -sf http://localhost:3001/ >/dev/null 2>&1 && \
+		echo "  $(GREEN)✅ Dashboard (3001): Healthy$(RESET)" || \
+		echo "  $(RED)❌ Dashboard (3001): Not responding$(RESET)"
+	@curl -sf http://localhost:3002/health >/dev/null 2>&1 && \
+		echo "  $(GREEN)✅ API (3002): Healthy$(RESET)" || \
+		echo "  $(RED)❌ API (3002): Not responding$(RESET)"
 
 # ===========================================
-# DEPLOYMENT
+# DOCKER DEPLOYMENT (full-container mode)
 # ===========================================
 
-deploy: check-docker        ## Full deployment (pull + build + migrate + up)
-	@echo "$(CYAN)Starting deployment...$(RESET)"
+docker-deploy: check-docker ## Full Docker deployment (pull + build + migrate + up)
+	@echo "$(CYAN)Starting Docker deployment...$(RESET)"
 	@echo "$(YELLOW)⚠️  This will update production!$(RESET)"
 	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
 	@echo "$(CYAN)Step 1/5: Pulling latest code...$(RESET)"
 	git pull
 	@echo "$(CYAN)Step 2/5: Building containers (this may take a few minutes)...$(RESET)"
-	docker-compose -f docker-compose.prod.yml --env-file .env.production build
+	docker compose build
 	@echo "$(CYAN)Step 3/5: Starting database services...$(RESET)"
-	docker-compose -f docker-compose.prod.yml --env-file .env.production up -d postgres redis
+	docker compose up -d postgres redis
 	@sleep 5
 	@echo "$(CYAN)Step 4/5: Running database migrations...$(RESET)"
-	docker-compose -f docker-compose.prod.yml --env-file .env.production run --rm api npx prisma migrate deploy || echo "$(YELLOW)⚠️  Migration skipped (may need db push)$(RESET)"
+	docker compose run --rm api npx prisma migrate deploy || echo "$(YELLOW)⚠️  Migration skipped (may need db push)$(RESET)"
 	@echo "$(CYAN)Step 5/5: Starting all services...$(RESET)"
-	docker-compose -f docker-compose.prod.yml --env-file .env.production up -d
-	@echo "$(GREEN)✅ Deployment complete$(RESET)"
+	docker compose up -d
+	@echo "$(GREEN)✅ Docker deployment complete$(RESET)"
 	@make prod-status
 
-deploy-quick: check-docker  ## Quick deploy (no build, just restart)
+docker-deploy-quick: check-docker ## Quick Docker deploy (no build, just restart)
 	@echo "$(CYAN)Quick deploy - restarting services...$(RESET)"
-	docker-compose -f docker-compose.prod.yml --env-file .env.production up -d
+	docker compose up -d
 	@make prod-status
 
 backup:                     ## Backup database
@@ -558,18 +728,18 @@ update:                     ## Update dependencies
 	npm update
 
 shell-db:                   ## Open PostgreSQL shell
-	@if ! docker-compose ps postgres 2>/dev/null | grep -q "Up"; then \
+	@if ! $(DC) ps postgres 2>/dev/null | grep -q "Up"; then \
 		echo "$(RED)❌ Postgres is not running. Run 'make dev-infra' first.$(RESET)"; \
 		exit 1; \
 	fi
-	docker-compose exec postgres psql -U postgres -d twobot
+	$(DC) exec postgres psql -U postgres -d twobot
 
 shell-redis:                ## Open Redis CLI
-	@if ! docker-compose ps redis 2>/dev/null | grep -q "Up"; then \
+	@if ! $(DC) ps redis 2>/dev/null | grep -q "Up"; then \
 		echo "$(RED)❌ Redis is not running. Run 'make dev-infra' first.$(RESET)"; \
 		exit 1; \
 	fi
-	docker-compose exec redis redis-cli
+	$(DC) exec redis redis-cli
 
 health:                     ## Quick health check of all services
 	@echo "$(CYAN)Health Check:$(RESET)"
@@ -579,10 +749,10 @@ health:                     ## Quick health check of all services
 	@curl -sf http://localhost:3001/health >/dev/null 2>&1 && \
 		echo "  $(GREEN)✅ API: OK$(RESET)" || \
 		echo "  $(RED)❌ API: DOWN$(RESET)"
-	@docker-compose exec -T postgres pg_isready -U postgres >/dev/null 2>&1 && \
+	@$(DC) exec -T postgres pg_isready -U postgres >/dev/null 2>&1 && \
 		echo "  $(GREEN)✅ Postgres: OK$(RESET)" || \
 		echo "  $(RED)❌ Postgres: DOWN$(RESET)"
-	@docker-compose exec -T redis redis-cli ping >/dev/null 2>&1 && \
+	@$(DC) exec -T redis redis-cli ping >/dev/null 2>&1 && \
 		echo "  $(GREEN)✅ Redis: OK$(RESET)" || \
 		echo "  $(RED)❌ Redis: DOWN$(RESET)"
 

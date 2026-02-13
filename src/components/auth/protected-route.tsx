@@ -23,6 +23,10 @@ interface ProtectedRouteProps {
    * Required plan for access (optional)
    */
   requiredPlan?: "FREE" | "STARTER" | "PRO" | "BUSINESS" | "ENTERPRISE";
+  /**
+   * Required role for access (optional)
+   */
+  requiredRole?: "MEMBER" | "DEVELOPER" | "SUPPORT" | "ADMIN" | "SUPER_ADMIN";
 }
 
 /**
@@ -42,7 +46,7 @@ function LoadingSpinner() {
 /**
  * Access Denied Component
  */
-function AccessDenied({ requiredPlan }: { requiredPlan: string }) {
+function AccessDenied({ requiredPlan, requiredRole }: { requiredPlan?: string; requiredRole?: string }) {
   const router = useRouter();
 
   return (
@@ -51,14 +55,23 @@ function AccessDenied({ requiredPlan }: { requiredPlan: string }) {
         <div className="text-6xl">🔒</div>
         <h1 className="text-2xl font-bold text-foreground">Access Denied</h1>
         <p className="text-muted-foreground">
-          This page requires a {requiredPlan} plan.
+          {requiredRole 
+            ? `This page requires ${requiredRole} role or higher.`
+            : `This page requires a ${requiredPlan} plan.`
+          }
         </p>
-        <button
-          onClick={() => router.push("/pricing")}
-          className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-foreground rounded-md transition-colors"
-        >
-          Upgrade Plan
-        </button>
+        {requiredPlan ? <button
+            onClick={() => router.push("/pricing")}
+            className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-foreground rounded-md transition-colors"
+          >
+            Upgrade Plan
+          </button> : null}
+        {requiredRole ? <button
+            onClick={() => router.push("/")}
+            className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-foreground rounded-md transition-colors"
+          >
+            Return Home
+          </button> : null}
       </div>
     </div>
   );
@@ -68,6 +81,7 @@ export function ProtectedRoute({
   children,
   redirectTo = "/login",
   requiredPlan,
+  requiredRole,
 }: ProtectedRouteProps) {
   const router = useRouter();
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -99,6 +113,23 @@ export function ProtectedRoute({
     return <LoadingSpinner />;
   }
 
+  // Check role requirement
+  if (requiredRole && user) {
+    const roleHierarchy: Record<string, number> = {
+      MEMBER: 0,
+      DEVELOPER: 1,
+      SUPPORT: 2,
+      ADMIN: 3,
+      SUPER_ADMIN: 4,
+    };
+    const userRoleLevel = roleHierarchy[user.role] ?? 0;
+    const requiredRoleLevel = roleHierarchy[requiredRole] ?? 0;
+
+    if (userRoleLevel < requiredRoleLevel) {
+      return <AccessDenied requiredRole={requiredRole} />;
+    }
+  }
+
   // Check plan requirement
   if (requiredPlan && user) {
     const planHierarchy: Record<string, number> = { 
@@ -128,13 +159,18 @@ export function ProtectedRoute({
  */
 export function withProtectedRoute<P extends object>(
   WrappedComponent: React.ComponentType<P>,
-  options?: { redirectTo?: string; requiredPlan?: "FREE" | "STARTER" | "PRO" | "BUSINESS" | "ENTERPRISE" }
+  options?: { 
+    redirectTo?: string; 
+    requiredPlan?: "FREE" | "STARTER" | "PRO" | "BUSINESS" | "ENTERPRISE";
+    requiredRole?: "MEMBER" | "DEVELOPER" | "SUPPORT" | "ADMIN" | "SUPER_ADMIN";
+  }
 ) {
   return function ProtectedComponent(props: P) {
     return (
       <ProtectedRoute
         redirectTo={options?.redirectTo}
         requiredPlan={options?.requiredPlan}
+        requiredRole={options?.requiredRole}
       >
         <WrappedComponent {...props} />
       </ProtectedRoute>

@@ -11,5 +11,7 @@ export { TwoBotAIAssistantWidget } from "./2bot-ai-assistant-widget";
 export { TwoBotAIChat } from "./2bot-ai-chat";
 export { TwoBotAIChatMessage, type ChatMessageData } from "./2bot-ai-chat-message";
 export { CreditsDisplay, TokenDisplay, type CreditsDisplayProps } from "./credits-display"; // TokenDisplay is deprecated
-export { ModelSelector, type ModelOption } from "./model-selector";
+export {
+    ModelSelector, type LegacyModelOption, type ModelOption, type TwoBotAIModelFeatures, type TwoBotAIModelOption, type TwoBotAITierInfo
+} from "./model-selector";
 

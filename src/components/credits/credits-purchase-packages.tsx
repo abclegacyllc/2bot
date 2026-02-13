@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { formatCredits } from "@/shared/lib/format";
 import { Check, Sparkles } from "lucide-react";
 
 export interface CreditPackage {
@@ -41,25 +42,12 @@ export interface CreditsPurchasePackagesProps {
   className?: string;
 }
 
-/**
- * Format credits for display
- */
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${Math.round(credits / 1_000)}K`;
-  }
-  return credits.toLocaleString();
-}
-
 export function CreditsPurchasePackages({
   packages,
   loading = false,
   purchasing,
   onPurchase,
-  variant = "personal",
+  variant: _variant = "personal",
   className,
 }: CreditsPurchasePackagesProps) {
   if (loading) {
@@ -116,12 +104,10 @@ export function CreditsPurchasePackages({
               pkg.popular && "border-primary"
             )}
           >
-            {pkg.popular && (
-              <Badge className="absolute -top-2 right-4 gap-1">
+            {pkg.popular ? <Badge className="absolute -top-2 right-4 gap-1">
                 <Sparkles className="h-3 w-3" />
                 Most Popular
-              </Badge>
-            )}
+              </Badge> : null}
 
             <CardHeader>
               <CardTitle className="text-lg">{pkg.name}</CardTitle>

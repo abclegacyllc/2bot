@@ -443,4 +443,8 @@ export const CAPABILITY_DETECTION_PATTERNS: Record<AICapability, RegExp[]> = {
   "file-processing": [
     /\b(read|parse|process|extract\s+from)\s+(this\s+)?(file|document|pdf)\b/i,
   ],
+  "rerank": [],
+  "moderation": [
+    /\b(moderate|check\s+safety|content\s+filter|is\s+this\s+(safe|appropriate))\b/i,
+  ],
 };

@@ -396,7 +396,7 @@ class GatewayService {
     error?: string
   ): Promise<SafeGateway> {
     // First check ownership
-    const gateway = await this.findById(ctx, id);
+    const _gateway = await this.findById(ctx, id);
 
     // Update status
     const updated = await this.updateStatus(id, status, error);
@@ -518,7 +518,7 @@ class GatewayService {
    * Convert Gateway to SafeGateway (remove encrypted credentials, add info)
    */
   private toSafeGateway(gateway: Gateway, credentials: GatewayCredentials): SafeGateway {
-    const { credentialsEnc, ...rest } = gateway;
+    const { credentialsEnc: _credentialsEnc, ...rest } = gateway;
 
     // Build credential info (no secrets)
     const credentialInfo: SafeGateway["credentialInfo"] = {

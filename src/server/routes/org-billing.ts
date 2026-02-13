@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { stripeService } from '@/modules/billing';
 import type { OrgPlanType } from '@/shared/constants/org-plans';
 import { ORG_PLAN_STRIPE_PRICES, ORG_PLAN_UPGRADE_PATHS } from '@/shared/constants/org-plans';
+import type { PlanType } from '@/shared/constants/plans';
 import { BadRequestError, ValidationError } from '@/shared/errors';
 import type { ApiResponse } from '@/shared/types';
 import { createServiceContext, type ServiceContext } from '@/shared/types/context';
@@ -32,7 +33,7 @@ const checkoutSchema = z.object({
   plan: z.enum(['ORG_GROWTH', 'ORG_PRO', 'ORG_ENTERPRISE'] as const),
 });
 
-const workspaceBoosterSchema = z.object({
+const workspaceAddonSchema = z.object({
   tier: z.enum(['WS_STARTER', 'WS_PRO', 'WS_TEAM'] as const),
   quantity: z.number().min(1).max(100).optional().default(1),
 });
@@ -177,7 +178,7 @@ orgBillingRouter.post(
     }
 
     // Create checkout session with org-specific URLs
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dash.2bot.org';
     const successUrl = `${baseUrl}/organizations/billing?success=true`;
     const cancelUrl = `${baseUrl}/organizations/billing?canceled=true`;
 
@@ -186,7 +187,7 @@ orgBillingRouter.post(
     // TODO: Extend stripeService to handle OrgPlanType directly
     const url = await stripeService.createCheckoutSession(
       ctx,
-      plan as unknown as import('@/shared/constants/plans').PlanType,
+      plan as unknown as PlanType,
       successUrl,
       cancelUrl
     );
@@ -210,7 +211,7 @@ orgBillingRouter.post(
     const orgId = getPathParam(req, 'orgId');
     const ctx = getOrgContext(req, orgId);
 
-    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/organizations/billing`;
+    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://dash.2bot.org'}/organizations/billing`;
     const url = await stripeService.createPortalSession(ctx, returnUrl);
 
     res.json({
@@ -222,29 +223,29 @@ orgBillingRouter.post(
 
 /**
  * POST /api/orgs/:orgId/billing/workspace
- * Purchase workspace booster for org
- * TODO: Implement workspace booster checkout flow
+ * Purchase workspace addon for org
+ * TODO: Implement workspace addon checkout flow
  */
 orgBillingRouter.post(
   '/workspace',
   requireAuth,
   requireOrgAdmin,
-  asyncHandler(async (req: Request, res: Response<ApiResponse<{ url: string }>>) => {
+  asyncHandler(async (req: Request, _res: Response<ApiResponse<{ url: string }>>) => {
     const orgId = getPathParam(req, 'orgId');
-    const ctx = getOrgContext(req, orgId);
+    const _ctx = getOrgContext(req, orgId);
 
     // Parse and validate request body
-    const parseResult = workspaceBoosterSchema.safeParse(req.body);
+    const parseResult = workspaceAddonSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new ValidationError('Validation failed', formatZodErrors(parseResult.error));
     }
 
     const { tier, quantity } = parseResult.data;
 
-    // TODO: Implement workspace booster checkout
+    // TODO: Implement workspace addon checkout
     // For now, return a placeholder response
     throw new BadRequestError(
-      `Workspace booster checkout not yet implemented. ` +
+      `Workspace addon checkout not yet implemented. ` +
       `Requested: ${quantity}x ${tier} for org ${orgId}`
     );
   })

@@ -28,12 +28,10 @@ export type TwoBotAIModel =
   | "o1-mini"
   | "o3-mini"
   // Anthropic Chat
-  | "claude-sonnet-4-20250514"
-  | "claude-opus-4-20250514"
-  | "claude-3-5-sonnet-20241022"
+  | "claude-opus-4-6-20260131"
+  | "claude-sonnet-4-5-20251022"
+  | "claude-haiku-4-5-20251022"
   | "claude-3-5-haiku-20241022"
-  | "claude-3-opus-20240229"
-  | "claude-3-haiku-20240307"
   // Image
   | "dall-e-3"
   // TTS
@@ -44,7 +42,7 @@ export type TwoBotAIModel =
   // Allow any string for dynamically discovered models
   | (string & {});
 
-export type TwoBotAIProvider = "openai" | "anthropic";
+export type TwoBotAIProvider = "openai" | "anthropic" | "together";
 
 // ===========================================
 // Model Capabilities - What each model can do
@@ -58,7 +56,7 @@ export type ModelInputType = "text" | "image" | "audio" | "file" | "video";
 /**
  * Output types a model can produce
  */
-export type ModelOutputType = "text" | "image" | "audio" | "embedding";
+export type ModelOutputType = "text" | "image" | "audio" | "video" | "embedding";
 
 /**
  * Capability levels (like OpenAI shows)
@@ -156,7 +154,8 @@ export type ImageStyle = "vivid" | "natural";
 
 export interface ImageGenerationRequest {
   prompt: string;
-  model?: "dall-e-3" | "dall-e-3-hd";
+  /** Model ID: 2Bot model ID (e.g. '2bot-ai-image-pro') or raw provider model ID */
+  model?: string;
   size?: ImageSize;
   quality?: ImageQuality;
   style?: ImageStyle;
@@ -186,7 +185,8 @@ export type SpeechSynthesisFormat = "mp3" | "opus" | "aac" | "flac" | "wav" | "p
 
 export interface SpeechSynthesisRequest {
   text: string;
-  model?: "tts-1" | "tts-1-hd";
+  /** Model ID: 2Bot model ID (e.g. '2bot-ai-voice-pro') or raw provider model ID */
+  model?: string;
   voice?: SpeechSynthesisVoice;
   format?: SpeechSynthesisFormat;
   speed?: number; // 0.25 to 4.0
@@ -211,7 +211,8 @@ export interface SpeechSynthesisResponse {
 
 export interface SpeechRecognitionRequest {
   audio: Buffer | string; // Buffer or base64
-  model?: "whisper-1";
+  /** Model ID: 2Bot model ID (e.g. '2bot-ai-transcribe-lite') or raw provider model ID */
+  model?: string;
   language?: string; // ISO 639-1 code
   prompt?: string; // Optional context
   userId: string;

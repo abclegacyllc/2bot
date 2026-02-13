@@ -55,6 +55,15 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // === ADMIN PATH RESTRICTION ===
+  // /admin/* pages are ONLY accessible via admin.2bot.org
+  // Block on all other subdomains (dash.2bot.org, dev.2bot.org, etc.)
+  if (url.pathname.startsWith('/admin') && !ADMIN_HOSTS.some(h => hostname.includes(h))) {
+    const adminUrl = new URL(url.pathname, `https://admin.${ROOT_DOMAIN}`);
+    adminUrl.search = url.search;
+    return NextResponse.redirect(adminUrl);
+  }
+
   // === DASHBOARD SUBDOMAIN (dash.{ROOT_DOMAIN}) ===
   if (DASHBOARD_HOSTS.some(h => hostname.includes(h))) {
     // Dashboard subdomain - serve dashboard pages directly

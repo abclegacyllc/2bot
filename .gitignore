@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next-admin/
 /out/
 
 # production
@@ -31,10 +32,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (all ignored except .env.example)
 .env*
-!.env.development.example
-!.env.production.example
+!.env.example
 
 # SSL certificates (NEVER commit)
 /ssl/

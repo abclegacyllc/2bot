@@ -251,8 +251,9 @@ class BYOKUsageService {
 
       // By capability (universal naming) - read directly from record
       const capability = record.capability as AICapability;
-      if (byCapability[capability]) {
-        byCapability[capability]!.requests++;
+      const capabilityStats = byCapability[capability];
+      if (capabilityStats) {
+        capabilityStats.requests++;
       }
 
       // By model
@@ -263,7 +264,7 @@ class BYOKUsageService {
       byModel[model].requests++;
 
       // By day
-      const day = record.createdAt.toISOString().split("T")[0]!;
+      const day = record.createdAt.toISOString().split("T")[0] ?? "";
       if (!byDay[day]) {
         byDay[day] = { requests: 0 };
       }
@@ -277,7 +278,7 @@ class BYOKUsageService {
         .filter(([, stats]) => stats && stats.requests > 0)
         .map(([capability, stats]) => ({
           capability: capability as AICapability,
-          requests: stats!.requests,
+          requests: stats?.requests ?? 0,
         })),
       byModel: Object.entries(byModel).map(([model, stats]) => ({
         model,

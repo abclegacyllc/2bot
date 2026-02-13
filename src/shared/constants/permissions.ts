@@ -17,11 +17,47 @@ export const PERMISSIONS = {
   'plugin:configure': ['MEMBER', 'DEVELOPER', 'ADMIN', 'SUPER_ADMIN'],
   'plugin:uninstall': ['MEMBER', 'DEVELOPER', 'ADMIN', 'SUPER_ADMIN'],
 
-  // Admin permissions
+  // Admin permissions - Users
   'admin:users:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
   'admin:users:write': ['ADMIN', 'SUPER_ADMIN'],
   'admin:users:delete': ['SUPER_ADMIN'],
   'admin:users:impersonate': ['SUPER_ADMIN'],
+
+  // Admin permissions - Organizations
+  'admin:organizations:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'admin:organizations:write': ['ADMIN', 'SUPER_ADMIN'],
+  'admin:organizations:delete': ['SUPER_ADMIN'],
+
+  // Admin permissions - Credits
+  'admin:credits:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'admin:credits:write': ['ADMIN', 'SUPER_ADMIN'],
+  'admin:credits:grant': ['SUPER_ADMIN'],
+
+  // Admin permissions - Gateways
+  'admin:gateways:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'admin:gateways:write': ['ADMIN', 'SUPER_ADMIN'],
+  'admin:gateways:delete': ['SUPER_ADMIN'],
+
+  // Admin permissions - AI Usage
+  'admin:ai-usage:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+
+  // Admin permissions - Audit Logs
+  'admin:audit-logs:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+
+  // Admin permissions - Stats
+  'admin:stats:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+
+  // Support permissions - Tickets
+  'support:tickets:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'support:tickets:write': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'support:tickets:assign': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+
+  // Support permissions - Knowledge Base
+  'support:kb:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'support:kb:write': ['ADMIN', 'SUPER_ADMIN'],
+
+  // Support permissions - User lookup
+  'support:users:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
 
   // Marketplace permissions
   'marketplace:submit': ['DEVELOPER', 'ADMIN', 'SUPER_ADMIN'],

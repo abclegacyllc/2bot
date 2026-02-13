@@ -19,25 +19,25 @@ import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans'
 import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
 import type { ServiceContext } from '@/shared/types/context';
 import type {
-  AIUsageBreakdown,
-  AllocatedResource,
-  AllocationQuota,
-  AutomationPool,
-  BillingPool,
-  CountQuota,
-  DeptAllocationSummary,
-  OrgAllocationSummary,
-  OrgDeptResourceStatus,
-  OrgMemberResourceStatus,
-  OrgResourceStatus,
-  PersonalResourceStatus,
-  UsageMetric,
-  WorkspacePool
+    AIUsageBreakdown,
+    AllocatedResource,
+    AllocationQuota,
+    AutomationPool,
+    BillingPool,
+    CountQuota,
+    DeptAllocationSummary,
+    OrgAllocationSummary,
+    OrgDeptResourceStatus,
+    OrgMemberResourceStatus,
+    OrgResourceStatus,
+    PersonalResourceStatus,
+    UsageMetric,
+    WorkspacePool
 } from '@/shared/types/resources';
 import { allocationService } from './allocation.service';
 import { usageTracker } from './usage-tracker.service';
 
-const log = logger.child({ module: 'resource-service' });
+const _log = logger.child({ module: 'resource-service' });
 
 // ===========================================
 // Helpers for building resource types
@@ -134,13 +134,18 @@ class ResourceServiceImpl {
     }
     
     // Organization context - need to determine which level
+    const orgId = ctx.organizationId;
+    if (!orgId) {
+      throw new Error('Organization ID is required for non-personal context');
+    }
+    
     if (ctx.departmentId) {
       // Department or Member context
-      return this.getDeptStatus(ctx, ctx.organizationId!, ctx.departmentId);
+      return this.getDeptStatus(ctx, orgId, ctx.departmentId);
     }
     
     // Organization-wide context
-    return this.getOrgStatus(ctx, ctx.organizationId!);
+    return this.getOrgStatus(ctx, orgId);
   }
   
   // -------------------------------------------
@@ -186,7 +191,8 @@ class ResourceServiceImpl {
       },
     };
     
-    // Build billing pool
+    // Build billing pool — use DB monthlyUsed (persisted) instead of Redis (ephemeral)
+    const creditsUsedThisMonth = creditWallet?.monthlyUsed ?? 0;
     const billing: BillingPool = {
       credits: {
         balance: creditWallet?.balance ?? 0,
@@ -194,9 +200,9 @@ class ResourceServiceImpl {
         usage: {
           ai: createEmptyAIBreakdown(),
           marketplace: createUsageMetric(0, null),
-          total: createUsageMetric(usage.creditsUsed, planLimits.creditsPerMonth),
+          total: createUsageMetric(creditsUsedThisMonth, planLimits.creditsPerMonth),
         },
-        resetsAt: null,
+        resetsAt: creditWallet?.allocationResetAt?.toISOString() ?? null,
       },
       subscription: {
         seats: createCountQuota(1, 1), // Personal = 1 seat
@@ -303,16 +309,17 @@ class ResourceServiceImpl {
     // Build workspace pool
     const workspace: WorkspacePool = {
       compute: {
-        ram: createAllocationQuota(org.poolRamMb, org.poolRamMb, 'MB'),
-        cpu: createAllocationQuota(org.poolCpuCores, org.poolCpuCores, 'cores'),
+        ram: createAllocationQuota(org.workspacePoolRamMb, org.workspacePoolRamMb, 'MB'),
+        cpu: createAllocationQuota(org.workspacePoolCpuCores, org.workspacePoolCpuCores, 'cores'),
       },
       storage: {
-        allocation: createAllocationQuota(org.poolStorageMb, org.poolStorageMb, 'MB'),
+        allocation: createAllocationQuota(org.workspacePoolStorageMb, org.workspacePoolStorageMb, 'MB'),
       },
       containers: createCountQuota(0, null),
     };
     
-    // Build billing pool
+    // Build billing pool — use DB monthlyUsed (persisted) instead of Redis (ephemeral)
+    const orgCreditsUsedThisMonth = org.creditWallet?.monthlyUsed ?? 0;
     const billing: BillingPool = {
       credits: {
         balance: org.creditWallet?.balance ?? 0,
@@ -320,9 +327,9 @@ class ResourceServiceImpl {
         usage: {
           ai: createEmptyAIBreakdown(),
           marketplace: createUsageMetric(0, null),
-          total: createUsageMetric(usage.creditsUsed, planLimits.sharedCreditsPerMonth),
+          total: createUsageMetric(orgCreditsUsedThisMonth, planLimits.sharedCreditsPerMonth),
         },
-        resetsAt: null,
+        resetsAt: org.creditWallet?.allocationResetAt?.toISOString() ?? null,
       },
       subscription: {
         seats: createCountQuota(org.memberships.length, org.maxSeats),
@@ -357,9 +364,9 @@ class ResourceServiceImpl {
         plugins: unlimited(allocPlugins, planLimits.sharedPlugins),
         workflows: unlimited(allocWorkflows, planLimits.sharedWorkflows),
         creditBudget: unlimited(allocCredits, planLimits.sharedCreditsPerMonth),
-        ramMb: Math.max(0, org.poolRamMb - allocRam),
-        cpuCores: Math.max(0, org.poolCpuCores - allocCpu),
-        storageMb: Math.max(0, org.poolStorageMb - allocStorage),
+        ramMb: Math.max(0, org.workspacePoolRamMb - allocRam),
+        cpuCores: Math.max(0, org.workspacePoolCpuCores - allocCpu),
+        storageMb: Math.max(0, org.workspacePoolStorageMb - allocStorage),
       },
       departmentCount: org.departments.length,
       memberCount: org.memberships.length,

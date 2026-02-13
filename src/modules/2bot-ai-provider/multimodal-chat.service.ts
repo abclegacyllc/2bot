@@ -106,7 +106,7 @@ export function detectCapabilities(input: MultimodalChatInput): DetectedIntent {
   if (input.requestedCapabilities && input.requestedCapabilities.length > 0) {
     const [primary, ...secondary] = input.requestedCapabilities;
     return {
-      primaryCapability: primary!,
+      primaryCapability: primary ?? "text-generation",
       secondaryCapabilities: secondary,
       confidence: 1.0,
       reasoning: "User explicitly requested capabilities",
@@ -139,7 +139,8 @@ export function getOrCreateConversation(
   organizationId?: string
 ): MultimodalConversation {
   if (conversationId && conversations.has(conversationId)) {
-    return conversations.get(conversationId)!;
+    const existing = conversations.get(conversationId);
+    if (existing) return existing;
   }
 
   const newConversation: MultimodalConversation = {

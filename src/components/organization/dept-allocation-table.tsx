@@ -18,6 +18,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import { formatNumber } from "@/shared/lib/format";
 import type { DeptAllocationRecord } from "@/shared/types/resources";
 import { Pencil, Trash2 } from "lucide-react";
 
@@ -44,14 +45,6 @@ function formatAllocMode(mode: string): {
     default:
       return { label: mode, variant: "outline" };
   }
-}
-
-// Format number with K/M suffix
-function formatNumber(num: number | null): string {
-  if (num === null) return "—";
-  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-  if (num >= 1000) return `${(num / 1000).toFixed(0)}K`;
-  return num.toString();
 }
 
 // Format relative time
@@ -123,26 +116,22 @@ export function DeptAllocationTable({
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
-                    {onEdit && (
-                      <Button
+                    {onEdit ? <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => onEdit(alloc)}
                       >
                         <Pencil className="h-4 w-4" />
                         <span className="sr-only">Edit</span>
-                      </Button>
-                    )}
-                    {onDelete && (
-                      <Button
+                      </Button> : null}
+                    {onDelete ? <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => onDelete(alloc.departmentId)}
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
                         <span className="sr-only">Delete</span>
-                      </Button>
-                    )}
+                      </Button> : null}
                   </div>
                 </TableCell>
               </TableRow>

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
+import { formatCredits } from "@/shared/lib/format";
 import { AlertTriangle, Coins } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
@@ -30,22 +31,9 @@ interface CreditsBalanceDisplayProps {
 
 export type { CreditsBalanceDisplayProps };
 
-/**
- * Format credits for display (e.g., 125000 -> "125K")
- */
-function formatCredits(credits: number): string {
-  if (credits >= 1_000_000) {
-    return `${(credits / 1_000_000).toFixed(1)}M`;
-  }
-  if (credits >= 1_000) {
-    return `${(credits / 1_000).toFixed(1)}K`;
-  }
-  return credits.toLocaleString();
-}
-
 export function CreditsBalanceDisplay({
   className,
-  variant = "default",
+  variant: _variant = "default",
 }: CreditsBalanceDisplayProps) {
   const { context, user, availableOrgs, token } = useAuth();
   const [balance, setBalance] = useState<number | null>(null);
@@ -99,7 +87,7 @@ export function CreditsBalanceDisplay({
     return () => clearInterval(interval);
   }, [fetchBalance]);
 
-  // Determine warning state (thresholds scaled for 1 credit = $0.001)
+  // Determine warning state (thresholds scaled for 1 credit = $0.01)
   const isLowBalance = balance !== null && balance < 50;
   const isCritical = balance !== null && balance < 10;
 
@@ -152,12 +140,8 @@ export function CreditsBalanceDisplay({
             {isOrgContext ? "Organization" : "Personal"} Credits:{" "}
             {balance.toLocaleString()}
           </p>
-          {isCritical && (
-            <p className="text-destructive text-xs">Credits critically low!</p>
-          )}
-          {isLowBalance && !isCritical && (
-            <p className="text-yellow-500 text-xs">Credits running low</p>
-          )}
+          {isCritical ? <p className="text-destructive text-xs">Credits critically low!</p> : null}
+          {isLowBalance && !isCritical ? <p className="text-yellow-500 text-xs">Credits running low</p> : null}
           <p className="text-muted-foreground text-xs">Click to manage</p>
         </TooltipContent>
       </Tooltip>

@@ -28,7 +28,7 @@ const gatewayNameSchema = z
 /**
  * Gateway type validation
  */
-const gatewayTypeSchema = z.nativeEnum(GatewayType);
+const _gatewayTypeSchema = z.nativeEnum(GatewayType);
 
 // ===========================================
 // Credential Schemas

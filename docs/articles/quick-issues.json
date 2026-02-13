@@ -1,0 +1,74 @@
+[
+  {
+    "title": "Gateway won't connect",
+    "description": "My gateway shows an error or won't connect to the external service.",
+    "suggestedType": "bug",
+    "suggestedCategory": "gateway",
+    "articleSlug": "troubleshooting-gateway-issues",
+    "icon": "🔌",
+    "sortOrder": 1
+  },
+  {
+    "title": "Credits not showing",
+    "description": "My credit balance seems wrong or credits aren't being added.",
+    "suggestedType": "bug",
+    "suggestedCategory": "billing",
+    "articleSlug": "understanding-credits-and-billing",
+    "icon": "💰",
+    "sortOrder": 2
+  },
+  {
+    "title": "Plugin not working",
+    "description": "An installed plugin isn't functioning as expected.",
+    "suggestedType": "bug",
+    "suggestedCategory": "plugin",
+    "articleSlug": "installing-and-using-plugins",
+    "icon": "🔧",
+    "sortOrder": 3
+  },
+  {
+    "title": "Upgrade my plan",
+    "description": "I need help upgrading my subscription plan or have questions about pricing.",
+    "suggestedType": "billing",
+    "suggestedCategory": "billing",
+    "articleSlug": "understanding-credits-and-billing",
+    "icon": "⬆️",
+    "sortOrder": 4
+  },
+  {
+    "title": "Can't access organization",
+    "description": "I'm unable to join or access my organization workspace.",
+    "suggestedType": "bug",
+    "suggestedCategory": "account",
+    "articleSlug": "managing-organizations",
+    "icon": "🏢",
+    "sortOrder": 5
+  },
+  {
+    "title": "AI responses are slow",
+    "description": "The AI assistant is taking too long to respond or timing out.",
+    "suggestedType": "bug",
+    "suggestedCategory": "other",
+    "articleSlug": "ai-features-and-models",
+    "icon": "🤖",
+    "sortOrder": 6
+  },
+  {
+    "title": "Feature request",
+    "description": "I have an idea for a new feature or improvement.",
+    "suggestedType": "feature_request",
+    "suggestedCategory": "other",
+    "articleSlug": null,
+    "icon": "💡",
+    "sortOrder": 7
+  },
+  {
+    "title": "Account / security issue",
+    "description": "I need help with my account settings, password, or security concern.",
+    "suggestedType": "question",
+    "suggestedCategory": "account",
+    "articleSlug": "account-settings-and-security",
+    "icon": "🔒",
+    "sortOrder": 8
+  }
+]

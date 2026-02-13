@@ -6,7 +6,6 @@
  * @module app/terms/page
  */
 
-import { ArrowLeft } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -21,13 +20,16 @@ export default function TermsOfServicePage() {
       {/* Header */}
       <header className="border-b border-border bg-card/50">
         <div className="mx-auto max-w-4xl px-6 py-4">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Home
-          </Link>
+          <nav className="flex items-center gap-1.5 text-sm">
+            <Link
+              href="/"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Home
+            </Link>
+            <span className="text-muted-foreground/50">/</span>
+            <span className="text-foreground font-medium">Terms of Service</span>
+          </nav>
         </div>
       </header>
 

@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiUrl } from "@/shared/config/urls";
+import { adminApiUrl } from "@/shared/config/urls";
 import {
     AlertTriangle,
     Bot,
@@ -26,9 +26,11 @@ import {
     ChevronLeft,
     ChevronRight,
     Clock,
+    Eye,
     User,
-    XCircle,
+    XCircle
 } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 interface AdminGateway {
@@ -45,16 +47,6 @@ interface AdminGateway {
     name: string | null;
     type: "user" | "organization";
     organizationName?: string;
-  };
-}
-
-interface GatewaysResponse {
-  gateways: AdminGateway[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
   };
 }
 
@@ -131,7 +123,7 @@ export default function AdminGatewaysPage() {
       if (statusFilter) params.set("status", statusFilter);
       if (typeFilter) params.set("type", typeFilter);
 
-      const response = await fetch(apiUrl(`/admin/gateways?${params}`), {
+      const response = await fetch(adminApiUrl(`/gateways?${params}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) {
@@ -175,8 +167,8 @@ export default function AdminGatewaysPage() {
     });
   };
 
-  // Get unique types from gateways
-  const gatewayTypes = [...new Set(gateways.map((g) => g.type))].filter(Boolean);
+  // Get unique types from gateways (filter out any undefined entries)
+  const gatewayTypes = [...new Set(gateways.filter(g => g?.type).map((g) => g.type))].filter(Boolean);
 
   if (error) {
     return (
@@ -268,6 +260,9 @@ export default function AdminGatewaysPage() {
                   <th className="px-4 py-3 text-left text-sm font-medium text-muted-foreground">
                     Created
                   </th>
+                  <th className="px-4 py-3 text-right text-sm font-medium text-muted-foreground">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -281,7 +276,7 @@ export default function AdminGatewaysPage() {
                   </>
                 ) : gateways.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No gateways found
                     </td>
                   </tr>
@@ -309,30 +304,44 @@ export default function AdminGatewaysPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          {gateway.owner.type === "organization" ? (
+                          {gateway.owner?.type === "organization" ? (
                             <Building2 className="h-4 w-4 text-purple-400" />
                           ) : (
                             <User className="h-4 w-4 text-muted-foreground" />
                           )}
                           <div>
                             <div className="text-foreground text-sm">
-                              {gateway.owner.type === "organization"
+                              {gateway.owner?.type === "organization"
                                 ? gateway.owner.organizationName
-                                : gateway.owner.name || "No name"}
+                                : gateway.owner?.name || "No name"}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {gateway.owner.email}
+                              {gateway.owner?.email || "N/A"}
                             </div>
                           </div>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-foreground">
-                        {gateway.executionCount.toLocaleString()}
+                        {gateway.executionCount?.toLocaleString() || '0'}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-sm">
                         <div className="flex items-center gap-1">
                           <Calendar className="h-3 w-3" />
                           {formatDate(gateway.createdAt)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <Link href={`/admin/gateways/${gateway.id}`}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="border-border"
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View
+                            </Button>
+                          </Link>
                         </div>
                       </td>
                     </tr>

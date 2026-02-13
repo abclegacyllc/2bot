@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
-import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
+import { useOrganization } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import Link from "next/link";
 
@@ -136,8 +136,7 @@ function PluginCard({ plugin, isInstalled, isInstalling, canManagePlugins, onIns
         ) : null}
 
         {/* Action button */}
-        {canManagePlugins && (
-          isInstalled ? (
+        {canManagePlugins ? isInstalled ? (
             <Button
               variant="outline"
               className="w-full border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300"
@@ -154,13 +153,10 @@ function PluginCard({ plugin, isInstalled, isInstalling, canManagePlugins, onIns
             >
               {isInstalling ? "Installing..." : "Install"}
             </Button>
-          )
-        )}
-        {!canManagePlugins && isInstalled && (
-          <div className="w-full text-center text-sm text-muted-foreground py-2">
+          ) : null}
+        {!canManagePlugins && isInstalled ? <div className="w-full text-center text-sm text-muted-foreground py-2">
             Installed
-          </div>
-        )}
+          </div> : null}
       </CardContent>
     </Card>
   );
@@ -173,7 +169,6 @@ function PluginCard({ plugin, isInstalled, isInstalling, canManagePlugins, onIns
 function PluginsContent() {
   const { token } = useAuth();
   const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
-  const { buildOrgUrl } = useOrgUrls();
   const { can } = useOrgPermissions();
   const [plugins, setPlugins] = useState<PluginListItem[]>([]);
   const [installedPlugins, setInstalledPlugins] = useState<Map<string, InstalledPlugin>>(new Map());
@@ -338,7 +333,7 @@ function PluginsContent() {
           <CardContent className="py-12 text-center">
             <h3 className="text-lg font-medium text-foreground mb-2">Organization not found</h3>
             <p className="text-muted-foreground mb-4">
-              The organization you're looking for doesn't exist or you don't have access.
+              The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access.
             </p>
             <Link href="/">
               <Button variant="outline" className="border-border">

@@ -299,7 +299,7 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
           return { valid: false, error: `Ollama server returned ${response.status}` };
         }
         return { valid: true };
-      } catch (error) {
+      } catch (_error) {
         return {
           valid: false,
           error: `Cannot reach Ollama server at ${baseUrl}`,

@@ -76,9 +76,7 @@ export function QuotaUsageBar({
         </p>
       )}
 
-      {isUnlimited && (
-        <div className="h-2 bg-green-100 dark:bg-green-900/30 rounded-full" />
-      )}
+      {isUnlimited ? <div className="h-2 bg-green-100 dark:bg-green-900/30 rounded-full" /> : null}
     </div>
   );
 }

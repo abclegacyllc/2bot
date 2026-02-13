@@ -15,50 +15,50 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-    Form,
-    FormControl,
-    FormField,
-    FormItem,
-    FormLabel,
-    FormMessage,
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { useOrgPermissions } from "@/hooks/use-org-permissions";
 import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
 import { apiUrl } from "@/shared/config/urls";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowLeft, Clock, Loader2, Mail, RefreshCw, Trash2, UserPlus } from "lucide-react";
+import { Clock, Loader2, Mail, RefreshCw, Trash2, UserPlus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -130,7 +130,7 @@ function OrgNotFound() {
           <CardContent className="py-12 text-center">
             <h3 className="text-lg font-medium text-foreground mb-2">Organization not found</h3>
             <p className="text-muted-foreground mb-4">
-              The organization you're looking for doesn't exist or you don't have access to it.
+              The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access to it.
             </p>
             <Link href="/">
               <Button variant="outline" className="border-border">
@@ -146,8 +146,8 @@ function OrgNotFound() {
 
 function MembersContent() {
   const { token, user } = useAuth();
-  const { orgId, orgName, orgRole, isFound, isLoading: orgLoading } = useOrganization();
-  const { buildOrgUrl } = useOrgUrls();
+  const { orgId, orgName, orgRole: _orgRole, isFound, isLoading: orgLoading } = useOrganization();
+  const { buildOrgUrl: _buildOrgUrl } = useOrgUrls();
   
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
@@ -206,7 +206,7 @@ function MembersContent() {
   }, [isFound, orgId, fetchMembers]);
 
   // Use org-permissions hook for permission checks
-  const { can, canRemove: canRemoveMember, canModifyRole } = useOrgPermissions();
+  const { can, canRemove: _canRemoveMember, canModifyRole: _canModifyRole } = useOrgPermissions();
   const canInvite = can('org:members:invite');
   const canChangeRole = can('org:members:update_role');
   const canRemove = can('org:members:remove');
@@ -359,22 +359,11 @@ function MembersContent() {
       <div className="max-w-4xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href={buildOrgUrl("/")}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <ArrowLeft className="h-5 w-5" />
-              </Button>
-            </Link>
-            <div>
-              <h1 className="text-3xl font-bold text-foreground">Members</h1>
-              <p className="text-muted-foreground">
-                Manage {orgName ? `${orgName}'s` : "organization"} members and invitations
-              </p>
-            </div>
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">Members</h1>
+            <p className="text-muted-foreground">
+              Manage {orgName ? `${orgName}'s` : "organization"} members and invitations
+            </p>
           </div>
           {canInvite ? (
             <Dialog open={inviteDialogOpen} onOpenChange={setInviteDialogOpen}>

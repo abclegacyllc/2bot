@@ -172,9 +172,13 @@ async function handleCheckoutComplete(session: Stripe.Checkout.Session): Promise
     return;
   }
 
+  if (!stripe) {
+    webhookLogger.warn('Stripe client not available in handleCheckoutComplete');
+    return;
+  }
+
   // Get subscription details from Stripe
-  // Note: stripe is guaranteed to be non-null here since webhook handler guards it
-  const stripeSubscription = await stripe!.subscriptions.retrieve(
+  const stripeSubscription = await stripe.subscriptions.retrieve(
     session.subscription as string
   );
 

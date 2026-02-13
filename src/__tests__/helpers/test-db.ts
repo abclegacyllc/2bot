@@ -209,7 +209,7 @@ export async function cleanupTestOrgs(orgIds: string[]): Promise<void> {
  * Get available plugins (for testing installation limits)
  */
 export async function getAvailablePlugins(limit = 100) {
-  let plugins = await prisma.plugin.findMany({
+  const plugins = await prisma.plugin.findMany({
     where: { isActive: true },
     take: limit,
   });

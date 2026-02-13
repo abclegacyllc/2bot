@@ -14,6 +14,9 @@ CREATE TYPE "OrgRole" AS ENUM ('ORG_OWNER', 'ORG_ADMIN', 'DEPT_MANAGER', 'ORG_ME
 CREATE TYPE "MembershipStatus" AS ENUM ('INVITED', 'ACTIVE', 'SUSPENDED');
 
 -- CreateEnum
+CREATE TYPE "InviteStatus" AS ENUM ('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED');
+
+-- CreateEnum
 CREATE TYPE "DatabaseType" AS ENUM ('SHARED', 'DEDICATED');
 
 -- CreateEnum
@@ -26,7 +29,10 @@ CREATE TYPE "GatewayStatus" AS ENUM ('CONNECTED', 'DISCONNECTED', 'ERROR');
 CREATE TYPE "ExecutionMode" AS ENUM ('SERVERLESS', 'WORKSPACE');
 
 -- CreateEnum
-CREATE TYPE "OrgPlan" AS ENUM ('ORG_STARTER', 'ORG_GROWTH', 'ORG_PRO', 'ORG_BUSINESS', 'ORG_ENTERPRISE');
+CREATE TYPE "OrgPlan" AS ENUM ('ORG_FREE', 'ORG_STARTER', 'ORG_GROWTH', 'ORG_PRO', 'ORG_BUSINESS', 'ORG_ENTERPRISE');
+
+-- CreateEnum
+CREATE TYPE "AllocationMode" AS ENUM ('UNLIMITED', 'SOFT_CAP', 'HARD_CAP', 'RESERVED');
 
 -- CreateEnum
 CREATE TYPE "DepartmentRole" AS ENUM ('MANAGER', 'MEMBER');
@@ -104,7 +110,7 @@ CREATE TABLE "subscriptions" (
     "stripe_subscription_id" TEXT,
     "stripe_price_id" TEXT,
     "stripe_status" TEXT,
-    "plan" "PlanType" NOT NULL DEFAULT 'FREE',
+    "plan" TEXT NOT NULL DEFAULT 'FREE',
     "current_period_start" TIMESTAMP(3),
     "current_period_end" TIMESTAMP(3),
     "cancel_at_period_end" BOOLEAN NOT NULL DEFAULT false,
@@ -119,7 +125,7 @@ CREATE TABLE "organizations" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
-    "org_plan" "OrgPlan" NOT NULL DEFAULT 'ORG_STARTER',
+    "org_plan" "OrgPlan" NOT NULL DEFAULT 'ORG_FREE',
     "stripe_customer_id" TEXT,
     "max_seats" INTEGER NOT NULL DEFAULT 5,
     "used_seats" INTEGER NOT NULL DEFAULT 0,
@@ -153,15 +159,30 @@ CREATE TABLE "memberships" (
 );
 
 -- CreateTable
+CREATE TABLE "org_invites" (
+    "id" TEXT NOT NULL,
+    "organization_id" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "role" "OrgRole" NOT NULL DEFAULT 'ORG_MEMBER',
+    "token" TEXT NOT NULL,
+    "invited_by" TEXT NOT NULL,
+    "expires_at" TIMESTAMP(3) NOT NULL,
+    "resend_count" INTEGER NOT NULL DEFAULT 0,
+    "last_resent_at" TIMESTAMP(3),
+    "status" "InviteStatus" NOT NULL DEFAULT 'PENDING',
+    "used_at" TIMESTAMP(3),
+    "declined_at" TIMESTAMP(3),
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "org_invites_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "departments" (
     "id" TEXT NOT NULL,
     "organization_id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
-    "max_workflows" INTEGER,
-    "max_plugins" INTEGER,
-    "max_api_calls" INTEGER,
-    "max_storage" INTEGER,
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
@@ -176,8 +197,6 @@ CREATE TABLE "department_members" (
     "department_id" TEXT NOT NULL,
     "membership_id" TEXT NOT NULL,
     "role" "DepartmentRole" NOT NULL DEFAULT 'MEMBER',
-    "max_workflows" INTEGER,
-    "max_plugins" INTEGER,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
@@ -185,25 +204,45 @@ CREATE TABLE "department_members" (
 );
 
 -- CreateTable
-CREATE TABLE "resource_quotas" (
+CREATE TABLE "dept_allocations" (
     "id" TEXT NOT NULL,
-    "organization_id" TEXT,
-    "department_id" TEXT,
-    "user_id" TEXT,
+    "department_id" TEXT NOT NULL,
+    "max_gateways" INTEGER,
     "max_workflows" INTEGER,
     "max_plugins" INTEGER,
-    "max_api_calls" INTEGER,
-    "max_storage" INTEGER,
-    "max_steps" INTEGER,
-    "used_workflows" INTEGER NOT NULL DEFAULT 0,
-    "used_plugins" INTEGER NOT NULL DEFAULT 0,
-    "used_api_calls" INTEGER NOT NULL DEFAULT 0,
-    "used_storage" INTEGER NOT NULL DEFAULT 0,
-    "api_calls_reset_at" TIMESTAMP(3),
+    "credit_budget" INTEGER,
+    "credit_used" INTEGER NOT NULL DEFAULT 0,
+    "credit_reset_at" TIMESTAMP(3),
+    "max_ram_mb" INTEGER,
+    "max_cpu_cores" DOUBLE PRECISION,
+    "max_storage_mb" INTEGER,
+    "alloc_mode" "AllocationMode" NOT NULL DEFAULT 'SOFT_CAP',
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
+    "set_by_id" TEXT NOT NULL,
 
-    CONSTRAINT "resource_quotas_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "dept_allocations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "member_allocations" (
+    "id" TEXT NOT NULL,
+    "user_id" TEXT NOT NULL,
+    "department_id" TEXT NOT NULL,
+    "max_gateways" INTEGER,
+    "max_workflows" INTEGER,
+    "credit_budget" INTEGER,
+    "credit_used" INTEGER NOT NULL DEFAULT 0,
+    "credit_reset_at" TIMESTAMP(3),
+    "max_ram_mb" INTEGER,
+    "max_cpu_cores" DOUBLE PRECISION,
+    "max_storage_mb" INTEGER,
+    "alloc_mode" "AllocationMode" NOT NULL DEFAULT 'SOFT_CAP',
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+    "set_by_id" TEXT NOT NULL,
+
+    CONSTRAINT "member_allocations_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -214,7 +253,7 @@ CREATE TABLE "usage_history" (
     "user_id" TEXT,
     "period_start" TIMESTAMP(3) NOT NULL,
     "period_type" "PeriodType" NOT NULL DEFAULT 'DAILY',
-    "api_calls" INTEGER NOT NULL DEFAULT 0,
+    "requests" INTEGER NOT NULL DEFAULT 0,
     "workflow_runs" INTEGER NOT NULL DEFAULT 0,
     "plugin_executions" INTEGER NOT NULL DEFAULT 0,
     "storage_used" INTEGER NOT NULL DEFAULT 0,
@@ -302,22 +341,27 @@ CREATE TABLE "audit_logs" (
 );
 
 -- CreateTable
-CREATE TABLE "credit_balances" (
+CREATE TABLE "credit_wallets" (
     "id" TEXT NOT NULL,
-    "user_id" TEXT NOT NULL,
+    "user_id" TEXT,
+    "organization_id" TEXT,
     "balance" INTEGER NOT NULL DEFAULT 0,
     "lifetime" INTEGER NOT NULL DEFAULT 0,
+    "pending_credits" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "monthly_allocation" INTEGER NOT NULL DEFAULT 0,
+    "monthly_used" INTEGER NOT NULL DEFAULT 0,
+    "allocation_reset_at" TIMESTAMP(3),
     "settings" JSONB NOT NULL DEFAULT '{}',
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "credit_balances_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "credit_wallets_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "credit_transactions" (
     "id" TEXT NOT NULL,
-    "credit_balance_id" TEXT NOT NULL,
+    "credit_wallet_id" TEXT,
     "type" TEXT NOT NULL,
     "amount" INTEGER NOT NULL,
     "balance_after" INTEGER NOT NULL,
@@ -444,6 +488,51 @@ CREATE TABLE "workflow_step_runs" (
     CONSTRAINT "workflow_step_runs_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "ai_usage" (
+    "id" TEXT NOT NULL,
+    "user_id" TEXT NOT NULL,
+    "organization_id" TEXT,
+    "department_id" TEXT,
+    "gateway_id" TEXT,
+    "capability" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "input_tokens" INTEGER,
+    "output_tokens" INTEGER,
+    "total_tokens" INTEGER,
+    "image_count" INTEGER,
+    "character_count" INTEGER,
+    "audio_seconds" INTEGER,
+    "credits_used" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "billing_period" TEXT NOT NULL,
+    "request_id" TEXT,
+    "duration_ms" INTEGER,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ai_usage_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "credit_rates" (
+    "id" TEXT NOT NULL,
+    "capability" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "credits_per_input_token" DOUBLE PRECISION,
+    "credits_per_output_token" DOUBLE PRECISION,
+    "credits_per_image" DOUBLE PRECISION,
+    "credits_per_char" DOUBLE PRECISION,
+    "credits_per_minute" DOUBLE PRECISION,
+    "your_cost_per_1k_input" DECIMAL(10,6),
+    "your_cost_per_1k_output" DECIMAL(10,6),
+    "your_cost_per_unit" DECIMAL(10,6),
+    "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "credit_rates_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
@@ -529,6 +618,21 @@ CREATE INDEX "memberships_status_idx" ON "memberships"("status");
 CREATE UNIQUE INDEX "memberships_user_id_organization_id_key" ON "memberships"("user_id", "organization_id");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "org_invites_token_key" ON "org_invites"("token");
+
+-- CreateIndex
+CREATE INDEX "org_invites_email_idx" ON "org_invites"("email");
+
+-- CreateIndex
+CREATE INDEX "org_invites_token_idx" ON "org_invites"("token");
+
+-- CreateIndex
+CREATE INDEX "org_invites_expires_at_idx" ON "org_invites"("expires_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "org_invites_organization_id_email_key" ON "org_invites"("organization_id", "email");
+
+-- CreateIndex
 CREATE INDEX "departments_organization_id_idx" ON "departments"("organization_id");
 
 -- CreateIndex
@@ -547,22 +651,13 @@ CREATE INDEX "department_members_department_id_idx" ON "department_members"("dep
 CREATE UNIQUE INDEX "department_members_user_id_department_id_key" ON "department_members"("user_id", "department_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "resource_quotas_organization_id_key" ON "resource_quotas"("organization_id");
+CREATE UNIQUE INDEX "dept_allocations_department_id_key" ON "dept_allocations"("department_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "resource_quotas_department_id_key" ON "resource_quotas"("department_id");
+CREATE INDEX "member_allocations_department_id_idx" ON "member_allocations"("department_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "resource_quotas_user_id_key" ON "resource_quotas"("user_id");
-
--- CreateIndex
-CREATE INDEX "resource_quotas_organization_id_idx" ON "resource_quotas"("organization_id");
-
--- CreateIndex
-CREATE INDEX "resource_quotas_department_id_idx" ON "resource_quotas"("department_id");
-
--- CreateIndex
-CREATE INDEX "resource_quotas_user_id_idx" ON "resource_quotas"("user_id");
+CREATE UNIQUE INDEX "member_allocations_user_id_department_id_key" ON "member_allocations"("user_id", "department_id");
 
 -- CreateIndex
 CREATE INDEX "usage_history_period_start_idx" ON "usage_history"("period_start");
@@ -631,10 +726,13 @@ CREATE INDEX "audit_logs_resource_resource_id_idx" ON "audit_logs"("resource", "
 CREATE INDEX "audit_logs_created_at_idx" ON "audit_logs"("created_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "credit_balances_user_id_key" ON "credit_balances"("user_id");
+CREATE UNIQUE INDEX "credit_wallets_user_id_key" ON "credit_wallets"("user_id");
 
 -- CreateIndex
-CREATE INDEX "credit_transactions_credit_balance_id_idx" ON "credit_transactions"("credit_balance_id");
+CREATE UNIQUE INDEX "credit_wallets_organization_id_key" ON "credit_wallets"("organization_id");
+
+-- CreateIndex
+CREATE INDEX "credit_transactions_credit_wallet_id_idx" ON "credit_transactions"("credit_wallet_id");
 
 -- CreateIndex
 CREATE INDEX "credit_transactions_type_idx" ON "credit_transactions"("type");
@@ -714,6 +812,30 @@ CREATE INDEX "workflow_step_runs_run_id_idx" ON "workflow_step_runs"("run_id");
 -- CreateIndex
 CREATE UNIQUE INDEX "workflow_step_runs_run_id_step_order_key" ON "workflow_step_runs"("run_id", "step_order");
 
+-- CreateIndex
+CREATE INDEX "ai_usage_user_id_billing_period_idx" ON "ai_usage"("user_id", "billing_period");
+
+-- CreateIndex
+CREATE INDEX "ai_usage_organization_id_billing_period_idx" ON "ai_usage"("organization_id", "billing_period");
+
+-- CreateIndex
+CREATE INDEX "ai_usage_department_id_billing_period_idx" ON "ai_usage"("department_id", "billing_period");
+
+-- CreateIndex
+CREATE INDEX "ai_usage_gateway_id_created_at_idx" ON "ai_usage"("gateway_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "ai_usage_source_billing_period_idx" ON "ai_usage"("source", "billing_period");
+
+-- CreateIndex
+CREATE INDEX "ai_usage_capability_created_at_idx" ON "ai_usage"("capability", "created_at");
+
+-- CreateIndex
+CREATE INDEX "credit_rates_is_active_idx" ON "credit_rates"("is_active");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "credit_rates_capability_model_key" ON "credit_rates"("capability", "model");
+
 -- AddForeignKey
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -736,6 +858,12 @@ ALTER TABLE "memberships" ADD CONSTRAINT "memberships_organization_id_fkey" FORE
 ALTER TABLE "memberships" ADD CONSTRAINT "memberships_invited_by_fkey" FOREIGN KEY ("invited_by") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "org_invites" ADD CONSTRAINT "org_invites_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "org_invites" ADD CONSTRAINT "org_invites_invited_by_fkey" FOREIGN KEY ("invited_by") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "departments" ADD CONSTRAINT "departments_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -748,13 +876,19 @@ ALTER TABLE "department_members" ADD CONSTRAINT "department_members_department_i
 ALTER TABLE "department_members" ADD CONSTRAINT "department_members_membership_id_fkey" FOREIGN KEY ("membership_id") REFERENCES "memberships"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "resource_quotas" ADD CONSTRAINT "resource_quotas_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "dept_allocations" ADD CONSTRAINT "dept_allocations_department_id_fkey" FOREIGN KEY ("department_id") REFERENCES "departments"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "resource_quotas" ADD CONSTRAINT "resource_quotas_department_id_fkey" FOREIGN KEY ("department_id") REFERENCES "departments"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "dept_allocations" ADD CONSTRAINT "dept_allocations_set_by_id_fkey" FOREIGN KEY ("set_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "resource_quotas" ADD CONSTRAINT "resource_quotas_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "member_allocations" ADD CONSTRAINT "member_allocations_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "member_allocations" ADD CONSTRAINT "member_allocations_department_id_fkey" FOREIGN KEY ("department_id") REFERENCES "departments"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "member_allocations" ADD CONSTRAINT "member_allocations_set_by_id_fkey" FOREIGN KEY ("set_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "usage_history" ADD CONSTRAINT "usage_history_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -778,10 +912,13 @@ ALTER TABLE "gateways" ADD CONSTRAINT "gateways_user_id_fkey" FOREIGN KEY ("user
 ALTER TABLE "gateways" ADD CONSTRAINT "gateways_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "credit_balances" ADD CONSTRAINT "credit_balances_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "credit_wallets" ADD CONSTRAINT "credit_wallets_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "credit_transactions" ADD CONSTRAINT "credit_transactions_credit_balance_id_fkey" FOREIGN KEY ("credit_balance_id") REFERENCES "credit_balances"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "credit_wallets" ADD CONSTRAINT "credit_wallets_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "credit_transactions" ADD CONSTRAINT "credit_transactions_credit_wallet_id_fkey" FOREIGN KEY ("credit_wallet_id") REFERENCES "credit_wallets"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "user_plugins" ADD CONSTRAINT "user_plugins_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -819,3 +956,8 @@ ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_workflow_id_fkey" FORE
 -- AddForeignKey
 ALTER TABLE "workflow_step_runs" ADD CONSTRAINT "workflow_step_runs_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+-- AddForeignKey
+ALTER TABLE "ai_usage" ADD CONSTRAINT "ai_usage_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ai_usage" ADD CONSTRAINT "ai_usage_gateway_id_fkey" FOREIGN KEY ("gateway_id") REFERENCES "gateways"("id") ON DELETE CASCADE ON UPDATE CASCADE;

@@ -15,14 +15,15 @@ import { useEffect, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { GatewayStatusIndicator } from "@/components/gateways/gateway-status";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,12 +33,6 @@ import type { SafeGateway } from "@/modules/gateway/gateway.types";
 import { apiUrl } from "@/shared/config/urls";
 
 // Icons
-const ArrowLeftIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-  </svg>
-);
-
 const TrashIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -388,31 +383,17 @@ function OrgGatewayDetailContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-2xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-start gap-4">
-          <Link
-            href={backUrl}
-            className="mt-1 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeftIcon />
-          </Link>
-          <div className="flex items-center gap-4 flex-grow">
-            <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center text-muted-foreground">
-              {getGatewayIcon(gateway.type)}
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">{gateway.name}</h1>
-              <p className="text-muted-foreground">{getGatewayTypeName(gateway.type)}</p>
-            </div>
-          </div>
-        </div>
+        <PageHeader
+          title={gateway.name}
+          description={getGatewayTypeName(gateway.type)}
+          icon={<div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center text-muted-foreground">{getGatewayIcon(gateway.type)}</div>}
+          breadcrumbs={[{ label: "Gateways", href: backUrl }]}
+        />
 
         {/* Organization context */}
-        {orgName && (
-          <div className="text-sm text-muted-foreground">
+        {orgName ? <div className="text-sm text-muted-foreground">
             Organization: <span className="text-foreground">{orgName}</span>
-          </div>
-        )}
+          </div> : null}
 
         {/* Status Card */}
         <Card className="border-border bg-card/50">
@@ -440,8 +421,7 @@ function OrgGatewayDetailContent() {
                 </span>
               </Button>
 
-              {testResult && (
-                <div
+              {testResult ? <div
                   className={`mt-3 p-3 rounded-md ${
                     testResult.success
                       ? "bg-green-950/20 border border-green-900/30"
@@ -455,8 +435,7 @@ function OrgGatewayDetailContent() {
                   >
                     {testResult.message}
                   </p>
-                </div>
-              )}
+                </div> : null}
             </div>
           </CardContent>
         </Card>
@@ -483,37 +462,25 @@ function OrgGatewayDetailContent() {
             </div>
 
             {/* Credential info (masked) */}
-            {gateway.credentialInfo && (
-              <div className="space-y-2">
+            {gateway.credentialInfo ? <div className="space-y-2">
                 <Label className="text-foreground">Credentials</Label>
                 <div className="bg-card border border-border rounded-md p-3 text-sm text-muted-foreground">
-                  {gateway.type === "TELEGRAM_BOT" && gateway.credentialInfo.hasBotToken && (
-                    <p>Bot Token: ••••••••••••••••</p>
-                  )}
-                  {gateway.type === "AI" && gateway.credentialInfo.provider && (
-                    <p>Provider: {gateway.credentialInfo.provider}</p>
-                  )}
-                  {gateway.type === "AI" && gateway.credentialInfo.hasApiKey && (
-                    <p>API Key: ••••••••••••••••</p>
-                  )}
+                  {gateway.type === "TELEGRAM_BOT" && gateway.credentialInfo.hasBotToken ? <p>Bot Token: ••••••••••••••••</p> : null}
+                  {gateway.type === "AI" && gateway.credentialInfo.provider ? <p>Provider: {gateway.credentialInfo.provider}</p> : null}
+                  {gateway.type === "AI" && gateway.credentialInfo.hasApiKey ? <p>API Key: ••••••••••••••••</p> : null}
                   <p className="text-xs text-muted-foreground mt-1">
                     Credentials are encrypted and cannot be displayed
                   </p>
                 </div>
-              </div>
-            )}
+              </div> : null}
 
-            {saveError && (
-              <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
+            {saveError ? <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
                 <p className="text-sm text-red-400">{saveError}</p>
-              </div>
-            )}
+              </div> : null}
 
-            {saveSuccess && (
-              <div className="bg-green-950/20 border border-green-900/30 rounded-md p-3">
+            {saveSuccess ? <div className="bg-green-950/20 border border-green-900/30 rounded-md p-3">
                 <p className="text-sm text-green-400">Changes saved successfully!</p>
-              </div>
-            )}
+              </div> : null}
 
             {canUpdateGateway ? (
               <Button
@@ -533,8 +500,7 @@ function OrgGatewayDetailContent() {
         </Card>
 
         {/* Danger Zone - Only show if user can delete */}
-        {canDeleteGateway && (
-        <Card className="border-red-900/30 bg-red-950/10">
+        {canDeleteGateway ? <Card className="border-red-900/30 bg-red-950/10">
           <CardHeader>
             <CardTitle className="text-red-400 text-lg">Danger Zone</CardTitle>
             <CardDescription className="text-muted-foreground">
@@ -559,29 +525,16 @@ function OrgGatewayDetailContent() {
               </Button>
             </div>
           </CardContent>
-        </Card>
-        )}
-
-        {/* Back link */}
-        <div className="pt-4">
-          <Link
-            href={backUrl}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            ← Back to Organization
-          </Link>
-        </div>
+        </Card> : null}
       </div>
 
       {/* Delete confirmation dialog */}
-      {showDeleteDialog && (
-        <DeleteConfirmDialog
+      {showDeleteDialog ? <DeleteConfirmDialog
           gatewayName={gateway.name}
           onConfirm={handleDelete}
           onCancel={() => setShowDeleteDialog(false)}
           loading={deleting}
-        />
-      )}
+        /> : null}
     </div>
   );
 }

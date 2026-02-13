@@ -13,45 +13,44 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardFooter,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
 import { getPlanDisplayName, INCLUDED_WORKSPACE_TIER, PLAN_LIMITS, type PlanType } from "@/shared/constants/plans";
 import {
-    ALL_ADDON_TIERS,
-    calculateTotalWorkspace,
-    canPurchaseAddon,
-    getMinRequiredPlanForAddon,
-    WORKSPACE_ADDONS,
-    WORKSPACE_PRICING,
-    WORKSPACE_SPECS,
-    type WorkspaceAddonTier
+  ALL_ADDON_TIERS,
+  calculateTotalWorkspace,
+  canPurchaseAddon,
+  getMinRequiredPlanForAddon,
+  WORKSPACE_ADDONS,
+  WORKSPACE_PRICING,
+  WORKSPACE_SPECS,
+  type WorkspaceAddonTier
 } from "@/shared/constants/workspace-addons";
 import {
-    AlertCircle,
-    ArrowLeft,
-    Check,
-    Cpu,
-    HardDrive,
-    Info,
-    Loader2,
-    Lock,
-    MemoryStick,
-    Plus,
-    Server
+  AlertCircle,
+  Check,
+  Cpu,
+  HardDrive,
+  Info,
+  Loader2,
+  Lock,
+  MemoryStick,
+  Plus,
+  Server
 } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 
 /**
@@ -92,20 +91,16 @@ function WorkspaceTierCard({
         isLocked && "opacity-60"
       )}
     >
-      {isOwned && (
-        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+      {isOwned ? <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
           <Badge className="bg-green-600 text-white">Owned</Badge>
-        </div>
-      )}
+        </div> : null}
 
-      {isLocked && minRequiredPlan && (
-        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+      {isLocked && minRequiredPlan ? <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
           <Badge variant="outline" className="border-muted-foreground text-muted-foreground">
             <Lock className="h-3 w-3 mr-1" />
             Requires {PLAN_LIMITS[minRequiredPlan].displayName}+
           </Badge>
-        </div>
-      )}
+        </div> : null}
 
       <CardHeader className="text-center pt-8">
         <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-purple-600/20 flex items-center justify-center">
@@ -251,12 +246,10 @@ function WorkspaceSummary({
               </span>
             </div>
             <div className="text-xs text-muted-foreground">
-              {hasIncludedWorkspace && includedTier !== 'CUSTOM' && (
-                <span>{WORKSPACE_SPECS[includedTier].ramMb / 1024}GB from plan</span>
-              )}
+              {hasIncludedWorkspace && includedTier !== 'CUSTOM' ? <span>{WORKSPACE_SPECS[includedTier].ramMb / 1024}GB from plan</span> : null}
               {ownedAddons.length > 0 && (
                 <span>
-                  {hasIncludedWorkspace && " + "}
+                  {hasIncludedWorkspace ? " + " : null}
                   {ownedAddons.reduce((sum, t) => sum + WORKSPACE_SPECS[t].ramMb, 0) / 1024}GB from add-ons
                 </span>
               )}
@@ -275,12 +268,10 @@ function WorkspaceSummary({
               </span>
             </div>
             <div className="text-xs text-muted-foreground">
-              {hasIncludedWorkspace && includedTier !== 'CUSTOM' && (
-                <span>{WORKSPACE_SPECS[includedTier].cpuCores} from plan</span>
-              )}
+              {hasIncludedWorkspace && includedTier !== 'CUSTOM' ? <span>{WORKSPACE_SPECS[includedTier].cpuCores} from plan</span> : null}
               {ownedAddons.length > 0 && (
                 <span>
-                  {hasIncludedWorkspace && " + "}
+                  {hasIncludedWorkspace ? " + " : null}
                   {ownedAddons.reduce((sum, t) => sum + WORKSPACE_SPECS[t].cpuCores, 0)} from add-ons
                 </span>
               )}
@@ -301,12 +292,10 @@ function WorkspaceSummary({
               </span>
             </div>
             <div className="text-xs text-muted-foreground">
-              {hasIncludedWorkspace && includedTier !== 'CUSTOM' && (
-                <span>{WORKSPACE_SPECS[includedTier].storageMb / 1024}GB from plan</span>
-              )}
+              {hasIncludedWorkspace && includedTier !== 'CUSTOM' ? <span>{WORKSPACE_SPECS[includedTier].storageMb / 1024}GB from plan</span> : null}
               {ownedAddons.length > 0 && (
                 <span>
-                  {hasIncludedWorkspace && " + "}
+                  {hasIncludedWorkspace ? " + " : null}
                   {ownedAddons.reduce((sum, t) => sum + WORKSPACE_SPECS[t].storageMb, 0) / 1024}GB from add-ons
                 </span>
               )}
@@ -329,7 +318,6 @@ function WorkspaceContent() {
 
   // Get current plan (default to FREE)
   const currentPlan = (user?.plan as PlanType) || "FREE";
-  const planLimits = PLAN_LIMITS[currentPlan];
 
   // TODO: Fetch owned add-ons from user data / subscription
   // For now, use empty array - this should come from user.workspaceAddons
@@ -384,36 +372,19 @@ function WorkspaceContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-6xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
-              <Server className="h-8 w-8 text-purple-400" />
-              Workspace Add-ons
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Expand your compute resources or unlock unlimited executions
-            </p>
-          </div>
-          <Link href="/billing">
-            <Button
-              variant="outline"
-              className="border-border text-foreground hover:bg-muted"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Billing
-            </Button>
-          </Link>
-        </div>
+        <PageHeader
+          title="Workspace Add-ons"
+          description="Expand your compute resources or unlock unlimited executions"
+          icon={<Server className="h-8 w-8 text-purple-400" />}
+          breadcrumbs={[{ label: "Billing", href: "/billing" }]}
+        />
 
         {/* Error Alert */}
-        {error && (
-          <Alert variant="destructive">
+        {error ? <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+          </Alert> : null}
 
         {/* Current Plan Info */}
         <Alert className="border-border bg-muted/30">

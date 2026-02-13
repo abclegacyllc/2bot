@@ -13,3 +13,8 @@ export {
     anthropicTextGeneration,
     anthropicTextGenerationStream
 } from "./anthropic.adapter";
+
+export {
+    togetherImageGeneration, togetherTextGeneration,
+    togetherTextGenerationStream
+} from "./together.adapter";

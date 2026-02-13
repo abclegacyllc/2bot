@@ -132,6 +132,7 @@ export async function setupIntegrationTest() {
   }
 
   if (process.env.TEST_DATABASE_URL.includes('production') || 
+      process.env.TEST_DATABASE_URL.includes('2bot_production') ||
       process.env.TEST_DATABASE_URL.includes('2bot_dev')) {
     throw new Error('TEST_DATABASE_URL points to non-test database! This is dangerous!');
   }

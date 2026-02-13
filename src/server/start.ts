@@ -8,8 +8,14 @@
 import dotenv from "dotenv";
 import path from "path";
 
-// Load environment variables from .env.local and .env
+// Load environment variables (same priority order as Next.js):
+//   1. .env.local          — secrets (highest priority, gitignored)
+//   2. .env.{NODE_ENV}     — mode-specific URLs (dev vs prod)
+//   3. .env                — shared base defaults (lowest priority)
+// dotenv won't overwrite vars already set, so order = priority.
+const nodeEnv = process.env.NODE_ENV || "development";
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config({ path: path.resolve(process.cwd(), `.env.${nodeEnv}`) });
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 import { loggers } from "@/lib/logger";

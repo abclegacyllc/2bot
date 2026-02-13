@@ -12,7 +12,7 @@ import {
     // Plan Arrays
     ALL_ORG_PLAN_TYPES,
     calculateExtraSeatsPrice,
-    formatOrgPoolResources,
+    formatOrgWorkspaceResources,
     getOrgPlanLimits,
     getOrgRemainingCapacity,
     isAtLeastOrgPlan,
@@ -79,10 +79,10 @@ describe('ORG_PLAN_LIMITS', () => {
   });
 
   it('has increasing AI token budgets per tier', () => {
-    expect(ORG_PLAN_LIMITS.ORG_STARTER.sharedCreditsPerMonth).toBe(5000);
-    expect(ORG_PLAN_LIMITS.ORG_GROWTH.sharedCreditsPerMonth).toBe(20000);
-    expect(ORG_PLAN_LIMITS.ORG_PRO.sharedCreditsPerMonth).toBe(100000);
-    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.sharedCreditsPerMonth).toBe(500000);
+    expect(ORG_PLAN_LIMITS.ORG_STARTER.sharedCreditsPerMonth).toBe(2500);
+    expect(ORG_PLAN_LIMITS.ORG_GROWTH.sharedCreditsPerMonth).toBe(10000);
+    expect(ORG_PLAN_LIMITS.ORG_PRO.sharedCreditsPerMonth).toBe(50000);
+    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.sharedCreditsPerMonth).toBe(100000);
     expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.sharedCreditsPerMonth).toBe(-1); // unlimited
   });
 
@@ -111,22 +111,22 @@ describe('ORG_PLAN_LIMITS', () => {
   });
 
   it('has correct workspace pool resources', () => {
-    expect(ORG_PLAN_LIMITS.ORG_STARTER.pool).toEqual({
+    expect(ORG_PLAN_LIMITS.ORG_STARTER.workspace).toEqual({
       ramMb: 4096,
       cpuCores: 2,
       storageMb: 20480,
     });
     
-    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.pool).toEqual({
+    expect(ORG_PLAN_LIMITS.ORG_BUSINESS.workspace).toEqual({
       ramMb: 32768,
       cpuCores: 16,
       storageMb: 256000,
     });
     
     // Enterprise has custom resources
-    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.pool.ramMb).toBeNull();
-    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.pool.cpuCores).toBeNull();
-    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.pool.storageMb).toBeNull();
+    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.workspace.ramMb).toBeNull();
+    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.workspace.cpuCores).toBeNull();
+    expect(ORG_PLAN_LIMITS.ORG_ENTERPRISE.workspace.storageMb).toBeNull();
   });
 
   it('has correct pricing tiers', () => {
@@ -364,15 +364,15 @@ describe('calculateExtraSeatsPrice', () => {
 // Formatting Functions Tests
 // ===========================================
 
-describe('formatOrgPoolResources', () => {
-  it('formats pool resources in readable format', () => {
-    const starterPool = ORG_PLAN_LIMITS.ORG_STARTER.pool;
-    const formatted = formatOrgPoolResources(starterPool);
+describe('formatOrgWorkspaceResources', () => {
+  it('formats workspace resources in readable format', () => {
+    const starterWorkspace = ORG_PLAN_LIMITS.ORG_STARTER.workspace;
+    const formatted = formatOrgWorkspaceResources(starterWorkspace);
     expect(formatted).toBe('4GB RAM, 2 CPUs, 20GB Storage');
   });
 
   it('formats single CPU correctly', () => {
-    const result = formatOrgPoolResources({
+    const result = formatOrgWorkspaceResources({
       ramMb: 1024,
       cpuCores: 1,
       storageMb: 1024,
@@ -381,7 +381,7 @@ describe('formatOrgPoolResources', () => {
   });
 
   it('formats MB values correctly', () => {
-    const result = formatOrgPoolResources({
+    const result = formatOrgWorkspaceResources({
       ramMb: 512,
       cpuCores: 0.5,
       storageMb: 500,
@@ -390,8 +390,8 @@ describe('formatOrgPoolResources', () => {
   });
 
   it('returns custom message for null values', () => {
-    const enterprisePool = ORG_PLAN_LIMITS.ORG_ENTERPRISE.pool;
-    expect(formatOrgPoolResources(enterprisePool)).toBe('Custom resources');
+    const enterpriseWorkspace = ORG_PLAN_LIMITS.ORG_ENTERPRISE.workspace;
+    expect(formatOrgWorkspaceResources(enterpriseWorkspace)).toBe('Custom resources');
   });
 });
 

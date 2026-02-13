@@ -67,11 +67,9 @@ export function PlanCard({
         className
       )}
     >
-      {plan.popular && (
-        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+      {plan.popular ? <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
           <Badge className="bg-purple-600 text-foreground">Most Popular</Badge>
-        </div>
-      )}
+        </div> : null}
 
       <CardHeader className="text-center pt-8">
         <CardTitle className="text-foreground text-xl">{plan.name}</CardTitle>

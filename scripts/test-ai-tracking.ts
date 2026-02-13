@@ -8,6 +8,7 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 import { prisma } from "@/lib/prisma";
 import { twoBotAIProvider } from "@/modules/2bot-ai-provider/2bot-ai.provider";
+import type { TwoBotAIModel } from "@/modules/2bot-ai-provider/types";
 import { creditWalletService } from "@/modules/credits/wallet.service";
 
 async function main() {
@@ -42,7 +43,7 @@ async function main() {
   try {
     const response = await twoBotAIProvider.textGeneration({
       messages: [{ role: "user", content: `Say 'Testing AI Usage ${Date.now()}' and nothing else.` }],
-      model: modelToTest as any,
+      model: modelToTest as TwoBotAIModel,
       userId: user.id,
       stream: false,
       smartRouting: false, // Force specific model
@@ -54,7 +55,11 @@ async function main() {
 
     // 4. Verify Tracking
     const finalWallet = await creditWalletService.getPersonalWallet(user.id);
-    const finalBalance = finalWallet!.balance;
+    if (!finalWallet) {
+      console.error('❌ Final wallet not found');
+      process.exit(1);
+    }
+    const finalBalance = finalWallet.balance;
     
     const finalUsageCount = await prisma.aIUsage.count({
       where: { userId: user.id },

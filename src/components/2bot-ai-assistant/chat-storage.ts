@@ -1,4 +1,4 @@
-import { ChatMessageData } from "./2bot-ai-chat-message";
+import type { ChatMessageData } from "./2bot-ai-chat-message";
 
 export interface ChatSession {
   id: string;

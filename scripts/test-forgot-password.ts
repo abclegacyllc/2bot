@@ -41,7 +41,11 @@ async function testForgotPassword() {
   // 4. Verify expiry is ~1 hour from now
   console.log('\n4️⃣ Verifying token expires in ~1 hour...');
   const now = new Date();
-  const expiresAt = storedToken!.expiresAt;
+  if (!storedToken) {
+    console.error('❌ Token not found in database');
+    process.exit(1);
+  }
+  const expiresAt = storedToken.expiresAt;
   const diffMs = expiresAt.getTime() - now.getTime();
   const diffMins = Math.round(diffMs / 1000 / 60);
   console.log('✅ Token expires in', diffMins, 'minutes');

@@ -1,4 +1,4 @@
-import { Metadata } from "next";
+import type { Metadata } from "next";
 import { UsageDashboardV2Client } from "./client-v2";
 
 export const metadata: Metadata = {

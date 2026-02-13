@@ -10,6 +10,7 @@
 
 import type { GatewayType } from "@prisma/client";
 
+import { decryptJson } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -297,10 +298,27 @@ async function createPluginContext(
   gateways: Array<{ id: string; name: string; type: string }>,
   executeGateway: GatewayActionExecutor
 ): Promise<PluginContext> {
+  // Decrypt config if needed
+  let config = (userPlugin.config as Record<string, unknown>) ?? {};
+  
+  if (
+    typeof config === "object" &&
+    config !== null &&
+    "_encrypted" in config &&
+    typeof (config as Record<string, unknown>)._encrypted === "string"
+  ) {
+    try {
+      config = decryptJson((config as Record<string, unknown>)._encrypted as string);
+    } catch (error) {
+      logger.error({ error }, "Failed to decrypt plugin config in event context");
+      config = {};
+    }
+  }
+
   return {
     userId: userPlugin.userId,
     organizationId: userPlugin.organizationId ?? undefined,
-    config: (userPlugin.config as Record<string, unknown>) ?? {},
+    config,
     userPluginId: userPlugin.id,
     gateways: createGatewayAccessor(userPlugin.userId, gateways, executeGateway),
     storage: createPluginStorage(userPlugin.id, userPlugin.userId),

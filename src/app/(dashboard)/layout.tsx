@@ -16,10 +16,12 @@ import { ProtectedRoute } from "@/components/auth/protected-route";
 import { CreditsBalanceDisplay } from "@/components/credits";
 import { ContextSwitcher } from "@/components/layouts";
 import { useAuth } from "@/components/providers/auth-provider";
+import { SupportWidget } from "@/components/support";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import {
+    Activity,
     Bot,
     Building2,
     ChevronDown,
@@ -28,13 +30,16 @@ import {
     Coins,
     CreditCard,
     Home,
+    Layers,
     LogOut,
     Menu,
+    Network,
     Plug,
     Settings,
     Shield,
     ShoppingBag,
-    User
+    User,
+    Users
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -67,6 +72,11 @@ const personalNavItems = [
 
 // Organization workspace specific items  
 const buildOrgNavItems = (orgSlug: string) => [
+  // Org team & structure
+  { href: `/organizations/${orgSlug}/members`, label: "Members", icon: Users },
+  { href: `/organizations/${orgSlug}/departments`, label: "Departments", icon: Network },
+  { href: `/organizations/${orgSlug}/resources`, label: "Resources", icon: Layers },
+  { href: `/organizations/${orgSlug}/monitoring`, label: "Monitoring", icon: Activity },
   // Org credits and billing
   { href: `/organizations/${orgSlug}/credits`, label: "Credits", icon: Coins },
   { href: `/organizations/${orgSlug}/billing`, label: "Billing", icon: CreditCard },
@@ -80,7 +90,6 @@ const personalSettingsSubItems = [
 // Settings sub-items for ORGANIZATION context (dynamic - see buildOrgSettingsSubItems)
 const buildOrgSettingsSubItems = (orgSlug: string) => [
   { href: `/organizations/${orgSlug}/settings`, label: "General", icon: Building2 },
-  { href: `/organizations/${orgSlug}/members`, label: "Members", icon: User },
 ];
 
 // Admin-only nav item
@@ -121,7 +130,15 @@ function Sidebar({
     : personalSettingsSubItems;
   
   // Check if any settings item is active
-  const isSettingsActive = pathname.startsWith("/settings");
+  const isSettingsActive = settingsSubItems.some(
+    item => pathname === item.href || pathname.startsWith(item.href + "/")
+  );
+
+  // Find the most specific matching nav item to prevent parent paths from being highlighted
+  // when on a child route (e.g., don't highlight parent org link when on org sub-page)
+  const bestMatchingHref = mainNavItems
+    .filter(navItem => pathname === navItem.href || pathname.startsWith(navItem.href + "/"))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href || "";
 
   return (
     <aside
@@ -155,9 +172,8 @@ function Sidebar({
       <nav className="p-2 space-y-1">
         {/* Main nav items */}
         {mainNavItems.map((item) => {
-          const isActive =
-            pathname === item.href ||
-            (item.href !== "/" && pathname.startsWith(item.href));
+          // Only highlight the most specific match
+          const isActive = item.href === bestMatchingHref;
           const Icon = item.icon;
 
           return (
@@ -202,8 +218,7 @@ function Sidebar({
           </button>
           
           {/* Settings sub-items (slide down) */}
-          {!collapsed && settingsExpanded && (
-            <div className="ml-4 mt-1 space-y-1 border-l border-border pl-3">
+          {!collapsed && settingsExpanded ? <div className="ml-4 mt-1 space-y-1 border-l border-border pl-3">
               {settingsSubItems.map((item) => {
                 const isActive = pathname === item.href || 
                   (item.href !== "/settings" && pathname.startsWith(item.href));
@@ -224,13 +239,11 @@ function Sidebar({
                   </Link>
                 );
               })}
-            </div>
-          )}
+            </div> : null}
         </div>
 
         {/* Admin link - only for admins */}
-        {isAdmin && (
-          <>
+        {isAdmin ? <>
             <div className="border-t border-border my-2" />
             <Link
               href={adminNavItem.href}
@@ -244,8 +257,7 @@ function Sidebar({
               <adminNavItem.icon className="h-5 w-5 flex-shrink-0" />
               {!collapsed && <span>{adminNavItem.label}</span>}
             </Link>
-          </>
-        )}
+          </> : null}
       </nav>
     </aside>
   );
@@ -324,12 +336,10 @@ function DashboardLayoutContent({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-background">
       {/* Mobile Sidebar Overlay */}
-      {mobileMenuOpen && (
-        <div 
+      {mobileMenuOpen ? <div 
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
           onClick={() => setMobileMenuOpen(false)}
-        />
-      )}
+        /> : null}
 
       {/* Mobile Sidebar */}
       <div className={`fixed inset-y-0 left-0 z-50 lg:hidden transition-transform duration-300 ${
@@ -361,6 +371,9 @@ function DashboardLayoutContent({ children }: { children: ReactNode }) {
         {/* Page content */}
         <main className="p-6">{children}</main>
       </div>
+
+      {/* Support Widget */}
+      <SupportWidget position="bottom-left" />
 
       {/* 2Bot AI Assistant Widget */}
       <TwoBotAIAssistantWidget position="bottom-right" />

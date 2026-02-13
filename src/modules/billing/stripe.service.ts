@@ -230,10 +230,10 @@ class StripeService {
           plugins: orgLimits.sharedPlugins,
           workflowRunsPerMonth: orgLimits.workflowRunsPerMonth,
           creditsPerMonth: orgLimits.sharedCreditsPerMonth,
-          workspace: orgLimits.pool.ramMb !== null ? {
-            ramMb: orgLimits.pool.ramMb,
-            cpuCores: orgLimits.pool.cpuCores ?? 0,
-            storageMb: orgLimits.pool.storageMb ?? 0,
+          workspace: orgLimits.workspace.ramMb !== null ? {
+            ramMb: orgLimits.workspace.ramMb,
+            cpuCores: orgLimits.workspace.cpuCores ?? 0,
+            storageMb: orgLimits.workspace.storageMb ?? 0,
           } : null,
         },
       };

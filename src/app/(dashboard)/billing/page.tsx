@@ -11,42 +11,40 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import {
-    isPersonalStatus,
-    ResourcePoolCard,
-    useResourceStatus,
-    type ResourcePoolItem,
+  isPersonalStatus,
+  ResourcePoolCard,
+  useResourceStatus,
+  type ResourcePoolItem,
 } from "@/components/resources";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
 import { apiUrl } from "@/shared/config/urls";
-import { getPlanDisplayName, PLAN_LIMITS, type PlanType } from "@/shared/constants/plans";
+import { getPlanDisplayName, getPlanLimits, type PlanType } from "@/shared/constants/plans";
 import {
-    AlertCircle,
-    ArrowLeft,
-    Bot,
-    Cpu,
-    CreditCard,
-    Database,
-    GitBranch,
-    HardDrive,
-    MemoryStick,
-    Server,
-    Settings,
-    Sparkles,
-    Zap
+  AlertCircle,
+  Cpu,
+  CreditCard,
+  Database,
+  GitBranch,
+  HardDrive,
+  MemoryStick,
+  Server,
+  Settings,
+  Sparkles,
+  Zap
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 
@@ -130,14 +128,15 @@ function BillingSkeleton() {
 }
 
 function BillingContent() {
-  const router = useRouter();
   const { context, isLoading: authLoading, token } = useAuth();
-  const [portalLoading, setPortalLoading] = useState(false);
-  const [portalError, setPortalError] = useState<string | null>(null);
 
   // Get plan limits from centralized constants based on user's current plan
   const currentPlan = context.plan as PlanType;
-  const planLimits = PLAN_LIMITS[currentPlan] || PLAN_LIMITS.FREE;
+  const planLimits = getPlanLimits(currentPlan);
+
+  // Portal state
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalError, setPortalError] = useState<string | null>(null);
 
   // Create fetcher with auth token
   const fetcher = createFetcher(token);
@@ -274,29 +273,13 @@ function BillingContent() {
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-4xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
-              <CreditCard className="h-8 w-8" />
-              Billing
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              {context.type === "organization"
-                ? `Manage billing for ${context.organizationName}`
-                : "Manage your personal subscription"}
-            </p>
-          </div>
-          <Link href="/settings">
-            <Button
-              variant="outline"
-              className="border-border text-foreground hover:bg-muted"
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Settings
-            </Button>
-          </Link>
-        </div>
+        <PageHeader 
+          title="Billing"
+          description={context.type === "organization"
+            ? `Manage billing for ${context.organizationName}`
+            : "Manage your personal subscription"}
+          icon={<CreditCard className="h-8 w-8" />}
+        />
 
         {/* Past Due Alert */}
         {subscription?.status === "past_due" && (
@@ -320,8 +303,7 @@ function BillingContent() {
         )}
 
         {/* Cancellation Alert */}
-        {subscription?.cancelAtPeriodEnd && subscription.currentPeriodEnd && (
-          <Alert className="border-yellow-500/50 bg-yellow-500/10">
+        {subscription?.cancelAtPeriodEnd && subscription.currentPeriodEnd ? <Alert className="border-yellow-500/50 bg-yellow-500/10">
             <AlertCircle className="h-4 w-4 text-yellow-500" />
             <AlertTitle className="text-yellow-500">
               Subscription Ending
@@ -331,8 +313,7 @@ function BillingContent() {
               {formatDate(subscription.currentPeriodEnd)}. You can resume your
               subscription from the billing portal.
             </AlertDescription>
-          </Alert>
-        )}
+          </Alert> : null}
 
         {/* Current Plan */}
         <Card className="border-border bg-card/50">
@@ -360,16 +341,12 @@ function BillingContent() {
                 <p className="text-sm text-muted-foreground">
                   {subscription?.status === "active" &&
                     subscription.currentPeriodEnd &&
-                    !subscription.cancelAtPeriodEnd && (
-                      <>Renews on {formatDate(subscription.currentPeriodEnd)}</>
-                    )}
+                    !subscription.cancelAtPeriodEnd ? <>Renews on {formatDate(subscription.currentPeriodEnd)}</> : null}
                   {(!subscription?.status || subscription?.status === "none") && currentPlan === "FREE" && planLimits.description}
                   {subscription?.cancelAtPeriodEnd &&
-                    subscription.currentPeriodEnd && (
-                      <span className="text-yellow-400">
+                    subscription.currentPeriodEnd ? <span className="text-yellow-400">
                         Access until {formatDate(subscription.currentPeriodEnd)}
-                      </span>
-                    )}
+                      </span> : null}
                 </p>
               </div>
 
@@ -452,21 +429,6 @@ function BillingContent() {
               limit: quota?.workflowRuns?.limit ?? planLimits.workflowRunsPerMonth,
               period: quota?.workflowRuns?.period,
               resetsAt: quota?.workflowRuns?.resetsAt,
-            },
-          ] satisfies ResourcePoolItem[]}
-        />
-
-        {/* Billing Pool */}
-        <ResourcePoolCard
-          title="Billing Pool"
-          description="Your AI credits and spending"
-          icon={Bot}
-          items={[
-            {
-              label: "Credits/Month",
-              icon: Bot,
-              current: quota?.credits?.current ?? 0,
-              limit: quota?.credits?.limit ?? planLimits.creditsPerMonth,
             },
           ] satisfies ResourcePoolItem[]}
         />

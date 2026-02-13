@@ -56,9 +56,9 @@ export interface SafeOrganization {
   plan: OrgPlan;
   maxSeats: number;
   usedSeats: number;
-  poolRamMb: number;
-  poolCpuCores: number;
-  poolStorageMb: number;
+  workspacePoolRamMb: number;
+  workspacePoolCpuCores: number;
+  workspacePoolStorageMb: number;
   memberCount: number;
   isActive: boolean;
   createdAt: Date;
@@ -78,9 +78,9 @@ export function toSafeOrganization(
     plan: org.plan,
     maxSeats: org.maxSeats,
     usedSeats: org.usedSeats,
-    poolRamMb: org.poolRamMb,
-    poolCpuCores: org.poolCpuCores,
-    poolStorageMb: org.poolStorageMb,
+    workspacePoolRamMb: org.workspacePoolRamMb,
+    workspacePoolCpuCores: org.workspacePoolCpuCores,
+    workspacePoolStorageMb: org.workspacePoolStorageMb,
     memberCount: org._count.memberships,
     isActive: org.isActive,
     createdAt: org.createdAt,

@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils"
 function Progress({
   className,
   value,
-  // @ts-ignore - Consume custom prop to prevent DOM leakage
   indicatorClassName,
   ...props
 }: React.ComponentProps<typeof ProgressPrimitive.Root> & { indicatorClassName?: string }) {

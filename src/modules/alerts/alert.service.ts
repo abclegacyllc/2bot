@@ -9,18 +9,19 @@
 
 import { sendEmail } from '@/lib/email';
 import { logger } from '@/lib/logger';
+import { isSafeUrl } from '@/lib/network-security';
 import { prisma } from '@/lib/prisma';
 import { redis } from '@/lib/redis';
 import { resourceService } from '@/modules/resource';
 import type { ServiceContext } from '@/shared/types/context';
 import {
-  AlertSeverity,
-  AlertType,
-  type Alert,
-  type AlertConfig,
-  type AlertConfigInput,
-  type AlertHistoryEntry,
-  type AlertStats,
+    AlertSeverity,
+    AlertType,
+    type Alert,
+    type AlertConfig,
+    type AlertConfigInput,
+    type AlertHistoryEntry,
+    type AlertStats,
 } from './alert.types';
 
 const log = logger.child({ module: 'alerts' });
@@ -374,6 +375,12 @@ _Organization: ${orgName}_
    */
   private async sendWebhookAlert(webhookUrl: string, organizationId: string, alert: Alert): Promise<void> {
     try {
+      // Prevent SSRF by checking URL validity
+      if (!isSafeUrl(webhookUrl)) {
+        logger.warn({ webhookUrl, organizationId }, "Blocked unsafe webhook URL");
+        return;
+      }
+
       await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

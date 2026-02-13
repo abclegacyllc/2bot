@@ -170,3 +170,30 @@ export type {
     ToolUseContentBlock, VideoContentBlock
 } from "./multimodal-chat.types";
 
+// ===========================================
+// 2Bot AI Model Catalog (Abstraction Layer)
+// ===========================================
+
+// Model Catalog - 2Bot AI branded models
+export {
+    ModelResolutionError, TWOBOT_AI_MODELS,
+    TWOBOT_AI_MODEL_MAPPINGS,
+    // Constants
+    TWOBOT_AI_MODEL_TIERS,
+    // Model Resolver
+    TwoBotAIModelResolver, VALID_TWOBOT_AI_MODEL_IDS, canResolveTwoBotAIModel,
+    // Model getters
+    getAvailableTwoBotAIModels, getDefaultStrategy, getEnabledProviderOptions,
+    getPrimaryProviderOption, getResolvableTwoBotAIModels, getTwoBotAIModel,
+    // Mapping getters
+    getTwoBotAIModelMapping, getTwoBotAIModelsByCapability,
+    getTwoBotAIModelsByTier, hasMultipleProviders,
+    // Type guards
+    isTwoBotAIModelId, resetRoundRobinState, resolveTwoBotAIModel,
+    resolveTwoBotAIModelWithOptions, twoBotAIModelExists, twoBotAIModelResolver, type ModelResolutionErrorReason, type ModelResolutionRequest,
+    type ModelResolutionResult, type ModelSelectionConfig, type ModelSelectionStrategy, type ProviderModelOption, type TwoBotAIModelCatalog, type TwoBotAIModel as TwoBotAIModelDefinition, type TwoBotAIModelFeatures,
+    // Types
+    type TwoBotAIModelId, type TwoBotAIModelInfo, type TwoBotAIModelMapping, type TwoBotAIModelTier,
+    type TwoBotAIModelTierInfo
+} from "./model-catalog";
+

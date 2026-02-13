@@ -10,8 +10,8 @@
  */
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
+import { PageHeader } from "@/components/navigation";
 import { UsageCharts, type UsageDataPoint } from "@/components/organization";
-import { useAuth } from "@/components/providers/auth-provider";
 import {
     isOrgStatus,
     useResourceStatus,
@@ -24,7 +24,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
-import { useOrganization, useOrgUrls } from "@/hooks/use-organization";
+import { useOrganization } from "@/hooks/use-organization";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -49,9 +49,7 @@ type PeriodType = "HOURLY" | "DAILY" | "WEEKLY" | "MONTHLY";
 // ===========================================
 
 function MonitoringContent() {
-  const { context, token } = useAuth();
-  const { orgId, orgName, isFound, isLoading: orgLoading } = useOrganization();
-  const { buildOrgUrl } = useOrgUrls();
+  const { orgId, isFound, isLoading: orgLoading } = useOrganization();
   const [period, setPeriod] = useState<PeriodType>("DAILY");
   const [realTimeUsage, setRealTimeUsage] = useState<RealTimeUsage | null>(null);
   const [historyData, setHistoryData] = useState<UsageDataPoint[]>([]);
@@ -59,7 +57,7 @@ function MonitoringContent() {
   const [error, setError] = useState<string | null>(null);
 
   // Use new resource status hook for quota data
-  const { status: resourceStatus, isLoading: resourceLoading } = useResourceStatus({ 
+  const { status: resourceStatus } = useResourceStatus({ 
     orgId: orgId || undefined,
     refreshInterval: 30000 // Refresh every 30 seconds
   });
@@ -145,7 +143,7 @@ function MonitoringContent() {
           <CardContent className="p-6 text-center">
             <p className="text-lg font-medium text-foreground">Organization not found</p>
             <p className="text-muted-foreground mt-2">
-              The organization you're looking for doesn't exist or you don't have access.
+              The organization you&apos;re looking for doesn&apos;t exist or you don&apos;t have access.
             </p>
             <Link href="/">
               <Button variant="outline" className="mt-4">
@@ -163,12 +161,10 @@ function MonitoringContent() {
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">Monitoring Dashboard</h1>
-            <p className="text-muted-foreground mt-1">
-              Real-time usage metrics and historical data
-            </p>
-          </div>
+          <PageHeader
+            title="Monitoring Dashboard"
+            description="Real-time usage metrics and historical data"
+          />
           <div className="flex items-center gap-4">
             {/* Period Selector */}
             <div className="flex gap-2">
