@@ -4,7 +4,7 @@
 # Multi-stage build for optimized production image
 
 # Stage 1: Dependencies
-FROM node:20-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 
 # Install dependencies needed for native modules
@@ -21,7 +21,7 @@ COPY prisma ./prisma/
 RUN npx prisma generate
 
 # Stage 2: Builder
-FROM node:20-alpine AS builder
+FROM node:25-alpine AS builder
 WORKDIR /app
 
 # Copy dependencies from deps stage
@@ -36,7 +36,7 @@ ENV NODE_ENV=production
 RUN npm run build
 
 # Stage 3: Production Runner
-FROM node:20-alpine AS runner
+FROM node:25-alpine AS runner
 WORKDIR /app
 
 # Set production environment
