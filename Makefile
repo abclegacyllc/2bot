@@ -16,6 +16,7 @@
         test test-watch test-coverage lint lint-fix format check typecheck \
         build build-frontend build-backend clean \
         prod-build prod-up prod-down prod-logs prod-restart prod-status \
+        workspace-image proxy-image \
         deploy backup ssl-setup \
         install update health status shell-db shell-redis help \
         check-ports check-docker check-deps
@@ -39,36 +40,20 @@ DC := docker-compose -p 2bot
 
 check-ports:                ## Check if required ports are available
 	@echo "$(CYAN)Checking port availability...$(RESET)"
-	@if lsof -Pi :3001 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Port 3001 is in use (Dashboard prod)$(RESET)"; \
-		lsof -Pi :3001 -sTCP:LISTEN | head -3; \
-	else \
-		echo "$(GREEN)✅ Port 3001 is available$(RESET)"; \
-	fi
-	@if lsof -Pi :3002 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Port 3002 is in use (Express API prod)$(RESET)"; \
-		lsof -Pi :3002 -sTCP:LISTEN | head -3; \
-	else \
-		echo "$(GREEN)✅ Port 3002 is available$(RESET)"; \
-	fi
-	@if lsof -Pi :3005 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Port 3005 is in use (Dashboard dev)$(RESET)"; \
-		lsof -Pi :3005 -sTCP:LISTEN | head -3; \
-	else \
-		echo "$(GREEN)✅ Port 3005 is available$(RESET)"; \
-	fi
-	@if lsof -Pi :3006 -sTCP:LISTEN -t >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Port 3006 is in use (Express API dev)$(RESET)"; \
-		lsof -Pi :3006 -sTCP:LISTEN | head -3; \
-	else \
-		echo "$(GREEN)✅ Port 3006 is available$(RESET)"; \
-	fi
-	@if lsof -Pi :5432 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+	@for port_desc in "3000:Landing prod" "3001:Dashboard prod" "3002:Express API prod" "3005:Dashboard dev" "3006:Express API dev" "3007:Admin dev"; do \
+		port=$${port_desc%%:*}; desc=$${port_desc#*:}; \
+		if fuser $${port}/tcp >/dev/null 2>&1 || sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+			echo "$(YELLOW)⚠️  Port $$port is in use ($$desc)$(RESET)"; \
+		else \
+			echo "$(GREEN)✅ Port $$port is available ($$desc)$(RESET)"; \
+		fi; \
+	done
+	@if fuser 5432/tcp >/dev/null 2>&1; then \
 		echo "$(GREEN)✅ Port 5432 is in use (Postgres running)$(RESET)"; \
 	else \
 		echo "$(YELLOW)⚠️  Port 5432 is free (Postgres not running)$(RESET)"; \
 	fi
-	@if lsof -Pi :6379 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+	@if fuser 6379/tcp >/dev/null 2>&1; then \
 		echo "$(GREEN)✅ Port 6379 is in use (Redis running)$(RESET)"; \
 	else \
 		echo "$(YELLOW)⚠️  Port 6379 is free (Redis not running)$(RESET)"; \
@@ -121,17 +106,29 @@ status:                     ## Show status of all services
 # PRODUCTION (local process - no Docker)
 # ===========================================
 
-start: check-deps           ## Build and start production servers (no HMR, no auto-refresh)
+start: check-deps check-docker  ## Build and start production servers (no HMR, no auto-refresh)
 	@echo "$(CYAN)Starting 2Bot in production mode...$(RESET)"
-	@# Check if already running
-	@if ss -tlnp 2>/dev/null | grep -q ":3000 " && ss -tlnp 2>/dev/null | grep -q ":3001 " && ss -tlnp 2>/dev/null | grep -q ":3002 "; then \
-		echo "$(YELLOW)⚠️  Production servers are already running!$(RESET)"; \
-		echo "   Landing:   http://localhost:3000  (www.2bot.org)"; \
-		echo "   Dashboard: http://localhost:3001  (dash.2bot.org)"; \
-		echo "   API:       http://localhost:3002  (api.2bot.org)"; \
-		echo "Run 'make stop' first, then 'make start' again."; \
-		exit 0; \
-	fi
+	@# Kill any stale processes on production ports (regular + root-owned)
+	@for port in 3000 3001 3002; do \
+		pids=$$(fuser $${port}/tcp 2>/dev/null || true); \
+		if [ -n "$$pids" ]; then \
+			echo "$(YELLOW)⚠️  Killing stale process(es) on port $$port: $$pids$(RESET)"; \
+			kill -9 $$pids 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+			echo "$(YELLOW)⚠️  Root-owned process on port $$port — killing with sudo$(RESET)"; \
+			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+	done
+	@# Build workspace + proxy Docker images (ensures SDK changes are baked in)
+	@echo "$(CYAN)Building workspace container image...$(RESET)"
+	@docker build -t 2bot-workspace:latest -f docker/workspace/Dockerfile.workspace docker/workspace
+	@echo "$(GREEN)✅ Workspace image built$(RESET)"
+	@echo "$(CYAN)Building egress proxy image...$(RESET)"
+	@docker build -t 2bot-proxy:latest -f docker/squid-proxy/Dockerfile.proxy docker/squid-proxy
+	@echo "$(GREEN)✅ Proxy image built$(RESET)"
 	@# Start infrastructure
 	@make dev-infra
 	@echo ""
@@ -163,8 +160,8 @@ start: check-deps           ## Build and start production servers (no HMR, no au
 	@# Start backend (production mode, port 3002)
 	@echo "Starting Express API server on port 3002..."
 	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.production 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=production SERVER_PORT=3002 nohup npx tsx src/server/start.ts > /tmp/2bot-logs/backend.log 2>&1 & echo $$! > /tmp/2bot-logs/backend.pid'
-	@# Wait for backend to start (up to 10 seconds)
-	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+	@# Wait for backend to start (up to 20 seconds — includes bridge recovery + provider validation)
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
 		if ss -tlnp 2>/dev/null | grep -q ":3002 "; then \
 			break; \
 		fi; \
@@ -220,15 +217,20 @@ deploy: restart              ## Alias for restart (build + deploy changes to pro
 
 dev: check-deps             ## Start dev environment on dev.2bot.org (ports 3005/3006/3007)
 	@echo "$(CYAN)Starting 2Bot development environment...$(RESET)"
-	@# Check if already running
-	@if ss -tlnp 2>/dev/null | grep -q ":3005 " && ss -tlnp 2>/dev/null | grep -q ":3006 " && ss -tlnp 2>/dev/null | grep -q ":3007 "; then \
-		echo "$(YELLOW)⚠️  Development servers are already running!$(RESET)"; \
-		echo "   Frontend: http://localhost:3005  (dev.2bot.org)"; \
-		echo "   API:      http://localhost:3006  (dev-api.2bot.org)"; \
-		echo "   Admin:    http://localhost:3007  (admin.2bot.org)"; \
-		echo "Run 'make status' to check or 'make stop-dev' to stop them."; \
-		exit 0; \
-	fi
+	@# Kill any stale processes on dev ports (regular + root-owned)
+	@for port in 3005 3006 3007; do \
+		pids=$$(fuser $${port}/tcp 2>/dev/null || true); \
+		if [ -n "$$pids" ]; then \
+			echo "$(YELLOW)⚠️  Killing stale process(es) on port $$port: $$pids$(RESET)"; \
+			kill -9 $$pids 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+			echo "$(YELLOW)⚠️  Root-owned process on port $$port — killing with sudo$(RESET)"; \
+			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+	done
 	@# Start infrastructure first
 	@make dev-infra
 	@echo ""
@@ -238,8 +240,8 @@ dev: check-deps             ## Start dev environment on dev.2bot.org (ports 3005
 	@# Start dev backend (watch mode, port 3006) - serves ALL routes (user + admin)
 	@echo "Starting Express API dev server on port 3006..."
 	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.development 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=development SERVER_PORT=3006 nohup npm run dev:server > /tmp/2bot-logs/dev-backend.log 2>&1 & echo $$! > /tmp/2bot-logs/dev-backend.pid'
-	@# Wait for backend to start (up to 10 seconds)
-	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+	@# Wait for backend to start (up to 20 seconds — includes bridge recovery + provider validation)
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
 		if ss -tlnp 2>/dev/null | grep -q ":3006 "; then \
 			break; \
 		fi; \
@@ -303,7 +305,7 @@ dev: check-deps             ## Start dev environment on dev.2bot.org (ports 3005
 dev-fg: check-deps          ## Start dev environment in foreground (shows logs, Ctrl+C to stop)
 	@echo "$(CYAN)Starting 2Bot development environment (foreground)...$(RESET)"
 	@# Check if already running
-	@if lsof -ti:3005 >/dev/null 2>&1 || lsof -ti:3006 >/dev/null 2>&1; then \
+	@if fuser 3005/tcp >/dev/null 2>&1 || fuser 3006/tcp >/dev/null 2>&1 || sudo -n fuser 3005/tcp >/dev/null 2>&1 || sudo -n fuser 3006/tcp >/dev/null 2>&1; then \
 		echo "$(YELLOW)⚠️  Development servers are already running!$(RESET)"; \
 		echo "Run 'make stop-dev' first."; \
 		exit 1; \
@@ -353,9 +355,9 @@ dev-frontend: check-deps    ## Start Next.js dev server only (port 3005)
 		echo "Run 'make stop-frontend' to stop it first."; \
 		exit 1; \
 	fi
-	@if lsof -Pi :3005 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+	@if fuser 3005/tcp >/dev/null 2>&1 || sudo -n fuser 3005/tcp >/dev/null 2>&1; then \
 		echo "$(RED)❌ Port 3005 is already in use by another process$(RESET)"; \
-		lsof -Pi :3005 -sTCP:LISTEN; \
+		ss -tlnp sport = :3005; \
 		exit 1; \
 	fi
 	@echo "$(CYAN)Starting Next.js dev server on port 3005...$(RESET)"
@@ -367,9 +369,9 @@ dev-backend: check-deps     ## Start Express API dev server only (port 3006)
 		echo "Run 'make stop-backend' to stop it first."; \
 		exit 1; \
 	fi
-	@if lsof -Pi :3006 -sTCP:LISTEN -t >/dev/null 2>&1; then \
+	@if fuser 3006/tcp >/dev/null 2>&1 || sudo -n fuser 3006/tcp >/dev/null 2>&1; then \
 		echo "$(RED)❌ Port 3006 is already in use by another process$(RESET)"; \
-		lsof -Pi :3006 -sTCP:LISTEN; \
+		ss -tlnp sport = :3006; \
 		exit 1; \
 	fi
 	@echo "$(CYAN)Starting Express API dev server on port 3006...$(RESET)"
@@ -377,85 +379,144 @@ dev-backend: check-deps     ## Start Express API dev server only (port 3006)
 
 stop:                       ## Stop all services (dev and production)
 	@echo "$(CYAN)Stopping all services...$(RESET)"
-	@# Get current shell PID to avoid killing ourselves
-	@current_pid=$$$$; \
-	stopped_next=false; \
-	stopped_tsx=false; \
-	for pid in $$(pgrep -f "next-server" 2>/dev/null || true); do \
-		if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
-			kill -9 $$pid 2>/dev/null || true; \
-			stopped_next=true; \
+	@# Helper: kill a PID and ALL its descendants (children, grandchildren, etc.)
+	@# tsx watch spawns child node processes that survive if only the parent is killed
+	@kill_tree() { \
+		local pid=$$1; \
+		local descendants=$$(pstree -p "$$pid" 2>/dev/null | grep -oP '\(\K[0-9]+' || true); \
+		if [ -n "$$descendants" ]; then \
+			kill -9 $$descendants 2>/dev/null || true; \
 		fi; \
-	done; \
-	for pid in $$(pgrep -f "next dev" 2>/dev/null || true); do \
-		if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
-			kill -9 $$pid 2>/dev/null || true; \
-			stopped_next=true; \
-		fi; \
-	done; \
-	for pid in $$(pgrep -f "next start" 2>/dev/null || true); do \
-		if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
-			kill -9 $$pid 2>/dev/null || true; \
-			stopped_next=true; \
-		fi; \
-	done; \
-	if [ "$$stopped_next" = "true" ]; then \
-		echo "Stopped Next.js"; \
-	fi; \
-	for pid in $$(pgrep -f "tsx watch" 2>/dev/null || true); do \
-		if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
-			kill -9 $$pid 2>/dev/null || true; \
-			stopped_tsx=true; \
-		fi; \
-	done; \
-	for pid in $$(pgrep -f "tsx.*server" 2>/dev/null || true); do \
-		if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
-			kill -9 $$pid 2>/dev/null || true; \
-			stopped_tsx=true; \
-		fi; \
-	done; \
-	if [ "$$stopped_tsx" = "true" ]; then \
-		echo "Stopped Express API"; \
-	fi; \
-	for port in 3001 3002 3005 3006 3007; do \
-		for pid in $$(lsof -ti:$$port 2>/dev/null || true); do \
-			if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
-				echo "Killing orphaned process $$pid on port $$port..."; \
-				kill -9 $$pid 2>/dev/null || true; \
+	}; \
+	for pidfile in \
+		/tmp/2bot-logs/landing.pid \
+		/tmp/2bot-logs/frontend.pid \
+		/tmp/2bot-logs/backend.pid \
+		/tmp/2bot-logs/dev-frontend.pid \
+		/tmp/2bot-logs/dev-backend.pid \
+		/tmp/2bot-logs/dev-admin.pid; do \
+		if [ -f "$$pidfile" ]; then \
+			pid=$$(cat "$$pidfile" 2>/dev/null); \
+			if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+				kill_tree "$$pid"; \
 			fi; \
-		done; \
+			rm -f "$$pidfile"; \
+		fi; \
+	done
+	@echo "Stopped servers from PID files"
+	@# Step 2: Port sweep — catch any orphans on ALL app ports (use fuser, works for IPv4+IPv6)
+	@for port in 3000 3001 3002 3005 3006 3007; do \
+		pids=$$(fuser $${port}/tcp 2>/dev/null || true); \
+		if [ -n "$$pids" ]; then \
+			echo "Killing orphaned process(es) on port $$port:$$pids"; \
+			kill -9 $$pids 2>/dev/null || true; \
+		fi; \
+	done
+	@sleep 1
+	@# Step 3: Escalate with sudo for root-owned processes that survived
+	@needs_sudo=""; \
+	for port in 3000 3001 3002 3005 3006 3007; do \
+		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+			needs_sudo="$$needs_sudo $$port"; \
+		fi; \
 	done; \
-	sleep 1
-	@if lsof -ti:3001 >/dev/null 2>&1 || lsof -ti:3002 >/dev/null 2>&1 || lsof -ti:3005 >/dev/null 2>&1 || lsof -ti:3006 >/dev/null 2>&1 || lsof -ti:3007 >/dev/null 2>&1; then \
-		echo "$(YELLOW)⚠️  Some processes may still be running$(RESET)"; \
+	if [ -n "$$needs_sudo" ]; then \
+		echo "$(YELLOW)Root-owned processes detected on:$$needs_sudo — escalating with sudo$(RESET)"; \
+		for port in $$needs_sudo; do \
+			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
+		done; \
+		sleep 1; \
+	fi
+	@# Step 4: Kill zombie node/tsx processes that lost their ports but still hold Redis connections
+	@my_pgid=$$(ps -o pgid= -p $$$$ 2>/dev/null | tr -d ' '); \
+	zombies=""; \
+	for pid in $$(pgrep -f 'tsx watch src/server/start.ts' 2>/dev/null || true); do \
+		pgid=$$(ps -o pgid= -p $$pid 2>/dev/null | tr -d ' '); \
+		if [ "$$pgid" != "$$my_pgid" ]; then zombies="$$zombies $$pid"; fi; \
+	done; \
+	if [ -n "$$zombies" ]; then \
+		echo "Killing zombie tsx watch processes:$$zombies"; \
+		echo "$$zombies" | xargs kill -9 2>/dev/null || true; \
+	fi
+	@# Step 5: Verify all ports are free
+	@remaining=""; \
+	for port in 3000 3001 3002 3005 3006 3007; do \
+		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+			remaining="$$remaining $$port"; \
+		fi; \
+	done; \
+	if [ -n "$$remaining" ]; then \
+		echo "$(YELLOW)⚠️  Ports still in use:$$remaining$(RESET)"; \
 	else \
 		echo "$(GREEN)✅ All application servers stopped$(RESET)"; \
+	fi
+	@# Step 6: Clear stale bridge leases from Redis (killed servers can't release them gracefully)
+	@leases=$$(docker exec 2bot-redis redis-cli --no-auth-warning KEYS 'bridge:lease:*' 2>/dev/null | head -20); \
+	if [ -n "$$leases" ]; then \
+		echo "Clearing stale bridge leases from Redis..."; \
+		echo "$$leases" | xargs docker exec -i 2bot-redis redis-cli --no-auth-warning DEL 2>/dev/null || true; \
 	fi
 
 stop-dev:                   ## Stop only dev servers (ports 3005/3006/3007)
 	@echo "$(CYAN)Stopping dev services...$(RESET)"
-	@current_pid=$$$$; \
-	for port in 3005 3006 3007; do \
-		for pid in $$(lsof -ti:$$port 2>/dev/null || true); do \
-			if [ "$$pid" != "$$current_pid" ] && [ -n "$$pid" ]; then \
-				kill -9 $$pid 2>/dev/null || true; \
+	@kill_tree() { \
+		local pid=$$1; \
+		local descendants=$$(pstree -p "$$pid" 2>/dev/null | grep -oP '\(\K[0-9]+' || true); \
+		if [ -n "$$descendants" ]; then kill -9 $$descendants 2>/dev/null || true; fi; \
+	}; \
+	for pidfile in /tmp/2bot-logs/dev-frontend.pid /tmp/2bot-logs/dev-backend.pid /tmp/2bot-logs/dev-admin.pid; do \
+		if [ -f "$$pidfile" ]; then \
+			pid=$$(cat "$$pidfile" 2>/dev/null); \
+			if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+				kill_tree "$$pid"; \
 			fi; \
-		done; \
-	done; \
-	sleep 1
+			rm -f "$$pidfile"; \
+		fi; \
+	done
+	@for port in 3005 3006 3007; do \
+		pids=$$(fuser $${port}/tcp 2>/dev/null || true); \
+		if [ -n "$$pids" ]; then kill -9 $$pids 2>/dev/null || true; fi; \
+	done
+	@sleep 1
+	@# Escalate with sudo if root-owned processes survive
+	@for port in 3005 3006 3007; do \
+		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+			echo "$(YELLOW)Root-owned process on port $$port — killing with sudo$(RESET)"; \
+			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
+		fi; \
+	done
 	@echo "$(GREEN)✅ Dev servers stopped$(RESET)"
 
 stop-prod:                  ## Stop only production servers (ports 3000/3001/3002)
 	@echo "$(CYAN)Stopping production services...$(RESET)"
-	@# Kill processes by port only (safer than pkill patterns)
-	@for port in 3000 3001 3002; do \
-		if lsof -ti:$$port >/dev/null 2>&1; then \
-			echo "Stopping port $$port..."; \
-			lsof -ti:$$port | xargs -r kill -15 2>/dev/null || true; \
-			sleep 1; \
-			if lsof -ti:$$port >/dev/null 2>&1; then \
-				lsof -ti:$$port | xargs -r kill -9 2>/dev/null || true; \
+	@# Kill by PID files first (with full process tree)
+	@kill_tree() { \
+		local pid=$$1; \
+		local descendants=$$(pstree -p "$$pid" 2>/dev/null | grep -oP '\(\K[0-9]+' || true); \
+		if [ -n "$$descendants" ]; then kill -9 $$descendants 2>/dev/null || true; fi; \
+	}; \
+	for pidfile in /tmp/2bot-logs/landing.pid /tmp/2bot-logs/frontend.pid /tmp/2bot-logs/backend.pid; do \
+		if [ -f "$$pidfile" ]; then \
+			pid=$$(cat "$$pidfile" 2>/dev/null); \
+			if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+				kill_tree "$$pid"; \
 			fi; \
+			rm -f "$$pidfile"; \
+		fi; \
+	done
+	@for port in 3000 3001 3002; do \
+		pids=$$(fuser $${port}/tcp 2>/dev/null || true); \
+		if [ -n "$$pids" ]; then \
+			echo "Killing orphaned process(es) on port $$port..."; \
+			kill -9 $$pids 2>/dev/null || true; \
+		fi; \
+	done
+	@sleep 1
+	@# Escalate with sudo if root-owned processes survive
+	@for port in 3000 3001 3002; do \
+		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+			echo "$(YELLOW)Root-owned process on port $$port — killing with sudo$(RESET)"; \
+			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
 		fi; \
 	done
 	@echo "$(GREEN)✅ Production servers stopped$(RESET)"
@@ -616,10 +677,35 @@ build-backend: check-deps   ## Build Express API for production
 	@echo "$(CYAN)Building Express API...$(RESET)"
 	npm run build:server
 
-clean:                      ## Clean all build artifacts
-	@echo "$(CYAN)Cleaning build artifacts...$(RESET)"
-	rm -rf .next dist coverage node_modules/.cache
-	@echo "$(GREEN)✅ Clean complete$(RESET)"
+clean:                      ## Clean all build caches for a fresh build (keeps DB, source, node_modules)
+	@echo "$(CYAN)Cleaning build artifacts and caches...$(RESET)"
+	@echo ""
+	@# Next.js build output + dev cache (both main and admin instances)
+	@rm -rf .next .next-admin
+	@echo "  Removed .next/ .next-admin/"
+	@# TypeScript incremental build info
+	@rm -f tsconfig.tsbuildinfo
+	@echo "  Removed tsconfig.tsbuildinfo"
+	@# Compiled server output
+	@rm -rf dist
+	@echo "  Removed dist/"
+	@# Test coverage reports
+	@rm -rf coverage
+	@echo "  Removed coverage/"
+	@# Node module caches (eslint, babel, turbopack, etc.)
+	@rm -rf node_modules/.cache
+	@echo "  Removed node_modules/.cache/"
+	@# Server log files (not needed for builds, can grow large)
+	@rm -f /tmp/2bot-logs/*.log
+	@echo "  Removed /tmp/2bot-logs/*.log"
+	@# Stale PID files
+	@rm -f /tmp/2bot-logs/*.pid
+	@echo "  Removed stale PID files"
+	@# ESLint / Prettier caches
+	@rm -f .eslintcache .prettiercache
+	@echo ""
+	@echo "$(GREEN)✅ Clean complete — ready for fresh build$(RESET)"
+	@echo "$(CYAN)  Run 'make dev' or 'make start' to rebuild$(RESET)"
 
 clean-all: clean            ## Clean everything including node_modules
 	@echo "$(YELLOW)⚠️  This will remove node_modules!$(RESET)"
@@ -631,9 +717,23 @@ clean-all: clean            ## Clean everything including node_modules
 # DOCKER PRODUCTION (full-container deployment)
 # ===========================================
 
-prod-build: check-docker    ## Build production Docker images
+workspace-image: check-docker ## Build workspace container image (for plugin isolation)
+	@echo "$(CYAN)Building workspace container image...$(RESET)"
+	docker build -t 2bot-workspace:latest -f docker/workspace/Dockerfile.workspace docker/workspace
+	@echo "$(GREEN)✅ Workspace image built: 2bot-workspace:latest$(RESET)"
+
+proxy-image: check-docker   ## Build egress proxy image (Squid forward proxy for workspaces)
+	@echo "$(CYAN)Building egress proxy image...$(RESET)"
+	docker build -t 2bot-proxy:latest -f docker/squid-proxy/Dockerfile.proxy docker/squid-proxy
+	@echo "$(GREEN)✅ Proxy image built: 2bot-proxy:latest$(RESET)"
+
+prod-build: check-docker    ## Build production Docker images (includes workspace)
 	@echo "$(CYAN)Building production Docker images...$(RESET)"
 	docker compose build
+	@echo "$(CYAN)Building workspace image...$(RESET)"
+	docker build -t 2bot-workspace:latest -f docker/workspace/Dockerfile.workspace docker/workspace
+	@echo "$(CYAN)Building proxy image...$(RESET)"
+	docker build -t 2bot-proxy:latest -f docker/squid-proxy/Dockerfile.proxy docker/squid-proxy
 	@echo "$(GREEN)✅ Production images built$(RESET)"
 
 prod-up: check-docker       ## Start production stack (Docker)
@@ -714,6 +814,36 @@ ssl-setup:                  ## Setup SSL certificates
 		echo "$(RED)❌ SSL setup script not found$(RESET)"; \
 		exit 1; \
 	fi
+
+setup-nginx:                ## Setup nginx: symlinks site config + gateway map, adds sudoers for reload
+	@echo "$(CYAN)Setting up nginx configuration...$(RESET)"
+	@# 1. Symlink main site config (if not already done)
+	@if [ ! -L /etc/nginx/sites-enabled/2bot.conf ] || \
+	   [ "$$(readlink -f /etc/nginx/sites-enabled/2bot.conf)" != "$$(readlink -f nginx/2bot.conf)" ]; then \
+		echo "  Linking nginx/2bot.conf → /etc/nginx/sites-enabled/"; \
+		sudo ln -sf "$$(pwd)/nginx/2bot.conf" /etc/nginx/sites-enabled/2bot.conf; \
+	else \
+		echo "  $(GREEN)✅ Site config already linked$(RESET)"; \
+	fi
+	@# 2. Symlink gateway-routes.map (webhook routing)
+	@if [ ! -L /etc/nginx/conf.d/gateway-routes.map ] || \
+	   [ "$$(readlink -f /etc/nginx/conf.d/gateway-routes.map)" != "$$(readlink -f nginx/gateway-routes.map)" ]; then \
+		echo "  Linking nginx/gateway-routes.map → /etc/nginx/conf.d/"; \
+		sudo ln -sf "$$(pwd)/nginx/gateway-routes.map" /etc/nginx/conf.d/gateway-routes.map; \
+	else \
+		echo "  $(GREEN)✅ Gateway routes map already linked$(RESET)"; \
+	fi
+	@# 3. Add passwordless sudo for nginx reload (required by gateway-route.service)
+	@if [ ! -f /etc/sudoers.d/2bot-nginx ]; then \
+		echo "  Adding sudoers entry for passwordless nginx reload"; \
+		echo "$$(whoami) ALL=(root) NOPASSWD: /usr/sbin/nginx -s reload" | sudo tee /etc/sudoers.d/2bot-nginx > /dev/null; \
+		sudo chmod 440 /etc/sudoers.d/2bot-nginx; \
+	else \
+		echo "  $(GREEN)✅ Sudoers entry already exists$(RESET)"; \
+	fi
+	@# 4. Validate and reload
+	@sudo nginx -t && sudo nginx -s reload
+	@echo "$(GREEN)✅ nginx setup complete$(RESET)"
 
 # ===========================================
 # UTILITIES
