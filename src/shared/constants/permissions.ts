@@ -41,6 +41,10 @@ export const PERMISSIONS = {
   // Admin permissions - AI Usage
   'admin:ai-usage:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
 
+  // Admin permissions - Workspaces
+  'admin:workspaces:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'admin:workspaces:write': ['ADMIN', 'SUPER_ADMIN'],
+
   // Admin permissions - Audit Logs
   'admin:audit-logs:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
 

@@ -36,8 +36,8 @@ export type CreditClaimType = 'daily' | 'monthly' | 'none';
 // ===========================================
 
 export const ALL_PLAN_TYPES: PlanType[] = ['FREE', 'STARTER', 'PRO', 'BUSINESS', 'ENTERPRISE'];
-export const SERVERLESS_PLANS: PlanType[] = ['FREE', 'STARTER'];
-export const WORKSPACE_PLANS: PlanType[] = ['PRO', 'BUSINESS', 'ENTERPRISE'];
+export const SERVERLESS_PLANS: PlanType[] = [];
+export const WORKSPACE_PLANS: PlanType[] = ['FREE', 'STARTER', 'PRO', 'BUSINESS', 'ENTERPRISE'];
 export const PAID_PLAN_TYPES: PlanType[] = ['STARTER', 'PRO', 'BUSINESS', 'ENTERPRISE'];
 
 // ===========================================
@@ -63,8 +63,8 @@ export const PLAN_ORDER: Record<PlanType, number> = {
 // Actual specs come from WORKSPACE_SPECS in workspace-addons.ts
 
 export const INCLUDED_WORKSPACE_TIER: Record<PlanType, WorkspaceAddonTier | 'CUSTOM' | null> = {
-  FREE: null,           // Serverless only (can purchase add-ons)
-  STARTER: null,        // Serverless only (can purchase add-ons)
+  FREE: 'MICRO',        // Lightweight workspace: 1GB RAM, 0.5 CPU, 10GB storage
+  STARTER: 'MICRO',     // Lightweight workspace: 1GB RAM, 0.5 CPU, 10GB storage
   PRO: 'SMALL',         // Includes SMALL: 2GB RAM, 1 CPU, 20GB storage
   BUSINESS: 'LARGE',    // Includes LARGE: 8GB RAM, 4 CPU, 80GB storage
   ENTERPRISE: 'CUSTOM', // Custom negotiated resources
@@ -72,7 +72,7 @@ export const INCLUDED_WORKSPACE_TIER: Record<PlanType, WorkspaceAddonTier | 'CUS
 
 /**
  * Get the workspace resources included with a plan
- * Returns null for serverless plans, WorkspaceResources for workspace plans
+ * All plans now include a workspace (FREE/STARTER get MICRO tier)
  */
 export function getIncludedWorkspace(plan: PlanType): WorkspaceResources | null {
   const tier = INCLUDED_WORKSPACE_TIER[plan];
@@ -100,20 +100,19 @@ export function getIncludedWorkspace(plan: PlanType): WorkspaceResources | null 
 // ===========================================
 
 /**
- * Get execution mode for a user based on their plan and add-on status
+ * Get execution mode for a user based on their plan and add-on status.
+ * All plans now use WORKSPACE mode — every user gets a container.
  */
-export function getExecutionMode(plan: PlanType, hasWorkspaceAddon: boolean = false): ExecutionMode {
-  if (WORKSPACE_PLANS.includes(plan) || hasWorkspaceAddon) {
-    return 'WORKSPACE';
-  }
-  return 'SERVERLESS';
+export function getExecutionMode(_plan: PlanType, _hasWorkspaceAddon: boolean = false): ExecutionMode {
+  return 'WORKSPACE';
 }
 
 /**
- * Check if a plan includes workspace execution by default
+ * Check if a plan includes workspace execution by default.
+ * All plans now include workspace.
  */
-export function hasWorkspaceByDefault(plan: PlanType): boolean {
-  return WORKSPACE_PLANS.includes(plan);
+export function hasWorkspaceByDefault(_plan: PlanType): boolean {
+  return true;
 }
 
 /**
@@ -192,9 +191,9 @@ export interface PlanLimits {
 
 export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
   FREE: {
-    executionMode: 'SERVERLESS',
+    executionMode: 'WORKSPACE',
     workflowRunsPerMonth: 500,
-    workspace: getIncludedWorkspace('FREE'),  // null (serverless)
+    workspace: getIncludedWorkspace('FREE'),  // MICRO tier: 1GB RAM, 0.5 CPU, 10GB
     gateways: 1,
     workflows: 3,
     workflowSteps: 5,
@@ -216,9 +215,9 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     description: 'Get started with basic automation',
   },
   STARTER: {
-    executionMode: 'SERVERLESS',
+    executionMode: 'WORKSPACE',
     workflowRunsPerMonth: 5000,
-    workspace: getIncludedWorkspace('STARTER'),  // null (serverless)
+    workspace: getIncludedWorkspace('STARTER'),  // MICRO tier: 1GB RAM, 0.5 CPU, 10GB
     gateways: 3,
     workflows: 10,
     workflowSteps: 10,

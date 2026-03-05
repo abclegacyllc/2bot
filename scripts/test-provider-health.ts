@@ -11,8 +11,7 @@ config({ path: ".env" });
 
 import {
     discoverAllModels,
-    discoverAnthropicModels,
-    discoverOpenAIModels,
+    discoverModelsForProvider,
 } from "../src/modules/2bot-ai-provider/model-discovery.service";
 import {
     getConfiguredProviders,
@@ -70,7 +69,7 @@ async function main() {
     // Discover models from each provider
     if (results.find((r) => r.provider === "openai" && r.healthy)) {
       console.log("  Discovering OpenAI models...");
-      const openaiModels = await discoverOpenAIModels();
+      const openaiModels = await discoverModelsForProvider("openai");
       console.log(`  ✅ Found ${openaiModels.length} OpenAI models:`);
       for (const model of openaiModels) {
         const badge = model.badge ? ` [${model.badge}]` : "";
@@ -82,7 +81,7 @@ async function main() {
 
     if (results.find((r) => r.provider === "anthropic" && r.healthy)) {
       console.log("  Discovering Anthropic models...");
-      const anthropicModels = await discoverAnthropicModels();
+      const anthropicModels = await discoverModelsForProvider("anthropic");
       console.log(`  ✅ Found ${anthropicModels.length} Anthropic models:`);
       for (const model of anthropicModels) {
         const badge = model.badge ? ` [${model.badge}]` : "";

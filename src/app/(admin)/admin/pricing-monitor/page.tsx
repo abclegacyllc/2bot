@@ -18,30 +18,33 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { adminApiUrl } from "@/shared/config/urls";
 import {
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
-  Check,
-  CheckCircle2,
-  Clock,
-  DollarSign,
-  Globe,
-  Image,
-  Loader2,
-  MessageSquare,
-  Mic,
-  Music,
-  RefreshCw,
-  Search,
-  Shield,
-  ShieldAlert,
-  Sparkles,
-  Trash2,
-  Type,
-  Video,
-  XCircle,
+    AlertTriangle,
+    ArrowDown,
+    ArrowUp,
+    Check,
+    CheckCircle2,
+    Clock,
+    DollarSign,
+    Globe,
+    Image,
+    Layers,
+    Loader2,
+    MessageSquare,
+    Mic,
+    Music,
+    RefreshCw,
+    Search,
+    Shield,
+    ShieldAlert,
+    Sparkles,
+    Trash2,
+    TrendingDown,
+    Type,
+    Video,
+    XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -593,6 +596,166 @@ function sortUnifiedRows(rows: UnifiedModelRow[], field: SortField, dir: SortDir
 }
 
 // ===========================================
+// Cross-Provider Comparison — canonical name matching
+// ===========================================
+
+/**
+ * Extract a canonical "model family" name from provider-specific model IDs.
+ * E.g. Together's `meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8`,
+ *      Fireworks' `accounts/fireworks/models/deepseek-v3p1`,
+ *      OpenRouter's `meta-llama/llama-4-maverick`
+ * all become `llama-4-maverick`.
+ */
+function getModelFamily(modelId: string): string {
+  let name = modelId;
+
+  // Remove provider-specific prefixes
+  name = name.replace(/^accounts\/fireworks\/models\//, "");
+  name = name.replace(/^accounts\/[^/]+\/models\//, "");
+
+  // Take last segment after /
+  const slash = name.lastIndexOf("/");
+  if (slash >= 0) name = name.substring(slash + 1);
+
+  // Lowercase
+  name = name.toLowerCase();
+
+  // Remove common training/serving suffixes (order matters — longest first)
+  const suffixes = [
+    "-instruct-turbo", "-instruct-basic", "-instruct",
+    "-turbo", "-fp8", "-fp16", "-bf16", "-int4", "-int8",
+    "-it", "-hf", "-free", "-preview", "-basic",
+    "-thinking", "-thinker",
+  ];
+  for (const s of suffixes) {
+    if (name.endsWith(s)) name = name.slice(0, -s.length);
+  }
+
+  // Normalize dots → dashes (FLUX.1 → flux-1)
+  name = name.replace(/\./g, "-");
+
+  // Remove date suffixes (-20250514, -0324, -2411, -2507, -2512)
+  name = name.replace(/-20\d{6}$/, "").replace(/-\d{4}$/, "");
+
+  // Normalize version separators: 3p1 → 3.1, v3p1 → v3.1
+  name = name.replace(/(\d)p(\d)/g, "$1.$2");
+
+  // Normalize letter→digit boundaries: llama4 → llama-4, qwen3 → qwen-3
+  // Skip 'v' prefix (v3 stays v3), 'x' (8x22b), 'e' (128e is a param count)
+  name = name.replace(/([a-uw-z])(\d)/g, "$1-$2");
+
+  // Remove parameter-size suffixes: -17b, -128e, -9b, -8x22b, -671b, etc.
+  name = name.replace(/-\d+x?\d*[bme]/g, "");
+
+  // Remove repeated/trailing dashes
+  name = name.replace(/-{2,}/g, "-").replace(/-$/, "").replace(/^-/, "");
+
+  return name;
+}
+
+// Manual override mapping for models that don't normalize cleanly
+const CANONICAL_OVERRIDES: Record<string, string> = {
+  // DeepSeek variations
+  "deepseek-chat-v3": "deepseek-v3",
+  "deepseek-v3p1": "deepseek-v3",
+  // FLUX variations
+  "flux-1-schnell": "flux-1-schnell",
+  "flux-1-dev": "flux-1-dev",
+  // Claude models (different date suffixes)
+  "claude-opus-4-6": "claude-opus-4.6",
+  "claude-sonnet-4-5": "claude-sonnet-4.5",
+  "claude-haiku-4-5": "claude-haiku-4.5",
+  "claude-sonnet-4": "claude-sonnet-4",
+  "claude-opus-4": "claude-opus-4",
+  "claude-opus-4-1": "claude-opus-4.1",
+  "claude-opus-4-5": "claude-opus-4.5",
+  "claude-3-5-sonnet": "claude-3.5-sonnet",
+  "claude-3-5-haiku": "claude-3.5-haiku",
+  "claude-3-haiku": "claude-3-haiku",
+  "claude-3-opus": "claude-3-opus",
+  "claude-3-7-sonnet": "claude-3.7-sonnet",
+};
+
+function getCanonicalName(modelId: string): string {
+  const family = getModelFamily(modelId);
+  return CANONICAL_OVERRIDES[family] || family;
+}
+
+/** A group of the same logical model offered by multiple providers */
+interface CrossProviderGroup {
+  canonicalName: string;
+  displayName: string;
+  author: string;
+  type: string;
+  /** Provider → row data */
+  providers: Map<string, UnifiedModelRow>;
+  /** Number of providers offering this model */
+  providerCount: number;
+  /** Best (lowest) input price per MTok across providers, or null */
+  bestInputPrice: number | null;
+  /** Which provider has the best price */
+  bestProvider: string | null;
+  /** Whether we use this model (have it in our pricing) */
+  isOurs: boolean;
+}
+
+function buildCrossProviderGroups(rows: UnifiedModelRow[], minProviders = 2): CrossProviderGroup[] {
+  const groupMap = new Map<string, CrossProviderGroup>();
+
+  for (const row of rows) {
+    const canonical = getCanonicalName(row.modelId);
+
+    let group = groupMap.get(canonical);
+    if (!group) {
+      group = {
+        canonicalName: canonical,
+        displayName: row.displayName,
+        author: row.author,
+        type: row.type,
+        providers: new Map(),
+        providerCount: 0,
+        bestInputPrice: null,
+        bestProvider: null,
+        isOurs: false,
+      };
+      groupMap.set(canonical, group);
+    }
+
+    // Prefer the better display name
+    if (row.displayName.length > group.displayName.length) {
+      group.displayName = row.displayName;
+    }
+
+    // Track whether any row is "ours" (verified, mismatch, unverifiable, removed)
+    if (row.status !== "new") group.isOurs = true;
+
+    group.providers.set(row.provider, row);
+    group.providerCount = group.providers.size;
+
+    // Track best price
+    const price = row.providerPriceNum ?? row.ourPriceNum;
+    if (price !== null && price >= 0) {
+      if (group.bestInputPrice === null || price < group.bestInputPrice) {
+        group.bestInputPrice = price;
+        group.bestProvider = row.provider;
+      }
+    }
+  }
+
+  // Filter by minimum number of providers
+  const filtered = [...groupMap.values()].filter(g => g.providerCount >= minProviders);
+
+  // Sort: models we use first, then by provider count desc
+  filtered.sort((a, b) => {
+    if (a.isOurs !== b.isOurs) return a.isOurs ? -1 : 1;
+    if (a.providerCount !== b.providerCount) return b.providerCount - a.providerCount;
+    return a.canonicalName.localeCompare(b.canonicalName);
+  });
+
+  return filtered;
+}
+
+// ===========================================
 // Main Page Component
 // ===========================================
 
@@ -786,7 +949,42 @@ export default function AdminPricingMonitorPage() {
           ))}
 
           {/* Unified Model Table */}
-          <UnifiedModelTable report={report} />
+          <Tabs defaultValue="our-models" className="w-full">
+            <TabsList className="w-full justify-start">
+              <TabsTrigger value="our-models" className="gap-1.5">
+                <DollarSign className="h-3.5 w-3.5" />
+                Our Models
+              </TabsTrigger>
+              <TabsTrigger value="cross-provider" className="gap-1.5">
+                <Layers className="h-3.5 w-3.5" />
+                Cross-Provider
+              </TabsTrigger>
+              <TabsTrigger value="new-models" className="gap-1.5">
+                <Sparkles className="h-3.5 w-3.5" />
+                New Models
+              </TabsTrigger>
+              <TabsTrigger value="all-models" className="gap-1.5">
+                <Search className="h-3.5 w-3.5" />
+                All Models
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="our-models" className="mt-4">
+              <OurModelsTable report={report} />
+            </TabsContent>
+
+            <TabsContent value="cross-provider" className="mt-4">
+              <CrossProviderTable report={report} />
+            </TabsContent>
+
+            <TabsContent value="new-models" className="mt-4">
+              <NewModelsTable report={report} />
+            </TabsContent>
+
+            <TabsContent value="all-models" className="mt-4">
+              <UnifiedModelTable report={report} />
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </div>
@@ -818,6 +1016,622 @@ function SummaryCard({
         <div className="text-2xl font-bold">{value}</div>
       </CardContent>
     </Card>
+  );
+}
+
+// ===========================================
+// Our Models Table — only models in our pricing config
+// ===========================================
+
+function OurModelsTable({ report }: { report: PricingAuditReport }) {
+  const [search, setSearch] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [sortField, setSortField] = useState<SortField>("status");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const allRows = useMemo(() => flattenToUnifiedRows(report), [report]);
+
+  // "Our models" = everything except status "new" (new = available but not in our config)
+  const ourRows = useMemo(() => allRows.filter(r => r.status !== "new"), [allRows]);
+
+  const providers = useMemo(() => [...new Set(ourRows.map(r => r.provider))].sort(), [ourRows]);
+  const types = useMemo(() => [...new Set(ourRows.map(r => r.type))].sort(), [ourRows]);
+
+  const rows = useMemo(() => {
+    let result = ourRows;
+    if (search) {
+      const s = search.toLowerCase();
+      result = result.filter(r =>
+        r.modelId.toLowerCase().includes(s) ||
+        r.displayName.toLowerCase().includes(s) ||
+        r.author.toLowerCase().includes(s)
+      );
+    }
+    if (providerFilter !== "all") result = result.filter(r => r.provider === providerFilter);
+    if (typeFilter !== "all") result = result.filter(r => r.type === typeFilter);
+    return sortUnifiedRows(result, sortField, sortDir);
+  }, [ourRows, search, providerFilter, typeFilter, sortField, sortDir]);
+
+  const handleSort = (field: SortField) => {
+    if (field === sortField) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
+  };
+
+  // Count by status
+  const statusCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of ourRows) c[r.status] = (c[r.status] || 0) + 1;
+    return c;
+  }, [ourRows]);
+
+  // Count mismatches where we're overpaying (provider price < our price)
+  const savingsCount = useMemo(() =>
+    ourRows.filter(r => r.status === "mismatch" && r.diffPercent !== null && r.diffPercent > 0).length
+  , [ourRows]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <DollarSign className="h-5 w-5 text-green-500" />
+            Our Configured Models ({ourRows.length})
+          </span>
+          {savingsCount > 0 && (
+            <Badge className="bg-yellow-500/15 text-yellow-400 text-xs gap-1">
+              <TrendingDown className="h-3 w-3" />
+              {savingsCount} price update{savingsCount !== 1 ? "s" : ""} needed
+            </Badge>
+          )}
+        </CardTitle>
+        <CardDescription>
+          Models in our pricing config — shows verification status against provider APIs
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* Summary pills */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-green-500/10 text-green-400">
+            ✓ Verified: {statusCounts.verified || 0}
+          </span>
+          <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-red-500/10 text-red-400">
+            ⚠ Mismatched: {statusCounts.mismatch || 0}
+          </span>
+          <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-amber-500/10 text-amber-400">
+            ? Unverifiable: {statusCounts.unverifiable || 0}
+          </span>
+          <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-yellow-500/10 text-yellow-400">
+            ✗ Removed: {statusCounts.removed || 0}
+          </span>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search model, author..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <select
+            value={providerFilter}
+            onChange={e => setProviderFilter(e.target.value)}
+            className="text-sm rounded-md border border-border bg-background text-foreground px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="all">All Providers</option>
+            {providers.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value)}
+            className="text-sm rounded-md border border-border bg-background text-foreground px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="all">All Types</option>
+            {types.map(t => <option key={t} value={t}>{TYPE_CONFIG[t]?.label || t}</option>)}
+          </select>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <SortableHeader label="Status" field="status" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Provider" field="provider" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Author" field="author" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Model" field="model" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Type" field="type" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Our Price" field="ourPrice" current={sortField} dir={sortDir} onSort={handleSort} align="right" />
+                <SortableHeader label="Provider $" field="providerPrice" current={sortField} dir={sortDir} onSort={handleSort} align="right" />
+                <th className="text-right py-2 px-2 text-muted-foreground font-medium text-xs">Web $</th>
+                <SortableHeader label="Diff" field="diff" current={sortField} dir={sortDir} onSort={handleSort} align="right" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => (
+                <tr
+                  key={row.id}
+                  className={`border-b border-border/50 hover:bg-muted/30 ${
+                    row.status === "mismatch" ? "bg-red-500/5" :
+                    row.status === "removed" ? "bg-yellow-500/5" : ""
+                  }`}
+                >
+                  <td className="py-1.5 px-2"><ModelStatusBadge status={row.status} /></td>
+                  <td className="py-1.5 px-2 text-xs text-muted-foreground whitespace-nowrap">{row.provider}</td>
+                  <td className="py-1.5 px-2"><AuthorDisplay slug={row.modelId.split("/")[0] || row.author} /></td>
+                  <td className="py-1.5 px-2 max-w-[280px]">
+                    <div className="text-sm text-foreground truncate font-medium" title={row.modelId}>{row.displayName}</div>
+                  </td>
+                  <td className="py-1.5 px-2"><TypeBadge type={row.type} /></td>
+                  <td className="py-1.5 px-2 text-right font-mono text-xs text-foreground whitespace-nowrap">{row.ourPrice}</td>
+                  <td className={`py-1.5 px-2 text-right font-mono text-xs whitespace-nowrap ${
+                    row.status === "mismatch" ? "text-red-400 font-semibold" : "text-foreground"
+                  }`}>{row.providerPrice}</td>
+                  <td className="py-1.5 px-2 text-right text-xs whitespace-nowrap">
+                    {row.webPrice !== "—" ? <span className="text-blue-400">{row.webPrice}</span> : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="py-1.5 px-2 text-right">
+                    {row.diffPercent !== null && row.diffPercent !== 0
+                      ? <DiffBadge percent={row.diffPercent} />
+                      : <span className="text-muted-foreground text-xs">—</span>}
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr><td colSpan={9} className="py-8 text-center text-muted-foreground">No models match the current filters</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===========================================
+// New Models Table — models available from providers but not in our config
+// ===========================================
+
+function NewModelsTable({ report }: { report: PricingAuditReport }) {
+  const [search, setSearch] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [sortField, setSortField] = useState<SortField>("providerPrice");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const allRows = useMemo(() => flattenToUnifiedRows(report), [report]);
+
+  // "New models" = status "new" — available from providers but not in our pricing config
+  const newRows = useMemo(() => allRows.filter(r => r.status === "new"), [allRows]);
+
+  const providers = useMemo(() => [...new Set(newRows.map(r => r.provider))].sort(), [newRows]);
+  const types = useMemo(() => [...new Set(newRows.map(r => r.type))].sort(), [newRows]);
+
+  // Cross-provider comparison for new models
+  const crossProviderGroups = useMemo(() => buildCrossProviderGroups(newRows, 1), [newRows]);
+
+  const rows = useMemo(() => {
+    let result = newRows;
+    if (search) {
+      const s = search.toLowerCase();
+      result = result.filter(r =>
+        r.modelId.toLowerCase().includes(s) ||
+        r.displayName.toLowerCase().includes(s) ||
+        r.author.toLowerCase().includes(s)
+      );
+    }
+    if (providerFilter !== "all") result = result.filter(r => r.provider === providerFilter);
+    if (typeFilter !== "all") result = result.filter(r => r.type === typeFilter);
+    return sortUnifiedRows(result, sortField, sortDir);
+  }, [newRows, search, providerFilter, typeFilter, sortField, sortDir]);
+
+  const handleSort = (field: SortField) => {
+    if (field === sortField) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
+  };
+
+  // Count with pricing data available
+  const withPricing = useMemo(() => newRows.filter(r => r.providerPriceNum !== null && r.providerPriceNum > 0).length, [newRows]);
+
+  // Count available from 2+ providers
+  const multiProvider = useMemo(() => crossProviderGroups.filter(g => g.providerCount >= 2).length, [crossProviderGroups]);
+
+  // Count by provider
+  const providerCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of newRows) c[r.provider] = (c[r.provider] || 0) + 1;
+    return c;
+  }, [newRows]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-blue-500" />
+            New Models Available ({newRows.length})
+          </span>
+          <div className="flex gap-2">
+            <Badge className="bg-blue-500/15 text-blue-400 text-xs">
+              {withPricing} with pricing
+            </Badge>
+            {multiProvider > 0 && (
+              <Badge className="bg-purple-500/15 text-purple-400 text-xs">
+                {multiProvider} multi-provider
+              </Badge>
+            )}
+          </div>
+        </CardTitle>
+        <CardDescription>
+          Models from provider APIs not yet in our pricing config — candidates for addition
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* Provider counts */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          {Object.entries(providerCounts).sort((a, b) => b[1] - a[1]).map(([prov, count]) => (
+            <button
+              key={prov}
+              onClick={() => setProviderFilter(providerFilter === prov ? "all" : prov)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                providerFilter === prov
+                  ? "bg-foreground/10 text-foreground ring-1 ring-foreground/20"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <span className={PROVIDER_COLORS[prov] || ""}>{prov}</span> {count}
+            </button>
+          ))}
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search model, author..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value)}
+            className="text-sm rounded-md border border-border bg-background text-foreground px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="all">All Types</option>
+            {types.map(t => <option key={t} value={t}>{TYPE_CONFIG[t]?.label || t}</option>)}
+          </select>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <SortableHeader label="Provider" field="provider" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Author" field="author" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Model" field="model" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Type" field="type" current={sortField} dir={sortDir} onSort={handleSort} />
+                <SortableHeader label="Price" field="providerPrice" current={sortField} dir={sortDir} onSort={handleSort} align="right" />
+                <SortableHeader label="Ctx" field="context" current={sortField} dir={sortDir} onSort={handleSort} align="right" />
+                <th className="py-2 px-2 text-right text-muted-foreground font-medium text-xs">Also On</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => {
+                // Find if this model is available from other providers
+                const canonical = getCanonicalName(row.modelId);
+                const group = crossProviderGroups.find(g => g.canonicalName === canonical);
+                const otherProviders = group
+                  ? [...group.providers.keys()].filter(p => p !== row.provider)
+                  : [];
+
+                return (
+                  <tr
+                    key={row.id}
+                    className="border-b border-border/50 hover:bg-muted/30"
+                  >
+                    <td className="py-1.5 px-2 text-xs whitespace-nowrap">
+                      <span className={PROVIDER_COLORS[row.provider] || "text-muted-foreground"}>{row.provider}</span>
+                    </td>
+                    <td className="py-1.5 px-2"><AuthorDisplay slug={row.modelId.split("/")[0] || row.author} /></td>
+                    <td className="py-1.5 px-2 max-w-[280px]">
+                      <div className="text-sm text-foreground truncate font-medium" title={row.modelId}>{row.displayName}</div>
+                    </td>
+                    <td className="py-1.5 px-2"><TypeBadge type={row.type} /></td>
+                    <td className="py-1.5 px-2 text-right font-mono text-xs text-foreground whitespace-nowrap">
+                      {row.providerPrice !== "—" ? row.providerPrice : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-xs text-muted-foreground whitespace-nowrap">
+                      {row.contextLength ? `${(row.contextLength / 1024).toFixed(0)}K` : "—"}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-xs">
+                      {otherProviders.length > 0 ? (
+                        <span className="text-purple-400">
+                          {otherProviders.map(p => p.replace(" AI", "")).join(", ")}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/30">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && (
+                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">No new models match the current filters</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===========================================
+// Cross-Provider Comparison Table
+// ===========================================
+
+const PROVIDER_COLS = ["OpenAI", "Anthropic", "Together AI", "Fireworks AI", "OpenRouter"] as const;
+
+const PROVIDER_COLORS: Record<string, string> = {
+  "OpenAI": "text-green-400",
+  "Anthropic": "text-orange-400",
+  "Together AI": "text-blue-400",
+  "Fireworks AI": "text-red-400",
+  "OpenRouter": "text-purple-400",
+};
+
+function CrossProviderTable({ report }: { report: PricingAuditReport }) {
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [showOursOnly, setShowOursOnly] = useState(false);
+  const [showSingleProvider, setShowSingleProvider] = useState(false);
+
+  const allRows = useMemo(() => flattenToUnifiedRows(report), [report]);
+  const groups = useMemo(
+    () => buildCrossProviderGroups(allRows, showSingleProvider ? 1 : 2),
+    [allRows, showSingleProvider]
+  );
+
+  const types = useMemo(() => [...new Set(groups.map(g => g.type))].sort(), [groups]);
+
+  // Which providers actually appear in the data
+  const activeProviders = useMemo(() => {
+    const s = new Set<string>();
+    for (const g of groups) for (const p of g.providers.keys()) s.add(p);
+    return PROVIDER_COLS.filter(p => s.has(p));
+  }, [groups]);
+
+  const filteredGroups = useMemo(() => {
+    let result = groups;
+    if (search) {
+      const s = search.toLowerCase();
+      result = result.filter(g =>
+        g.canonicalName.toLowerCase().includes(s) ||
+        g.displayName.toLowerCase().includes(s) ||
+        g.author.toLowerCase().includes(s)
+      );
+    }
+    if (typeFilter !== "all") result = result.filter(g => g.type === typeFilter);
+    if (showOursOnly) result = result.filter(g => g.isOurs);
+    return result;
+  }, [groups, search, typeFilter, showOursOnly]);
+
+  // Compute savings opportunities: models we use from a provider but there's a cheaper one
+  const savingsOpportunities = useMemo(() => {
+    const opps: { group: CrossProviderGroup; currentProvider: string; currentPrice: number; bestPrice: number; savings: number }[] = [];
+    for (const g of groups) {
+      if (!g.isOurs || g.bestInputPrice === null) continue;
+      // Find the provider we're currently using
+      for (const [provName, row] of g.providers) {
+        if (row.status === "new") continue; // not ours
+        const ourPrice = row.ourPriceNum ?? row.providerPriceNum;
+        if (ourPrice !== null && g.bestInputPrice !== null && ourPrice > g.bestInputPrice * 1.05) {
+          opps.push({
+            group: g,
+            currentProvider: provName,
+            currentPrice: ourPrice,
+            bestPrice: g.bestInputPrice,
+            savings: ((ourPrice - g.bestInputPrice) / ourPrice) * 100,
+          });
+        }
+      }
+    }
+    return opps.sort((a, b) => b.savings - a.savings);
+  }, [groups]);
+
+  return (
+    <div className="space-y-4">
+      {/* Savings Opportunities Banner */}
+      {savingsOpportunities.length > 0 && (
+        <Card className="border-green-500/30 bg-green-500/5">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingDown className="h-4 w-4 text-green-400" />
+              <span className="text-sm font-medium text-green-400">
+                {savingsOpportunities.length} savings opportunit{savingsOpportunities.length === 1 ? "y" : "ies"} found
+              </span>
+            </div>
+            <div className="space-y-1">
+              {savingsOpportunities.slice(0, 5).map(opp => (
+                <div key={opp.group.canonicalName} className="text-xs text-muted-foreground flex items-center gap-2">
+                  <span className="text-foreground font-medium">{opp.group.displayName}</span>
+                  <span>→ switch from {opp.currentProvider} to</span>
+                  <span className="text-green-400 font-medium">{opp.group.bestProvider}</span>
+                  <span className="text-green-400">({opp.savings.toFixed(0)}% cheaper)</span>
+                </div>
+              ))}
+              {savingsOpportunities.length > 5 && (
+                <div className="text-xs text-muted-foreground">
+                  +{savingsOpportunities.length - 5} more...
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Layers className="h-5 w-5 text-purple-500" />
+              Cross-Provider Comparison ({filteredGroups.length} model families)
+            </span>
+            <span className="text-xs text-muted-foreground font-normal">
+              Same model, different provider pricing
+            </span>
+          </CardTitle>
+          <CardDescription>
+            Compare prices side by side across providers. Green = cheapest for that model.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search model family..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <select
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
+              className="text-sm rounded-md border border-border bg-background text-foreground px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="all">All Types</option>
+              {types.map(t => <option key={t} value={t}>{TYPE_CONFIG[t]?.label || t}</option>)}
+            </select>
+            <button
+              onClick={() => setShowOursOnly(!showOursOnly)}
+              className={`px-3 py-2 rounded-md text-xs font-medium transition-colors border ${
+                showOursOnly
+                  ? "bg-green-500/15 text-green-400 border-green-500/30"
+                  : "text-muted-foreground border-border hover:text-foreground"
+              }`}
+            >
+              Our models only
+            </button>
+            <button
+              onClick={() => setShowSingleProvider(!showSingleProvider)}
+              className={`px-3 py-2 rounded-md text-xs font-medium transition-colors border ${
+                showSingleProvider
+                  ? "bg-purple-500/15 text-purple-400 border-purple-500/30"
+                  : "text-muted-foreground border-border hover:text-foreground"
+              }`}
+            >
+              Include single-provider
+            </button>
+          </div>
+
+          {/* Comparison Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="py-2 px-2 text-left text-muted-foreground font-medium text-xs w-[200px]">Model</th>
+                  <th className="py-2 px-2 text-left text-muted-foreground font-medium text-xs">Author</th>
+                  <th className="py-2 px-2 text-left text-muted-foreground font-medium text-xs">Type</th>
+                  {activeProviders.map(p => (
+                    <th key={p} className={`py-2 px-2 text-right font-medium text-xs ${PROVIDER_COLORS[p] || "text-muted-foreground"}`}>
+                      {p.replace(" AI", "")}
+                    </th>
+                  ))}
+                  <th className="py-2 px-2 text-right text-muted-foreground font-medium text-xs">Best</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredGroups.map(group => {
+                  return (
+                    <tr
+                      key={group.canonicalName}
+                      className={`border-b border-border/50 hover:bg-muted/30 ${group.isOurs ? "" : "opacity-60"}`}
+                    >
+                      <td className="py-2 px-2 max-w-[220px]">
+                        <div className="flex items-center gap-1.5">
+                          {group.isOurs && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-green-500 flex-shrink-0" title="In our pricing config" />
+                          )}
+                          <span className="text-sm text-foreground truncate font-medium" title={group.canonicalName}>
+                            {group.displayName}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2 px-2">
+                        <AuthorDisplay slug={group.author} />
+                      </td>
+                      <td className="py-2 px-2">
+                        <TypeBadge type={group.type} />
+                      </td>
+                      {activeProviders.map(provName => {
+                        const row = group.providers.get(provName);
+                        if (!row) return <td key={provName} className="py-2 px-2 text-right text-xs text-muted-foreground/30">—</td>;
+                        const price = row.providerPriceNum ?? row.ourPriceNum;
+                        const isBest = price !== null && group.bestInputPrice !== null && price <= group.bestInputPrice && group.providerCount > 1;
+                        const isOurModel = row.status !== "new";
+                        return (
+                          <td key={provName} className={`py-2 px-2 text-right font-mono text-xs whitespace-nowrap ${
+                            isBest ? "text-green-400 font-semibold" : "text-foreground"
+                          }`}>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span>{row.providerPrice !== "—" ? row.providerPrice : row.ourPrice}</span>
+                              {isOurModel && (
+                                <span className="text-[9px] text-green-500/60 font-sans font-normal">using</span>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                      <td className="py-2 px-2 text-right">
+                        {group.bestProvider && group.providerCount > 1 && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-green-500/10 text-green-400 whitespace-nowrap">
+                            {group.bestProvider.replace(" AI", "")}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredGroups.length === 0 && (
+                  <tr>
+                    <td colSpan={activeProviders.length + 4} className="py-8 text-center text-muted-foreground">
+                      No cross-provider models found matching filters
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Legend */}
+          <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-500" /> = In our pricing config
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-green-400 font-semibold font-mono">$0.15</span> = Cheapest provider
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-green-500/60 text-[9px]">using</span> = We use this model from this provider
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

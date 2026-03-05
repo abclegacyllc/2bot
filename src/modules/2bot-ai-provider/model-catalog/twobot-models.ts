@@ -104,6 +104,51 @@ const TRANSCRIBE_FEATURES: TwoBotAIModelFeatures = {
   codeExecution: false,
 };
 
+// Code Generation feature presets
+const CODE_FREE_FEATURES: TwoBotAIModelFeatures = {
+  streaming: true,
+  functionCalling: true,  // gemma-3n supports tool calling
+  vision: false,
+  jsonMode: false,
+  systemMessage: true,
+  multiTurn: true,
+  reasoning: false,
+  codeExecution: true,
+};
+
+const CODE_LITE_FEATURES: TwoBotAIModelFeatures = {
+  streaming: true,
+  functionCalling: true,
+  vision: false,
+  jsonMode: true,
+  systemMessage: true,
+  multiTurn: true,
+  reasoning: false,
+  codeExecution: true,
+};
+
+const CODE_PRO_FEATURES: TwoBotAIModelFeatures = {
+  streaming: true,
+  functionCalling: true,
+  vision: false,
+  jsonMode: true,
+  systemMessage: true,
+  multiTurn: true,
+  reasoning: false,
+  codeExecution: true,
+};
+
+const CODE_ULTRA_FEATURES: TwoBotAIModelFeatures = {
+  streaming: true,
+  functionCalling: true,
+  vision: true,
+  jsonMode: true,
+  systemMessage: true,
+  multiTurn: true,
+  reasoning: false,
+  codeExecution: true,
+};
+
 // ============================================================================
 // 2Bot Model Definitions
 // ============================================================================
@@ -111,7 +156,8 @@ const TRANSCRIBE_FEATURES: TwoBotAIModelFeatures = {
 /**
  * All 2Bot AI model definitions
  * 
- * 3-Tier System:
+ * 4-Tier System:
+ * - free: Zero-cost AI for simple tasks (available to all plans)
  * - lite: Fast and affordable for everyday tasks
  * - pro: Balanced performance and quality
  * - ultra: Maximum capability for demanding tasks
@@ -120,6 +166,30 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
   // ==========================================================================
   // Text Generation Models
   // ==========================================================================
+
+  '2bot-ai-text-free': {
+    id: '2bot-ai-text-free',
+    displayName: '2Bot AI Text Free',
+    description: 'Free AI for simple tasks — no credits required',
+    capability: 'text-generation',
+    tier: 'free',
+    maxContextTokens: 32768,
+    maxOutputTokens: 4096,
+    isAvailable: true,
+    isDeprecated: false,
+    releasedAt: new Date('2025-07-01'),
+    features: {
+      streaming: true,
+      functionCalling: false,
+      vision: false,
+      jsonMode: false,
+      systemMessage: true,
+      multiTurn: true,
+      reasoning: false,
+      codeExecution: false,
+    },
+    tags: ['free', 'simple', 'no-credits'],
+  },
 
   '2bot-ai-text-lite': {
     id: '2bot-ai-text-lite',
@@ -164,6 +234,70 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
     releasedAt: new Date('2024-09-01'),
     features: TEXT_ULTRA_FEATURES,
     tags: ['premium', 'reasoning', 'complex-tasks', 'highest-quality'],
+  },
+
+  // ==========================================================================
+  // Code Generation Models
+  // ==========================================================================
+
+  '2bot-ai-code-free': {
+    id: '2bot-ai-code-free',
+    displayName: '2Bot AI Code Free',
+    description: 'Free code generation with tool calling — no credits required',
+    capability: 'code-generation',
+    tier: 'free',
+    maxContextTokens: 32768,
+    maxOutputTokens: 4096,
+    isAvailable: true,
+    isDeprecated: false,
+    releasedAt: new Date('2025-07-15'),
+    features: CODE_FREE_FEATURES,
+    tags: ['free', 'code', 'no-credits', 'agent'],
+  },
+
+  '2bot-ai-code-lite': {
+    id: '2bot-ai-code-lite',
+    displayName: '2Bot AI Code Lite',
+    description: 'Fast code generation with function calling for everyday coding',
+    capability: 'code-generation',
+    tier: 'lite',
+    maxContextTokens: 128000,
+    maxOutputTokens: 16384,
+    isAvailable: true,
+    isDeprecated: false,
+    releasedAt: new Date('2025-07-15'),
+    features: CODE_LITE_FEATURES,
+    tags: ['fast', 'code', 'affordable', 'agent'],
+  },
+
+  '2bot-ai-code-pro': {
+    id: '2bot-ai-code-pro',
+    displayName: '2Bot AI Code Pro',
+    description: 'Professional code generation with Kimi K2.5, DeepSeek V3, GLM 4.7',
+    capability: 'code-generation',
+    tier: 'pro',
+    maxContextTokens: 200000,
+    maxOutputTokens: 32768,
+    isAvailable: true,
+    isDeprecated: false,
+    releasedAt: new Date('2025-07-15'),
+    features: CODE_PRO_FEATURES,
+    tags: ['code', 'agent', 'recommended', 'function-calling'],
+  },
+
+  '2bot-ai-code-ultra': {
+    id: '2bot-ai-code-ultra',
+    displayName: '2Bot AI Code Ultra',
+    description: 'Top-tier code generation with vision support and largest models',
+    capability: 'code-generation',
+    tier: 'ultra',
+    maxContextTokens: 200000,
+    maxOutputTokens: 65536,
+    isAvailable: true,
+    isDeprecated: false,
+    releasedAt: new Date('2025-07-15'),
+    features: CODE_ULTRA_FEATURES,
+    tags: ['code', 'premium', 'vision', 'agent', 'highest-quality'],
   },
 
   // ==========================================================================

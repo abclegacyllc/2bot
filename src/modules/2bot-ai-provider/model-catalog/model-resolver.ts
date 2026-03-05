@@ -12,20 +12,23 @@
  * // Resolve a 2Bot model to a provider model
  * const result = modelResolver.resolve('2bot-ai-text-pro');
  * console.log(result.provider); // 'anthropic'
- * console.log(result.providerModelId); // 'claude-sonnet-4-5-20251022'
+ * console.log(result.providerModelId); // 'claude-sonnet-4-6'
  * ```
  */
 
 import { isProviderConfigured } from '../provider-config';
+import { selectSmartProvider } from '../smart-provider-router';
 import type {
     ModelResolutionRequest,
     ModelResolutionResult,
     ModelSelectionStrategy,
     Provider,
     ProviderModelOption,
+    RoutingPreference,
     TwoBotAIModelId,
     TwoBotAIModelMapping,
 } from './model-catalog.types';
+import { TWOBOT_AI_MODEL_TIERS } from './model-catalog.types';
 import {
     TWOBOT_AI_MODEL_MAPPINGS,
     getEnabledProviderOptions,
@@ -138,16 +141,51 @@ function selectByWeight(
 }
 
 /**
- * Lowest-cost strategy: Select the cheapest provider
- * Note: For now, this uses priority as a proxy for cost ranking
- * In the future, this should integrate with model-pricing.ts
+ * Lowest-cost strategy: Select the cheapest available provider.
+ * Uses smart-provider-router.ts which compares real credit costs
+ * from model-pricing.ts, with cross-provider awareness via canonical-models.ts.
  */
 function selectByLowestCost(
-  options: ProviderModelOption[]
+  options: ProviderModelOption[],
+  modelId: TwoBotAIModelId,
+  routingPreference?: RoutingPreference
 ): ProviderModelOption | undefined {
-  // Currently uses priority as cost proxy
-  // Lower priority = lower cost assumption
-  return selectByPriority(options);
+  // Look up the capability from the model definition
+  const model = TWOBOT_AI_MODELS[modelId];
+  if (!model) return selectByPriority(options);
+
+  // Build tier cost range for guardrail filtering
+  const tierInfo = TWOBOT_AI_MODEL_TIERS[model.tier];
+  let tierCostRange: { min: number; max: number } | undefined;
+  if (tierInfo) {
+    const isImage = model.capability === 'image-generation';
+    tierCostRange = {
+      min: isImage ? (tierInfo.minImageCostThreshold ?? 0) : tierInfo.minCostThreshold,
+      max: isImage ? (tierInfo.maxImageCostThreshold ?? Infinity) : tierInfo.maxCostThreshold,
+    };
+  }
+
+  const selection = selectSmartProvider(options, model.capability, tierCostRange, routingPreference);
+  if (!selection) return selectByPriority(options);
+
+  // Find the matching option from the original list
+  const match = options.find(
+    (o) => o.provider === selection.provider && o.modelId === selection.providerModelId
+  );
+
+  // If the smart router selected a model from the canonical map that
+  // isn't in our options list (e.g., a cheaper provider), synthesize an option
+  if (!match) {
+    return {
+      provider: selection.provider,
+      modelId: selection.providerModelId,
+      priority: 0,
+      weight: 1.0,
+      enabled: true,
+    };
+  }
+
+  return match;
 }
 
 /**
@@ -169,7 +207,8 @@ function selectByBestQuality(
 function selectProviderByStrategy(
   options: ProviderModelOption[],
   strategy: ModelSelectionStrategy,
-  modelId: TwoBotAIModelId
+  modelId: TwoBotAIModelId,
+  routingPreference?: RoutingPreference
 ): ProviderModelOption | undefined {
   switch (strategy) {
     case 'priority':
@@ -183,7 +222,7 @@ function selectProviderByStrategy(
       return selectByWeight(options);
 
     case 'lowest-cost':
-      return selectByLowestCost(options);
+      return selectByLowestCost(options, modelId, routingPreference);
 
     case 'fastest':
       // For now, fastest uses priority (could integrate with latency metrics)
@@ -213,7 +252,7 @@ export class TwoBotAIModelResolver {
    * @throws ModelResolutionError if resolution fails
    */
   resolve(request: ModelResolutionRequest): ModelResolutionResult {
-    const { twobotAIModelId, strategy, preferredProvider, excludeProviders } =
+    const { twobotAIModelId, strategy, preferredProvider, excludeProviders, routingPreference } =
       request;
 
     // 1. Check if model exists
@@ -302,7 +341,8 @@ export class TwoBotAIModelResolver {
     const selected = selectProviderByStrategy(
       availableOptions,
       effectiveStrategy,
-      twobotAIModelId
+      twobotAIModelId,
+      routingPreference
     );
 
     if (!selected) {
@@ -422,8 +462,12 @@ export const twoBotAIModelResolver = new TwoBotAIModelResolver();
  * Resolve a 2Bot AI model to a provider model (uses default resolver)
  */
 export function resolveTwoBotAIModel(
-  twobotAIModelId: TwoBotAIModelId
+  twobotAIModelId: TwoBotAIModelId,
+  routingPreference?: RoutingPreference
 ): ModelResolutionResult {
+  if (routingPreference) {
+    return twoBotAIModelResolver.resolve({ twobotAIModelId, routingPreference });
+  }
   return twoBotAIModelResolver.resolveModel(twobotAIModelId);
 }
 

@@ -29,7 +29,6 @@ export {
     getCapabilityInfo,
     getCommonCapabilities,
     isValidCapability,
-    providerSupportsCapability,
     type AICapability,
     type AICapabilityCategory,
     type CapabilityInfo,
@@ -40,11 +39,35 @@ export {
 export {
     clearDiscoveryCache,
     discoverAllModels,
-    discoverAnthropicModels,
-    discoverOpenAIModels,
+    discoverModelsForProvider,
     getDiscoveredModels,
     hasDiscoveredModels
 } from "./model-discovery.service";
+
+// Model registry (single source of truth for all model metadata)
+export {
+    CHAT_CAPS,
+    EMBEDDING_CAPS,
+    IMAGE_GEN_CAPS,
+    MARGIN,
+    MODEL_REGISTRY,
+    SPEECH_REC_CAPS,
+    SPEECH_SYNTH_CAPS,
+    VISION_CAPS,
+    creditPerChar,
+    creditPerImage,
+    creditPerInputToken,
+    creditPerMinute,
+    creditPerOutputToken,
+    getProviderModelIds,
+    getRegistryEntriesByCapability,
+    getRegistryEntriesByProvider,
+    getRegistryEntry,
+    isRegisteredModel,
+    registryToModelInfo,
+    type ModelRegistryEntry,
+    type ProviderCost
+} from "./model-registry";
 
 // Model pricing (single source of truth)
 export {
@@ -61,7 +84,8 @@ export {
 // Provider configuration
 export {
     getAvailableFeatures,
-    getProvidersStatus
+    getProvidersStatus,
+    invalidateModelCache
 } from "./provider-config";
 
 // Provider health checks
@@ -137,39 +161,6 @@ export {
     type TwoBotTokenBreakdown,
     type TwoBotTokenUsageResult
 } from "./2bot-ai-metrics.service";
-
-// ===========================================
-// Multimodal Multi-Modal Chat (ChatGPT/Gemini-like)
-// ===========================================
-
-// Multimodal Chat Service - Single interface for ALL AI capabilities
-export {
-    detectCapabilities,
-    getOrCreateConversation,
-    multimodalChat,
-    multimodalChatService,
-    multimodalChatStream
-} from "./multimodal-chat.service";
-
-// Multimodal Chat Types
-export type {
-    AudioContentBlock,
-    CodeContentBlock,
-    ContentBlock,
-    ContentBlockType,
-    DetectedIntent,
-    ErrorContentBlock,
-    FileContentBlock,
-    ImageContentBlock, MultimodalChatInput,
-    MultimodalChatRequest,
-    MultimodalChatResponse,
-    MultimodalChatStreamChunk,
-    MultimodalConversation,
-    MultimodalMessage, TextContentBlock,
-    ToolResultContentBlock,
-    ToolUseContentBlock, VideoContentBlock
-} from "./multimodal-chat.types";
-
 // ===========================================
 // 2Bot AI Model Catalog (Abstraction Layer)
 // ===========================================

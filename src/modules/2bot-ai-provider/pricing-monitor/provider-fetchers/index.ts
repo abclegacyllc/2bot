@@ -10,6 +10,8 @@
  */
 
 export { AnthropicFetcher } from "./anthropic.fetcher";
+export { FireworksFetcher } from "./fireworks.fetcher";
 export { OpenAIFetcher } from "./openai.fetcher";
+export { OpenRouterFetcher } from "./openrouter.fetcher";
 export { TogetherAIFetcher } from "./together-ai.fetcher";
 

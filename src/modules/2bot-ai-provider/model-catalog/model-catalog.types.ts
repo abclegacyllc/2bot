@@ -76,11 +76,12 @@ export interface ProviderModelOption {
  * Tier levels for 2Bot models - affects pricing, capabilities, and plan access
  * 
  * Plan Access Matrix:
- * - FREE plan: lite only
- * - STARTER plan: lite, pro
- * - PRO+ plans: lite, pro, ultra
+ * - ALL plans: free (always available)
+ * - FREE plan: free, lite
+ * - STARTER plan: free, lite, pro
+ * - PRO+ plans: free, lite, pro, ultra
  */
-export type TwoBotAIModelTier = 'lite' | 'pro' | 'ultra';
+export type TwoBotAIModelTier = 'free' | 'lite' | 'pro' | 'ultra';
 
 /**
  * Tier metadata for display and pricing multipliers
@@ -90,21 +91,72 @@ export interface TwoBotAIModelTierInfo {
   displayName: string;
   description: string;
   /** Badge color for UI display */
-  badgeColor: 'gray' | 'blue' | 'gold';
+  badgeColor: 'green' | 'gray' | 'blue' | 'gold';
   /** Base price multiplier relative to lite tier */
   priceMultiplier: number;
+  /**
+   * Minimum comparable cost (creditsPerInputToken + creditsPerOutputToken)
+   * for models in this tier. Models cheaper than this are filtered out
+   * by the smart router when using lowest-cost strategy.
+   */
+  minCostThreshold: number;
+  /**
+   * Maximum comparable cost for models in this tier.
+   * Use Infinity for the top tier (no upper limit).
+   */
+  maxCostThreshold: number;
+  /** Minimum credits-per-image for image models in this tier */
+  minImageCostThreshold?: number;
+  /** Maximum credits-per-image for image models in this tier */
+  maxImageCostThreshold?: number;
+  /**
+   * Separate cost thresholds for code-generation models.
+   * Code-specialist models are inherently cheaper than text models,
+   * so code tiers use shifted-lower boundaries to avoid empty tiers.
+   * Falls back to minCostThreshold/maxCostThreshold if not set.
+   */
+  minCodeCostThreshold?: number;
+  maxCodeCostThreshold?: number;
 }
 
 /**
  * Tier definitions with display information
  */
 export const TWOBOT_AI_MODEL_TIERS: Record<TwoBotAIModelTier, TwoBotAIModelTierInfo> = {
+  free: {
+    tier: 'free',
+    displayName: 'Free',
+    description: 'Free AI for simple tasks',
+    badgeColor: 'green',
+    priceMultiplier: 0,
+    // Free tier: only truly free or near-free models (0 credits)
+    // Text: Apriel 1.6 (0), Qwen3-8B (0), Gemma 3n (0.000018), Llama 3.1 8B (0.00003)
+    minCostThreshold: 0,
+    maxCostThreshold: 0.00005,
+    // Code free: same boundary
+    minCodeCostThreshold: 0,
+    maxCodeCostThreshold: 0.00005,
+    // No image generation for free tier
+    minImageCostThreshold: 0,
+    maxImageCostThreshold: 0,
+  },
   lite: {
     tier: 'lite',
     displayName: 'Lite',
     description: 'Fast and cost-effective',
     badgeColor: 'gray',
     priceMultiplier: 1.0,
+    // Text: GPT-OSS 20B (0.000051) → Haiku 4.5 (0.0018), o3-mini (0.00165)
+    // NON-OVERLAPPING: starts above free max, ends below pro min
+    minCostThreshold: 0.00005,
+    maxCostThreshold: 0.002,
+    // Code lite: shifted lower — code specialists are cheaper
+    // Qwen2.5-Coder-32B (0.000072) → GPT-OSS 120B (0.000225)
+    minCodeCostThreshold: 0.00005,
+    maxCodeCostThreshold: 0.0005,
+    // Images: budget models only (FLUX Schnell)
+    minImageCostThreshold: 0,
+    maxImageCostThreshold: 5,
   },
   pro: {
     tier: 'pro',
@@ -112,6 +164,17 @@ export const TWOBOT_AI_MODEL_TIERS: Record<TwoBotAIModelTier, TwoBotAIModelTierI
     description: 'Balanced performance and quality',
     badgeColor: 'blue',
     priceMultiplier: 2.0,
+    // Text: Mistral Large (0.0024) → Sonnet 4.6 (0.0054)
+    // NON-OVERLAPPING: starts above lite max, ends below ultra min
+    minCostThreshold: 0.002,
+    maxCostThreshold: 0.006,
+    // Code pro: shifted lower — best code models are cheaper
+    // Qwen3-Coder (0.00051) → Kimi K2-Instruct (0.0012)
+    minCodeCostThreshold: 0.0005,
+    maxCodeCostThreshold: 0.003,
+    // Images: mid-range (FLUX Dev, DALL-E 3, Imagen Fast)
+    minImageCostThreshold: 5,
+    maxImageCostThreshold: 16,
   },
   ultra: {
     tier: 'ultra',
@@ -119,6 +182,16 @@ export const TWOBOT_AI_MODEL_TIERS: Record<TwoBotAIModelTier, TwoBotAIModelTierI
     description: 'Maximum capability and quality',
     badgeColor: 'gold',
     priceMultiplier: 4.0,
+    // Text: Opus 4.6 (0.009) → o1-pro (0.225), no upper limit
+    // NON-OVERLAPPING: starts above pro max
+    minCostThreshold: 0.006,
+    maxCostThreshold: Infinity,
+    // Code ultra: GPT-5 (0.003375), Gemini 3 Pro (0.0042), Sonnet 4.6 (0.0054)
+    minCodeCostThreshold: 0.003,
+    maxCodeCostThreshold: Infinity,
+    // Images: premium models (DALL-E 3 HD, Imagen Ultra, Ideogram)
+    minImageCostThreshold: 16,
+    maxImageCostThreshold: Infinity,
   },
 };
 
@@ -212,9 +285,15 @@ export interface TwoBotAIModelMapping {
  */
 export type TwoBotAIModelId =
   // Text Generation Models
+  | '2bot-ai-text-free'
   | '2bot-ai-text-lite'
   | '2bot-ai-text-pro'
   | '2bot-ai-text-ultra'
+  // Code Generation Models
+  | '2bot-ai-code-free'
+  | '2bot-ai-code-lite'
+  | '2bot-ai-code-pro'
+  | '2bot-ai-code-ultra'
   // Reasoning Models
   | '2bot-ai-reasoning-pro'
   | '2bot-ai-reasoning-ultra'
@@ -238,9 +317,14 @@ export function isTwoBotAIModelId(value: string): value is TwoBotAIModelId {
  * Array of all valid 2Bot model IDs for runtime validation
  */
 export const VALID_TWOBOT_AI_MODEL_IDS: TwoBotAIModelId[] = [
+  '2bot-ai-text-free',
   '2bot-ai-text-lite',
   '2bot-ai-text-pro',
   '2bot-ai-text-ultra',
+  '2bot-ai-code-free',
+  '2bot-ai-code-lite',
+  '2bot-ai-code-pro',
+  '2bot-ai-code-ultra',
   '2bot-ai-reasoning-pro',
   '2bot-ai-reasoning-ultra',
   '2bot-ai-image-pro',
@@ -294,6 +378,14 @@ export interface TwoBotAIModelInfo {
 }
 
 /**
+ * User's routing preference for AI model selection within a tier.
+ * - 'quality': prefer higher-quality (more expensive) models
+ * - 'balanced': prefer median-cost models (default)
+ * - 'cost': prefer cheapest models
+ */
+export type RoutingPreference = 'quality' | 'balanced' | 'cost';
+
+/**
  * Request type for model resolution (internal use)
  */
 export interface ModelResolutionRequest {
@@ -304,6 +396,8 @@ export interface ModelResolutionRequest {
   preferredProvider?: Provider;
   /** Exclude specific providers */
   excludeProviders?: Provider[];
+  /** User's quality preference for provider sorting within tier */
+  routingPreference?: RoutingPreference;
 }
 
 /**

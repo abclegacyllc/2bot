@@ -14,7 +14,7 @@
  */
 
 import type { OrgWorkspaceAddonTier } from './org-workspace-addons';
-import { ORG_WORKSPACE_ADDONS } from './org-workspace-addons';
+import { ORG_WORKSPACE_SPECS as ORG_ADDON_WORKSPACE_SPECS, ORG_WORKSPACE_ADDONS } from './org-workspace-addons';
 import type { CreditClaimType, ExecutionMode } from './plans';
 
 // ===========================================
@@ -54,37 +54,20 @@ export interface OrgWorkspaceSpecs {
   storageMb: number | null;
 }
 
+// Derives specs from org-workspace-addons.ts (single source of truth)
+// Only NONE and CUSTOM are defined here; all tier specs come from ORG_ADDON_WORKSPACE_SPECS
 export const ORG_WORKSPACE_SPECS: Record<OrgWorkspaceTier, OrgWorkspaceSpecs> = {
   NONE: {
     ramMb: null,        // No workspace - serverless only
     cpuCores: null,
     storageMb: null,
   },
-  ORG_SMALL: {
-    ramMb: 4096,        // 4GB - small team
-    cpuCores: 2,
-    storageMb: 20480,   // 20GB
-  },
-  ORG_MEDIUM: {
-    ramMb: 8192,        // 8GB - growing team
-    cpuCores: 4,
-    storageMb: 51200,   // 50GB
-  },
-  ORG_LARGE: {
-    ramMb: 16384,       // 16GB - professional
-    cpuCores: 8,
-    storageMb: 102400,  // 100GB
-  },
-  ORG_XLARGE: {
-    ramMb: 32768,       // 32GB - business
-    cpuCores: 16,
-    storageMb: 256000,  // 250GB
-  },
-  ORG_MICRO: {
-    ramMb: 2048,        // 2GB - micro (not typically offered as included)
-    cpuCores: 1,
-    storageMb: 10240,   // 10GB
-  },
+  // All tier specs from org-workspace-addons.ts — single source of truth
+  ORG_MICRO: ORG_ADDON_WORKSPACE_SPECS.ORG_MICRO,
+  ORG_SMALL: ORG_ADDON_WORKSPACE_SPECS.ORG_SMALL,
+  ORG_MEDIUM: ORG_ADDON_WORKSPACE_SPECS.ORG_MEDIUM,
+  ORG_LARGE: ORG_ADDON_WORKSPACE_SPECS.ORG_LARGE,
+  ORG_XLARGE: ORG_ADDON_WORKSPACE_SPECS.ORG_XLARGE,
   CUSTOM: {
     ramMb: null,        // Custom/negotiated
     cpuCores: null,

@@ -53,23 +53,21 @@ describe('PLAN_LIMITS', () => {
     expect(ALL_PLAN_TYPES).toContain('ENTERPRISE');
   });
 
-  it('has SERVERLESS mode for FREE and STARTER', () => {
-    expect(SERVERLESS_PLANS).toContain('FREE');
-    expect(SERVERLESS_PLANS).toContain('STARTER');
-    expect(SERVERLESS_PLANS).toHaveLength(2);
-    
-    // Verify execution mode in limits
-    expect(PLAN_LIMITS.FREE.executionMode).toBe('SERVERLESS');
-    expect(PLAN_LIMITS.STARTER.executionMode).toBe('SERVERLESS');
+  it('SERVERLESS_PLANS is empty (Phase 0: all plans use WORKSPACE)', () => {
+    expect(SERVERLESS_PLANS).toHaveLength(0);
   });
 
-  it('has WORKSPACE mode for PRO, BUSINESS, ENTERPRISE', () => {
+  it('has WORKSPACE mode for all plans', () => {
+    expect(WORKSPACE_PLANS).toContain('FREE');
+    expect(WORKSPACE_PLANS).toContain('STARTER');
     expect(WORKSPACE_PLANS).toContain('PRO');
     expect(WORKSPACE_PLANS).toContain('BUSINESS');
     expect(WORKSPACE_PLANS).toContain('ENTERPRISE');
-    expect(WORKSPACE_PLANS).toHaveLength(3);
+    expect(WORKSPACE_PLANS).toHaveLength(5);
     
     // Verify execution mode in limits
+    expect(PLAN_LIMITS.FREE.executionMode).toBe('WORKSPACE');
+    expect(PLAN_LIMITS.STARTER.executionMode).toBe('WORKSPACE');
     expect(PLAN_LIMITS.PRO.executionMode).toBe('WORKSPACE');
     expect(PLAN_LIMITS.BUSINESS.executionMode).toBe('WORKSPACE');
     expect(PLAN_LIMITS.ENTERPRISE.executionMode).toBe('WORKSPACE');
@@ -85,15 +83,25 @@ describe('PLAN_LIMITS', () => {
     expect(typeof PLAN_LIMITS.STARTER.workflowRunsPerMonth).toBe('number');
   });
 
-  it('has workspace resources for workspace plans', () => {
-    // Workspace plans should have workspace resources
+  it('has workspace resources for all plans (Phase 0: containers for everyone)', () => {
+    // All plans now have workspace resources
+    expect(PLAN_LIMITS.FREE.workspace).not.toBeNull();
+    expect(PLAN_LIMITS.STARTER.workspace).not.toBeNull();
     expect(PLAN_LIMITS.PRO.workspace).not.toBeNull();
     expect(PLAN_LIMITS.BUSINESS.workspace).not.toBeNull();
     expect(PLAN_LIMITS.ENTERPRISE.workspace).not.toBeNull();
-    
-    // Serverless plans should not have workspace resources
-    expect(PLAN_LIMITS.FREE.workspace).toBeNull();
-    expect(PLAN_LIMITS.STARTER.workspace).toBeNull();
+
+    // FREE/STARTER get MICRO tier: 1GB RAM, 0.5 CPU, 10GB storage
+    expect(PLAN_LIMITS.FREE.workspace).toEqual({
+      ramMb: 1024,
+      cpuCores: 0.5,
+      storageMb: 10240,
+    });
+    expect(PLAN_LIMITS.STARTER.workspace).toEqual({
+      ramMb: 1024,
+      cpuCores: 0.5,
+      storageMb: 10240,
+    });
     
     // Check workspace resource structure (PRO gets SMALL tier: 2GB RAM, 1 CPU, 20GB storage)
     expect(PLAN_LIMITS.PRO.workspace).toEqual({
@@ -150,35 +158,17 @@ describe('PLAN_LIMITS', () => {
 // ===========================================
 
 describe('getExecutionMode', () => {
-  it('returns SERVERLESS for FREE without addon', () => {
-    expect(getExecutionMode('FREE', false)).toBe('SERVERLESS');
-    expect(getExecutionMode('FREE')).toBe('SERVERLESS');
-  });
-
-  it('returns WORKSPACE for FREE with addon', () => {
+  it('returns WORKSPACE for all plans (Phase 0: containers for everyone)', () => {
+    expect(getExecutionMode('FREE', false)).toBe('WORKSPACE');
+    expect(getExecutionMode('FREE')).toBe('WORKSPACE');
     expect(getExecutionMode('FREE', true)).toBe('WORKSPACE');
-  });
-
-  it('returns SERVERLESS for STARTER without addon', () => {
-    expect(getExecutionMode('STARTER', false)).toBe('SERVERLESS');
-    expect(getExecutionMode('STARTER')).toBe('SERVERLESS');
-  });
-
-  it('returns WORKSPACE for STARTER with addon', () => {
+    expect(getExecutionMode('STARTER', false)).toBe('WORKSPACE');
+    expect(getExecutionMode('STARTER')).toBe('WORKSPACE');
     expect(getExecutionMode('STARTER', true)).toBe('WORKSPACE');
-  });
-
-  it('returns WORKSPACE for PRO', () => {
     expect(getExecutionMode('PRO')).toBe('WORKSPACE');
     expect(getExecutionMode('PRO', false)).toBe('WORKSPACE');
     expect(getExecutionMode('PRO', true)).toBe('WORKSPACE');
-  });
-
-  it('returns WORKSPACE for BUSINESS', () => {
     expect(getExecutionMode('BUSINESS')).toBe('WORKSPACE');
-  });
-
-  it('returns WORKSPACE for ENTERPRISE', () => {
     expect(getExecutionMode('ENTERPRISE')).toBe('WORKSPACE');
   });
 });
@@ -188,23 +178,11 @@ describe('getExecutionMode', () => {
 // ===========================================
 
 describe('hasWorkspaceByDefault', () => {
-  it('returns false for FREE', () => {
-    expect(hasWorkspaceByDefault('FREE')).toBe(false);
-  });
-
-  it('returns false for STARTER', () => {
-    expect(hasWorkspaceByDefault('STARTER')).toBe(false);
-  });
-
-  it('returns true for PRO', () => {
+  it('returns true for all plans (Phase 0: containers for everyone)', () => {
+    expect(hasWorkspaceByDefault('FREE')).toBe(true);
+    expect(hasWorkspaceByDefault('STARTER')).toBe(true);
     expect(hasWorkspaceByDefault('PRO')).toBe(true);
-  });
-
-  it('returns true for BUSINESS', () => {
     expect(hasWorkspaceByDefault('BUSINESS')).toBe(true);
-  });
-
-  it('returns true for ENTERPRISE', () => {
     expect(hasWorkspaceByDefault('ENTERPRISE')).toBe(true);
   });
 });

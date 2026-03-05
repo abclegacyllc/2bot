@@ -212,6 +212,109 @@ async function validateTogetherKey(): Promise<{ valid: boolean; error?: string; 
   }
 }
 
+/**
+ * Validate Fireworks AI API key by making a real API call
+ */
+async function validateFireworksKey(): Promise<{ valid: boolean; error?: string; latencyMs: number }> {
+  const apiKey = process.env.TWOBOT_FIREWORKS_API_KEY;
+
+  if (!apiKey) {
+    return { valid: false, error: "TWOBOT_FIREWORKS_API_KEY not set", latencyMs: 0 };
+  }
+
+  if (apiKey.length < 10) {
+    return { valid: false, error: "Invalid Fireworks AI API key format", latencyMs: 0 };
+  }
+
+  const startTime = Date.now();
+  try {
+    const client = new OpenAI({
+      apiKey,
+      baseURL: "https://api.fireworks.ai/inference/v1",
+      timeout: 10000,
+    });
+
+    // Use models.list() as a lightweight validation call
+    await client.models.list();
+
+    const latencyMs = Date.now() - startTime;
+    log.info({ latencyMs }, "Fireworks AI API key validated successfully");
+    return { valid: true, latencyMs };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+
+    if (error instanceof OpenAI.AuthenticationError) {
+      log.error({ error: error.message }, "Fireworks AI API key is invalid");
+      return { valid: false, error: "Invalid API key - authentication failed", latencyMs };
+    }
+
+    if (error instanceof OpenAI.RateLimitError) {
+      log.warn("Fireworks AI rate limited, but key is valid");
+      return { valid: true, latencyMs };
+    }
+
+    if (error instanceof OpenAI.APIConnectionError) {
+      log.error({ error: error.message }, "Cannot connect to Fireworks AI API");
+      return { valid: false, error: "Cannot connect to Fireworks AI API", latencyMs };
+    }
+
+    log.error({ error }, "Fireworks AI validation failed with unknown error");
+    return { valid: false, error: `Validation failed: ${error}`, latencyMs };
+  }
+}
+
+/**
+ * Validate OpenRouter API key by making a real API call
+ */
+async function validateOpenRouterKey(): Promise<{ valid: boolean; error?: string; latencyMs: number }> {
+  const apiKey = process.env.TWOBOT_OPENROUTER_API_KEY;
+
+  if (!apiKey) {
+    return { valid: false, error: "TWOBOT_OPENROUTER_API_KEY not set", latencyMs: 0 };
+  }
+
+  if (!apiKey.startsWith("sk-or-") || apiKey.length < 20) {
+    return { valid: false, error: "Invalid OpenRouter API key format", latencyMs: 0 };
+  }
+
+  const startTime = Date.now();
+  try {
+    // Use models endpoint (no auth required but validates connectivity)
+    // Use auth/key endpoint to validate key specifically
+    const response = await fetch("https://openrouter.ai/api/v1/models", {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const latencyMs = Date.now() - startTime;
+
+    if (response.status === 401) {
+      log.error("OpenRouter API key is invalid");
+      return { valid: false, error: "Invalid API key - authentication failed", latencyMs };
+    }
+
+    if (response.status === 429) {
+      log.warn("OpenRouter rate limited, but key is valid");
+      return { valid: true, latencyMs };
+    }
+
+    if (!response.ok) {
+      return { valid: false, error: `OpenRouter API returned ${response.status}`, latencyMs };
+    }
+
+    log.info({ latencyMs }, "OpenRouter API key validated successfully");
+    return { valid: true, latencyMs };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    if (error instanceof Error && error.name === "AbortError") {
+      log.error("OpenRouter validation timed out");
+      return { valid: false, error: "Connection timed out", latencyMs };
+    }
+    log.error({ error }, "OpenRouter validation failed with unknown error");
+    return { valid: false, error: `Validation failed: ${error}`, latencyMs };
+  }
+}
+
 // ===========================================
 // Public Health Check API
 // ===========================================
@@ -255,6 +358,12 @@ export async function checkProviderHealth(provider: TwoBotAIProvider): Promise<P
     case "together":
       result = await validateTogetherKey();
       break;
+    case "fireworks":
+      result = await validateFireworksKey();
+      break;
+    case "openrouter":
+      result = await validateOpenRouterKey();
+      break;
     default:
       result = { valid: false, error: `Unknown provider: ${provider}`, latencyMs: 0 };
   }
@@ -280,18 +389,17 @@ export async function checkProviderHealth(provider: TwoBotAIProvider): Promise<P
  * Check all providers and return their health status
  */
 export async function checkAllProviders(): Promise<ProviderHealthStatus[]> {
-  const providers: TwoBotAIProvider[] = ["openai", "anthropic", "together"];
-  const results: ProviderHealthStatus[] = [];
+  const providers: TwoBotAIProvider[] = ["openai", "anthropic", "together", "fireworks", "openrouter"];
 
-  for (const provider of providers) {
-    const status = await checkProviderHealth(provider);
-    healthCache.set(provider, status);
-
-    // Update the provider-config validation cache
-    setProviderValidated(provider, status.healthy);
-
-    results.push(status);
-  }
+  // Check all providers in parallel for faster startup (~10s vs ~50s)
+  const results = await Promise.all(
+    providers.map(async (provider) => {
+      const status = await checkProviderHealth(provider);
+      healthCache.set(provider, status);
+      setProviderValidated(provider, status.healthy);
+      return status;
+    })
+  );
 
   return results;
 }

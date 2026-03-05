@@ -12,7 +12,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
     TextGenerationRequest,
     TextGenerationResponse,
-    TextGenerationStreamChunk
+    TextGenerationStreamChunk,
+    ToolCallResult,
+    ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -47,14 +49,23 @@ function getAnthropicClient(): Anthropic {
 // - Sonnet: Balanced performance/cost (most tasks)
 // - Haiku: Fastest, cheapest (simple tasks)
 const MODEL_MAP: Record<string, string> = {
-  // Claude 4.6 (newest, best value)
-  "claude-4.6-opus": "claude-opus-4-6-20260131",
-  "claude-opus-4.6": "claude-opus-4-6-20260131",
-  // Claude 4.5 models
-  "claude-4.5-sonnet": "claude-sonnet-4-5-20251022",
-  "claude-sonnet-4.5": "claude-sonnet-4-5-20251022",
-  "claude-4.5-haiku": "claude-haiku-4-5-20251022",
-  "claude-haiku-4.5": "claude-haiku-4-5-20251022",
+  // Claude 4.6 (newest generation)
+  "claude-4.6-opus": "claude-opus-4-6",
+  "claude-opus-4.6": "claude-opus-4-6",
+  "claude-4.6-sonnet": "claude-sonnet-4-6",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  // Claude 4.5 models (legacy, superseded by 4.6)
+  "claude-4.5-opus": "claude-opus-4-5-20251101",
+  "claude-opus-4.5": "claude-opus-4-5-20251101",
+  "claude-4.5-sonnet": "claude-sonnet-4-5-20250929",
+  "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
+  "claude-4.5-haiku": "claude-haiku-4-5-20251001",
+  "claude-haiku-4.5": "claude-haiku-4-5-20251001",
+  // Claude 4 models
+  "claude-4-opus": "claude-opus-4-20250514",
+  "claude-opus-4": "claude-opus-4-20250514",
+  "claude-4-sonnet": "claude-sonnet-4-20250514",
+  "claude-sonnet-4": "claude-sonnet-4-20250514",
   // Claude 3.5 models
   "claude-3.5-sonnet": "claude-3-5-sonnet-20241022",
   "claude-3.5-haiku": "claude-3-5-haiku-20241022",
@@ -125,6 +136,64 @@ function formatMessageForAnthropic(m: TextGenerationRequest["messages"][0]): {
 }
 
 // ===========================================
+// Tool Formatting (Anthropic-specific)
+// ===========================================
+
+/**
+ * Convert ToolDefinition[] to Anthropic tool format.
+ * Anthropic uses { name, description, input_schema } instead of OpenAI's function wrapper.
+ */
+function formatToolsForAnthropic(tools: ToolDefinition[]): Anthropic.Tool[] {
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.parameters as Anthropic.Tool.InputSchema,
+  }));
+}
+
+/**
+ * Convert tool_choice from 2Bot format to Anthropic format.
+ */
+function formatToolChoiceForAnthropic(
+  toolChoice: TextGenerationRequest["toolChoice"]
+): Anthropic.MessageCreateParams["tool_choice"] | undefined {
+  if (!toolChoice) return undefined;
+  if (toolChoice === "auto") return { type: "auto" };
+  if (toolChoice === "none") return undefined; // Anthropic: just don't send tools
+  if (toolChoice === "required") return { type: "any" };
+  return { type: "tool", name: toolChoice.name };
+}
+
+/**
+ * Extract tool calls from Anthropic response content blocks.
+ */
+function extractAnthropicToolCalls(
+  content: Anthropic.ContentBlock[]
+): ToolCallResult[] | undefined {
+  const toolBlocks = content.filter(
+    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
+  );
+  if (toolBlocks.length === 0) return undefined;
+  return toolBlocks.map((block) => ({
+    id: block.id,
+    name: block.name,
+    arguments: (block.input as Record<string, unknown>) || {},
+  }));
+}
+
+/**
+ * Map Anthropic stop_reason to our finishReason.
+ */
+function mapAnthropicFinishReason(
+  reason: string | null | undefined
+): TextGenerationResponse["finishReason"] {
+  if (reason === "end_turn") return "stop";
+  if (reason === "tool_use") return "tool_use";
+  if (reason === "max_tokens") return "length";
+  return (reason as TextGenerationResponse["finishReason"]) ?? null;
+}
+
+// ===========================================
 // Text Generation
 // ===========================================
 
@@ -140,29 +209,40 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
     // Check if any message has images (for logging)
     const hasImages = request.messages.some((m) => m.parts?.some((p) => p.type === "image_url"));
 
-    const response = await client.messages.create({
+    const createParams: Anthropic.MessageCreateParamsNonStreaming = {
       model: mapModelId(request.model),
       system: systemMessage?.content,
       messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
-    });
+    };
+
+    // Add tools if provided (function calling / agent mode)
+    if (request.tools && request.tools.length > 0) {
+      createParams.tools = formatToolsForAnthropic(request.tools);
+      const toolChoice = formatToolChoiceForAnthropic(request.toolChoice);
+      if (toolChoice) createParams.tool_choice = toolChoice;
+    }
+
+    const response = await client.messages.create(createParams);
 
     const textBlock = response.content.find((c: { type: string }) => c.type === "text");
     const content = textBlock?.type === "text" ? (textBlock as { type: "text"; text: string }).text : "";
+    const toolCalls = extractAnthropicToolCalls(response.content);
 
     log.info({
       model: request.model,
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
       hasImages,
+      toolCallCount: toolCalls?.length ?? 0,
     }, "Anthropic text generation completed");
 
     return {
       id: response.id,
       model: response.model,
       content,
-      finishReason: response.stop_reason === "end_turn" ? "stop" : response.stop_reason as TextGenerationResponse["finishReason"],
+      finishReason: mapAnthropicFinishReason(response.stop_reason),
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
@@ -170,6 +250,7 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
       },
       creditsUsed: 0,
       newBalance: 0,
+      toolCalls,
     };
   } catch (error) {
     log.error({ error }, "Anthropic chat error");
@@ -192,20 +273,51 @@ export async function* anthropicTextGenerationStream(
     const systemMessage = request.messages.find((m) => m.role === "system");
     const conversationMessages = request.messages.filter((m) => m.role !== "system");
 
-    const stream = await client.messages.stream({
+    const streamParams: Anthropic.MessageCreateParamsStreaming = {
       model: mapModelId(request.model),
       system: systemMessage?.content,
       messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
-    });
+      stream: true,
+    };
+
+    // Add tools if provided (function calling / agent mode)
+    if (request.tools && request.tools.length > 0) {
+      streamParams.tools = formatToolsForAnthropic(request.tools);
+      const toolChoice = formatToolChoiceForAnthropic(request.toolChoice);
+      if (toolChoice) streamParams.tool_choice = toolChoice;
+    }
+
+    const stream = await client.messages.stream(streamParams);
 
     let messageId = "";
     let totalContent = "";
+    // Track tool use blocks being built during streaming
+    let currentToolIndex = 0;
+    let currentToolId = "";
+    let currentToolName = "";
 
     for await (const event of stream) {
       if (event.type === "message_start") {
         messageId = event.message.id;
+      } else if (event.type === "content_block_start") {
+        // Text block start — nothing to emit yet
+        if (event.content_block.type === "tool_use") {
+          // A new tool use block is starting
+          currentToolId = event.content_block.id;
+          currentToolName = event.content_block.name;
+          yield {
+            id: messageId,
+            delta: "",
+            finishReason: null,
+            toolUse: {
+              index: currentToolIndex,
+              id: currentToolId,
+              name: currentToolName,
+            },
+          };
+        }
       } else if (event.type === "content_block_delta") {
         const delta = event.delta;
         if (delta.type === "text_delta") {
@@ -215,13 +327,37 @@ export async function* anthropicTextGenerationStream(
             delta: delta.text,
             finishReason: null,
           };
+        } else if (delta.type === "input_json_delta") {
+          // Tool input arguments streaming
+          yield {
+            id: messageId,
+            delta: "",
+            finishReason: null,
+            toolUse: {
+              index: currentToolIndex,
+              argumentsDelta: delta.partial_json,
+            },
+          };
+        }
+      } else if (event.type === "content_block_stop") {
+        // If we were building a tool, increment the index for the next one
+        if (currentToolId) {
+          currentToolIndex++;
+          currentToolId = "";
+          currentToolName = "";
+        }
+      } else if (event.type === "message_delta") {
+        // Contains stop_reason
+        const stopReason = (event.delta as { stop_reason?: string }).stop_reason;
+        if (stopReason) {
+          yield {
+            id: messageId,
+            delta: "",
+            finishReason: mapAnthropicFinishReason(stopReason),
+          };
         }
       } else if (event.type === "message_stop") {
-        yield {
-          id: messageId,
-          delta: "",
-          finishReason: "stop",
-        };
+        // Stream is done — no additional yield needed, message_delta already sent finishReason
       }
     }
 

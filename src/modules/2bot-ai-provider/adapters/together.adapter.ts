@@ -16,6 +16,8 @@ import type {
     TextGenerationRequest,
     TextGenerationResponse,
     TextGenerationStreamChunk,
+    ToolCallResult,
+    ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -77,6 +79,45 @@ function formatMessageForTogether(m: TextGenerationRequest["messages"][0]): {
 }
 
 // ===========================================
+// Tool Formatting (OpenAI-compatible)
+// ===========================================
+
+function formatToolsForTogether(tools: ToolDefinition[]) {
+  return tools.map((tool) => ({
+    type: "function" as const,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters as Record<string, unknown>,
+    },
+  }));
+}
+
+function formatToolChoiceForTogether(
+  toolChoice: TextGenerationRequest["toolChoice"]
+) {
+  if (!toolChoice) return undefined;
+  if (typeof toolChoice === "string") return toolChoice;
+  return { type: "function" as const, function: { name: toolChoice.name } };
+}
+
+function extractToolCalls(
+  toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> | undefined
+): ToolCallResult[] | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  return toolCalls.map((tc) => ({
+    id: tc.id,
+    name: tc.function.name,
+    arguments: JSON.parse(tc.function.arguments || "{}"),
+  }));
+}
+
+function mapFinishReason(reason: string | null | undefined): TextGenerationResponse["finishReason"] {
+  if (reason === "tool_calls") return "tool_use";
+  return (reason as TextGenerationResponse["finishReason"]) ?? null;
+}
+
+// ===========================================
 // Text Generation
 // ===========================================
 
@@ -89,16 +130,35 @@ export async function togetherTextGeneration(
   const hasImages = request.messages.some((m) => m.parts?.some((p) => p.type === "image_url"));
 
   try {
-    const response = await client.chat.completions.create({
+    // Together SDK types don't expose tools on createParams, so we build
+    // a plain object and cast through `unknown` at the call site.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createParams: any = {
       model: request.model,
-      messages: request.messages.map(formatMessageForTogether) as Parameters<typeof client.chat.completions.create>[0]["messages"],
+      messages: request.messages.map(formatMessageForTogether),
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 4096,
       stream: false,
-    });
+    };
 
-    const choice = response.choices[0];
-    const usage = response.usage;
+    // Add tools if provided (function calling / agent mode)
+    if (request.tools && request.tools.length > 0) {
+      createParams.tools = formatToolsForTogether(request.tools);
+      const toolChoice = formatToolChoiceForTogether(request.toolChoice);
+      if (toolChoice) createParams.tool_choice = toolChoice;
+    }
+
+    const response = await client.chat.completions.create(createParams);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = response as any;
+    const choice = result.choices?.[0];
+    const message = choice?.message;
+    const usage = result.usage;
+    const toolCalls = extractToolCalls(
+      message?.tool_calls as
+        Array<{ id: string; function: { name: string; arguments: string } }> | undefined
+    );
 
     log.info(
       {
@@ -106,15 +166,16 @@ export async function togetherTextGeneration(
         inputTokens: usage?.prompt_tokens,
         outputTokens: usage?.completion_tokens,
         hasImages,
+        toolCallCount: toolCalls?.length ?? 0,
       },
       "Together AI text generation completed"
     );
 
     return {
-      id: response.id,
-      model: response.model,
-      content: choice?.message?.content || "",
-      finishReason: choice?.finish_reason as TextGenerationResponse["finishReason"],
+      id: result.id,
+      model: result.model,
+      content: (message?.content as string) || "",
+      finishReason: mapFinishReason(choice?.finish_reason as string | null | undefined),
       usage: {
         inputTokens: usage?.prompt_tokens || 0,
         outputTokens: usage?.completion_tokens || 0,
@@ -122,6 +183,7 @@ export async function togetherTextGeneration(
       },
       creditsUsed: 0,
       newBalance: 0,
+      toolCalls,
     };
   } catch (error) {
     log.error({ error, model: request.model, hasImages }, "Together AI chat error");
@@ -140,27 +202,67 @@ export async function* togetherTextGenerationStream(
   const log = logger.child({ module: "2bot-ai-together", capability: "text-generation" });
 
   try {
-    const stream = await client.chat.completions.create({
+    // Together SDK types don't expose tools/streaming params uniformly,
+    // so we use a plain options object.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createParams: any = {
       model: request.model,
-      messages: request.messages.map(formatMessageForTogether) as Parameters<typeof client.chat.completions.create>[0]["messages"],
+      messages: request.messages.map(formatMessageForTogether),
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 4096,
       stream: true,
-    });
+    };
+
+    // Add tools if provided (function calling / agent mode)
+    if (request.tools && request.tools.length > 0) {
+      createParams.tools = formatToolsForTogether(request.tools);
+      const toolChoice = formatToolChoiceForTogether(request.toolChoice);
+      if (toolChoice) createParams.tool_choice = toolChoice;
+    }
+
+    const stream = await client.chat.completions.create(createParams) as unknown as AsyncIterable<{ id: string; choices: Array<{ delta: Record<string, unknown>; finish_reason: string | null }>; usage?: { prompt_tokens: number; completion_tokens: number } }>;
 
     let totalContent = "";
     let usage = { inputTokens: 0, outputTokens: 0 };
 
     for await (const chunk of stream) {
       const choice = chunk.choices[0];
-      const delta = choice?.delta?.content || "";
+      const delta = (choice?.delta?.content as string) || "";
 
       if (delta) {
         totalContent += delta;
         yield {
           id: chunk.id,
           delta,
-          finishReason: choice?.finish_reason as TextGenerationStreamChunk["finishReason"],
+          finishReason: mapFinishReason(choice?.finish_reason),
+        };
+      }
+
+      // Stream tool call deltas (Together uses OpenAI-compatible format)
+      const toolCallDeltas = choice?.delta?.tool_calls as
+        Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> | undefined;
+      if (toolCallDeltas && toolCallDeltas.length > 0) {
+        for (const tc of toolCallDeltas) {
+          yield {
+            id: chunk.id,
+            delta: "",
+            finishReason: mapFinishReason(choice?.finish_reason),
+            toolUse: {
+              index: tc.index,
+              id: tc.id,
+              name: tc.function?.name,
+              argumentsDelta: tc.function?.arguments,
+            },
+          };
+        }
+      }
+
+      // Emit finish_reason on final choice chunk
+      if (!delta && !toolCallDeltas && choice?.finish_reason) {
+        yield {
+          id: chunk.id,
+          delta: "",
+          finishReason: mapFinishReason(choice.finish_reason),
         };
       }
 

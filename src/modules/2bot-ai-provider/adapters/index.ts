@@ -18,3 +18,13 @@ export {
     togetherImageGeneration, togetherTextGeneration,
     togetherTextGenerationStream
 } from "./together.adapter";
+
+export {
+    fireworksImageGeneration, fireworksTextGeneration,
+    fireworksTextGenerationStream
+} from "./fireworks.adapter";
+
+export {
+    openrouterTextGeneration,
+    openrouterTextGenerationStream
+} from "./openrouter.adapter";

@@ -12,14 +12,11 @@
  * @module modules/2bot-ai-provider/2bot-ai-metrics.service
  */
 
-import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
 import { PLAN_LIMITS, type PlanType } from "@/shared/constants/plans";
 import { formatNumber, formatCredits as sharedFormatCredits } from "@/shared/lib/format";
 import { getCurrentBillingPeriod } from "./2bot-ai-usage.service";
-
-const _log = logger.child({ module: "2bot-ai-metrics" });
 
 // ===========================================
 // Types
@@ -429,13 +426,6 @@ class TwoBotAIMetricsService {
     return sharedFormatCredits(credits);
   }
 
-  /**
-   * Calculate token estimate for a message
-   * Rough estimate: 1 token ≈ 4 characters
-   */
-  estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
-  }
 }
 
 // ===========================================

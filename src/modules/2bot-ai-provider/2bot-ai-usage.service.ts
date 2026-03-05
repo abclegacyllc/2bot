@@ -33,19 +33,23 @@ export interface TwoBotAIUsageData {
   organizationId?: string;
   departmentId?: string; // For budget enforcement
   gatewayId?: string | null;
+  /** Track which plugin made this AI call (for per-plugin usage analytics) */
+  userPluginId?: string;
   /** AI capability (universal naming) */
   capability: AICapability;
   model: string;
   requestId?: string;
   durationMs?: number;
   source?: "2bot"; // Always "2bot" for this service, optional for backwards compat
+  /** Which platform feature triggered this usage ("chat", "cursor", "plugin-ipc", "api") */
+  feature?: string;
 }
 
 /**
  * Text generation/embedding usage (token-based)
  */
 export interface TwoBotTextGenerationUsageData extends TwoBotAIUsageData {
-  capability: "text-generation" | "text-embedding" | "image-understanding";
+  capability: "text-generation" | "code-generation" | "text-embedding" | "image-understanding";
   inputTokens: number;
   outputTokens: number;
 }
@@ -107,6 +111,11 @@ export interface TwoBotAIUsageStats {
     requests: number;
     credits: number;
   }>;
+  byFeature: Array<{
+    feature: string;
+    requests: number;
+    credits: number;
+  }>;
   byDay: Array<{
     date: string;
     requests: number;
@@ -154,9 +163,11 @@ class TwoBotAIUsageService {
       organizationId: data.organizationId,
       departmentId: data.departmentId,
       gatewayId: data.gatewayId ?? undefined,
+      userPluginId: data.userPluginId ?? undefined,
       capability: data.capability, // Universal capability naming
       model: data.model,
       source: "2bot", // Always 2Bot for this service
+      feature: data.feature ?? null, // Which platform feature: "chat", "cursor", "plugin-ipc", "api"
       billingPeriod,
       requestId: data.requestId,
       durationMs: data.durationMs,
@@ -164,7 +175,7 @@ class TwoBotAIUsageService {
     };
 
     // Add capability-specific fields
-    if (data.capability === "text-generation" || data.capability === "text-embedding" || data.capability === "image-understanding") {
+    if (data.capability === "text-generation" || data.capability === "code-generation" || data.capability === "text-embedding" || data.capability === "image-understanding") {
       const textGenData = data as TwoBotTextGenerationUsageData;
       usageData.inputTokens = textGenData.inputTokens;
       usageData.outputTokens = textGenData.outputTokens;
@@ -241,6 +252,7 @@ class TwoBotAIUsageService {
     // Track by capability (universal naming)
     const byCapability: Partial<Record<AICapability, { requests: number; credits: number }>> = {
       "text-generation": { requests: 0, credits: 0 },
+      "code-generation": { requests: 0, credits: 0 },
       "image-generation": { requests: 0, credits: 0 },
       "speech-synthesis": { requests: 0, credits: 0 },
       "speech-recognition": { requests: 0, credits: 0 },
@@ -249,6 +261,7 @@ class TwoBotAIUsageService {
     };
 
     const byModel: Record<string, { requests: number; credits: number }> = {};
+    const byFeature: Record<string, { requests: number; credits: number }> = {};
     const byDay: Record<string, { requests: number; credits: number }> = {};
 
     for (const record of usageRecords) {
@@ -274,6 +287,14 @@ class TwoBotAIUsageService {
       byModel[model].requests++;
       byModel[model].credits += record.creditsUsed;
 
+      // By feature (cursor, chat, agent, etc.)
+      const feature = record.feature || "other";
+      if (!byFeature[feature]) {
+        byFeature[feature] = { requests: 0, credits: 0 };
+      }
+      byFeature[feature].requests++;
+      byFeature[feature].credits += record.creditsUsed;
+
       // By day (with credits)
       const day = record.createdAt.toISOString().split("T")[0] ?? "";
       if (!byDay[day]) {
@@ -294,6 +315,10 @@ class TwoBotAIUsageService {
         })),
       byModel: Object.entries(byModel).map(([model, stats]) => ({
         model,
+        ...stats,
+      })),
+      byFeature: Object.entries(byFeature).map(([feature, stats]) => ({
+        feature,
         ...stats,
       })),
       byDay: Object.entries(byDay)

@@ -18,41 +18,53 @@
  */
 
 import {
-  ANTHROPIC_TEXT_GENERATION_PRICING,
-  OPENAI_IMAGE_GENERATION_PRICING,
-  OPENAI_SPEECH_RECOGNITION_PRICING,
-  OPENAI_SPEECH_SYNTHESIS_PRICING,
-  OPENAI_TEXT_EMBEDDING_PRICING,
-  OPENAI_TEXT_GENERATION_PRICING,
-  TOGETHER_IMAGE_GENERATION_PRICING,
-  TOGETHER_TEXT_EMBEDDING_PRICING,
-  TOGETHER_TEXT_GENERATION_PRICING,
+    ANTHROPIC_TEXT_GENERATION_PRICING,
+    FIREWORKS_IMAGE_GENERATION_PRICING,
+    FIREWORKS_TEXT_GENERATION_PRICING,
+    OPENAI_IMAGE_GENERATION_PRICING,
+    OPENAI_SPEECH_RECOGNITION_PRICING,
+    OPENAI_SPEECH_SYNTHESIS_PRICING,
+    OPENAI_TEXT_EMBEDDING_PRICING,
+    OPENAI_TEXT_GENERATION_PRICING,
+    OPENROUTER_TEXT_GENERATION_PRICING,
+    TOGETHER_IMAGE_GENERATION_PRICING,
+    TOGETHER_TEXT_EMBEDDING_PRICING,
+    TOGETHER_TEXT_GENERATION_PRICING,
 } from "../model-pricing";
 
 import type {
-  ModelType,
-  PriceMismatch,
-  PricingAuditReport,
-  PricingUnit,
-  ProviderAuditResult,
-  ProviderFetcher,
-  UnverifiableModelInfo,
-  VerificationSource,
-  VerifiedModelInfo,
+    ModelType,
+    PriceMismatch,
+    PricingAuditReport,
+    PricingUnit,
+    ProviderAuditResult,
+    ProviderFetcher,
+    UnverifiableModelInfo,
+    VerificationSource,
+    VerifiedModelInfo,
 } from "./pricing-monitor.types";
 
 import {
-  AnthropicFetcher,
-  OpenAIFetcher,
-  TogetherAIFetcher,
+    AnthropicFetcher,
+    FireworksFetcher,
+    OpenAIFetcher,
+    OpenRouterFetcher,
+    TogetherAIFetcher,
 } from "./provider-fetchers";
 
 import {
-  buildWebPriceLookup,
-  fetchTogetherAIWebPrices,
-  findWebPriceForModel,
-  type WebPriceEntry,
+    buildWebPriceLookup,
+    fetchTogetherAIWebPrices,
+    findWebPriceForModel,
+    type WebPriceEntry,
 } from "./provider-fetchers/together-ai-web.fetcher";
+
+import {
+    buildFireworksWebPriceLookup,
+    fetchFireworksWebPrices,
+    findFireworksWebPriceForModel,
+    type FireworksWebPriceEntry,
+} from "./provider-fetchers/fireworks-web.fetcher";
 
 // ===========================================
 // Provider Registry (add new providers here)
@@ -62,6 +74,8 @@ const PROVIDER_FETCHERS: ProviderFetcher[] = [
   new TogetherAIFetcher(),
   new AnthropicFetcher(),
   new OpenAIFetcher(),
+  new FireworksFetcher(),
+  new OpenRouterFetcher(),
 ];
 
 // ===========================================
@@ -180,6 +194,35 @@ function getOurModels(): OurModelEntry[] {
       modelId, providerId: "together-ai", type: "embedding", pricingUnit: "per_mtok",
       inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
       outputPerMTok: 0,
+    });
+  }
+
+  // ── Fireworks AI Text Generation (per_mtok) ──
+
+  for (const [modelId, pricing] of Object.entries(FIREWORKS_TEXT_GENERATION_PRICING)) {
+    entries.push({
+      modelId, providerId: "fireworks", type: "chat", pricingUnit: "per_mtok",
+      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
+      outputPerMTok: pricing.creditsPerOutputToken * CREDITS_TO_DOLLARS_MTOK,
+    });
+  }
+
+  // ── Fireworks AI Image Generation (per_image) ──
+
+  for (const [modelId, pricing] of Object.entries(FIREWORKS_IMAGE_GENERATION_PRICING)) {
+    entries.push({
+      modelId, providerId: "fireworks", type: "image", pricingUnit: "per_image",
+      perImage: pricing.creditsPerImage * CREDITS_TO_DOLLARS,
+    });
+  }
+
+  // ── OpenRouter Text Generation (per_mtok) ──
+
+  for (const [modelId, pricing] of Object.entries(OPENROUTER_TEXT_GENERATION_PRICING)) {
+    entries.push({
+      modelId, providerId: "openrouter", type: "chat", pricingUnit: "per_mtok",
+      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
+      outputPerMTok: pricing.creditsPerOutputToken * CREDITS_TO_DOLLARS_MTOK,
     });
   }
 
@@ -310,6 +353,10 @@ function comparePricing(
       return { status: 'no_provider_data', reason: 'Provider API returns no token pricing for this model' };
     }
     if (provModel.pricing.inputPerMTok === 0 && provModel.pricing.outputPerMTok === 0) {
+      // Legitimate free models: if our price is also $0, that's a verified match
+      if ((ourModel.inputPerMTok || 0) === 0 && (ourModel.outputPerMTok || 0) === 0) {
+        return { status: 'verified' };
+      }
       return { status: 'no_provider_data', reason: 'Provider API returns $0 pricing (not exposed)' };
     }
 
@@ -681,6 +728,121 @@ function mergeWebPricing(
 }
 
 // ===========================================
+// Fireworks Web Price Merging
+// ===========================================
+
+/**
+ * Merge Fireworks web pricing data into the Fireworks audit result.
+ *
+ * Since the Fireworks API returns NO pricing data, all our models will be
+ * "unverifiable" by default. The web scraper can promote them to "verified (web)"
+ * if the web price matches our price, or flag them as mismatches.
+ *
+ * Also enriches new models with web pricing data.
+ */
+function mergeFireworksWebPricing(
+  result: ProviderAuditResult,
+  webEntries: FireworksWebPriceEntry[]
+): void {
+  const webLookup = buildFireworksWebPriceLookup(webEntries);
+  const ourModels = getOurModels().filter((m) => m.providerId === 'fireworks');
+  const ourModelsMap = new Map(ourModels.map((m) => [m.modelId, m]));
+
+  // 1. Try to verify unverifiable models using web data
+  const stillUnverifiable: UnverifiableModelInfo[] = [];
+
+  for (const unverified of result.unverifiableModels) {
+    const webEntry = findFireworksWebPriceForModel(unverified.modelId, webLookup, webEntries);
+    if (!webEntry || webEntry.isTier) {
+      // No model-specific web data — stays unverifiable
+      stillUnverifiable.push(unverified);
+      continue;
+    }
+
+    const ourModel = ourModelsMap.get(unverified.modelId);
+    if (!ourModel) {
+      stillUnverifiable.push(unverified);
+      continue;
+    }
+
+    // Compare our price with web price — only verify when units match
+    const webInputMatch = ourModel.pricingUnit === 'per_mtok'
+      ? pricesMatch(ourModel.inputPerMTok || 0, webEntry.inputPrice)
+      : ourModel.pricingUnit === 'per_image' ? true : false;
+    const webOutputMatch = ourModel.pricingUnit === 'per_mtok'
+      ? pricesMatch(ourModel.outputPerMTok || 0, webEntry.outputPrice)
+      : ourModel.pricingUnit === 'per_image' ? true : false;
+    const webImageMatch = ourModel.pricingUnit === 'per_image'
+      ? pricesMatch(ourModel.perImage || 0, webEntry.inputPrice)
+      : ourModel.pricingUnit === 'per_mtok' ? true : false;
+
+    if (webInputMatch && webOutputMatch && webImageMatch) {
+      // Web confirms our price — promote to verified
+      result.verifiedModels.push({
+        modelId: unverified.modelId,
+        displayName: unverified.displayName,
+        type: unverified.type,
+        pricingUnit: ourModel.pricingUnit,
+        inputPerMTok: ourModel.inputPerMTok !== undefined ? round6(ourModel.inputPerMTok) : undefined,
+        outputPerMTok: ourModel.outputPerMTok !== undefined ? round6(ourModel.outputPerMTok) : undefined,
+        perImage: ourModel.perImage !== undefined ? round6(ourModel.perImage) : undefined,
+        verificationSource: 'web',
+        webPrice: ourModel.pricingUnit === 'per_mtok'
+          ? `$${webEntry.inputPrice}/$${webEntry.outputPrice} /MTok`
+          : `$${webEntry.inputPrice}/${webEntry.pricingUnit.replace('per_', '')}`,
+      });
+    } else {
+      // Web shows different price — mismatch
+      result.priceMismatches.push({
+        modelId: unverified.modelId,
+        displayName: unverified.displayName,
+        type: unverified.type,
+        pricingUnit: ourModel.pricingUnit,
+        field: ourModel.pricingUnit === 'per_mtok'
+          ? (!webInputMatch && !webOutputMatch ? 'both' : !webInputMatch ? 'input' : 'output')
+          : 'price',
+        our: {
+          inputPerMTok: ourModel.inputPerMTok !== undefined ? round6(ourModel.inputPerMTok) : undefined,
+          outputPerMTok: ourModel.outputPerMTok !== undefined ? round6(ourModel.outputPerMTok) : undefined,
+          perImage: ourModel.perImage !== undefined ? round6(ourModel.perImage) : undefined,
+        },
+        provider: {
+          inputPerMTok: ourModel.pricingUnit === 'per_mtok' ? webEntry.inputPrice : undefined,
+          outputPerMTok: ourModel.pricingUnit === 'per_mtok' ? webEntry.outputPrice : undefined,
+          perImage: ourModel.pricingUnit === 'per_image' ? webEntry.inputPrice : undefined,
+        },
+        diffPercent: Math.round(
+          percentDiff(
+            ourModel.inputPerMTok || ourModel.perImage || 0,
+            webEntry.inputPrice
+          ) * 10
+        ) / 10,
+      });
+    }
+  }
+
+  result.unverifiableModels = stillUnverifiable;
+
+  // 2. Enrich new models with web pricing data
+  for (const newModel of result.newModels) {
+    const webEntry = findFireworksWebPriceForModel(
+      newModel.modelId,
+      webLookup,
+      webEntries
+    );
+    if (!webEntry || webEntry.isTier) continue;
+
+    newModel.webPrice = webEntry.pricingUnit === 'per_mtok'
+      ? `$${webEntry.inputPrice}/$${webEntry.outputPrice} /MTok`
+      : `$${webEntry.inputPrice}/${webEntry.pricingUnit.replace('per_', '')}`;
+    newModel.pricingSource = 'web';
+  }
+
+  // 3. Update matched count
+  result.matchedModels = result.verifiedModels.length + result.priceMismatches.length + result.unverifiableModels.length;
+}
+
+// ===========================================
 // Public API
 // ===========================================
 
@@ -693,14 +855,21 @@ let lastAuditReport: PricingAuditReport | null = null;
  *
  * For Together AI: also scrapes the pricing webpage as a secondary source,
  * merging web-verified prices into the audit results.
+ *
+ * For Fireworks AI: also scrapes fireworks.ai/pricing for pricing data,
+ * since the Fireworks API does not return pricing information.
  */
 export async function runPricingAudit(): Promise<PricingAuditReport> {
-  // Run API audits + web scrape in parallel
-  const [providerResults, webPricesResult] = await Promise.all([
+  // Run API audits + web scrapes in parallel
+  const [providerResults, webPricesResult, fireworksWebPricesResult] = await Promise.all([
     Promise.allSettled(PROVIDER_FETCHERS.map((fetcher) => auditProvider(fetcher))),
     fetchTogetherAIWebPrices().catch((err) => {
-      console.warn('[pricing-monitor] Web price fetch failed:', err instanceof Error ? err.message : err);
+      console.warn('[pricing-monitor] Together AI web price fetch failed:', err instanceof Error ? err.message : err);
       return [] as WebPriceEntry[];
+    }),
+    fetchFireworksWebPrices().catch((err) => {
+      console.warn('[pricing-monitor] Fireworks web price fetch failed:', err instanceof Error ? err.message : err);
+      return [] as FireworksWebPriceEntry[];
     }),
   ]);
 
@@ -735,6 +904,14 @@ export async function runPricingAudit(): Promise<PricingAuditReport> {
       const ourModels = getOurModels().filter((m) => m.providerId === 'together-ai');
       const ourModelsMap = new Map(ourModels.map((m) => [m.modelId, m]));
       mergeWebPricing(togetherResult, webLookup, webPricesResult, ourModelsMap);
+    }
+  }
+
+  // Merge web pricing into Fireworks AI result
+  if (fireworksWebPricesResult.length > 0) {
+    const fireworksResult = providers.find((p) => p.providerId === 'fireworks');
+    if (fireworksResult && fireworksResult.status === 'ok') {
+      mergeFireworksWebPricing(fireworksResult, fireworksWebPricesResult);
     }
   }
 

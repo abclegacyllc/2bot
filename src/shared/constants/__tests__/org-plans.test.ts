@@ -111,16 +111,17 @@ describe('ORG_PLAN_LIMITS', () => {
   });
 
   it('has correct workspace pool resources', () => {
+    // Values now derived from org-workspace-addons.ts (single source of truth)
     expect(ORG_PLAN_LIMITS.ORG_STARTER.workspace).toEqual({
       ramMb: 4096,
       cpuCores: 2,
-      storageMb: 20480,
+      storageMb: 61440,
     });
     
     expect(ORG_PLAN_LIMITS.ORG_BUSINESS.workspace).toEqual({
       ramMb: 32768,
       cpuCores: 16,
-      storageMb: 256000,
+      storageMb: 460800,
     });
     
     // Enterprise has custom resources
@@ -368,7 +369,7 @@ describe('formatOrgWorkspaceResources', () => {
   it('formats workspace resources in readable format', () => {
     const starterWorkspace = ORG_PLAN_LIMITS.ORG_STARTER.workspace;
     const formatted = formatOrgWorkspaceResources(starterWorkspace);
-    expect(formatted).toBe('4GB RAM, 2 CPUs, 20GB Storage');
+    expect(formatted).toBe('4GB RAM, 2 CPUs, 60GB Storage');
   });
 
   it('formats single CPU correctly', () => {

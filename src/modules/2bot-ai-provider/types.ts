@@ -23,14 +23,13 @@ export type TwoBotAIModel =
   // OpenAI Chat
   | "gpt-4o"
   | "gpt-4o-mini"
-  | "gpt-4-turbo"
   | "o1"
-  | "o1-mini"
   | "o3-mini"
   // Anthropic Chat
-  | "claude-opus-4-6-20260131"
-  | "claude-sonnet-4-5-20251022"
-  | "claude-haiku-4-5-20251022"
+  | "claude-opus-4-6"
+  | "claude-sonnet-4-6"
+  | "claude-sonnet-4-5-20250929"
+  | "claude-haiku-4-5-20251001"
   | "claude-3-5-haiku-20241022"
   // Image
   | "dall-e-3"
@@ -42,7 +41,7 @@ export type TwoBotAIModel =
   // Allow any string for dynamically discovered models
   | (string & {});
 
-export type TwoBotAIProvider = "openai" | "anthropic" | "together";
+export type TwoBotAIProvider = "openai" | "anthropic" | "together" | "fireworks" | "openrouter";
 
 // ===========================================
 // Model Capabilities - What each model can do
@@ -109,6 +108,74 @@ export interface TextGenerationMessageContent {
   };
 }
 
+// ===========================================
+// Tool / Function Calling Types
+// ===========================================
+
+/**
+ * A tool definition sent to AI providers for function calling.
+ * Provider-agnostic format — adapters convert to OpenAI/Anthropic format.
+ */
+export interface ToolDefinition {
+  /** Tool name (unique identifier) */
+  name: string;
+  /** Description explaining when/how to use this tool */
+  description: string;
+  /** JSON Schema for the tool's input parameters */
+  parameters: {
+    type: "object";
+    properties: Record<string, {
+      type: string;
+      description: string;
+      enum?: string[];
+      items?: { type: string };
+      default?: unknown;
+    }>;
+    required?: string[];
+    additionalProperties?: boolean;
+  };
+}
+
+/**
+ * A tool call result from the AI model (non-streaming).
+ * Present in TextGenerationResponse when finishReason === "tool_use".
+ */
+export interface ToolCallResult {
+  /** Unique ID for this tool call (from the AI provider) */
+  id: string;
+  /** Tool name to call */
+  name: string;
+  /** Parsed arguments JSON */
+  arguments: Record<string, unknown>;
+}
+
+/**
+ * Tool use data in a streaming chunk.
+ * Sent incrementally as the AI builds a tool call.
+ */
+export interface ToolUseStreamDelta {
+  /** Tool call index (for parallel tool calls) */
+  index: number;
+  /** Tool call ID (set on first chunk for this tool call) */
+  id?: string;
+  /** Tool name (set on first chunk for this tool call) */
+  name?: string;
+  /** Incremental JSON argument string (concatenate to build full args) */
+  argumentsDelta?: string;
+}
+
+/**
+ * A tool result message sent back to the AI after executing a tool call.
+ * Added to the messages array as role: "tool".
+ */
+export interface ToolResultMessage {
+  role: "tool";
+  /** Matching tool call ID */
+  toolCallId: string;
+  /** String output from tool execution */
+  content: string;
+}
+
 export interface TextGenerationRequest {
   messages: TextGenerationMessage[];
   model: TwoBotAIModel;
@@ -118,16 +185,28 @@ export interface TextGenerationRequest {
   userId: string;
   /** Organization ID for org-level credit deduction */
   organizationId?: string;
+  /** User plugin ID for per-plugin AI usage tracking */
+  userPluginId?: string;
   conversationId?: string;
   /** Enable smart routing to use cheaper models for simple queries (default: true) */
   smartRouting?: boolean;
+  /** User's routing preference: quality=best models, balanced=default, cost=cheapest */
+  routingPreference?: 'quality' | 'balanced' | 'cost';
+  /** Tool definitions for AI function calling (agent mode) */
+  tools?: ToolDefinition[];
+  /** Tool choice: 'auto' (default), 'none', 'required', or specific tool name */
+  toolChoice?: 'auto' | 'none' | 'required' | { name: string };
+  /** Which platform feature is making this request (for credit attribution) */
+  feature?: string;
+  /** Override the recorded capability (default: "text-generation"). Use "code-generation" for code-focused features. */
+  capability?: AICapability;
 }
 
 export interface TextGenerationResponse {
   id: string;
   model: string;
   content: string;
-  finishReason: "stop" | "length" | "content_filter" | null;
+  finishReason: "stop" | "length" | "content_filter" | "tool_use" | null;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -136,12 +215,16 @@ export interface TextGenerationResponse {
   creditsUsed: number;
   newBalance: number;
   cached?: boolean; // True if response came from cache (cost: $0.00)
+  /** Tool calls requested by the AI (present when finishReason === "tool_use") */
+  toolCalls?: ToolCallResult[];
 }
 
 export interface TextGenerationStreamChunk {
   id: string;
   delta: string;
-  finishReason: "stop" | "length" | "content_filter" | null;
+  finishReason: "stop" | "length" | "content_filter" | "tool_use" | null;
+  /** Tool use data in streaming mode (present when AI is calling a tool) */
+  toolUse?: ToolUseStreamDelta;
 }
 
 // ===========================================
@@ -163,6 +246,10 @@ export interface ImageGenerationRequest {
   userId: string;
   /** Organization ID for org-level credit deduction */
   organizationId?: string;
+  /** User plugin ID for per-plugin AI usage tracking */
+  userPluginId?: string;
+  /** User's routing preference: quality=best models, balanced=default, cost=cheapest */
+  routingPreference?: 'quality' | 'balanced' | 'cost';
 }
 
 export interface ImageGenerationResponse {
@@ -193,6 +280,8 @@ export interface SpeechSynthesisRequest {
   userId: string;
   /** Organization ID for org-level credit deduction */
   organizationId?: string;
+  /** User plugin ID for per-plugin AI usage tracking */
+  userPluginId?: string;
 }
 
 export interface SpeechSynthesisResponse {
@@ -218,6 +307,8 @@ export interface SpeechRecognitionRequest {
   userId: string;
   /** Organization ID for org-level credit deduction */
   organizationId?: string;
+  /** Plugin ID for per-plugin AI usage tracking */
+  userPluginId?: string;
 }
 
 export interface SpeechRecognitionResponse {
@@ -236,6 +327,8 @@ export interface SpeechRecognitionResponse {
 export interface ModelInfo {
   id: TwoBotAIModel;
   name: string;
+  /** Company / organization that created this model */
+  author: string;
   provider: TwoBotAIProvider;
   /** AI capability (universal naming) */
   capability: AICapability;

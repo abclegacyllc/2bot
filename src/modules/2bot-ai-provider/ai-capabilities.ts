@@ -156,7 +156,7 @@ export const CAPABILITY_INFO: Record<AICapability, CapabilityInfo> = {
     category: "video",
     inputType: "mixed",
     outputType: "video",
-    commonlySupported: true,
+    commonlySupported: false,
   },
   "video-understanding": {
     capability: "video-understanding",
@@ -279,7 +279,7 @@ export function isValidCapability(capability: string): capability is AICapabilit
 // Provider Capability Support Matrix
 // ===========================================
 
-export type ProviderName = "openai" | "anthropic" | "together" | "google" | "azure" | "huggingface" | "local";
+export type ProviderName = "openai" | "anthropic" | "together" | "fireworks" | "openrouter";
 
 /**
  * Which capabilities each provider supports
@@ -308,48 +308,16 @@ export const PROVIDER_CAPABILITIES: Record<ProviderName, AICapability[]> = {
     // NOTE: speech-recognition and video-generation removed — no adapters implemented yet
     "tool-use",
   ],
-  google: [
+  fireworks: [
     "text-generation",
-    "text-embedding",
     "image-generation",
     "image-understanding",
-    "speech-synthesis",
-    "speech-recognition",
+  ],
+  openrouter: [
+    "text-generation",
+    "image-understanding",
     "tool-use",
-  ],
-  azure: [
-    "text-generation",
-    "text-embedding",
-    "image-generation",
-    "image-understanding",
-    "speech-synthesis",
-    "speech-recognition",
-    "tool-use",
-  ],
-  huggingface: [
-    "text-generation",
-    "text-embedding",
-    "image-generation",
-    "image-understanding",
-    "speech-synthesis",
-    "speech-recognition",
-  ],
-  local: [
-    "text-generation",
-    "text-embedding",
-    // Local models vary widely
   ],
 };
 
-/**
- * Check if a provider supports a capability
- * @param provider - Provider name
- * @param capability - AICapability
- * @returns boolean
- */
-export function providerSupportsCapability(
-  provider: ProviderName,
-  capability: AICapability
-): boolean {
-  return PROVIDER_CAPABILITIES[provider]?.includes(capability) ?? false;
-}
+

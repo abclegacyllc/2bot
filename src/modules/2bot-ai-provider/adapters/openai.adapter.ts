@@ -11,15 +11,17 @@ import { logger } from "@/lib/logger";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type {
-  ImageGenerationRequest,
-  ImageGenerationResponse,
-  SpeechRecognitionRequest,
-  SpeechRecognitionResponse,
-  SpeechSynthesisRequest,
-  SpeechSynthesisResponse,
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    SpeechRecognitionRequest,
+    SpeechRecognitionResponse,
+    SpeechSynthesisRequest,
+    SpeechSynthesisResponse,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk,
+    ToolCallResult,
+    ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -89,6 +91,60 @@ function formatMessageForOpenAI(m: TextGenerationRequest["messages"][0]): {
   };
 }
 
+/**
+ * Convert ToolDefinition[] to OpenAI function calling format.
+ */
+function formatToolsForOpenAI(tools: ToolDefinition[]): OpenAI.Chat.ChatCompletionTool[] {
+  return tools.map((tool) => ({
+    type: "function" as const,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters as Record<string, unknown>,
+    },
+  }));
+}
+
+/**
+ * Convert tool_choice from 2Bot format to OpenAI format.
+ */
+function formatToolChoiceForOpenAI(
+  toolChoice: TextGenerationRequest["toolChoice"]
+): OpenAI.Chat.ChatCompletionToolChoiceOption | undefined {
+  if (!toolChoice) return undefined;
+  if (typeof toolChoice === "string") return toolChoice; // 'auto' | 'none' | 'required'
+  return { type: "function", function: { name: toolChoice.name } };
+}
+
+/**
+ * Extract tool calls from an OpenAI response choice.
+ * Filters to function-type tool calls only (OpenAI SDK union includes custom tool calls).
+ */
+function extractToolCalls(
+  toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] | undefined
+): ToolCallResult[] | undefined {
+  if (!toolCalls || toolCalls.length === 0) return undefined;
+  return toolCalls
+    .filter((tc) => tc.type === "function")
+    .map((tc) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fn = (tc as any).function as { name: string; arguments: string };
+      return {
+        id: tc.id,
+        name: fn.name,
+        arguments: JSON.parse(fn.arguments || "{}"),
+      };
+    });
+}
+
+/**
+ * Map OpenAI finish_reason to our finishReason (including tool_calls → tool_use).
+ */
+function mapFinishReason(reason: string | null | undefined): TextGenerationResponse["finishReason"] {
+  if (reason === "tool_calls") return "tool_use";
+  return (reason as TextGenerationResponse["finishReason"]) ?? null;
+}
+
 export async function openaiTextGeneration(request: TextGenerationRequest): Promise<TextGenerationResponse> {
   const client = getOpenAIClient();
   const log = logger.child({ module: "2bot-ai-openai", capability: "text-generation" });
@@ -97,29 +153,40 @@ export async function openaiTextGeneration(request: TextGenerationRequest): Prom
   const hasImages = request.messages.some((m) => m.parts?.some((p) => p.type === "image_url"));
 
   try {
-    const response = await client.chat.completions.create({
+    const createParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
       model: request.model,
       messages: request.messages.map(formatMessageForOpenAI) as ChatCompletionMessageParam[],
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 4096,
       stream: false,
-    });
+    };
+
+    // Add tools if provided (function calling / agent mode)
+    if (request.tools && request.tools.length > 0) {
+      createParams.tools = formatToolsForOpenAI(request.tools);
+      const toolChoice = formatToolChoiceForOpenAI(request.toolChoice);
+      if (toolChoice) createParams.tool_choice = toolChoice;
+    }
+
+    const response = await client.chat.completions.create(createParams);
 
     const choice = response.choices[0];
     const usage = response.usage;
+    const toolCalls = extractToolCalls(choice?.message?.tool_calls);
 
     log.info({
       model: request.model,
       inputTokens: usage?.prompt_tokens,
       outputTokens: usage?.completion_tokens,
       hasImages,
+      toolCallCount: toolCalls?.length ?? 0,
     }, "OpenAI text generation completed");
 
     return {
       id: response.id,
       model: response.model,
       content: choice?.message?.content || "",
-      finishReason: choice?.finish_reason as TextGenerationResponse["finishReason"],
+      finishReason: mapFinishReason(choice?.finish_reason),
       usage: {
         inputTokens: usage?.prompt_tokens || 0,
         outputTokens: usage?.completion_tokens || 0,
@@ -128,6 +195,7 @@ export async function openaiTextGeneration(request: TextGenerationRequest): Prom
       // Credits will be calculated and set by the provider
       creditsUsed: 0,
       newBalance: 0,
+      toolCalls,
     };
   } catch (error) {
     log.error({ error, hasImages }, "OpenAI chat error");
@@ -146,14 +214,23 @@ export async function* openaiTextGenerationStream(
   const log = logger.child({ module: "2bot-ai-openai", capability: "text-generation" });
 
   try {
-    const stream = await client.chat.completions.create({
+    const createParams: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
       model: request.model,
       messages: request.messages.map(formatMessageForOpenAI) as ChatCompletionMessageParam[],
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 4096,
       stream: true,
       stream_options: { include_usage: true },
-    });
+    };
+
+    // Add tools if provided (function calling / agent mode)
+    if (request.tools && request.tools.length > 0) {
+      createParams.tools = formatToolsForOpenAI(request.tools);
+      const toolChoice = formatToolChoiceForOpenAI(request.toolChoice);
+      if (toolChoice) createParams.tool_choice = toolChoice;
+    }
+
+    const stream = await client.chat.completions.create(createParams);
 
     let totalContent = "";
     let usage = { inputTokens: 0, outputTokens: 0 };
@@ -167,7 +244,34 @@ export async function* openaiTextGenerationStream(
         yield {
           id: chunk.id,
           delta,
-          finishReason: choice?.finish_reason as TextGenerationStreamChunk["finishReason"],
+          finishReason: mapFinishReason(choice?.finish_reason),
+        };
+      }
+
+      // Stream tool call deltas
+      const toolCallDeltas = choice?.delta?.tool_calls;
+      if (toolCallDeltas && toolCallDeltas.length > 0) {
+        for (const tc of toolCallDeltas) {
+          yield {
+            id: chunk.id,
+            delta: "",
+            finishReason: mapFinishReason(choice?.finish_reason),
+            toolUse: {
+              index: tc.index,
+              id: tc.id,
+              name: tc.function?.name,
+              argumentsDelta: tc.function?.arguments,
+            },
+          };
+        }
+      }
+
+      // Emit finish_reason on final choice chunk (no delta, no tool_calls)
+      if (!delta && !toolCallDeltas && choice?.finish_reason) {
+        yield {
+          id: chunk.id,
+          delta: "",
+          finishReason: mapFinishReason(choice.finish_reason),
         };
       }
 
