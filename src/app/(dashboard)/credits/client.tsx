@@ -114,7 +114,10 @@ export function CreditsDashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyType, setHistoryType] = useState<string | undefined>();
-  const [usagePeriod, setUsagePeriod] = useState<"7d" | "30d" | "90d">("30d");
+  const [usagePeriod, setUsagePeriod] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [claimStatus, setClaimStatus] = useState<ClaimStatus | null>(null);
   const [claiming, setClaiming] = useState(false);
 
@@ -146,8 +149,9 @@ export function CreditsDashboardClient() {
     return data.data as BalanceData;
   }, [getAuthHeaders]);
 
-  const fetchUsage = useCallback(async () => {
-    const response = await fetch(apiUrl("/credits/usage"), {
+  const fetchUsage = useCallback(async (period?: string) => {
+    const params = period ? `?period=${period}` : "";
+    const response = await fetch(apiUrl(`/credits/usage${params}`), {
       credentials: "include",
       headers: getAuthHeaders(),
     });
@@ -222,7 +226,7 @@ export function CreditsDashboardClient() {
 
       const [balanceData, usageData, historyData, claimData] = await Promise.all([
         fetchBalance(),
-        fetchUsage(),
+        fetchUsage(usagePeriod),
         fetchHistory(1),
         fetchClaimStatus(),
       ]);
@@ -244,6 +248,12 @@ export function CreditsDashboardClient() {
       fetchAll();
     }
   }, [user, fetchAll]);
+
+  // Refetch usage when period changes
+  useEffect(() => {
+    if (!user || loading) return;
+    fetchUsage(usagePeriod).then(setUsage).catch(() => {});
+  }, [user, loading, usagePeriod, fetchUsage]);
 
   // Handle history pagination and filtering
   useEffect(() => {
@@ -321,6 +331,7 @@ export function CreditsDashboardClient() {
         <BuyCreditsModal
           packages={CREDIT_PACKAGES}
           variant="personal"
+          authToken={token}
           onPurchaseComplete={fetchAll}
         />
       </div>
@@ -330,7 +341,6 @@ export function CreditsDashboardClient() {
           currentBalance={balance.balance}
           monthlyUsed={monthlyUsed}
           monthlyLimit={monthlyLimit}
-          dismissable
         /> : null}
 
       {/* Claim Card + Balance Card */}
@@ -370,7 +380,7 @@ export function CreditsDashboardClient() {
             <CreditsUsageChart
               data={chartData}
               period={usagePeriod}
-              onPeriodChange={(p) => setUsagePeriod(p as "7d" | "30d" | "90d")}
+              onPeriodChange={setUsagePeriod}
               loading={loading}
             />
 
@@ -399,10 +409,9 @@ export function CreditsDashboardClient() {
             loading={false}
             variant="personal"
             onPurchase={async (packageId) => {
-              // Open buy modal directly
               const response = await fetch(apiUrl("/credits/purchase"), {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
                 credentials: "include",
                 body: JSON.stringify({ package: packageId }),
               });

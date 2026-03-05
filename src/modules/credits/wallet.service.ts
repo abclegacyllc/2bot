@@ -468,6 +468,7 @@ class CreditWalletService {
       amount: number;
       balanceAfter: number;
       description: string | null;
+      metadata: Record<string, unknown> | null;
       createdAt: Date;
     }>;
     total: number;
@@ -489,13 +490,20 @@ class CreditWalletService {
           amount: true,
           balanceAfter: true,
           description: true,
+          metadata: true,
           createdAt: true,
         },
       }),
       prisma.creditTransaction.count({ where }),
     ]);
 
-    return { transactions, total };
+    return {
+      transactions: transactions.map((t) => ({
+        ...t,
+        metadata: t.metadata as Record<string, unknown> | null,
+      })),
+      total,
+    };
   }
 
   /**

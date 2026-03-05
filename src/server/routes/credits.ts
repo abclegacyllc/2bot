@@ -166,17 +166,34 @@ creditsRouter.get(
 
     // Filter by category if specified (from metadata)
     const filteredTransactions = category
-      ? result.transactions.filter((t: Record<string, unknown>) => {
+      ? result.transactions.filter((t) => {
           const meta = t.metadata as Record<string, unknown> | null;
           return meta?.category === category;
         })
       : result.transactions;
 
+    // Adjust total when category filter reduces results
+    const filteredTotal = category ? filteredTransactions.length : result.total;
+
+    // Map metadata.category to top-level category field
+    const mappedTransactions = filteredTransactions.map((t) => {
+      const meta = t.metadata as Record<string, unknown> | null;
+      return {
+        id: t.id,
+        type: t.type,
+        amount: t.amount,
+        balanceAfter: t.balanceAfter,
+        description: t.description,
+        category: (meta?.category as CreditUsageCategory) || undefined,
+        createdAt: t.createdAt,
+      };
+    });
+
     res.json({
       success: true,
       data: {
-        transactions: filteredTransactions,
-        total: result.total,
+        transactions: mappedTransactions,
+        total: filteredTotal,
         page,
         pageSize,
         walletType: result.walletType,
@@ -366,8 +383,8 @@ creditsRouter.post(
         package: body.package,
         credits: pkg.credits.toString(),
       },
-      success_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/usage?purchase=success`,
-      cancel_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/usage?purchase=cancelled`,
+      success_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/credits?purchase=success`,
+      cancel_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/credits?purchase=cancelled`,
     });
 
     log.info({

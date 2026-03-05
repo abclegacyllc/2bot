@@ -278,6 +278,11 @@ orgCreditsRouter.get(
         totalCredits,
         byCategory: {
           ai_usage: totalCredits,
+          marketplace: 0,
+          premium_feature: 0,
+          subscription: 0,
+          transfer: 0,
+          other: 0,
         },
         aiUsage: {
           byCapability,
@@ -367,8 +372,8 @@ orgCreditsRouter.post(
         package: body.package,
         credits: pkg.credits.toString(),
       },
-      success_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/orgs/${orgId}/settings?purchase=success`,
-      cancel_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/orgs/${orgId}/settings?purchase=cancelled`,
+      success_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/organizations/${orgId}/credits?purchase=success`,
+      cancel_url: `${process.env.NEXT_PUBLIC_DASHBOARD_URL}/organizations/${orgId}/credits?purchase=cancelled`,
     });
 
     log.info({

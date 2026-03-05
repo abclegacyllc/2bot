@@ -18,6 +18,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from "@/components/ui/dialog";
+import { apiUrl } from "@/shared/config/urls";
 import { useState } from "react";
 import type {
     CreditPackage
@@ -32,6 +33,7 @@ export interface BuyCreditsModalProps {
   variant?: "personal" | "organization";
   organizationId?: string;
   onPurchaseComplete?: () => void;
+  authToken?: string | null;
   trigger?: React.ReactNode;
 }
 
@@ -40,7 +42,8 @@ export function BuyCreditsModal({
   loading = false,
   variant = "personal",
   organizationId,
-  onPurchaseComplete: _onPurchaseComplete,
+  onPurchaseComplete,
+  authToken,
   trigger,
 }: BuyCreditsModalProps) {
   const [open, setOpen] = useState(false);
@@ -55,14 +58,15 @@ export function BuyCreditsModal({
       // Determine the API endpoint based on variant
       const endpoint =
         variant === "organization" && organizationId
-          ? `/api/orgs/${organizationId}/credits/purchase`
-          : "/api/credits/purchase";
+          ? apiUrl(`/orgs/${organizationId}/credits/purchase`)
+          : apiUrl("/credits/purchase");
+
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         credentials: "include",
         body: JSON.stringify({ package: packageId }),
       });
@@ -76,6 +80,8 @@ export function BuyCreditsModal({
 
       // Redirect to Stripe checkout
       if (data.data?.checkoutUrl) {
+        // Notify parent before navigating (in case they want to update state)
+        onPurchaseComplete?.();
         window.location.href = data.data.checkoutUrl;
       } else {
         throw new Error("No checkout URL returned");

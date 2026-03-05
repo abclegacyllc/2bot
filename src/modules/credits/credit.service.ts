@@ -241,6 +241,7 @@ class CreditService {
       amount: number;
       balanceAfter: number;
       description: string | null;
+      metadata: Record<string, unknown> | null;
       createdAt: Date;
     }>;
     total: number;
@@ -394,6 +395,7 @@ class CreditService {
       amount: number;
       balanceAfter: number;
       description: string | null;
+      metadata: Record<string, unknown> | null;
       createdAt: Date;
     }>;
     total: number;

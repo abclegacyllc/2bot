@@ -118,7 +118,10 @@ export function OrgCreditsDashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyType, setHistoryType] = useState<string | undefined>();
-  const [usagePeriod, setUsagePeriod] = useState<"7d" | "30d" | "90d">("30d");
+  const [usagePeriod, setUsagePeriod] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [claimStatus, setClaimStatus] = useState<ClaimStatus | null>(null);
   const [claiming, setClaiming] = useState(false);
 
@@ -154,9 +157,10 @@ export function OrgCreditsDashboardClient() {
     return data.data as BalanceData;
   }, [orgId, getAuthHeaders]);
 
-  const fetchUsage = useCallback(async () => {
+  const fetchUsage = useCallback(async (period?: string) => {
     if (!orgId) return null;
-    const response = await fetch(apiUrl(`/orgs/${orgId}/credits/usage`), {
+    const params = period ? `?period=${period}` : "";
+    const response = await fetch(apiUrl(`/orgs/${orgId}/credits/usage${params}`), {
       credentials: "include",
       headers: getAuthHeaders(),
     });
@@ -233,7 +237,7 @@ export function OrgCreditsDashboardClient() {
 
       const [balanceData, usageData, historyData, claimData] = await Promise.all([
         fetchBalance(),
-        fetchUsage(),
+        fetchUsage(usagePeriod),
         fetchHistory(1),
         fetchClaimStatus(),
       ]);
@@ -255,6 +259,12 @@ export function OrgCreditsDashboardClient() {
       fetchAll();
     }
   }, [user, orgId, isFound, fetchAll]);
+
+  // Refetch usage when period changes
+  useEffect(() => {
+    if (!user || !orgId || loading) return;
+    fetchUsage(usagePeriod).then((data) => { if (data) setUsage(data); }).catch(() => {});
+  }, [user, orgId, loading, usagePeriod, fetchUsage]);
 
   // Handle history pagination and filtering
   useEffect(() => {
@@ -361,6 +371,7 @@ export function OrgCreditsDashboardClient() {
             packages={CREDIT_PACKAGES}
             variant="organization"
             organizationId={orgId}
+            authToken={token}
             onPurchaseComplete={fetchAll}
           /> : null}
       </div>
@@ -370,7 +381,6 @@ export function OrgCreditsDashboardClient() {
           currentBalance={balance.balance}
           monthlyUsed={monthlyUsed}
           monthlyLimit={monthlyLimit}
-          dismissable
         /> : null}
 
       {/* Claim Card + Balance Card */}
@@ -397,28 +407,28 @@ export function OrgCreditsDashboardClient() {
       </div>
 
       {/* Tabs for different views */}
-      <Tabs defaultValue="usage" className="space-y-4">
+      <Tabs defaultValue={isAdmin ? "usage" : "history"} className="space-y-4">
         <TabsList>
-          <TabsTrigger value="usage">Usage</TabsTrigger>
+          {isAdmin ? <TabsTrigger value="usage">Usage</TabsTrigger> : null}
           <TabsTrigger value="history">History</TabsTrigger>
           {isAdmin ? <TabsTrigger value="purchase">Buy Credits</TabsTrigger> : null}
         </TabsList>
 
-        {/* Usage Tab */}
-        <TabsContent value="usage" className="space-y-4">
+        {/* Usage Tab - Admin only (API requires requireOrgAdmin) */}
+        {isAdmin ? <TabsContent value="usage" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             {/* Usage Chart */}
             <CreditsUsageChart
               data={chartData}
               period={usagePeriod}
-              onPeriodChange={(p) => setUsagePeriod(p as "7d" | "30d" | "90d")}
+              onPeriodChange={setUsagePeriod}
               loading={loading}
             />
 
             {/* Usage Breakdown */}
             {breakdownData ? <CreditsUsageBreakdown data={breakdownData} loading={loading} /> : null}
           </div>
-        </TabsContent>
+        </TabsContent> : null}
 
         {/* History Tab */}
         <TabsContent value="history" className="space-y-4">
@@ -442,7 +452,7 @@ export function OrgCreditsDashboardClient() {
               onPurchase={async (packageId) => {
                 const response = await fetch(apiUrl(`/orgs/${orgId}/credits/purchase`), {
                   method: "POST",
-                  headers: { "Content-Type": "application/json" },
+                  headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
                   credentials: "include",
                   body: JSON.stringify({ package: packageId }),
                 });
