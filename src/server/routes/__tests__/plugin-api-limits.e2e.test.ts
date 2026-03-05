@@ -44,6 +44,11 @@ vi.mock('@/lib/audit', () => ({
   },
 }));
 
+vi.mock('@/lib/encryption', () => ({
+  encrypt: vi.fn((data: unknown) => `encrypted:${JSON.stringify(data)}`),
+  decryptJson: vi.fn(() => ({})),
+}));
+
 // Import after mocking
 import { prisma } from '@/lib/prisma';
 import { pluginService } from '@/modules/plugin/plugin.service';
@@ -113,7 +118,7 @@ function mockUserPlugin(id: string, userId: string, plugin: any, organizationId:
 // Personal Plugin API Tests - FREE Plan
 // ===========================================
 
-describe('API: POST /api/user/plugins/install - FREE Plan', () => {
+describe('API: POST /api/plugins/install - FREE Plan', () => {
   it('allows installing up to 3 plugins', async () => {
     const userId = 'user-123';
     const plugin = mockPlugin('plugin-1', 'Test Plugin 1');

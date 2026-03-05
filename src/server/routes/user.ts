@@ -2,28 +2,23 @@
  * User Routes (Personal Resources)
  *
  * URL-based API pattern for personal resources (GitHub-style)
- * All routes at /api/user/* return the authenticated user's personal resources
+ * All routes at /api/user/* return the authenticated user's personal resources.
+ *
+ * Plugin routes have been moved to /api/plugins/* (see plugin.ts).
  *
  * @module server/routes/user
  */
 
+import { prisma } from "@/lib/prisma";
 import { gatewayService } from "@/modules/gateway";
 import type { GatewayListItem } from "@/modules/gateway/gateway.types";
 import type { OrgWithRole, PendingInvite } from "@/modules/organization";
 import { organizationService } from "@/modules/organization";
-import { pluginService } from "@/modules/plugin";
-import type { SafeUserPlugin } from "@/modules/plugin/plugin.types";
-import {
-    installPluginSchema,
-    togglePluginSchema,
-    updatePluginConfigSchema,
-} from "@/modules/plugin/plugin.validation";
 import { resourceService, type PersonalResourceStatus } from "@/modules/resource";
-import { BadRequestError, ValidationError } from "@/shared/errors";
+import { BadRequestError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext, type ServiceContext } from "@/shared/types/context";
 import { Router, type Request, type Response } from "express";
-import type { ZodError } from "zod";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
 
@@ -31,21 +26,6 @@ export const userRouter = Router();
 
 // All routes require authentication
 userRouter.use(requireAuth);
-
-/**
- * Format Zod validation errors into a simple object
- */
-function formatZodErrors(error: ZodError): Record<string, string[]> {
-  const errors: Record<string, string[]> = {};
-  for (const issue of error.issues) {
-    const path = issue.path.join(".") || "general";
-    if (!errors[path]) {
-      errors[path] = [];
-    }
-    errors[path].push(issue.message);
-  }
-  return errors;
-}
 
 /**
  * Helper to create personal ServiceContext from Express request
@@ -96,174 +76,9 @@ userRouter.get(
   })
 );
 
-/**
- * GET /api/user/plugins
- *
- * List user's installed plugins (personal workspace)
- *
- * @returns {SafeUserPlugin[]} User's installed plugins
- */
-userRouter.get(
-  "/plugins",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin[]>>) => {
-    const ctx = getPersonalContext(req);
-
-    const plugins = await pluginService.getUserPlugins(ctx);
-
-    res.json({
-      success: true,
-      data: plugins,
-    });
-  })
-);
-
-/**
- * GET /api/user/plugins/:id
- *
- * Get a specific user plugin by ID
- *
- * @param {string} id - UserPlugin ID
- * @returns {SafeUserPlugin} User plugin details
- */
-userRouter.get(
-  "/plugins/:id",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
-    const ctx = getPersonalContext(req);
-    const id = req.params.id as string;
-
-    if (!id) {
-      throw new BadRequestError("Plugin ID is required");
-    }
-
-    const userPlugin = await pluginService.getUserPluginById(ctx, id);
-
-    res.json({
-      success: true,
-      data: userPlugin,
-    });
-  })
-);
-
-/**
- * POST /api/user/plugins/install
- *
- * Install a plugin for the current user
- *
- * @body {string} slug - Slug of the plugin to install
- * @body {object} [config] - Plugin configuration
- * @body {string} [gatewayId] - Gateway to bind the plugin to
- * @returns {SafeUserPlugin} Installed plugin
- */
-userRouter.post(
-  "/plugins/install",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
-    const ctx = getPersonalContext(req);
-
-    const parseResult = installPluginSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      throw new ValidationError("Invalid install data", formatZodErrors(parseResult.error));
-    }
-
-    const userPlugin = await pluginService.installPlugin(ctx, parseResult.data);
-
-    res.status(201).json({
-      success: true,
-      data: userPlugin,
-    });
-  })
-);
-
-/**
- * DELETE /api/user/plugins/:id
- *
- * Uninstall a plugin
- *
- * @param {string} id - UserPlugin ID
- */
-userRouter.delete(
-  "/plugins/:id",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<null>>) => {
-    const ctx = getPersonalContext(req);
-    const id = req.params.id as string;
-
-    if (!id) {
-      throw new BadRequestError("Plugin ID is required");
-    }
-
-    await pluginService.uninstallPlugin(ctx, id);
-
-    res.json({
-      success: true,
-      data: null,
-    });
-  })
-);
-
-/**
- * PUT /api/user/plugins/:id/config
- *
- * Update plugin configuration
- *
- * @param {string} id - UserPlugin ID
- * @body {object} config - New plugin configuration
- * @returns {SafeUserPlugin} Updated plugin
- */
-userRouter.put(
-  "/plugins/:id/config",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
-    const ctx = getPersonalContext(req);
-    const id = req.params.id as string;
-
-    if (!id) {
-      throw new BadRequestError("Plugin ID is required");
-    }
-
-    const parseResult = updatePluginConfigSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      throw new ValidationError("Invalid config data", formatZodErrors(parseResult.error));
-    }
-
-    const userPlugin = await pluginService.updatePluginConfig(ctx, id, parseResult.data);
-
-    res.json({
-      success: true,
-      data: userPlugin,
-    });
-  })
-);
-
-/**
- * POST /api/user/plugins/:id/toggle
- *
- * Enable or disable a plugin
- *
- * @param {string} id - UserPlugin ID
- * @body {boolean} enabled - Enable or disable the plugin
- * @returns {SafeUserPlugin} Updated plugin
- */
-userRouter.post(
-  "/plugins/:id/toggle",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
-    const ctx = getPersonalContext(req);
-    const id = req.params.id as string;
-
-    if (!id) {
-      throw new BadRequestError("Plugin ID is required");
-    }
-
-    const parseResult = togglePluginSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      throw new ValidationError("Invalid toggle data", formatZodErrors(parseResult.error));
-    }
-
-    const userPlugin = await pluginService.togglePlugin(ctx, id, parseResult.data.enabled);
-
-    res.json({
-      success: true,
-      data: userPlugin,
-    });
-  })
-);
+// ===========================================
+// Quota
+// ===========================================
 
 /**
  * GET /api/user/quota
@@ -442,6 +257,52 @@ userRouter.post(
     res.json({
       success: true,
       data: null,
+    });
+  })
+);
+
+// ===========================================
+// PUT /api/user/preferences
+// ===========================================
+
+const VALID_ROUTING_PREFERENCES = ['quality', 'balanced', 'cost'] as const;
+
+/**
+ * PUT /api/user/preferences
+ *
+ * Update user preferences (AI routing preference, etc.)
+ *
+ * @body {string} [aiRoutingPreference] - quality | balanced | cost
+ * @returns Updated preference values
+ */
+userRouter.put(
+  "/preferences",
+  asyncHandler(async (req: Request, res: Response<ApiResponse<{ aiRoutingPreference: string }>>) => {
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
+    const { aiRoutingPreference } = req.body as { aiRoutingPreference?: string };
+
+    if (aiRoutingPreference !== undefined) {
+      if (!VALID_ROUTING_PREFERENCES.includes(aiRoutingPreference as typeof VALID_ROUTING_PREFERENCES[number])) {
+        throw new BadRequestError(
+          `Invalid aiRoutingPreference: "${aiRoutingPreference}". Must be one of: ${VALID_ROUTING_PREFERENCES.join(', ')}`
+        );
+      }
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(aiRoutingPreference !== undefined && { aiRoutingPreference }),
+      },
+      select: {
+        aiRoutingPreference: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: { aiRoutingPreference: updated.aiRoutingPreference },
     });
   })
 );

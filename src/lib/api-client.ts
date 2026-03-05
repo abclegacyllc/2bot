@@ -223,3 +223,185 @@ export async function apiPostForm<T>(
     };
   }
 }
+
+// ============================================================================
+// Gateway API Functions
+// ============================================================================
+
+/** Minimal gateway info for dropdowns */
+export interface GatewayOption {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+}
+
+/**
+ * List user's gateways (personal scope)
+ */
+export function getUserGateways(
+  token?: string
+): Promise<ApiResponse<GatewayOption[]>> {
+  return apiGet<GatewayOption[]>("/user/gateways", token);
+}
+
+/**
+ * List org gateways
+ */
+export function getOrgGateways(
+  orgId: string,
+  token?: string
+): Promise<ApiResponse<GatewayOption[]>> {
+  return apiGet<GatewayOption[]>(`/orgs/${orgId}/gateways`, token);
+}
+
+// ============================================================================
+// Plugin API Functions
+// ============================================================================
+
+import type {
+    AnyPluginTemplate,
+    CreateCustomPluginRequest,
+    CreatePluginFromRepoRequest,
+    PluginDefinition,
+    PluginListItem,
+    PluginTemplateListItem,
+    RegisterDirectoryAsPluginRequest,
+    UpdateCustomPluginRequest,
+    UserPlugin,
+} from "@/shared/types/plugin";
+
+/** Custom plugin with code included */
+export interface CustomPluginDetail extends PluginDefinition {
+  code: string;
+  /** Entry file path relative to workspace (present for directory plugins) */
+  entryFile?: string | null;
+}
+
+/**
+ * List available plugins in the catalog
+ */
+export function getPluginCatalog(
+  params?: { category?: string; search?: string; tags?: string },
+  token?: string
+): Promise<ApiResponse<PluginListItem[]>> {
+  const qs = new URLSearchParams();
+  if (params?.category) qs.set("category", params.category);
+  if (params?.search) qs.set("search", params.search);
+  if (params?.tags) qs.set("tags", params.tags);
+  const query = qs.toString();
+  return apiGet<PluginListItem[]>(`/plugins${query ? `?${query}` : ""}`, token);
+}
+
+/**
+ * Get a plugin by slug (full details including configSchema)
+ */
+export function getPluginBySlug(
+  slug: string,
+  token?: string
+): Promise<ApiResponse<PluginDefinition>> {
+  return apiGet<PluginDefinition>(`/plugins/${slug}`, token);
+}
+
+/**
+ * List plugin templates
+ */
+export function getPluginTemplates(
+  params?: { category?: string; difficulty?: string },
+  token?: string
+): Promise<ApiResponse<PluginTemplateListItem[]>> {
+  const qs = new URLSearchParams();
+  if (params?.category) qs.set("category", params.category);
+  if (params?.difficulty) qs.set("difficulty", params.difficulty);
+  const query = qs.toString();
+  return apiGet<PluginTemplateListItem[]>(`/plugins/templates${query ? `?${query}` : ""}`, token);
+}
+
+/**
+ * Get a single template by ID (includes code or files for directory templates)
+ */
+export function getPluginTemplate(
+  id: string,
+  token?: string
+): Promise<ApiResponse<AnyPluginTemplate>> {
+  return apiGet<AnyPluginTemplate>(`/plugins/templates/${id}`, token);
+}
+
+/**
+ * Create a custom plugin
+ */
+export function createCustomPlugin(
+  data: CreateCustomPluginRequest,
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPost<UserPlugin>("/plugins/custom", data, token);
+}
+
+/**
+ * Create a plugin from a Git repository
+ */
+export function createPluginFromRepo(
+  data: CreatePluginFromRepoRequest,
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPost<UserPlugin>("/plugins/from-repo", data, token);
+}
+
+/**
+ * Register a workspace directory as a plugin
+ */
+export function registerDirectoryAsPlugin(
+  data: RegisterDirectoryAsPluginRequest,
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPost<UserPlugin>("/plugins/register-dir", data, token);
+}
+
+/** Plugin health entry returned by the health endpoint */
+export interface PluginHealthEntry {
+  pluginSlug: string;
+  userPluginId: string;
+  entryFile: string;
+  fileExists: boolean;
+  processRunning: boolean;
+}
+
+/**
+ * Get health status for all enabled plugins in the user's workspace.
+ */
+export function getPluginHealth(
+  token?: string,
+): Promise<ApiResponse<PluginHealthEntry[]>> {
+  return apiGet<PluginHealthEntry[]>("/plugins/health", token);
+}
+
+/**
+ * Get a custom plugin's full details including code
+ */
+export function getCustomPlugin(
+  id: string,
+  token?: string
+): Promise<ApiResponse<CustomPluginDetail>> {
+  return apiGet<CustomPluginDetail>(`/plugins/custom/${id}`, token);
+}
+
+/**
+ * Update a custom plugin
+ */
+export function updateCustomPlugin(
+  id: string,
+  data: UpdateCustomPluginRequest,
+  token?: string
+): Promise<ApiResponse<PluginDefinition>> {
+  return apiPut<PluginDefinition>(`/plugins/custom/${id}`, data, token);
+}
+
+/**
+ * Delete a custom plugin
+ */
+export function deleteCustomPlugin(
+  id: string,
+  token?: string
+): Promise<ApiResponse<void>> {
+  return apiDelete<void>(`/plugins/custom/${id}`, token);
+}

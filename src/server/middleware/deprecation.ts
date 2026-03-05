@@ -96,11 +96,11 @@ export const ENDPOINT_MIGRATIONS = {
     description: "Gateway list - use /api/user/* for personal, /api/orgs/:orgId/* for organization",
   },
 
-  // Plugin routes
+  // Plugin routes (consolidated under /api/plugins/*)
   "GET /api/plugins/user/plugins": {
-    personal: "GET /api/user/plugins",
+    personal: "GET /api/plugins/installed",
     organization: "GET /api/orgs/:orgId/plugins",
-    description: "User plugins - use URL-based routes instead of context-based",
+    description: "User plugins - use /api/plugins/installed for personal, /api/orgs/:orgId/plugins for organization",
   },
 
   // Quota routes

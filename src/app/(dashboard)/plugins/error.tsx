@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Plugins Error Page
+ * My Plugins Error Page
  *
  * @module app/(dashboard)/plugins/error
  */
@@ -9,7 +9,7 @@
 import { useEffect } from "react";
 import { ErrorFallback } from "@/components/error-boundary";
 
-export default function PluginsError({
+export default function MyPluginsError({
   error,
   reset,
 }: {
@@ -17,15 +17,15 @@ export default function PluginsError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("Plugins error:", error);
+    console.error("My plugins error:", error);
   }, [error]);
 
   return (
     <ErrorFallback
       error={error}
       reset={reset}
-      title="Plugin Store Error"
-      description="Failed to load plugins. Please try again."
+      title="My Plugins Error"
+      description="Failed to load your plugins. Please try again."
     />
   );
 }

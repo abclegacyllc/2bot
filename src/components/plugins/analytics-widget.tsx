@@ -242,7 +242,7 @@ export function AnalyticsWidget({
       setLoading(true);
       setError(null);
 
-      const response = await fetch(apiUrl(`/plugins/user/plugins/${userPluginId}/analytics`), {
+      const response = await fetch(apiUrl(`/plugins/installed/${userPluginId}/analytics`), {
         credentials: "include",
       });
 
