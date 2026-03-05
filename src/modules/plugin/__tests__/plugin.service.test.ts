@@ -47,6 +47,11 @@ vi.mock('@/lib/audit', () => ({
   },
 }));
 
+vi.mock('@/lib/encryption', () => ({
+  encrypt: vi.fn((data: unknown) => `encrypted:${JSON.stringify(data)}`),
+  decryptJson: vi.fn(() => ({})),
+}));
+
 vi.mock('@/lib/plan-limits', () => ({
   enforcePluginLimit: vi.fn(),
 }));

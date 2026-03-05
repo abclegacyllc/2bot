@@ -7,10 +7,10 @@
  * @module modules/plugin/plugin.types
  */
 
-import type { GatewayType, Plugin, UserPlugin } from "@prisma/client";
+import type { GatewayType, Plugin, PluginAuthorType, UserPlugin } from "@prisma/client";
 
 // Re-export Prisma types
-export type { Plugin, UserPlugin } from "@prisma/client";
+export type { Plugin, PluginAuthorType, UserPlugin } from "@prisma/client";
 
 // ===========================================
 // JSON Schema Type (simplified)
@@ -35,6 +35,8 @@ export interface JSONSchema {
   pattern?: string;
   format?: string;
   title?: string;
+  /** Custom UI component to render instead of default input (e.g. "ai-model-selector") */
+  uiComponent?: string;
 }
 
 // ===========================================
@@ -57,6 +59,9 @@ export interface PluginDefinition {
   tags: string[];
   isBuiltin: boolean;
   isActive: boolean;
+  authorId?: string | null;
+  authorType: PluginAuthorType;
+  isPublic: boolean;
   
   // For workflow integration (Phase 5+)
   inputSchema?: JSONSchema | null;
@@ -91,6 +96,9 @@ export function toPluginDefinition(plugin: Plugin): PluginDefinition {
     tags: plugin.tags,
     isBuiltin: plugin.isBuiltin,
     isActive: plugin.isActive,
+    authorId: plugin.authorId,
+    authorType: plugin.authorType,
+    isPublic: plugin.isPublic,
     inputSchema: plugin.inputSchema as JSONSchema | null,
     outputSchema: plugin.outputSchema as JSONSchema | null,
   };
@@ -105,6 +113,7 @@ export function toPluginDefinition(plugin: Plugin): PluginDefinition {
  */
 export interface UserPluginWithPlugin extends UserPlugin {
   plugin: Plugin;
+  gateway?: { id: string; name: string; type: GatewayType; status: string } | null;
 }
 
 /**
@@ -120,12 +129,20 @@ export interface SafeUserPlugin {
   pluginCategory: string;
   config: Record<string, unknown>;
   gatewayId: string | null;
+  gatewayName: string | null;
+  gatewayType: string | null;
+  gatewayStatus: string | null;
+  requiredGateways: string[];
   isEnabled: boolean;
   executionCount: number;
   lastExecutedAt: Date | null;
   lastError: string | null;
+  storageQuotaMb: number;
   createdAt: Date;
   updatedAt: Date;
+  authorType: PluginAuthorType;
+  /** Entry file path relative to workspace (e.g. plugins/my-bot.js or plugins/my-bot/index.js) */
+  entryFile: string | null;
 }
 
 /**
@@ -142,12 +159,19 @@ export function toSafeUserPlugin(userPlugin: UserPluginWithPlugin): SafeUserPlug
     pluginCategory: userPlugin.plugin.category,
     config: userPlugin.config as Record<string, unknown>,
     gatewayId: userPlugin.gatewayId,
+    gatewayName: userPlugin.gateway?.name ?? null,
+    gatewayType: userPlugin.gateway?.type ?? null,
+    gatewayStatus: userPlugin.gateway?.status ?? null,
+    requiredGateways: userPlugin.plugin.requiredGateways as string[],
     isEnabled: userPlugin.isEnabled,
     executionCount: userPlugin.executionCount,
     lastExecutedAt: userPlugin.lastExecutedAt,
     lastError: userPlugin.lastError,
+    storageQuotaMb: userPlugin.storageQuotaMb,
     createdAt: userPlugin.createdAt,
     updatedAt: userPlugin.updatedAt,
+    authorType: userPlugin.plugin.authorType,
+    entryFile: userPlugin.entryFile ?? null,
   };
 }
 
@@ -172,6 +196,8 @@ export interface InstallPluginRequest {
 export interface UpdatePluginConfigRequest {
   config: Record<string, unknown>;
   gatewayId?: string | null;
+  /** Storage quota for local KV store in MB (0 = unlimited, default 50) */
+  storageQuotaMb?: number;
 }
 
 /**
@@ -312,6 +338,8 @@ export type PluginEventType = PluginEvent["type"];
 
 // ===========================================
 // Plugin List Item (for API responses)
+// NOTE: Matching frontend type at @/shared/types/plugin — keep in sync.
+// Backend uses Prisma GatewayType enum; frontend uses plain strings.
 // ===========================================
 
 /**
@@ -328,4 +356,65 @@ export interface PluginListItem {
   tags: string[];
   requiredGateways: GatewayType[];
   isBuiltin: boolean;
+  authorType: PluginAuthorType;
+  isPublic: boolean;
+}
+
+// ===========================================
+// Custom Plugin Request Types
+// ===========================================
+
+/**
+ * Create a custom plugin
+ */
+export interface CreateCustomPluginRequest {
+  slug: string;
+  name: string;
+  description: string;
+  /** Single-file plugin code (required unless files is provided) */
+  code?: string;
+  /** Multi-file (directory) plugin files — key is relative path, value is content */
+  files?: Record<string, string>;
+  /** Entry file for directory plugins (default: "index.js") */
+  entry?: string;
+  requiredGateways?: GatewayType[];
+  configSchema?: JSONSchema;
+  config?: Record<string, unknown>;
+  gatewayId?: string;
+  category?: PluginCategory;
+  tags?: string[];
+}
+
+/**
+ * Update custom plugin code
+ */
+export interface UpdateCustomPluginRequest {
+  code?: string;
+  name?: string;
+  description?: string;
+  configSchema?: JSONSchema;
+  category?: PluginCategory;
+  tags?: string[];
+}
+
+/**
+ * Create a plugin from a Git repository
+ */
+export interface CreatePluginFromRepoRequest {
+  /** Git repository URL (https or git://) */
+  gitUrl: string;
+  /** Branch to clone (default: default branch) */
+  branch?: string;
+  /** Optional gateway to bind the plugin to */
+  gatewayId?: string;
+}
+
+/**
+ * Register an existing workspace directory as a plugin
+ */
+export interface RegisterDirectoryAsPluginRequest {
+  /** Path to directory inside workspace (e.g. "plugins/my-bot") */
+  dirPath: string;
+  /** Optional gateway to bind the plugin to */
+  gatewayId?: string;
 }

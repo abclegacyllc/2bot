@@ -67,6 +67,102 @@ export interface TelegramCallbackEventData {
 }
 
 /**
+ * Telegram chat member updated event
+ * Fires when the bot or a chat member status changes
+ */
+export interface TelegramChatMemberUpdatedEventData {
+  chatId: number;
+  chatType: "private" | "group" | "supergroup" | "channel";
+  chatTitle?: string;
+  from: {
+    id: number;
+    isBot: boolean;
+    firstName: string;
+    lastName?: string;
+    username?: string;
+  };
+  date: number;
+  oldStatus: "creator" | "administrator" | "member" | "restricted" | "left" | "kicked";
+  newStatus: "creator" | "administrator" | "member" | "restricted" | "left" | "kicked";
+  oldMember: {
+    userId: number;
+    isBot: boolean;
+    firstName: string;
+    username?: string;
+  };
+  newMember: {
+    userId: number;
+    isBot: boolean;
+    firstName: string;
+    username?: string;
+  };
+}
+
+/**
+ * Telegram inline query event
+ */
+export interface TelegramInlineQueryEventData {
+  id: string;
+  from: {
+    id: number;
+    isBot: boolean;
+    firstName: string;
+    lastName?: string;
+    username?: string;
+  };
+  query: string;
+  offset: string;
+  chatType?: "sender" | "private" | "group" | "supergroup" | "channel";
+}
+
+/**
+ * Telegram chosen inline result event
+ */
+export interface TelegramChosenInlineResultEventData {
+  resultId: string;
+  from: {
+    id: number;
+    isBot: boolean;
+    firstName: string;
+    lastName?: string;
+    username?: string;
+  };
+  query: string;
+  inlineMessageId?: string;
+}
+
+/**
+ * Telegram poll state event
+ */
+export interface TelegramPollEventData {
+  pollId: string;
+  question: string;
+  options: Array<{ text: string; voterCount: number }>;
+  totalVoterCount: number;
+  isClosed: boolean;
+  isAnonymous: boolean;
+  type: "regular" | "quiz";
+  allowsMultipleAnswers: boolean;
+  correctOptionId?: number;
+  explanation?: string;
+}
+
+/**
+ * Telegram poll answer event
+ */
+export interface TelegramPollAnswerEventData {
+  pollId: string;
+  user: {
+    id: number;
+    isBot: boolean;
+    firstName: string;
+    lastName?: string;
+    username?: string;
+  };
+  optionIds: number[];
+}
+
+/**
  * Schedule trigger event
  */
 export interface ScheduleTriggerEventData {
@@ -76,15 +172,19 @@ export interface ScheduleTriggerEventData {
 }
 
 /**
- * Webhook trigger event
+ * Custom gateway / webhook trigger event
  */
-export interface WebhookTriggerEventData {
+export interface CustomGatewayEventData {
   method: string;
-  path: string;
   headers: Record<string, string>;
   query: Record<string, string>;
   body: unknown;
+  /** Decrypted credentials stored on the gateway (key-value pairs) */
+  credentials: Record<string, string>;
 }
+
+/** @deprecated Use CustomGatewayEventData */
+export type WebhookTriggerEventData = CustomGatewayEventData;
 
 /**
  * Manual trigger event
@@ -101,8 +201,15 @@ export interface ManualTriggerEventData {
 export type PluginEvent =
   | { type: "telegram.message"; data: TelegramMessageEventData; gatewayId: string }
   | { type: "telegram.callback"; data: TelegramCallbackEventData; gatewayId: string }
+  | { type: "telegram.my_chat_member"; data: TelegramChatMemberUpdatedEventData; gatewayId: string }
+  | { type: "telegram.chat_member"; data: TelegramChatMemberUpdatedEventData; gatewayId: string }
+  | { type: "telegram.inline_query"; data: TelegramInlineQueryEventData; gatewayId: string }
+  | { type: "telegram.chosen_inline_result"; data: TelegramChosenInlineResultEventData; gatewayId: string }
+  | { type: "telegram.poll"; data: TelegramPollEventData; gatewayId: string }
+  | { type: "telegram.poll_answer"; data: TelegramPollAnswerEventData; gatewayId: string }
   | { type: "schedule.trigger"; data: ScheduleTriggerEventData }
-  | { type: "webhook.trigger"; data: WebhookTriggerEventData }
+  | { type: "webhook.trigger"; data: CustomGatewayEventData; gatewayId: string }
+  | { type: "customGateway.incoming"; data: CustomGatewayEventData; gatewayId: string }
   | { type: "manual.trigger"; data: ManualTriggerEventData }
   | { type: "workflow.step"; data: { input: unknown; previousOutput?: unknown } };
 
@@ -112,8 +219,15 @@ export type PluginEvent =
 export const PLUGIN_EVENT_TYPES = {
   TELEGRAM_MESSAGE: "telegram.message",
   TELEGRAM_CALLBACK: "telegram.callback",
+  TELEGRAM_MY_CHAT_MEMBER: "telegram.my_chat_member",
+  TELEGRAM_CHAT_MEMBER: "telegram.chat_member",
+  TELEGRAM_INLINE_QUERY: "telegram.inline_query",
+  TELEGRAM_CHOSEN_INLINE_RESULT: "telegram.chosen_inline_result",
+  TELEGRAM_POLL: "telegram.poll",
+  TELEGRAM_POLL_ANSWER: "telegram.poll_answer",
   SCHEDULE_TRIGGER: "schedule.trigger",
   WEBHOOK_TRIGGER: "webhook.trigger",
+  CUSTOM_GATEWAY_INCOMING: "customGateway.incoming",
   MANUAL_TRIGGER: "manual.trigger",
   WORKFLOW_STEP: "workflow.step",
 } as const;
@@ -196,6 +310,9 @@ export interface PluginContext {
 
   /** Plugin installation ID */
   userPluginId: string;
+
+  /** Entry file path inside workspace (e.g. "plugins/my-bot.js" or "plugins/my-bot/index.js") */
+  entryFile?: string;
 
   /** Access to user's gateways */
   gateways: GatewayAccessor;
@@ -445,6 +562,41 @@ export abstract class BasePlugin implements PluginHandler {
    */
   protected isTelegramCallback(event: PluginEvent): event is { type: "telegram.callback"; data: TelegramCallbackEventData; gatewayId: string } {
     return event.type === "telegram.callback";
+  }
+
+  /**
+   * Type guard for chat member update events (bot added/removed from chat)
+   */
+  protected isMyChatMemberUpdate(event: PluginEvent): event is { type: "telegram.my_chat_member"; data: TelegramChatMemberUpdatedEventData; gatewayId: string } {
+    return event.type === "telegram.my_chat_member";
+  }
+
+  /**
+   * Type guard for chat member update events (any member, not just the bot)
+   */
+  protected isChatMemberUpdate(event: PluginEvent): event is { type: "telegram.chat_member"; data: TelegramChatMemberUpdatedEventData; gatewayId: string } {
+    return event.type === "telegram.chat_member";
+  }
+
+  /**
+   * Type guard for inline query events
+   */
+  protected isInlineQuery(event: PluginEvent): event is { type: "telegram.inline_query"; data: TelegramInlineQueryEventData; gatewayId: string } {
+    return event.type === "telegram.inline_query";
+  }
+
+  /**
+   * Type guard for poll events
+   */
+  protected isPoll(event: PluginEvent): event is { type: "telegram.poll"; data: TelegramPollEventData; gatewayId: string } {
+    return event.type === "telegram.poll";
+  }
+
+  /**
+   * Type guard for poll answer events
+   */
+  protected isPollAnswer(event: PluginEvent): event is { type: "telegram.poll_answer"; data: TelegramPollAnswerEventData; gatewayId: string } {
+    return event.type === "telegram.poll_answer";
   }
 
   /**

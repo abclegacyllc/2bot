@@ -1,27 +1,29 @@
 /**
  * Plugin Executor
  *
- * Executes plugins in isolated worker threads with resource limits.
- * Provides timeout handling, crash recovery, circuit breaker protection,
- * and metrics collection.
+ * Executes plugins in their workspace containers via the bridge agent,
+ * or in-process for built-in server-side plugins.
+ *
+ * All custom/user plugins run in WORKSPACE mode (Phase 4 simplification).
+ * Built-in plugins registered via registerPlugin() run in-process.
  *
  * @module modules/plugin/plugin.executor
  */
 
-import path from "node:path";
-import { Worker } from "node:worker_threads";
-
 import { CircuitOpenError } from "@/lib/circuit-breaker";
+import { decrypt } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { redis } from "@/lib/redis";
+import { bridgeClientManager } from "@/modules/workspace";
+
+import { pluginDeployService } from "./plugin-deploy.service";
 
 import type { GatewayType } from "@prisma/client";
 
 import {
     executePluginWithCircuit,
-    getPluginCircuitStats,
-    isPluginCircuitOpen,
-    PluginCircuitOpenError,
+    PluginCircuitOpenError
 } from "./plugin-circuit";
 import type {
     GatewayAccessor,
@@ -29,6 +31,8 @@ import type {
     PluginEvent,
     PluginExecutionResult,
     PluginStorage,
+    TelegramCallbackEventData,
+    TelegramMessageEventData,
 } from "./plugin.interface";
 import {
     PluginCrashError,
@@ -39,6 +43,73 @@ import {
 const executorLogger = logger.child({ module: "plugin-executor" });
 
 // ===========================================
+// Raw Telegram Format Converters
+// ===========================================
+
+/**
+ * Convert internal TelegramMessageEventData back to raw Telegram format
+ * so container plugins can use standard Telegram Bot API field names.
+ */
+function toRawTelegramUpdate(event: PluginEvent): Record<string, unknown> {
+  if (event.type === 'telegram.message') {
+    const d = event.data as TelegramMessageEventData;
+    return {
+      message: {
+        message_id: d.messageId,
+        chat: { id: d.chatId, type: d.chatType },
+        from: d.from ? {
+          id: d.from.id,
+          is_bot: d.from.isBot,
+          first_name: d.from.firstName,
+          last_name: d.from.lastName,
+          username: d.from.username,
+        } : undefined,
+        text: d.text,
+        date: d.date,
+        photo: d.photo?.map(p => ({
+          file_id: p.fileId,
+          file_unique_id: p.fileUniqueId,
+          width: p.width,
+          height: p.height,
+        })),
+        document: d.document ? {
+          file_id: d.document.fileId,
+          file_unique_id: d.document.fileUniqueId,
+          file_name: d.document.fileName,
+          mime_type: d.document.mimeType,
+        } : undefined,
+      },
+    };
+  }
+
+  if (event.type === 'telegram.callback') {
+    const d = event.data as TelegramCallbackEventData;
+    return {
+      callback_query: {
+        id: d.id,
+        from: {
+          id: d.from.id,
+          is_bot: d.from.isBot,
+          first_name: d.from.firstName,
+          last_name: d.from.lastName,
+          username: d.from.username,
+        },
+        message: d.message ? {
+          message_id: d.message.messageId,
+          chat: { id: d.message.chatId, type: d.message.chatType },
+          text: d.message.text,
+          date: d.message.date,
+        } : undefined,
+        data: d.data,
+      },
+    };
+  }
+
+  // For other event types, pass data as-is
+  return event.data as Record<string, unknown>;
+}
+
+// ===========================================
 // Configuration
 // ===========================================
 
@@ -47,197 +118,15 @@ export interface ExecutorConfig {
   timeoutMs: number;
   /** Memory limit in MB (default: 128) */
   memoryLimitMb: number;
-  /** Whether to use worker threads (default: true) */
-  useWorkers: boolean;
 }
 
 const DEFAULT_CONFIG: ExecutorConfig = {
   timeoutMs: 30_000,
   memoryLimitMb: 128,
-  useWorkers: true,
 };
 
 // ===========================================
-// Worker Thread Executor
-// ===========================================
-
-interface WorkerInput {
-  pluginSlug: string;
-  pluginCode: string;
-  eventType: string;
-  eventData: unknown;
-  context: {
-    userId: string;
-    organizationId?: string;
-    config: Record<string, unknown>;
-    userPluginId: string;
-    gateways: Array<{ id: string; name: string; type: string }>;
-  };
-}
-
-interface WorkerMessage {
-  type: string;
-  id: string;
-  payload: unknown;
-  result?: PluginExecutionResult;
-}
-
-/**
- * Execute a plugin in a worker thread
- */
-async function executeInWorker(
-  pluginSlug: string,
-  pluginCode: string,
-  event: PluginEvent,
-  context: PluginContext,
-  config: ExecutorConfig
-): Promise<PluginExecutionResult> {
-  return new Promise((resolve, reject) => {
-    const workerPath = path.resolve(__dirname, "plugin-worker.js");
-
-    // Prepare worker input (context without functions)
-    const workerInput: WorkerInput = {
-      pluginSlug,
-      pluginCode,
-      eventType: event.type,
-      eventData: event.type === "workflow.step" ? event.data : event,
-      context: {
-        userId: context.userId,
-        organizationId: context.organizationId,
-        config: context.config,
-        userPluginId: context.userPluginId,
-        gateways: context.gateways.list().map((g) => ({
-          id: g.id,
-          name: g.name,
-          type: g.type,
-        })),
-      },
-    };
-
-    const worker = new Worker(workerPath, {
-      workerData: workerInput,
-      resourceLimits: {
-        maxOldGenerationSizeMb: config.memoryLimitMb,
-        maxYoungGenerationSizeMb: config.memoryLimitMb / 4,
-        stackSizeMb: 4,
-      },
-    });
-
-    // Timeout handler
-    const timeout = setTimeout(() => {
-      worker.terminate();
-      reject(new PluginTimeoutError(pluginSlug, config.timeoutMs));
-    }, config.timeoutMs);
-
-    // Handle messages from worker (storage, gateway requests)
-    worker.on("message", async (message: WorkerMessage) => {
-      if (message.type === "result" && message.result) {
-        clearTimeout(timeout);
-        resolve(message.result);
-        return;
-      }
-
-      // Handle storage operations
-      if (message.type === "storage.get") {
-        const { key } = message.payload as { key: string };
-        try {
-          const value = await context.storage.get(key);
-          worker.postMessage({
-            type: "storage.response",
-            id: message.id,
-            result: value,
-          });
-        } catch (error) {
-          worker.postMessage({
-            type: "storage.response",
-            id: message.id,
-            error: error instanceof Error ? error.message : "Storage error",
-          });
-        }
-      }
-
-      if (message.type === "storage.set") {
-        const { key, value, ttlSeconds } = message.payload as {
-          key: string;
-          value: unknown;
-          ttlSeconds?: number;
-        };
-        try {
-          await context.storage.set(key, value, ttlSeconds);
-          worker.postMessage({
-            type: "storage.response",
-            id: message.id,
-            result: null,
-          });
-        } catch (error) {
-          worker.postMessage({
-            type: "storage.response",
-            id: message.id,
-            error: error instanceof Error ? error.message : "Storage error",
-          });
-        }
-      }
-
-      if (message.type === "storage.delete") {
-        const { key } = message.payload as { key: string };
-        try {
-          await context.storage.delete(key);
-          worker.postMessage({
-            type: "storage.response",
-            id: message.id,
-            result: null,
-          });
-        } catch (error) {
-          worker.postMessage({
-            type: "storage.response",
-            id: message.id,
-            error: error instanceof Error ? error.message : "Storage error",
-          });
-        }
-      }
-
-      // Handle gateway operations
-      if (message.type === "gateway.execute") {
-        const { gatewayId, action, params } = message.payload as {
-          gatewayId: string;
-          action: string;
-          params: unknown;
-        };
-        try {
-          const result = await context.gateways.execute(gatewayId, action, params);
-          worker.postMessage({
-            type: "gateway.response",
-            id: message.id,
-            result,
-          });
-        } catch (error) {
-          worker.postMessage({
-            type: "gateway.response",
-            id: message.id,
-            error: error instanceof Error ? error.message : "Gateway error",
-          });
-        }
-      }
-    });
-
-    // Handle worker errors
-    worker.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(new PluginCrashError(pluginSlug, error));
-    });
-
-    // Handle worker exit
-    worker.on("exit", (code) => {
-      clearTimeout(timeout);
-      if (code !== 0) {
-        reject(new PluginCrashError(pluginSlug, new Error(`Worker exited with code ${code}`)));
-      }
-    });
-  });
-}
-
-// ===========================================
-// In-Process Executor (for testing/development)
+// In-Process Executor (built-in plugins only)
 // ===========================================
 
 /**
@@ -335,6 +224,178 @@ async function executeInProcess(
 }
 
 // ===========================================
+// Workspace Container Executor
+// ===========================================
+
+/**
+ * Execute a plugin inside a user's workspace container via bridge agent.
+ *
+ * Event-driven model: pushes the event to an already-running plugin process
+ * via the bridge agent's plugin.event action. If the plugin is not running,
+ * ensures file exists and starts the process first.
+ *
+ * Cold start path (Phase 4): If the user's container is STOPPED, auto-starts
+ * it before executing — so events are never lost due to idle containers.
+ */
+async function executeInWorkspace(
+  pluginSlug: string,
+  event: PluginEvent,
+  context: PluginContext,
+  config: ExecutorConfig
+): Promise<PluginExecutionResult> {
+  const startTime = Date.now();
+
+  // ── Find user's workspace container ──────────────────────────────
+  // Try exact org match first, then fall back to any container for this user.
+  let container = await prisma.workspaceContainer.findFirst({
+    where: {
+      userId: context.userId,
+      organizationId: context.organizationId ?? null,
+      status: { in: ['RUNNING', 'STOPPED'] },
+    },
+  });
+
+  if (!container && context.organizationId) {
+    container = await prisma.workspaceContainer.findFirst({
+      where: {
+        userId: context.userId,
+        status: { in: ['RUNNING', 'STOPPED'] },
+      },
+    });
+  }
+
+  if (!container) {
+    throw new PluginExecutionError(
+      'No workspace container found. Please create a workspace first.',
+      pluginSlug
+    );
+  }
+
+  // ── Cold start: auto-start STOPPED containers ───────────────────
+  if (container.status === 'STOPPED') {
+    executorLogger.info(
+      { pluginSlug, userId: context.userId, containerDbId: container.id },
+      'Container is STOPPED — auto-starting for plugin execution (cold start)',
+    );
+
+    try {
+      // Lazy import to avoid circular dependency at module level
+      const { workspaceService } = await import('@/modules/workspace');
+      await workspaceService.autoStartContainer(container.id);
+
+      // Re-fetch container to get updated bridgePort etc.
+      const updated = await prisma.workspaceContainer.findUnique({
+        where: { id: container.id },
+      });
+      if (!updated || updated.status !== 'RUNNING') {
+        throw new Error('Container did not reach RUNNING status after auto-start');
+      }
+      container = updated;
+    } catch (err) {
+      throw new PluginExecutionError(
+        `Cold start failed: ${err instanceof Error ? err.message : String(err)}`,
+        pluginSlug,
+      );
+    }
+  }
+
+  // ── Ensure bridge client connection ─────────────────────────────
+  let client = bridgeClientManager.getExistingClient(container.id);
+  if (!client) {
+    if (!container.bridgePort || !container.bridgeAuthToken) {
+      throw new PluginExecutionError(
+        'Workspace bridge connection info not available. Try restarting your workspace.',
+        pluginSlug
+      );
+    }
+    const authToken = container.bridgeAuthToken.startsWith('v1:')
+      ? decrypt(container.bridgeAuthToken)
+      : container.bridgeAuthToken;
+    try {
+      client = await bridgeClientManager.getClient(
+        container.id,
+        container.bridgePort,
+        authToken,
+      );
+    } catch (err) {
+      throw new PluginExecutionError(
+        `Failed to connect to workspace bridge agent: ${err instanceof Error ? err.message : String(err)}`,
+        pluginSlug
+      );
+    }
+  }
+
+  // ── Execute ─────────────────────────────────────────────────────
+  try {
+    // Ensure plugin file exists on the container filesystem (recover from template if missing)
+    await pluginDeployService.ensureFileExists(
+      container.id,
+      pluginSlug,
+      context.userId,
+      context.organizationId ?? null,
+      context.entryFile,
+    );
+
+    // Ensure plugin process is running (start if not)
+    await pluginDeployService.ensureRunning(
+      container.id,
+      pluginSlug,
+      {
+        PLUGIN_USER_ID: context.userId,
+        ...(context.organizationId ? { PLUGIN_ORG_ID: context.organizationId } : {}),
+        PLUGIN_CONFIG: JSON.stringify(context.config ?? {}),
+      },
+      context.entryFile,
+    );
+
+    const pluginFile = context.entryFile ?? `plugins/${pluginSlug}.js`;
+
+    // Push event to the running plugin via IPC
+    // Convert to raw format so container plugins see standard API field names
+    const bridgeResult = await Promise.race([
+      client.pluginEvent(pluginFile, {
+        type: event.type,
+        data: toRawTelegramUpdate(event),
+        gatewayId: 'gatewayId' in event ? event.gatewayId : undefined,
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new PluginTimeoutError(pluginSlug, config.timeoutMs));
+        }, config.timeoutMs);
+      }),
+    ]);
+
+    const durationMs = Date.now() - startTime;
+
+    if (bridgeResult.success) {
+      return {
+        success: true,
+        metrics: {
+          durationMs,
+        },
+      };
+    } else {
+      return {
+        success: false,
+        error: bridgeResult.error ?? 'Plugin event delivery failed',
+        metrics: {
+          durationMs,
+        },
+      };
+    }
+  } catch (error) {
+    if (error instanceof PluginTimeoutError) {
+      throw error;
+    }
+    throw new PluginExecutionError(
+      `Workspace execution failed: ${error instanceof Error ? error.message : String(error)}`,
+      pluginSlug,
+      error instanceof Error ? error : undefined
+    );
+  }
+}
+
+// ===========================================
 // Main Executor
 // ===========================================
 
@@ -351,12 +412,15 @@ export class PluginExecutor {
 
   /**
    * Execute a plugin event
+   *
+   * Routing (Phase 4 simplification):
+   *   - Built-in plugin registered in pluginRegistry → in-process
+   *   - Everything else → workspace container via bridge agent
    */
   async execute(
     pluginSlug: string,
-    pluginCode: string,
     event: PluginEvent,
-    context: PluginContext
+    context: PluginContext,
   ): Promise<PluginExecutionResult> {
     const startTime = Date.now();
 
@@ -365,44 +429,17 @@ export class PluginExecutor {
       "Executing plugin"
     );
 
-    // Check if circuit is open before attempting execution
-    if (isPluginCircuitOpen(pluginSlug)) {
-      const stats = getPluginCircuitStats(pluginSlug);
-      const retryAfterMs = stats?.lastStateChange
-        ? 60000 - (Date.now() - stats.lastStateChange.getTime())
-        : 60000;
-
-      executorLogger.warn(
-        { pluginSlug, userId: context.userId, retryAfterMs },
-        "Plugin circuit is OPEN, skipping execution"
-      );
-
-      // Record as failure (circuit open is a failure case)
-      await this.recordExecution(
-        context.userPluginId,
-        false,
-        Date.now() - startTime,
-        `Circuit open - too many recent failures`
-      );
-
-      throw new PluginCircuitOpenError(pluginSlug, Math.max(0, retryAfterMs));
-    }
-
     try {
       // Execute with circuit breaker protection
       const result = await executePluginWithCircuit(pluginSlug, async () => {
         let innerResult: PluginExecutionResult;
 
-        if (this.config.useWorkers && pluginCode && !pluginCode.startsWith("@builtin/")) {
-          innerResult = await executeInWorker(
-            pluginSlug,
-            pluginCode,
-            event,
-            context,
-            this.config
-          );
-        } else {
+        // Built-in plugins registered in-process run server-side
+        if (pluginRegistry.has(pluginSlug)) {
           innerResult = await executeInProcess(pluginSlug, event, context, this.config);
+        } else {
+          // All custom/user plugins run in the workspace container
+          innerResult = await executeInWorkspace(pluginSlug, event, context, this.config);
         }
 
         // If the plugin returned failure, we should throw to trigger circuit breaker
@@ -609,53 +646,48 @@ export function getPluginExecutor(config?: Partial<ExecutorConfig>): PluginExecu
 // ===========================================
 
 /**
- * Create a plugin storage implementation backed by Redis or database
+ * Create a plugin storage implementation backed by Redis.
+ * Each plugin installation gets its own namespaced key space.
+ * Data persists across server restarts.
  */
 export function createPluginStorage(
   userPluginId: string,
   _userId: string
 ): PluginStorage {
-  // Using a prefix to namespace storage keys per plugin installation
+  // Namespace storage keys per plugin installation
   const keyPrefix = `plugin:${userPluginId}:`;
-
-  // In-memory storage for now (replace with Redis in production)
-  const memoryStore = new Map<string, { value: unknown; expiresAt?: number }>();
 
   return {
     async get<T>(key: string): Promise<T | null> {
-      const item = memoryStore.get(`${keyPrefix}${key}`);
-      if (!item) return null;
-
-      // Check expiration
-      if (item.expiresAt && Date.now() > item.expiresAt) {
-        memoryStore.delete(`${keyPrefix}${key}`);
+      try {
+        const raw = await redis.get(`${keyPrefix}${key}`);
+        if (raw === null) return null;
+        return JSON.parse(raw) as T;
+      } catch {
         return null;
       }
-
-      return item.value as T;
     },
 
     async set<T>(key: string, value: T, ttlSeconds?: number): Promise<void> {
-      memoryStore.set(`${keyPrefix}${key}`, {
-        value,
-        expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined,
-      });
+      const serialized = JSON.stringify(value);
+      if (ttlSeconds && ttlSeconds > 0) {
+        await redis.set(`${keyPrefix}${key}`, serialized, 'EX', ttlSeconds);
+      } else {
+        await redis.set(`${keyPrefix}${key}`, serialized);
+      }
     },
 
     async delete(key: string): Promise<void> {
-      memoryStore.delete(`${keyPrefix}${key}`);
+      await redis.del(`${keyPrefix}${key}`);
     },
 
     async has(key: string): Promise<boolean> {
-      const result = await this.get(key);
-      return result !== null;
+      return (await redis.exists(`${keyPrefix}${key}`)) === 1;
     },
 
     async increment(key: string, by = 1): Promise<number> {
-      const current = (await this.get<number>(key)) ?? 0;
-      const newValue = current + by;
-      await this.set(key, newValue);
-      return newValue;
+      // If key doesn't exist yet, Redis INCRBY creates it with value 0 first
+      return redis.incrby(`${keyPrefix}${key}`, by);
     },
   };
 }

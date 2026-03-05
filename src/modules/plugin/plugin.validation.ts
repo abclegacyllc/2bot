@@ -120,6 +120,7 @@ export const installPluginSchema = z.object({
 export const updatePluginConfigSchema = z.object({
   config: pluginConfigSchema,
   gatewayId: z.string().cuid("Invalid gateway ID").optional().nullable(),
+  storageQuotaMb: z.number().int().min(0).max(500).optional(),
 });
 
 /**
@@ -174,6 +175,81 @@ export const createPluginSchema = z.object({
 });
 
 // ===========================================
+// Custom Plugin Schemas (User-created plugins)
+// ===========================================
+
+/**
+ * Plugin code validation — JS source code, max 100KB
+ */
+export const pluginCodeSchema = z
+  .string()
+  .min(10, "Plugin code must be at least 10 characters")
+  .max(102_400, "Plugin code must be less than 100KB");
+
+/**
+ * Plugin files validation — for directory (multi-file) plugins.
+ * Keys are relative file paths, values are file contents.
+ * Max 20 files, each max 100KB, must include at least an entry file.
+ */
+export const pluginFilesSchema = z
+  .record(
+    z.string().regex(/^[a-zA-Z0-9_\-./]+$/, "Invalid file path"),
+    z.string().max(102_400, "Each file must be less than 100KB"),
+  )
+  .refine(
+    (files) => Object.keys(files).length >= 1 && Object.keys(files).length <= 20,
+    { message: "Directory plugins must have between 1 and 20 files" },
+  );
+
+/**
+ * Create custom plugin request validation.
+ * Accepts either `code` (single-file) OR `files` + `entry` (directory plugin).
+ */
+export const createCustomPluginSchema = z.object({
+  slug: pluginSlugSchema,
+  name: pluginNameSchema,
+  description: z.string().min(3, "Description must be at least 3 characters").max(1000),
+  code: pluginCodeSchema.optional(),
+  files: pluginFilesSchema.optional(),
+  entry: z.string().min(1).max(200).default("index.js").optional(),
+  requiredGateways: gatewayTypesSchema.default([]),
+  configSchema: jsonSchemaSchema.optional().default({}),
+  config: pluginConfigSchema.optional(),
+  gatewayId: z.string().cuid("Invalid gateway ID").optional(),
+  category: pluginCategorySchema.default("general"),
+  tags: pluginTagsSchema.default([]),
+}).refine(
+  (data) => data.code || data.files,
+  { message: "Either 'code' (single-file) or 'files' (directory) must be provided" },
+).refine(
+  (data) => !(data.code && data.files),
+  { message: "Provide either 'code' or 'files', not both" },
+).refine(
+  (data) => {
+    if (data.files && data.entry) {
+      return data.entry in data.files;
+    }
+    return true;
+  },
+  { message: "Entry file must be included in the files map" },
+);
+
+/**
+ * Update custom plugin request validation
+ */
+export const updateCustomPluginSchema = z.object({
+  code: pluginCodeSchema.optional(),
+  name: pluginNameSchema.optional(),
+  description: z.string().min(3).max(1000).optional(),
+  configSchema: jsonSchemaSchema.optional(),
+  category: pluginCategorySchema.optional(),
+  tags: pluginTagsSchema.optional(),
+}).refine(
+  (data) => Object.keys(data).length > 0,
+  { message: "At least one field must be provided for update" }
+);
+
+// ===========================================
 // Query Parameter Schemas
 // ===========================================
 
@@ -204,6 +280,35 @@ export const userPluginsQuerySchema = z.object({
 }).merge(paginationSchema);
 
 // ===========================================
+// Git Clone / Register Directory Schemas
+// ===========================================
+
+/**
+ * Create plugin from a Git repository
+ */
+export const createPluginFromRepoSchema = z.object({
+  gitUrl: z.string()
+    .min(1, "Git URL is required")
+    .max(500, "Git URL too long")
+    .refine(
+      (url) => /^https?:\/\/.+\/.+/i.test(url) || /^git@.+:.+/i.test(url),
+      { message: "Must be a valid Git URL (https:// or git@)" }
+    ),
+  branch: z.string().max(100).optional(),
+  gatewayId: z.string().cuid("Invalid gateway ID").optional(),
+});
+
+/**
+ * Register an existing directory as a plugin
+ */
+export const registerDirectoryAsPluginSchema = z.object({
+  dirPath: z.string()
+    .min(1, "Directory path is required")
+    .max(500, "Path too long"),
+  gatewayId: z.string().cuid("Invalid gateway ID").optional(),
+});
+
+// ===========================================
 // Export Types from Schemas
 // ===========================================
 
@@ -211,6 +316,10 @@ export type InstallPluginInput = z.infer<typeof installPluginSchema>;
 export type UpdatePluginConfigInput = z.infer<typeof updatePluginConfigSchema>;
 export type TogglePluginInput = z.infer<typeof togglePluginSchema>;
 export type CreatePluginInput = z.infer<typeof createPluginSchema>;
+export type CreateCustomPluginInput = z.infer<typeof createCustomPluginSchema>;
+export type UpdateCustomPluginInput = z.infer<typeof updateCustomPluginSchema>;
+export type CreatePluginFromRepoInput = z.infer<typeof createPluginFromRepoSchema>;
+export type RegisterDirectoryAsPluginInput = z.infer<typeof registerDirectoryAsPluginSchema>;
 export type PluginListQueryInput = z.infer<typeof pluginListQuerySchema>;
 export type UserPluginsQueryInput = z.infer<typeof userPluginsQuerySchema>;
 

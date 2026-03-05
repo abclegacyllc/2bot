@@ -326,6 +326,21 @@ export class AnalyticsPlugin extends BasePlugin {
       lastName: event.data.from.lastName,
     };
   }
+
+  /**
+   * Override toSeedData to include the container-friendly codeBundle
+   * so the analytics plugin can run inside user workspace containers.
+   */
+  override toSeedData(): import("@prisma/client").Prisma.PluginCreateInput {
+    const base = super.toSeedData();
+    // Import the container-friendly analytics code from templates
+    const { PLUGIN_TEMPLATES } = require("../../plugin-templates");
+    const tpl = PLUGIN_TEMPLATES.find((t: { id: string }) => t.id === "channel-analytics");
+    return {
+      ...base,
+      codeBundle: tpl?.code ?? null,
+    };
+  }
 }
 
 /**

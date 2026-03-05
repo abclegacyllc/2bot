@@ -17,3 +17,6 @@ export * from "./plugin.validation";
 
 // Service
 export { pluginService } from "./plugin.service";
+
+// Templates
+export * from "./plugin-templates";

@@ -17,11 +17,17 @@ import { prisma } from "@/lib/prisma";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/shared/errors";
 import type { ServiceContext } from "@/shared/types/context";
 
+import { bridgeClientManager, workspaceService } from "@/modules/workspace";
+import { pluginDeployService } from "./plugin-deploy.service";
+import { pluginIpcService } from "./plugin-ipc.service";
 import type {
+    CreateCustomPluginRequest,
     InstallPluginRequest,
+    PluginCategory,
     PluginDefinition,
     PluginListItem,
     SafeUserPlugin,
+    UpdateCustomPluginRequest,
     UpdatePluginConfigRequest,
     UserPluginWithPlugin,
 } from "./plugin.types";
@@ -60,34 +66,51 @@ class PluginService {
   // ===========================================
 
   /**
-   * Get all available (active) plugins
+   * Get all available (active) plugins.
+   * When userId is provided, also includes the user's own custom (non-public) plugins.
    */
   async getAvailablePlugins(options?: {
     category?: string;
     gateway?: GatewayType;
     search?: string;
     tags?: string[];
+    userId?: string;
   }): Promise<PluginListItem[]> {
-    const where: Prisma.PluginWhereInput = { isActive: true };
+    // Base filter: active built-in/public plugins
+    const baseFilter: Prisma.PluginWhereInput = { isActive: true };
 
     if (options?.category) {
-      where.category = options.category;
+      baseFilter.category = options.category;
     }
 
     if (options?.gateway) {
-      where.requiredGateways = { has: options.gateway };
+      baseFilter.requiredGateways = { has: options.gateway };
     }
 
     if (options?.tags && options.tags.length > 0) {
-      where.tags = { hasSome: options.tags };
+      baseFilter.tags = { hasSome: options.tags };
     }
 
     if (options?.search) {
-      where.OR = [
+      baseFilter.OR = [
         { name: { contains: options.search, mode: "insensitive" } },
         { description: { contains: options.search, mode: "insensitive" } },
         { slug: { contains: options.search, mode: "insensitive" } },
       ];
+    }
+
+    // Include user's own custom plugins alongside public/built-in ones
+    let where: Prisma.PluginWhereInput;
+    if (options?.userId) {
+      where = {
+        OR: [
+          { ...baseFilter, isBuiltin: true },
+          { ...baseFilter, isPublic: true },
+          { ...baseFilter, authorId: options.userId },
+        ],
+      };
+    } else {
+      where = { ...baseFilter, OR: [{ isBuiltin: true }, { isPublic: true }] };
     }
 
     const plugins = await prisma.plugin.findMany({
@@ -104,6 +127,8 @@ class PluginService {
         tags: true,
         requiredGateways: true,
         isBuiltin: true,
+        authorType: true,
+        isPublic: true,
       },
     });
 
@@ -167,7 +192,10 @@ class PluginService {
 
     const userPlugins = await prisma.userPlugin.findMany({
       where,
-      include: { plugin: true },
+      include: {
+        plugin: true,
+        gateway: { select: { id: true, name: true, type: true, status: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
 
@@ -183,7 +211,10 @@ class PluginService {
   async getUserPluginById(ctx: ServiceContext, id: string): Promise<SafeUserPlugin> {
     const userPlugin = await prisma.userPlugin.findUnique({
       where: { id },
-      include: { plugin: true },
+      include: {
+        plugin: true,
+        gateway: { select: { id: true, name: true, type: true, status: true } },
+      },
     });
 
     if (!userPlugin) {
@@ -303,8 +334,12 @@ class PluginService {
         config: encryptedConfig,
         gatewayId: data.gatewayId ?? null,
         isEnabled: true,
+        entryFile: `plugins/${plugin.slug}.js`,
       },
-      include: { plugin: true },
+      include: {
+        plugin: true,
+        gateway: { select: { id: true, name: true, type: true, status: true } },
+      },
     });
 
     // Audit log
@@ -314,6 +349,39 @@ class PluginService {
       { userPluginId: userPlugin.id, pluginSlug: plugin.slug },
       "Plugin installed"
     );
+
+    // Ensure workspace container is running before writing template
+    try {
+      await workspaceService.ensureContainerRunning(ctx, ctx.organizationId);
+    } catch (err) {
+      pluginLogger.warn(
+        { pluginSlug: plugin.slug, error: (err as Error).message },
+        'Failed to ensure workspace running during install — template may not be deployed',
+      );
+    }
+
+    // Write template code to workspace container and start
+    const templateCode = plugin.codeBundle as string | null;
+    if (templateCode) {
+      const env: Record<string, string> = { PLUGIN_USER_ID: ctx.userId };
+      if (ctx.organizationId) env.PLUGIN_ORG_ID = ctx.organizationId;
+      if (data.gatewayId) env.PLUGIN_GATEWAY_ID = data.gatewayId;
+
+      try {
+        await pluginDeployService.writeTemplateToContainer(
+          ctx.userId,
+          ctx.organizationId ?? null,
+          plugin.slug,
+          templateCode,
+          env,
+        );
+      } catch (err) {
+        pluginLogger.warn(
+          { pluginSlug: plugin.slug, error: (err as Error).message },
+          'Plugin template deploy to workspace failed',
+        );
+      }
+    }
 
     // Return with original (unencrypted) config
     const decrypted = { ...userPlugin, config: data.config ?? {} };
@@ -336,18 +404,58 @@ class PluginService {
     // Check ownership
     this.checkOwnership(ctx, userPlugin);
 
-    // Delete the installation
-    await prisma.userPlugin.delete({
-      where: { id: userPluginId },
+    const plugin = userPlugin.plugin;
+    const isCustomPlugin = plugin.authorType === "USER" && !plugin.isBuiltin;
+
+    // For custom plugins, check if this is the last installation
+    let shouldDeleteCatalogEntry = false;
+    if (isCustomPlugin) {
+      const installCount = await prisma.userPlugin.count({
+        where: { pluginId: plugin.id },
+      });
+      // If this is the only installation, delete the catalog entry too
+      shouldDeleteCatalogEntry = installCount <= 1;
+    }
+
+    // Delete in a transaction: UserPlugin + (optionally) Plugin catalog entry
+    await prisma.$transaction(async (tx) => {
+      await tx.userPlugin.delete({ where: { id: userPluginId } });
+      if (shouldDeleteCatalogEntry) {
+        await tx.plugin.delete({ where: { id: plugin.id } });
+      }
     });
 
     // Audit log
-    void auditActions.pluginUninstalled(toAuditContext(ctx), userPluginId, userPlugin.plugin.slug);
+    void auditActions.pluginUninstalled(toAuditContext(ctx), userPluginId, plugin.slug);
 
     pluginLogger.info(
-      { userPluginId, pluginSlug: userPlugin.plugin.slug },
-      "Plugin uninstalled"
+      { userPluginId, pluginSlug: plugin.slug, catalogDeleted: shouldDeleteCatalogEntry },
+      shouldDeleteCatalogEntry ? "Custom plugin uninstalled and catalog entry deleted" : "Plugin uninstalled"
     );
+
+    // Remove plugin code from workspace container (non-blocking)
+    void pluginDeployService.undeployFromWorkspace(
+      ctx.userId,
+      ctx.organizationId ?? null,
+      plugin.slug,
+      userPlugin.entryFile ?? undefined,
+    ).catch((err) => {
+      pluginLogger.warn(
+        { pluginSlug: plugin.slug, error: (err as Error).message },
+        'Plugin undeploy from workspace failed (non-blocking)',
+      );
+    });
+
+    // Invalidate IPC context cache so stale plugin data doesn't linger
+    pluginIpcService.clearCache();
+
+    // Clean up server-side Redis storage for this plugin installation (non-blocking)
+    void pluginIpcService.clearPluginRedisKeys(userPluginId).catch((err) => {
+      pluginLogger.warn(
+        { userPluginId, error: (err as Error).message },
+        'Failed to clear plugin Redis storage (non-blocking)',
+      );
+    });
   }
 
   /**
@@ -360,7 +468,10 @@ class PluginService {
   ): Promise<SafeUserPlugin> {
     const userPlugin = await prisma.userPlugin.findUnique({
       where: { id: userPluginId },
-      include: { plugin: true },
+      include: {
+        plugin: true,
+        gateway: { select: { id: true, name: true, type: true, status: true } },
+      },
     });
 
     if (!userPlugin) {
@@ -386,6 +497,11 @@ class PluginService {
       config: encryptedConfig,
     };
 
+    // Update storage quota if provided
+    if (data.storageQuotaMb !== undefined) {
+      updateData.storageQuotaMb = data.storageQuotaMb;
+    }
+
     // Update gateway binding if provided
     if (data.gatewayId !== undefined) {
       if (data.gatewayId !== null) {
@@ -406,22 +522,80 @@ class PluginService {
           throw new ForbiddenError("You don't have access to this gateway");
         }
 
-        updateData.gatewayId = data.gatewayId;
+        updateData.gateway = { connect: { id: data.gatewayId! } };
       } else {
-        updateData.gatewayId = null;
+        updateData.gateway = { disconnect: true };
       }
     }
 
     const updated = await prisma.userPlugin.update({
       where: { id: userPluginId },
       data: updateData,
-      include: { plugin: true },
+      include: {
+        plugin: true,
+        gateway: { select: { id: true, name: true, type: true, status: true } },
+      },
     });
 
     pluginLogger.debug(
       { userPluginId, pluginSlug: userPlugin.plugin.slug },
       "Plugin config updated"
     );
+
+    // Push updated storage quota to running container (instant, no restart needed)
+    if (data.storageQuotaMb !== undefined) {
+      const entryFile = updated.entryFile ?? `plugins/${updated.plugin.slug}.js`;
+      void this.pushStorageQuota(ctx, entryFile, data.storageQuotaMb);
+    }
+
+    // Restart running plugin so it picks up new PLUGIN_CONFIG / PLUGIN_GATEWAY_ID (non-blocking)
+    const restartFile = updated.entryFile ?? `plugins/${updated.plugin.slug}.js`;
+    void (async () => {
+      const container = await prisma.workspaceContainer.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          status: 'RUNNING',
+        },
+        select: { id: true },
+      });
+      if (!container) return;
+
+      const client = bridgeClientManager.getExistingClient(container.id);
+      if (!client) return;
+
+      // Check if plugin is actually running before restarting
+      const list = await client.pluginList() as Array<{ file: string; status: string }>;
+      const running = list.find(p => p.file === restartFile && p.status === 'running');
+      if (!running) return;
+
+      // Build env with updated config and gateway
+      const env: Record<string, string> = {
+        PLUGIN_USER_ID: ctx.userId,
+        PLUGIN_CONFIG: JSON.stringify(data.config),
+      };
+      if (ctx.organizationId) env.PLUGIN_ORG_ID = ctx.organizationId;
+      if (data.gatewayId !== undefined) {
+        if (data.gatewayId) env.PLUGIN_GATEWAY_ID = data.gatewayId;
+      } else if (updated.gatewayId) {
+        env.PLUGIN_GATEWAY_ID = updated.gatewayId;
+      }
+
+      // Stop then start with fresh env
+      await client.pluginStop(restartFile).catch(() => {});
+      await new Promise(r => setTimeout(r, 300));
+      await client.pluginStart(restartFile, env, updated.storageQuotaMb);
+
+      pluginLogger.info(
+        { userPluginId, pluginSlug: updated.plugin.slug },
+        'Plugin restarted after config/gateway update',
+      );
+    })().catch((err) => {
+      pluginLogger.warn(
+        { userPluginId, error: (err as Error).message },
+        'Plugin restart after config update failed (non-blocking)',
+      );
+    });
 
     // Return with original (unencrypted) config (we know it's data.config)
     const decrypted = { ...updated, config: data.config };
@@ -438,7 +612,10 @@ class PluginService {
   ): Promise<SafeUserPlugin> {
     const userPlugin = await prisma.userPlugin.findUnique({
       where: { id: userPluginId },
-      include: { plugin: true },
+      include: {
+        plugin: true,
+        gateway: { select: { id: true, name: true, type: true, status: true } },
+      },
     });
 
     if (!userPlugin) {
@@ -448,10 +625,26 @@ class PluginService {
     // Check ownership
     this.checkOwnership(ctx, userPlugin);
 
+    // Pre-flight: check if required gateways are bound BEFORE updating DB
+    const plugin = userPlugin.plugin;
+    const hasCode = !!(plugin.codeBundle || userPlugin.entryFile);
+
+    if (enabled && hasCode) {
+      const reqGateways = plugin.requiredGateways as string[];
+      if (reqGateways.length > 0 && !userPlugin.gatewayId) {
+        throw new ValidationError("Plugin requires a gateway to be enabled", {
+          gatewayId: [`This plugin requires one of: ${reqGateways.join(", ")}. Configure a gateway first.`],
+        });
+      }
+    }
+
     const updated = await prisma.userPlugin.update({
       where: { id: userPluginId },
       data: { isEnabled: enabled },
-      include: { plugin: true },
+      include: {
+        plugin: true,
+        gateway: { select: { id: true, name: true, type: true, status: true } },
+      },
     });
 
     pluginLogger.info(
@@ -459,8 +652,947 @@ class PluginService {
       `Plugin ${enabled ? "enabled" : "disabled"}`
     );
 
+    // Start or stop the plugin process in the workspace container (non-blocking)
+    if (enabled && hasCode) {
+
+      // Ensure the plugin file exists and process is running (file already on disk)
+      const container = await prisma.workspaceContainer.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          status: 'RUNNING',
+        },
+        select: { id: true },
+      });
+
+      if (container) {
+        const env: Record<string, string> = { PLUGIN_USER_ID: ctx.userId };
+        if (ctx.organizationId) env.PLUGIN_ORG_ID = ctx.organizationId;
+        if (userPlugin.gatewayId) env.PLUGIN_GATEWAY_ID = userPlugin.gatewayId;
+
+        void (async () => {
+          await pluginDeployService.ensureFileExists(
+            container.id,
+            plugin.slug,
+            ctx.userId,
+            ctx.organizationId ?? null,
+            userPlugin.entryFile ?? undefined,
+          );
+          await pluginDeployService.ensureRunning(
+            container.id,
+            plugin.slug,
+            env,
+            userPlugin.entryFile ?? undefined,
+          );
+        })().catch((err) => {
+          pluginLogger.warn(
+            { pluginSlug: plugin.slug, error: (err as Error).message },
+            'Plugin start on enable failed (non-blocking)',
+          );
+        });
+      }
+    } else if (!enabled) {
+      // Stop the process
+      void pluginDeployService.stopPluginInWorkspace(
+        ctx.userId,
+        ctx.organizationId ?? null,
+        plugin.slug,
+        userPlugin.entryFile ?? undefined,
+      ).catch((err) => {
+        pluginLogger.warn(
+          { pluginSlug: plugin.slug, error: (err as Error).message },
+          'Plugin stop on disable failed (non-blocking)',
+        );
+      });
+    }
+
     const decrypted = { ...updated, config: this.decryptConfig(updated.config) };
     return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
+  }
+
+  // ===========================================
+  // Custom Plugin Management
+  // ===========================================
+
+  /**
+   * Get a plugin's full data including code.
+   * For user-authored plugins: only the author (or super admin) can view.
+   * For built-in/installed plugins: returns the catalog template code (Plugin.codeBundle).
+   * Actual user code lives on the workspace container filesystem.
+   */
+  async getCustomPlugin(
+    ctx: ServiceContext,
+    pluginId: string
+  ): Promise<PluginDefinition & { code: string; entryFile?: string | null }> {
+    const plugin = await prisma.plugin.findUnique({
+      where: { id: pluginId },
+    });
+
+    if (!plugin) {
+      throw new NotFoundError("Plugin not found");
+    }
+
+    // For built-in plugins, look up the user's installation
+    if (plugin.isBuiltin) {
+      const userPlugin = await prisma.userPlugin.findFirst({
+        where: {
+          pluginId,
+          userId: ctx.userId,
+        },
+      });
+
+      if (!userPlugin) {
+        throw new NotFoundError("You have not installed this plugin");
+      }
+
+      // Try to read the actual code from the workspace container (source of truth)
+      const entryFile = userPlugin.entryFile ?? `plugins/${plugin.slug}.js`;
+      const containerCode = await pluginDeployService.readCodeFromContainer(
+        ctx.userId,
+        ctx.organizationId ?? null,
+        entryFile,
+      );
+
+      return {
+        ...toPluginDefinition(plugin),
+        code: containerCode ?? plugin.codeBundle ?? "",
+        entryFile: userPlugin.entryFile,
+      };
+    }
+
+    // For user-authored plugins: only author can view (or super admin)
+    if (plugin.authorId !== ctx.userId && !ctx.isSuperAdmin()) {
+      throw new ForbiddenError("Only the plugin author can view this plugin's code");
+    }
+
+    // Try to read the actual code from the workspace container (source of truth)
+    const userPlugin = await prisma.userPlugin.findFirst({
+      where: {
+        pluginId,
+        userId: ctx.userId,
+      },
+    });
+    if (userPlugin?.entryFile) {
+      const containerCode = await pluginDeployService.readCodeFromContainer(
+        ctx.userId,
+        ctx.organizationId ?? null,
+        userPlugin.entryFile,
+      );
+      if (containerCode !== null) {
+        return {
+          ...toPluginDefinition(plugin),
+          code: containerCode,
+          entryFile: userPlugin.entryFile,
+        };
+      }
+    }
+
+    // Fallback to catalog template if container isn't running
+    return {
+      ...toPluginDefinition(plugin),
+      code: plugin.codeBundle || "",
+      entryFile: userPlugin?.entryFile ?? null,
+    };
+  }
+
+  /**
+   * Create a user-authored custom plugin.
+   * Creates the Plugin catalog record + auto-installs for the user.
+   */
+  async createCustomPlugin(
+    ctx: ServiceContext,
+    data: CreateCustomPluginRequest
+  ): Promise<SafeUserPlugin> {
+    pluginLogger.debug({ slug: data.slug }, "Creating custom plugin");
+
+    const isDirectory = !!data.files;
+
+    // Check plan limits
+    await enforcePluginLimit(ctx);
+
+    // Ensure slug is unique (prefix with user ID to avoid collisions)
+    const fullSlug = `custom-${ctx.userId.slice(0, 8)}-${data.slug}`;
+
+    const existingPlugin = await prisma.plugin.findUnique({
+      where: { slug: fullSlug },
+    });
+    if (existingPlugin) {
+      // If the existing plugin is an orphaned record (no installations), clean it up
+      const installCount = await prisma.userPlugin.count({
+        where: { pluginId: existingPlugin.id },
+      });
+      if (installCount === 0 && existingPlugin.authorId === ctx.userId) {
+        await prisma.plugin.delete({ where: { id: existingPlugin.id } });
+        pluginLogger.info({ slug: fullSlug }, "Cleaned up orphaned plugin record before re-create");
+      } else {
+        throw new ValidationError("A plugin with this slug already exists", {
+          slug: ["Choose a different slug"],
+        });
+      }
+    }
+
+    // Validate config against configSchema if both are provided
+    if (data.config && data.configSchema) {
+      const validation = validateConfigAgainstSchema(
+        data.config,
+        data.configSchema as Record<string, unknown>
+      );
+      if (!validation.valid) {
+        throw new ValidationError("Invalid plugin configuration", {
+          config: validation.errors ?? ["Configuration validation failed"],
+        });
+      }
+    }
+
+    // Verify gateway if provided
+    if (data.gatewayId) {
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: data.gatewayId },
+      });
+      if (!gateway) {
+        throw new NotFoundError("Gateway not found");
+      }
+      const isOwner = ctx.organizationId
+        ? gateway.organizationId === ctx.organizationId
+        : gateway.userId === ctx.userId && !gateway.organizationId;
+      if (!isOwner && !ctx.isSuperAdmin()) {
+        throw new ForbiddenError("You don't have access to this gateway");
+      }
+    }
+
+    // Determine entry file path
+    const entry = data.entry ?? 'index.js';
+    const entryFile = isDirectory
+      ? `plugins/${fullSlug}/${entry}`
+      : `plugins/${fullSlug}.js`;
+
+    // For single-file plugins, store code in codeBundle for recovery.
+    // For directory plugins, codeBundle is not used (files live on container only).
+    const codeBundle = isDirectory ? null : (data.code ?? null);
+
+    // Create Plugin catalog entry + UserPlugin installation in a transaction
+    const encryptedConfig = { _encrypted: encrypt(data.config ?? {}) };
+
+    const { userPlugin } = await prisma.$transaction(async (tx) => {
+      const plugin = await tx.plugin.create({
+        data: {
+          slug: fullSlug,
+          name: data.name,
+          description: data.description,
+          version: "1.0.0",
+          requiredGateways: data.requiredGateways ?? [],
+          configSchema: (data.configSchema ?? {}) as Prisma.InputJsonValue,
+          category: data.category ?? "general",
+          tags: data.tags ?? [],
+          isBuiltin: false,
+          isActive: true,
+          codeBundle,
+          authorId: ctx.userId,
+          authorType: "USER",
+          isPublic: false,
+        },
+      });
+
+      const up = await tx.userPlugin.create({
+        data: {
+          userId: ctx.userId,
+          pluginId: plugin.id,
+          organizationId: ctx.organizationId ?? null,
+          config: encryptedConfig,
+          gatewayId: data.gatewayId ?? null,
+          isEnabled: true,
+          entryFile,
+        },
+        include: {
+          plugin: true,
+          gateway: { select: { id: true, name: true, type: true, status: true } },
+        },
+      });
+
+      return { userPlugin: up };
+    });
+
+    // Audit log
+    void auditActions.pluginInstalled(toAuditContext(ctx), userPlugin.id, fullSlug);
+
+    pluginLogger.info(
+      { userPluginId: userPlugin.id, pluginSlug: fullSlug, isDirectory },
+      "Custom plugin created and installed"
+    );
+
+    // Ensure workspace container is running before writing code
+    try {
+      await workspaceService.ensureContainerRunning(ctx, ctx.organizationId);
+    } catch (err) {
+      pluginLogger.warn(
+        { pluginSlug: fullSlug, error: (err as Error).message },
+        'Failed to ensure workspace running during custom plugin create — code may not be deployed',
+      );
+    }
+
+    // Deploy to workspace container and start
+    const deployEnv: Record<string, string> = { PLUGIN_USER_ID: ctx.userId };
+    if (ctx.organizationId) deployEnv.PLUGIN_ORG_ID = ctx.organizationId;
+    if (data.gatewayId) deployEnv.PLUGIN_GATEWAY_ID = data.gatewayId;
+
+    try {
+      if (isDirectory && data.files) {
+        // Directory plugin: write multiple files + plugin.json
+        const manifestJson = JSON.stringify({
+          name: data.name,
+          slug: fullSlug,
+          version: "1.0.0",
+          entry,
+          description: data.description,
+        }, null, 2);
+
+        await pluginDeployService.writeDirectoryToContainer(
+          ctx.userId,
+          ctx.organizationId ?? null,
+          fullSlug,
+          data.files,
+          manifestJson,
+          entry,
+          deployEnv,
+        );
+      } else if (data.code) {
+        // Single-file plugin: write single .js file
+        await pluginDeployService.writeTemplateToContainer(
+          ctx.userId,
+          ctx.organizationId ?? null,
+          fullSlug,
+          data.code,
+          deployEnv,
+        );
+      }
+    } catch (err) {
+      pluginLogger.warn(
+        { pluginSlug: fullSlug, error: (err as Error).message },
+        'Custom plugin deploy to workspace failed',
+      );
+    }
+
+    // Return with original (unencrypted) config
+    const decrypted = { ...userPlugin, config: data.config ?? {} };
+    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
+  }
+
+  /**
+   * Create a plugin by cloning a Git repository into the workspace.
+   * 
+   * Flow:
+   * 1. Ensure workspace container is running
+   * 2. Clone the repo into /plugins/<repo-name>/
+   * 3. Read plugin.json manifest from the cloned directory
+   * 4. Create Plugin + UserPlugin records from the manifest
+   * 5. Install npm dependencies if package.json exists
+   * 6. Start the plugin
+   */
+  async createPluginFromRepo(
+    ctx: ServiceContext,
+    data: { gitUrl: string; branch?: string; gatewayId?: string }
+  ): Promise<SafeUserPlugin> {
+    pluginLogger.info({ gitUrl: data.gitUrl, branch: data.branch }, "Creating plugin from Git repo");
+
+    // Check plan limits
+    await enforcePluginLimit(ctx);
+
+    // Step 1: Ensure workspace container is running
+    const containerDbId = await workspaceService.ensureContainerRunning(ctx, ctx.organizationId);
+
+    // Step 2: Derive repo name from URL for target directory
+    const repoName = data.gitUrl
+      .replace(/\.git$/, '')
+      .split('/')
+      .pop()
+      ?.replace(/[^a-zA-Z0-9_-]/g, '-') || 'cloned-plugin';
+
+    const targetDir = `plugins/${repoName}`;
+
+    // Clone the repo
+    const cloneResult = await workspaceService.gitClone(ctx, containerDbId, data.gitUrl, {
+      targetDir,
+      branch: data.branch,
+      depth: 1,
+    }) as { success: boolean; targetDir: string; fileCount: number; error?: string };
+
+    if (!cloneResult.success) {
+      throw new ValidationError("Git clone failed", {
+        gitUrl: [cloneResult.error || "Failed to clone repository"],
+      });
+    }
+
+    pluginLogger.debug(
+      { targetDir: cloneResult.targetDir, fileCount: cloneResult.fileCount },
+      "Git clone completed"
+    );
+
+    // Step 3: Read plugin.json manifest
+    let manifest: {
+      name?: string;
+      slug?: string;
+      version?: string;
+      entry?: string;
+      description?: string;
+      category?: string;
+      requiredGateways?: string[];
+      configSchema?: Record<string, unknown>;
+      tags?: string[];
+    } = {};
+
+    try {
+      const manifestResult = await workspaceService.fileRead(
+        ctx,
+        containerDbId,
+        `${targetDir}/plugin.json`
+      );
+
+      const content = (manifestResult as { content?: string })?.content;
+      if (content) {
+        manifest = JSON.parse(content);
+      }
+    } catch {
+      pluginLogger.debug({ targetDir }, "No plugin.json found — using defaults from repo name");
+    }
+
+    // Derive values from manifest or repo name
+    const pluginSlug = manifest.slug || repoName;
+    const pluginName = manifest.name || repoName;
+    const pluginDescription = manifest.description || `Plugin cloned from ${data.gitUrl}`;
+    const pluginEntry = manifest.entry || 'index.js';
+    const pluginCategory = (manifest.category || 'general') as PluginCategory;
+    const pluginTags = manifest.tags || [];
+    const pluginVersion = manifest.version || '1.0.0';
+
+    // Full slug with user prefix to namespace
+    const fullSlug = `custom-${ctx.userId.slice(0, 8)}-${pluginSlug}`;
+
+    // Check for existing slug and clean up orphans
+    const existingPlugin = await prisma.plugin.findUnique({
+      where: { slug: fullSlug },
+    });
+    if (existingPlugin) {
+      const installCount = await prisma.userPlugin.count({
+        where: { pluginId: existingPlugin.id },
+      });
+      if (installCount === 0 && existingPlugin.authorId === ctx.userId) {
+        await prisma.plugin.delete({ where: { id: existingPlugin.id } });
+        pluginLogger.info({ slug: fullSlug }, "Cleaned up orphaned plugin record before repo create");
+      } else {
+        throw new ValidationError("A plugin with this slug already exists", {
+          slug: ["Choose a different repository or rename the plugin slug in plugin.json"],
+        });
+      }
+    }
+
+    // Verify gateway if provided
+    if (data.gatewayId) {
+      const gateway = await prisma.gateway.findUnique({ where: { id: data.gatewayId } });
+      if (!gateway) throw new NotFoundError("Gateway not found");
+      const isOwner = ctx.organizationId
+        ? gateway.organizationId === ctx.organizationId
+        : gateway.userId === ctx.userId && !gateway.organizationId;
+      if (!isOwner && !ctx.isSuperAdmin()) {
+        throw new ForbiddenError("You don't have access to this gateway");
+      }
+    }
+
+    // Step 4: Create Plugin + UserPlugin records
+    const entryFile = `${targetDir}/${pluginEntry}`;
+    const encryptedConfig = { _encrypted: encrypt({}) };
+
+    const { userPlugin } = await prisma.$transaction(async (tx) => {
+      const plugin = await tx.plugin.create({
+        data: {
+          slug: fullSlug,
+          name: pluginName,
+          description: pluginDescription,
+          version: pluginVersion,
+          requiredGateways: (manifest.requiredGateways ?? []) as Prisma.InputJsonValue as GatewayType[],
+          configSchema: (manifest.configSchema ?? {}) as Prisma.InputJsonValue,
+          category: pluginCategory,
+          tags: pluginTags,
+          isBuiltin: false,
+          isActive: true,
+          codeBundle: null,
+          authorId: ctx.userId,
+          authorType: "USER",
+          isPublic: false,
+        },
+      });
+
+      const up = await tx.userPlugin.create({
+        data: {
+          userId: ctx.userId,
+          pluginId: plugin.id,
+          organizationId: ctx.organizationId ?? null,
+          config: encryptedConfig,
+          gatewayId: data.gatewayId ?? null,
+          isEnabled: true,
+          entryFile,
+        },
+        include: {
+          plugin: true,
+          gateway: { select: { id: true, name: true, type: true, status: true } },
+        },
+      });
+
+      return { userPlugin: up };
+    });
+
+    // Audit log
+    void auditActions.pluginInstalled(toAuditContext(ctx), userPlugin.id, fullSlug);
+
+    // Step 5: Install npm dependencies if package.json exists
+    try {
+      const pkgResult = await workspaceService.fileRead(
+        ctx,
+        containerDbId,
+        `${targetDir}/package.json`
+      );
+      const pkgContent = (pkgResult as { content?: string })?.content;
+      if (pkgContent) {
+        pluginLogger.info({ targetDir }, "Found package.json — installing dependencies");
+        await workspaceService.packageInstall(ctx, containerDbId, [], { cwd: targetDir });
+      }
+    } catch {
+      pluginLogger.debug({ targetDir }, "No package.json or install skipped");
+    }
+
+    // Step 6: Start the plugin
+    const deployEnv: Record<string, string> = { PLUGIN_USER_ID: ctx.userId };
+    if (ctx.organizationId) deployEnv.PLUGIN_ORG_ID = ctx.organizationId;
+    if (data.gatewayId) deployEnv.PLUGIN_GATEWAY_ID = data.gatewayId;
+
+    try {
+      await workspaceService.pluginStart(ctx, containerDbId, entryFile, deployEnv, userPlugin.storageQuotaMb);
+    } catch (err) {
+      pluginLogger.warn(
+        { entryFile, error: (err as Error).message },
+        "Plugin from repo — auto-start failed (plugin created but not running)",
+      );
+    }
+
+    pluginLogger.info(
+      { userPluginId: userPlugin.id, pluginSlug: fullSlug, entryFile },
+      "Plugin from Git repo created, installed, and started"
+    );
+
+    const decrypted = { ...userPlugin, config: {} };
+    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
+  }
+
+  /**
+   * Register an existing workspace directory as a plugin.
+   * Reads plugin.json from the directory, creates DB records, and starts the plugin.
+   */
+  async registerDirectoryAsPlugin(
+    ctx: ServiceContext,
+    data: { dirPath: string; gatewayId?: string }
+  ): Promise<SafeUserPlugin> {
+    pluginLogger.info({ dirPath: data.dirPath }, "Registering directory as plugin");
+
+    // Check plan limits
+    await enforcePluginLimit(ctx);
+
+    // Ensure workspace container is running
+    const containerDbId = await workspaceService.ensureContainerRunning(ctx, ctx.organizationId);
+
+    // Read plugin.json from the directory
+    let manifest: {
+      name?: string;
+      slug?: string;
+      version?: string;
+      entry?: string;
+      description?: string;
+      category?: string;
+      requiredGateways?: string[];
+      configSchema?: Record<string, unknown>;
+      tags?: string[];
+    };
+
+    try {
+      const manifestResult = await workspaceService.fileRead(
+        ctx,
+        containerDbId,
+        `${data.dirPath}/plugin.json`
+      );
+      const content = (manifestResult as { content?: string })?.content;
+      if (!content) {
+        throw new Error("Empty manifest");
+      }
+      manifest = JSON.parse(content);
+    } catch {
+      throw new ValidationError("Cannot register directory as plugin", {
+        dirPath: ["Directory must contain a valid plugin.json file"],
+      });
+    }
+
+    // Derive values
+    const dirName = data.dirPath.split('/').filter(Boolean).pop() || 'unknown-plugin';
+    const pluginSlug = manifest.slug || dirName;
+    const pluginName = manifest.name || dirName;
+    const pluginDescription = manifest.description || `Plugin from workspace directory`;
+    const pluginEntry = manifest.entry || 'index.js';
+    const pluginCategory = (manifest.category || 'general') as PluginCategory;
+    const pluginTags = manifest.tags || [];
+    const pluginVersion = manifest.version || '1.0.0';
+
+    const fullSlug = `custom-${ctx.userId.slice(0, 8)}-${pluginSlug}`;
+
+    // Check for existing slug
+    const existingPlugin = await prisma.plugin.findUnique({
+      where: { slug: fullSlug },
+    });
+    if (existingPlugin) {
+      const installCount = await prisma.userPlugin.count({
+        where: { pluginId: existingPlugin.id },
+      });
+      if (installCount === 0 && existingPlugin.authorId === ctx.userId) {
+        await prisma.plugin.delete({ where: { id: existingPlugin.id } });
+      } else {
+        throw new ValidationError("A plugin with this slug already exists", {
+          slug: ["Change the slug in plugin.json or remove the existing plugin first"],
+        });
+      }
+    }
+
+    // Verify gateway
+    if (data.gatewayId) {
+      const gateway = await prisma.gateway.findUnique({ where: { id: data.gatewayId } });
+      if (!gateway) throw new NotFoundError("Gateway not found");
+      const isOwner = ctx.organizationId
+        ? gateway.organizationId === ctx.organizationId
+        : gateway.userId === ctx.userId && !gateway.organizationId;
+      if (!isOwner && !ctx.isSuperAdmin()) {
+        throw new ForbiddenError("You don't have access to this gateway");
+      }
+    }
+
+    // Create Plugin + UserPlugin records
+    const entryFile = `${data.dirPath}/${pluginEntry}`;
+    const encryptedConfig = { _encrypted: encrypt({}) };
+
+    const { userPlugin } = await prisma.$transaction(async (tx) => {
+      const plugin = await tx.plugin.create({
+        data: {
+          slug: fullSlug,
+          name: pluginName,
+          description: pluginDescription,
+          version: pluginVersion,
+          requiredGateways: (manifest.requiredGateways ?? []) as Prisma.InputJsonValue as GatewayType[],
+          configSchema: (manifest.configSchema ?? {}) as Prisma.InputJsonValue,
+          category: pluginCategory,
+          tags: pluginTags,
+          isBuiltin: false,
+          isActive: true,
+          codeBundle: null,
+          authorId: ctx.userId,
+          authorType: "USER",
+          isPublic: false,
+        },
+      });
+
+      const up = await tx.userPlugin.create({
+        data: {
+          userId: ctx.userId,
+          pluginId: plugin.id,
+          organizationId: ctx.organizationId ?? null,
+          config: encryptedConfig,
+          gatewayId: data.gatewayId ?? null,
+          isEnabled: true,
+          entryFile,
+        },
+        include: {
+          plugin: true,
+          gateway: { select: { id: true, name: true, type: true, status: true } },
+        },
+      });
+
+      return { userPlugin: up };
+    });
+
+    // Audit log
+    void auditActions.pluginInstalled(toAuditContext(ctx), userPlugin.id, fullSlug);
+
+    // Start the plugin
+    const deployEnv: Record<string, string> = { PLUGIN_USER_ID: ctx.userId };
+    if (ctx.organizationId) deployEnv.PLUGIN_ORG_ID = ctx.organizationId;
+    if (data.gatewayId) deployEnv.PLUGIN_GATEWAY_ID = data.gatewayId;
+
+    try {
+      await workspaceService.pluginStart(ctx, containerDbId, entryFile, deployEnv, userPlugin.storageQuotaMb);
+    } catch (err) {
+      pluginLogger.warn(
+        { entryFile, error: (err as Error).message },
+        "Register dir as plugin — auto-start failed",
+      );
+    }
+
+    pluginLogger.info(
+      { userPluginId: userPlugin.id, pluginSlug: fullSlug, entryFile },
+      "Directory registered as plugin and started"
+    );
+
+    const decrypted = { ...userPlugin, config: {} };
+    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
+  }
+
+  /**
+   * Update a plugin (code, name, description, etc.).
+   * For user-authored plugins: updates the Plugin catalog record (author only).
+   * For built-in plugins: writes updated code to workspace container (no DB code storage).
+   */
+  async updateCustomPlugin(
+    ctx: ServiceContext,
+    pluginId: string,
+    data: UpdateCustomPluginRequest
+  ): Promise<PluginDefinition> {
+    const plugin = await prisma.plugin.findUnique({
+      where: { id: pluginId },
+    });
+
+    if (!plugin) {
+      throw new NotFoundError("Plugin not found");
+    }
+
+    // For built-in plugins: write updated code to workspace container
+    if (plugin.isBuiltin) {
+      const userPlugin = await prisma.userPlugin.findFirst({
+        where: { pluginId, userId: ctx.userId },
+      });
+
+      if (!userPlugin) {
+        throw new NotFoundError("You have not installed this plugin");
+      }
+
+      if (data.code !== undefined) {
+        // Write updated code to workspace container (source of truth) and restart
+        void pluginDeployService.writeCodeToContainer(
+          ctx.userId,
+          userPlugin.organizationId,
+          plugin.slug,
+          data.code,
+          true, // restart after write
+          userPlugin.entryFile ?? undefined,
+        ).catch((err) => {
+          pluginLogger.warn(
+            { pluginSlug: plugin.slug, userId: ctx.userId, error: (err as Error).message },
+            "Built-in plugin code write to workspace failed (non-blocking)",
+          );
+        });
+      }
+
+      pluginLogger.info(
+        { pluginId, pluginSlug: plugin.slug, userId: ctx.userId },
+        "Built-in plugin personal code updated"
+      );
+
+      return toPluginDefinition(plugin);
+    }
+
+    // For user-authored plugins: only author can update (or super admin)
+    if (plugin.authorId !== ctx.userId && !ctx.isSuperAdmin()) {
+      throw new ForbiddenError("Only the plugin author can update this plugin");
+    }
+
+    // Build update data
+    const updateData: Prisma.PluginUpdateInput = {};
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.category !== undefined) updateData.category = data.category;
+    if (data.tags !== undefined) updateData.tags = data.tags;
+    if (data.configSchema !== undefined) {
+      updateData.configSchema = data.configSchema as Prisma.InputJsonValue;
+    }
+    if (data.code !== undefined) {
+      updateData.codeBundle = data.code;
+    }
+
+    const updated = await prisma.plugin.update({
+      where: { id: pluginId },
+      data: updateData,
+    });
+
+    pluginLogger.info(
+      { pluginId, pluginSlug: updated.slug, fieldsUpdated: Object.keys(updateData) },
+      "Custom plugin updated"
+    );
+
+    // If code changed, write to all workspace containers that have this plugin installed
+    if (data.code !== undefined) {
+      const installations = await prisma.userPlugin.findMany({
+        where: { pluginId },
+        select: { userId: true, organizationId: true },
+      });
+
+      for (const inst of installations) {
+        void pluginDeployService.writeCodeToContainer(
+          inst.userId,
+          inst.organizationId,
+          updated.slug,
+          data.code,
+          true, // restart after write
+        ).catch((err) => {
+          pluginLogger.warn(
+            { pluginSlug: updated.slug, userId: inst.userId, error: (err as Error).message },
+            "Custom plugin code write failed (non-blocking)",
+          );
+        });
+      }
+    }
+
+    return toPluginDefinition(updated);
+  }
+
+  /**
+   * Delete a user-authored custom plugin.
+   * Removes all installations and the catalog entry.
+   */
+  async deleteCustomPlugin(
+    ctx: ServiceContext,
+    pluginId: string
+  ): Promise<void> {
+    const plugin = await prisma.plugin.findUnique({
+      where: { id: pluginId },
+    });
+
+    if (!plugin) {
+      throw new NotFoundError("Plugin not found");
+    }
+
+    // Only author can delete (or super admin)
+    if (plugin.authorId !== ctx.userId && !ctx.isSuperAdmin()) {
+      throw new ForbiddenError("Only the plugin author can delete this plugin");
+    }
+
+    if (plugin.isBuiltin) {
+      throw new ForbiddenError("Cannot delete a built-in plugin");
+    }
+
+    // Find all installations to undeploy
+    const installations = await prisma.userPlugin.findMany({
+      where: { pluginId },
+      select: { id: true, userId: true, organizationId: true },
+    });
+
+    // Delete all installations + the plugin in a transaction
+    await prisma.$transaction(async (tx) => {
+      await tx.userPlugin.deleteMany({ where: { pluginId } });
+      await tx.plugin.delete({ where: { id: pluginId } });
+    });
+
+    pluginLogger.info(
+      { pluginId, pluginSlug: plugin.slug, installationsRemoved: installations.length },
+      "Custom plugin deleted"
+    );
+
+    // Undeploy from all workspace containers (non-blocking)
+    for (const inst of installations) {
+      void pluginDeployService.undeployFromWorkspace(
+        inst.userId,
+        inst.organizationId,
+        plugin.slug,
+      ).catch((err) => {
+        pluginLogger.warn(
+          { pluginSlug: plugin.slug, userId: inst.userId, error: (err as Error).message },
+          "Custom plugin undeploy failed (non-blocking)",
+        );
+      });
+    }
+  }
+
+  // ===========================================
+  // Plugin Health
+  // ===========================================
+
+  /**
+   * Get health status for all enabled plugins in the user's workspace.
+   * Checks file existence and process status via the bridge agent.
+   *
+   * @returns Array of plugin health entries, empty if no workspace/bridge connection
+   */
+  async getPluginHealth(
+    ctx: ServiceContext,
+  ): Promise<Array<{
+    pluginSlug: string;
+    userPluginId: string;
+    entryFile: string;
+    fileExists: boolean;
+    processRunning: boolean;
+  }>> {
+    // Find user's running container
+    const container = await prisma.workspaceContainer.findFirst({
+      where: {
+        userId: ctx.userId,
+        organizationId: ctx.organizationId ?? null,
+        status: 'RUNNING',
+      },
+      select: { id: true },
+    });
+
+    if (!container) return [];
+
+    const client = bridgeClientManager.getExistingClient(container.id);
+    if (!client) return [];
+
+    // Get all enabled plugins
+    const userPlugins = await prisma.userPlugin.findMany({
+      where: {
+        userId: ctx.userId,
+        organizationId: ctx.organizationId ?? null,
+        isEnabled: true,
+      },
+      include: {
+        plugin: { select: { slug: true } },
+      },
+    });
+
+    if (userPlugins.length === 0) return [];
+
+    // Get running process list once
+    let processList: Array<{ file: string; status: string }> = [];
+    try {
+      processList = await client.pluginList() as Array<{ file: string; status: string }>;
+    } catch {
+      // pluginList failed — report all as not running
+    }
+
+    const results: Array<{
+      pluginSlug: string;
+      userPluginId: string;
+      entryFile: string;
+      fileExists: boolean;
+      processRunning: boolean;
+    }> = [];
+
+    for (const up of userPlugins) {
+      const entryFile = up.entryFile ?? `plugins/${up.plugin.slug}.js`;
+
+      // Check file existence
+      let fileExists = false;
+      try {
+        await client.send('file.stat', { path: entryFile });
+        fileExists = true;
+      } catch {
+        // file missing
+      }
+
+      // Check process status
+      const processRunning = processList.some(
+        (p) => p.file === entryFile && p.status === 'running',
+      );
+
+      results.push({
+        pluginSlug: up.plugin.slug,
+        userPluginId: up.id,
+        entryFile,
+        fileExists,
+        processRunning,
+      });
+    }
+
+    return results;
   }
 
   // ===========================================
@@ -530,6 +1662,9 @@ class PluginService {
 
   /**
    * Decrypt plugin configuration if encrypted
+   *
+   * Returns the decrypted config or a fallback object with a
+   * `_decryptFailed` flag so callers / UI can detect the error.
    */
   private decryptConfig(config: unknown): Record<string, unknown> {
     if (
@@ -541,11 +1676,79 @@ class PluginService {
       try {
         return decryptJson((config as Record<string, unknown>)._encrypted as string);
       } catch (error) {
-        pluginLogger.error({ error }, "Failed to decrypt plugin config");
-        return {}; // Return empty config on error to prevent UI crash
+        pluginLogger.error(
+          { error, encLength: ((config as Record<string, unknown>)._encrypted as string).length },
+          "Failed to decrypt plugin config — returning empty config with failure flag"
+        );
+        return { _decryptFailed: true }; // Flag so callers/UI can surface the problem
       }
     }
     return (config ?? {}) as Record<string, unknown>;
+  }
+
+  /**
+   * Push a storage quota update to the running container via WebSocket.
+   * Non-blocking — failures are logged but don't bubble up.
+   */
+  private async pushStorageQuota(ctx: ServiceContext, pluginFile: string, quotaMb: number): Promise<void> {
+    try {
+      const container = await prisma.workspaceContainer.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          status: 'RUNNING',
+        },
+        select: { id: true },
+      });
+      if (!container) return;
+
+      const client = bridgeClientManager.getExistingClient(container.id);
+      if (!client) return;
+
+      await client.send('storage.setQuota', { pluginFile, quotaMb });
+      pluginLogger.debug({ pluginFile, quotaMb }, 'Storage quota pushed to container');
+    } catch (err) {
+      pluginLogger.warn(
+        { pluginFile, quotaMb, error: (err as Error).message },
+        'Failed to push storage quota to container (non-blocking)',
+      );
+    }
+  }
+
+  /**
+   * Get per-plugin storage stats from the running container.
+   * Returns quota info and per-plugin usage from the bridge agent's local SQLite store.
+   */
+  async getStorageStats(ctx: ServiceContext): Promise<{
+    quota: { dbSizeBytes: number; dbSizeMb: number; defaultQuotaMb: number; plugins: Array<{ pluginFile: string; keyCount: number; totalBytes: number; quotaMb: number }> };
+    plugins: Array<{ pluginFile: string; keyCount: number; totalBytes: number; quotaMb: number }>;
+  } | null> {
+    try {
+      const container = await prisma.workspaceContainer.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          status: 'RUNNING',
+        },
+        select: { id: true },
+      });
+      if (!container) return null;
+
+      const client = bridgeClientManager.getExistingClient(container.id);
+      if (!client) return null;
+
+      const stats = await client.send('storage.stats', {});
+      return stats as {
+        quota: { dbSizeBytes: number; dbSizeMb: number; defaultQuotaMb: number; plugins: Array<{ pluginFile: string; keyCount: number; totalBytes: number; quotaMb: number }> };
+        plugins: Array<{ pluginFile: string; keyCount: number; totalBytes: number; quotaMb: number }>;
+      };
+    } catch (err) {
+      pluginLogger.warn(
+        { error: (err as Error).message },
+        'Failed to get storage stats from container',
+      );
+      return null;
+    }
   }
 }
 
