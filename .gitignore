@@ -25,12 +25,14 @@
 # misc
 .DS_Store
 *.pem
+Thumbs.db
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+server.log
 
 # env files (all ignored except .env.example)
 .env*
@@ -48,8 +50,28 @@ nginx/ssl/
 *.tsbuildinfo
 next-env.d.ts
 
+# Prisma generated client
 /src/generated/prisma
 
 # Archive folder (old/deprecated code)
 /_archive_
-server.log
+
+# Database backups (NEVER commit)
+*.sql
+!prisma/migrations/**/*.sql
+
+# Nginx generated route maps
+nginx/gateway-routes.map
+
+# Accidental psql output files
+ql *
+
+# IDE / editor tools
+.qodo/
+.idea/
+*.swp
+*.swo
+*~
+
+# Server logs and PID files
+/tmp/2bot-logs/

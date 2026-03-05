@@ -13,12 +13,8 @@ node_modules
 dist
 build
 out
-
-# Development files
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+coverage
+.nyc_output
 
 # Environment files (secrets - passed at runtime)
 .env
@@ -30,18 +26,14 @@ yarn-error.log*
 .git
 .gitignore
 
-# IDE
+# IDE / editor tools
 .vscode
 .idea
+.qodo
 *.swp
 *.swo
 
-# Testing
-coverage
-.nyc_output
-jest.config.*
-
-# Documentation
+# Documentation (not needed in container)
 docs
 *.md
 !README.md
@@ -49,37 +41,48 @@ docs
 # SSL certificates (mounted at runtime)
 ssl
 
-# Backup files
+# Database backups
+*.sql
+!prisma/migrations/**/*.sql
+
+# Backup / temp files
 *.bak
 *.tmp
 *.temp
+_archive_
 
 # OS files
 .DS_Store
 Thumbs.db
 
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+server.log
+
 # Nginx configs (mounted at runtime)
-nginx/logs
+nginx
 
 # Scripts (not needed in container)
 scripts
 
-# Docker files (not needed in context)
+# Docker files (not needed in build context)
 docker-compose*.yml
 Dockerfile*
-
-# Prisma migrations - KEEP for migrate deploy
-# prisma/migrations
 
 # Test files
 **/*.test.ts
 **/*.spec.ts
 **/__tests__
+vitest*.ts
 
 # Misc
 .turbo
 .vercel
 .sentryclirc
+*.tsbuildinfo
 
-# Archive folder (old/deprecated code)
-_archive_
+# Accidental psql output files
+ql *
