@@ -16,7 +16,7 @@
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { ORG_PLAN_LIMITS, type OrgPlanType } from '@/shared/constants/org-plans';
-import { PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
+import { getExecutionMode, PLAN_LIMITS, type PlanType } from '@/shared/constants/plans';
 import type { ServiceContext } from '@/shared/types/context';
 import type {
     AIUsageBreakdown,
@@ -74,7 +74,7 @@ function createUsageMetric(
 function createAllocationQuota(
   allocated: number,
   limit: number | null,
-  unit: 'MB' | 'GB' | 'cores' | 'vCPU'
+  unit: AllocationQuota['unit']
 ): AllocationQuota {
   const effectiveLimit = limit === -1 ? null : limit;
   const isUnlimited = effectiveLimit === null;
@@ -157,12 +157,16 @@ class ResourceServiceImpl {
     const plan = ctx.userPlan as PlanType;
     const planLimits = PLAN_LIMITS[plan] || PLAN_LIMITS.FREE;
     
-    // Count current resources
-    const [gatewayCount, pluginCount, workflowCount, creditWallet] = await Promise.all([
+    // Count current resources + get actual workspace container allocation
+    const [gatewayCount, pluginCount, workflowCount, creditWallet, wsContainer] = await Promise.all([
       prisma.gateway.count({ where: { userId, organizationId: null } }),
       prisma.userPlugin.count({ where: { userId, organizationId: null } }),
       prisma.workflow.count({ where: { userId, organizationId: null } }),
       prisma.creditWallet.findUnique({ where: { userId } }),
+      prisma.workspaceContainer.findFirst({
+        where: { userId, organizationId: null, status: { not: 'DESTROYED' } },
+        select: { ramMb: true, cpuCores: true, storageMb: true, status: true },
+      }),
     ]);
     
     // Get usage from tracker
@@ -220,13 +224,31 @@ class ResourceServiceImpl {
       },
     };
     
+    // Build workspace pool: allocated = actual container resources, limit = plan max
+    const workspaceSpec = planLimits.workspace;
+    const executionMode = getExecutionMode(plan);
+    const workspace: WorkspacePool | null = workspaceSpec ? {
+      compute: {
+        ram: createAllocationQuota(wsContainer?.ramMb ?? 0, workspaceSpec.ramMb, 'MB'),
+        cpu: createAllocationQuota(
+          wsContainer?.cpuCores ?? 0,
+          workspaceSpec.cpuCores,
+          'cores'
+        ),
+      },
+      storage: {
+        allocation: createAllocationQuota(wsContainer?.storageMb ?? 0, workspaceSpec.storageMb, 'MB'),
+      },
+      containers: createCountQuota(wsContainer ? 1 : 0, null),
+    } : null;
+    
     const status: PersonalResourceStatus = {
       context: 'personal',
       userId,
       plan,
-      executionMode: 'SERVERLESS', // TODO: Determine from plan
+      executionMode,
       automation,
-      workspace: null, // TODO: Implement workspace mode
+      workspace,
       billing,
       historyDays: planLimits.historyDays ?? 30,
     };
@@ -310,7 +332,7 @@ class ResourceServiceImpl {
     const workspace: WorkspacePool = {
       compute: {
         ram: createAllocationQuota(org.workspacePoolRamMb, org.workspacePoolRamMb, 'MB'),
-        cpu: createAllocationQuota(org.workspacePoolCpuCores, org.workspacePoolCpuCores, 'cores'),
+        cpu: createAllocationQuota(Math.round(org.workspacePoolCpuCores * 100), Math.round(org.workspacePoolCpuCores * 100), '%'),
       },
       storage: {
         allocation: createAllocationQuota(org.workspacePoolStorageMb, org.workspacePoolStorageMb, 'MB'),
@@ -376,7 +398,7 @@ class ResourceServiceImpl {
       context: 'organization',
       organizationId: orgId,
       plan,
-      executionMode: 'SERVERLESS', // TODO: Determine from plan
+      executionMode: 'WORKSPACE',
       automation,
       workspace,
       billing,

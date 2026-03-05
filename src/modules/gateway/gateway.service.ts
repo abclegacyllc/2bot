@@ -77,8 +77,8 @@ function extractCredentialIdentifier(
     return null;
   }
   
-  if (type === "WEBHOOK") {
-    // Webhooks can be duplicated (different endpoints can use same URL)
+  if (type === "CUSTOM_GATEWAY") {
+    // Custom gateways can be duplicated (different endpoints can use same URL)
     return null;
   }
   
@@ -173,17 +173,46 @@ class GatewayService {
     // Encrypt credentials
     const credentialsEnc = encrypt(data.credentials);
 
+    // Custom gateways are immediately CONNECTED — nothing to connect to.
+    // Other types start DISCONNECTED and need a health-test / connect step.
+    const isCustom = data.type === "CUSTOM_GATEWAY";
+    const initialStatus: GatewayStatus = isCustom ? "CONNECTED" : "DISCONNECTED";
+
+    // For custom gateways, store the computed webhook URL in metadata
+    const metadata = isCustom
+      ? {
+          webhookUrl: `https://webhook.2bot.org/custom/pending`, // placeholder — updated after ID is known
+          credentialKeys: Object.keys(data.credentials),
+        }
+      : undefined;
+
     const gateway = await prisma.gateway.create({
       data: {
         userId: ctx.userId,
         organizationId: ctx.organizationId ?? null,
         name: data.name,
         type: data.type,
-        status: "DISCONNECTED",
+        status: initialStatus,
         credentialsEnc,
         config: (data.config ?? {}) as object,
+        ...(metadata && { metadata: metadata as object }),
+        ...(isCustom && { lastConnectedAt: new Date() }),
       },
     });
+
+    // For custom gateways, update the webhook URL now that we have the real ID
+    if (isCustom) {
+      const realMeta = {
+        ...(metadata as object),
+        webhookUrl: `https://webhook.2bot.org/custom/${gateway.id}`,
+      };
+      await prisma.gateway.update({
+        where: { id: gateway.id },
+        data: { metadata: realMeta },
+      });
+      // Patch the local object so the response is correct
+      (gateway as Record<string, unknown>).metadata = realMeta;
+    }
 
     // Audit log (non-blocking)
     void auditActions.gatewayCreated(
@@ -195,8 +224,10 @@ class GatewayService {
 
     gatewayLogger.info({ gatewayId: gateway.id, type: gateway.type }, "Gateway created");
 
-    // Test new gateway automatically (non-blocking)
-    void this.testNewGatewayHealth(gateway.id);
+    // Test new gateway automatically (non-blocking) — skip for custom gateways
+    if (!isCustom) {
+      void this.testNewGatewayHealth(gateway.id);
+    }
 
     return this.toSafeGateway(gateway, data.credentials);
   }
@@ -382,6 +413,17 @@ class GatewayService {
 
     gatewayLogger.debug({ gatewayId: id, status }, "Gateway status updated");
 
+    // Update gateway routes when a gateway connects or disconnects.
+    // A running container may need routes added or removed.
+    if (status === "CONNECTED" || status === "DISCONNECTED") {
+      this.refreshGatewayRoutes(gateway.userId, gateway.organizationId).catch(err => {
+        gatewayLogger.warn(
+          { gatewayId: id, status, error: (err as Error).message },
+          'Failed to refresh gateway routes after status change',
+        );
+      });
+    }
+
     return gateway;
   }
 
@@ -412,6 +454,31 @@ class GatewayService {
    */
   getDecryptedCredentials(gateway: Gateway): GatewayCredentials {
     return decryptJson<GatewayCredentials>(gateway.credentialsEnc);
+  }
+
+  /**
+   * Refresh gateway routes for a user's running container.
+   * Called when a gateway connects or disconnects so that the nginx map
+   * stays in sync without requiring a container restart.
+   *
+   * Uses lazy import to avoid circular dependency with workspace module.
+   */
+  private async refreshGatewayRoutes(userId: string, organizationId: string | null): Promise<void> {
+    // Find the user's running container (if any)
+    const container = await prisma.workspaceContainer.findFirst({
+      where: {
+        userId,
+        organizationId: organizationId ?? null,
+        status: 'RUNNING',
+      },
+      select: { id: true },
+    });
+
+    if (!container) return; // No running container — nothing to update
+
+    // Lazy import to avoid circular dependency
+    const { gatewayRouteService } = await import('@/modules/workspace/gateway-route.service');
+    await gatewayRouteService.activateRoutes(container.id);
   }
 
   /**
@@ -534,12 +601,35 @@ class GatewayService {
     } else if ("botToken" in credentials) {
       // Telegram Bot credentials
       credentialInfo.hasBotToken = true;
+    } else if (gateway.type === "CUSTOM_GATEWAY") {
+      // Custom gateway — expose key names (not values) so UI can show them
+      credentialInfo.credentialKeys = Object.keys(credentials);
+      const meta = (gateway.metadata ?? {}) as Record<string, unknown>;
+      credentialInfo.webhookUrl = meta.webhookUrl as string | undefined;
     }
 
     return {
       ...rest,
       credentialInfo,
+      providerMetadata: (gateway.metadata ?? {}) as Record<string, unknown>,
     };
+  }
+
+  /**
+   * Update gateway metadata (provider-specific info persisted on connect)
+   * Internal use — no ownership check (called by providers after connect)
+   */
+  async updateMetadata(
+    id: string,
+    metadata: Record<string, unknown>
+  ): Promise<Gateway> {
+    const gateway = await prisma.gateway.update({
+      where: { id },
+      data: { metadata: metadata as object },
+    });
+
+    gatewayLogger.debug({ gatewayId: id }, "Gateway metadata updated");
+    return gateway;
   }
 
   /**

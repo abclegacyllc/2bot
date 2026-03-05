@@ -14,35 +14,33 @@ import { ProtectedRoute } from "@/components/auth/protected-route";
 import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import {
-  isPersonalStatus,
-  ResourcePoolCard,
-  useResourceStatus,
-  type ResourcePoolItem,
+    isPersonalStatus,
+    ResourcePoolCard,
+    useResourceStatus,
+    type ResourcePoolItem,
 } from "@/components/resources";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import { apiUrl } from "@/shared/config/urls";
 import { getPlanDisplayName, getPlanLimits, type PlanType } from "@/shared/constants/plans";
 import {
-  AlertCircle,
-  Cpu,
-  CreditCard,
-  Database,
-  GitBranch,
-  HardDrive,
-  MemoryStick,
-  Server,
-  Settings,
-  Sparkles,
-  Zap
+    AlertCircle,
+    Cpu,
+    CreditCard,
+    Database,
+    GitBranch,
+    Server,
+    Settings,
+    Sparkles,
+    Zap
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
@@ -135,8 +133,8 @@ function BillingContent() {
   const planLimits = getPlanLimits(currentPlan);
 
   // Portal state
-  const [portalLoading, setPortalLoading] = useState(false);
-  const [portalError, setPortalError] = useState<string | null>(null);
+  const [_portalLoading, setPortalLoading] = useState(false);
+  const [_portalError, setPortalError] = useState<string | null>(null);
 
   // Create fetcher with auth token
   const fetcher = createFetcher(token);
@@ -271,7 +269,7 @@ function BillingContent() {
   };
 
   return (
-    <div className="min-h-screen bg-background p-8">
+    <div className="min-h-screen bg-background p-8" data-ai-target="billing-overview">
       <div className="max-w-4xl mx-auto space-y-8">
         <PageHeader 
           title="Billing"
@@ -439,37 +437,31 @@ function BillingContent() {
             title="Workspace Pool"
             description="Compute resources for automation execution"
             icon={Server}
-            columns={3}
+            columns={1}
             items={[
               {
-                label: "RAM",
-                icon: MemoryStick,
-                current: quota?.workspace?.compute?.ram?.allocated ?? 0,
-                limit: planLimits.workspace.ramMb,
-                unit: "MB",
-              },
-              {
-                label: "CPU",
-                icon: Cpu,
-                current: quota?.workspace?.compute?.cpu?.allocated ?? 0,
-                limit: planLimits.workspace.cpuCores,
-                unit: "cores",
-              },
-              {
-                label: "Storage",
-                icon: HardDrive,
-                current: quota?.workspace?.storage?.allocation?.allocated ?? 0,
-                limit: planLimits.workspace.storageMb,
-                unit: "MB",
+                label: "Active Containers",
+                icon: Server,
+                current: quota?.workspace?.containers?.used ?? 0,
+                limit: 1,
               },
             ] satisfies ResourcePoolItem[]}
             actions={
-              <Link href="/billing/workspace">
-                <Button variant="outline" size="sm" className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10">
-                  <Server className="mr-2 h-4 w-4" />
-                  Add Resources
-                </Button>
-              </Link>
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-muted-foreground text-right">
+                  <span>{planLimits.workspace.ramMb >= 1024 ? `${(planLimits.workspace.ramMb / 1024).toFixed(0)} GB` : `${planLimits.workspace.ramMb} MB`} RAM</span>
+                  <span className="mx-1.5">·</span>
+                  <span>{planLimits.workspace.cpuCores} {planLimits.workspace.cpuCores === 1 ? 'core' : 'cores'}</span>
+                  <span className="mx-1.5">·</span>
+                  <span>{planLimits.workspace.storageMb >= 1024 ? `${(planLimits.workspace.storageMb / 1024).toFixed(0)} GB` : `${planLimits.workspace.storageMb} MB`} storage</span>
+                </div>
+                <Link href="/billing/workspace">
+                  <Button variant="outline" size="sm" className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10">
+                    <Server className="mr-2 h-4 w-4" />
+                    Manage
+                  </Button>
+                </Link>
+              </div>
             }
           />
         ) : (

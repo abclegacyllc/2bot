@@ -11,9 +11,30 @@ import type { GatewayStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { Router } from "express";
 
+import { decryptJson } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { gatewayRegistry, gatewayService } from "@/modules/gateway";
+import { gatewayChatService } from "@/modules/gateway/gateway-chats.service";
+import { handleCustomGatewayWebhook, handleTelegramWebhook } from "@/modules/plugin/plugin.events";
 import type { ApiResponse } from "@/shared/types";
+
+import { createRateLimiter } from "../middleware/rate-limit";
+
+// ===========================================
+// Custom Gateway Rate Limiter
+// ===========================================
+
+/**
+ * Per-gateway rate limiter for custom gateway webhooks.
+ * 60 requests per minute per gatewayId, block for 60s if exceeded.
+ */
+const customGatewayRateLimiter = createRateLimiter({
+  keyPrefix: "webhook-custom",
+  points: 60,
+  duration: 60,
+  blockDuration: 60,
+});
 
 const webhookLogger = logger.child({ module: "webhook" });
 
@@ -75,7 +96,92 @@ interface TelegramCallbackQuery {
 }
 
 /**
+ * Telegram ChatMemberUpdated object
+ * Fires when a chat member's status changes (bot added/removed, user promoted, etc.)
+ */
+interface TelegramChatMemberUpdated {
+  chat: TelegramChat;
+  from: TelegramUser;
+  date: number;
+  old_chat_member: TelegramChatMember;
+  new_chat_member: TelegramChatMember;
+  invite_link?: {
+    invite_link: string;
+    creator: TelegramUser;
+    creates_join_request: boolean;
+    is_primary: boolean;
+    is_revoked: boolean;
+  };
+}
+
+/**
+ * Telegram ChatMember object (simplified union)
+ */
+interface TelegramChatMember {
+  status: "creator" | "administrator" | "member" | "restricted" | "left" | "kicked";
+  user: TelegramUser;
+  is_anonymous?: boolean;
+  custom_title?: string;
+  until_date?: number;
+}
+
+/**
+ * Telegram InlineQuery object
+ */
+interface TelegramInlineQuery {
+  id: string;
+  from: TelegramUser;
+  query: string;
+  offset: string;
+  chat_type?: "sender" | "private" | "group" | "supergroup" | "channel";
+  location?: { latitude: number; longitude: number };
+}
+
+/**
+ * Telegram ChosenInlineResult object
+ */
+interface TelegramChosenInlineResult {
+  result_id: string;
+  from: TelegramUser;
+  query: string;
+  location?: { latitude: number; longitude: number };
+  inline_message_id?: string;
+}
+
+/**
+ * Telegram Poll object
+ */
+interface TelegramPoll {
+  id: string;
+  question: string;
+  options: Array<{ text: string; voter_count: number }>;
+  total_voter_count: number;
+  is_closed: boolean;
+  is_anonymous: boolean;
+  type: "regular" | "quiz";
+  allows_multiple_answers: boolean;
+  correct_option_id?: number;
+  explanation?: string;
+}
+
+/**
+ * Telegram PollAnswer object
+ */
+interface TelegramPollAnswer {
+  poll_id: string;
+  user: TelegramUser;
+  option_ids: number[];
+}
+
+/**
  * Telegram Update object - the main payload from webhooks
+ *
+ * Covers all update types that Telegram can send:
+ * - Messages (new, edited, channel posts)
+ * - Callback queries (inline keyboard button presses)
+ * - Chat member updates (bot added/removed from chats) — critical for Phase 7
+ * - Inline queries and chosen inline results
+ * - Polls and poll answers
  */
 interface TelegramUpdate {
   update_id: number;
@@ -84,6 +190,12 @@ interface TelegramUpdate {
   channel_post?: TelegramMessage;
   edited_channel_post?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
+  my_chat_member?: TelegramChatMemberUpdated;
+  chat_member?: TelegramChatMemberUpdated;
+  inline_query?: TelegramInlineQuery;
+  chosen_inline_result?: TelegramChosenInlineResult;
+  poll?: TelegramPoll;
+  poll_answer?: TelegramPollAnswer;
 }
 
 // ===========================================
@@ -221,9 +333,68 @@ webhookRouter.post(
         "Processing Telegram update"
       );
 
-      // TODO: Phase 3 - Route to plugin system
-      // For now, just acknowledge receipt
-      // await pluginRouter.processUpdate(gateway, update);
+      // Route to plugin system (non-blocking)
+      // Plugins receive the update event if they require TELEGRAM_BOT gateway type
+      if (gateway.userId) {
+        const executeGateway = async (gId: string, action: string, params: unknown) => {
+          const provider = gatewayRegistry.get("TELEGRAM_BOT");
+          const gw = await prisma.gateway.findUnique({ where: { id: gId } });
+          if (!gw) throw new Error(`Gateway not found: ${gId}`);
+          const credentials = gatewayService.getDecryptedCredentials(gw);
+          try {
+            return await provider.execute(gId, action, params);
+          } catch (execErr) {
+            const msg = execErr instanceof Error ? execErr.message : '';
+            if (msg.includes('not connected') || msg.includes('Not connected')) {
+              await provider.connect(gId, credentials, (gw.config as Record<string, unknown>) ?? {});
+              return provider.execute(gId, action, params);
+            }
+            throw execErr;
+          }
+        };
+
+        void handleTelegramWebhook(
+          gatewayId,
+          gateway.userId,
+          gateway.organizationId ?? null,
+          update,
+          executeGateway
+        ).then((result) => {
+          if (result.pluginsExecuted > 0) {
+            webhookLogger.info(
+              { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+              'Webhook routed to plugins',
+            );
+          }
+        }).catch((err: Error) => {
+          webhookLogger.error({ gatewayId, error: err.message }, 'Plugin routing failed');
+        });
+      }
+
+      // ── Phase 7: Track chat membership changes (fire-and-forget) ──
+      if (update.my_chat_member) {
+        const mcm = update.my_chat_member;
+        const newStatus = mcm.new_chat_member.status;
+        const chatPayload = {
+          gatewayId,
+          chatId: mcm.chat.id,
+          chatType: mcm.chat.type,
+          chatTitle: mcm.chat.title,
+          chatUsername: mcm.chat.username,
+          newStatus,
+        };
+
+        // "member" | "administrator" | "creator" → bot is in the chat
+        // "left" | "kicked" | "restricted" → bot left / was removed
+        const isActive = ["member", "administrator", "creator"].includes(newStatus);
+
+        void (isActive
+          ? gatewayChatService.recordChatJoin(chatPayload)
+          : gatewayChatService.recordChatLeave(chatPayload)
+        ).catch((err: Error) => {
+          webhookLogger.error({ gatewayId, error: err.message }, "Chat tracking failed");
+        });
+      }
 
       // Update last activity timestamp (fire and forget)
       void prisma.gateway
@@ -319,6 +490,157 @@ webhookRouter.get(
 );
 
 // ===========================================
+// Custom Gateway Webhook (unified — same gateway table)
+// ===========================================
+
+/**
+ * Handle custom gateway incoming webhook
+ *
+ * POST /webhooks/custom/:gatewayId
+ *
+ * gatewayId is the gateway.id for a CUSTOM_GATEWAY-type row in the gateways table.
+ * External services POST here; we look up the gateway, decrypt credentials,
+ * and route the event through the plugin execution pipeline.
+ */
+webhookRouter.post(
+  "/custom/:gatewayId",
+  async (req: Request<GatewayParams>, res: Response) => {
+    const { gatewayId } = req.params;
+
+    // ── Rate limit: 60 req/min per gatewayId ──
+    try {
+      await customGatewayRateLimiter.consume(gatewayId);
+    } catch {
+      webhookLogger.warn({ gatewayId }, "Custom gateway webhook rate limit exceeded");
+      res.status(429).json({ success: false, error: "Too many requests. Try again later." });
+      return;
+    }
+
+    try {
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          credentialsEnc: true,
+          metadata: true,
+          userId: true,
+          organizationId: true,
+        },
+      });
+
+      if (!gateway || gateway.type !== "CUSTOM_GATEWAY") {
+        res.status(404).json({ success: false, error: "Gateway not found" });
+        return;
+      }
+
+      if (gateway.status !== "CONNECTED") {
+        res.status(503).json({ success: false, error: "Gateway not active" });
+        return;
+      }
+
+      // Decrypt stored credentials (same AES-256-GCM as Telegram bots)
+      const credentials = decryptJson<Record<string, string>>(gateway.credentialsEnc);
+
+      // ── Optional auth token verification ──
+      // If the gateway has an `_authToken` credential key, verify the
+      // incoming Authorization: Bearer header matches before proceeding.
+      if (credentials._authToken) {
+        const authHeader = req.headers.authorization;
+        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+        if (!bearerToken || bearerToken !== credentials._authToken) {
+          webhookLogger.warn({ gatewayId }, "Custom gateway webhook auth token mismatch");
+          res.status(401).json({ success: false, error: "Unauthorized" });
+          return;
+        }
+      }
+
+      // Build the inbound payload that plugins will receive
+      const inboundPayload = {
+        method: req.method,
+        headers: req.headers as Record<string, string>,
+        body: req.body as unknown,
+        query: req.query as Record<string, string>,
+      };
+
+      // Route to plugins via the shared event system (non-blocking)
+      void handleCustomGatewayWebhook(
+        gateway.id,
+        gateway.userId,
+        gateway.organizationId,
+        inboundPayload,
+        credentials as Record<string, string>,
+      ).then((result) => {
+        if (result.pluginsExecuted > 0) {
+          webhookLogger.info(
+            { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+            "Custom gateway webhook routed to plugins",
+          );
+        }
+      }).catch((err: Error) => {
+        webhookLogger.error({ gatewayId, error: err.message }, "Custom gateway plugin routing failed");
+      });
+
+      // Update last activity timestamp (fire and forget)
+      // Merge into existing metadata so we don't overwrite webhookUrl / credentialKeys
+      const existingMeta = (gateway.metadata ?? {}) as Record<string, unknown>;
+      void prisma.gateway
+        .update({
+          where: { id: gatewayId },
+          data: {
+            lastConnectedAt: new Date(),
+            metadata: { ...existingMeta, lastDeliveredAt: new Date().toISOString() },
+          },
+        })
+        .catch((err: Error) => {
+          webhookLogger.error({ gatewayId, err }, "Failed to update gateway timestamp");
+        });
+
+      // Return 200 immediately — plugins run asynchronously
+      res.status(200).json({ success: true, data: { received: true } });
+    } catch (err) {
+      webhookLogger.error({ gatewayId, error: (err as Error).message }, "Custom gateway webhook error");
+      res.status(502).json({ success: false, error: "Failed to deliver webhook" });
+    }
+  }
+);
+
+/**
+ * Custom gateway health / verification check
+ *
+ * GET /webhooks/custom/:gatewayId
+ *
+ * Some external services (e.g. Stripe, GitHub) send a GET to verify the URL.
+ */
+webhookRouter.get(
+  "/custom/:gatewayId",
+  async (req: Request<GatewayParams>, res: Response) => {
+    const { gatewayId } = req.params;
+
+    const gateway = await prisma.gateway.findUnique({
+      where: { id: gatewayId },
+      select: { id: true, name: true, type: true, status: true },
+    });
+
+    if (!gateway || gateway.type !== "CUSTOM_GATEWAY") {
+      res.status(404).json({ success: false, error: "Gateway not found" });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: gateway.id,
+        name: gateway.name,
+        active: gateway.status === "CONNECTED",
+      },
+    });
+  }
+);
+
+// ===========================================
 // Helper Functions
 // ===========================================
 
@@ -370,6 +692,49 @@ function extractUpdateInfo(update: TelegramUpdate): {
       type: "callback_query",
       chatId: update.callback_query.message?.chat.id,
       userId: update.callback_query.from.id,
+    };
+  }
+
+  if (update.my_chat_member) {
+    return {
+      type: "my_chat_member",
+      chatId: update.my_chat_member.chat.id,
+      userId: update.my_chat_member.from.id,
+    };
+  }
+
+  if (update.chat_member) {
+    return {
+      type: "chat_member",
+      chatId: update.chat_member.chat.id,
+      userId: update.chat_member.from.id,
+    };
+  }
+
+  if (update.inline_query) {
+    return {
+      type: "inline_query",
+      userId: update.inline_query.from.id,
+    };
+  }
+
+  if (update.chosen_inline_result) {
+    return {
+      type: "chosen_inline_result",
+      userId: update.chosen_inline_result.from.id,
+    };
+  }
+
+  if (update.poll) {
+    return {
+      type: "poll",
+    };
+  }
+
+  if (update.poll_answer) {
+    return {
+      type: "poll_answer",
+      userId: update.poll_answer.user.id,
     };
   }
 

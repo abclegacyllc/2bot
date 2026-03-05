@@ -61,6 +61,12 @@ echo "Step 2: Building Docker images..."
 docker compose -f docker-compose.prod.yml build --no-cache
 echo -e "${GREEN}✓${NC} Docker images built"
 
+# Step 2b: Build workspace container image
+echo ""
+echo "Step 2b: Building workspace container image..."
+docker build -t 2bot-workspace:latest -f docker/workspace/Dockerfile.workspace docker/workspace
+echo -e "${GREEN}✓${NC} Workspace image built"
+
 # Step 3: Stop existing containers
 echo ""
 echo "Step 3: Stopping existing containers..."

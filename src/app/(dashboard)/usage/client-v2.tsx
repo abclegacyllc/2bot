@@ -183,7 +183,9 @@ export function UsageDashboardV2Client() {
         </div>
 
         {/* Resource Overview */}
-        <ResourceOverview status={status} />
+        <div data-ai-target="usage-overview">
+          <ResourceOverview status={status} />
+        </div>
 
         {/* Upgrade CTA for Free plans */}
         {(planName === "FREE" || planName === "ORG_FREE") && (

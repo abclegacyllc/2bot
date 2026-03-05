@@ -16,13 +16,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "2Bot - AI-Powered Telegram Automation Platform",
-  description: "Build powerful Telegram bots with AI capabilities. Connect plugins, automate workflows, and scale your communication — all without writing code.",
-  keywords: ["telegram bot", "ai automation", "chatbot", "telegram automation", "bot builder", "no-code"],
-  authors: [{ name: "2Bot" }],
+  title: "2Bot - No-Code Workflow Automation & Backend Builder",
+  description: "Build powerful workflow automations with AI capabilities. Connect messaging APIs, automate backend processes, and scale your operations — all without writing code.",
+  keywords: ["workflow automation", "ai automation", "backend builder", "no-code", "messaging api", "saas platform"],
+  authors: [{ name: "ABC Legacy LLC" }],
   openGraph: {
-    title: "2Bot - AI-Powered Telegram Automation",
-    description: "Build powerful Telegram bots with AI capabilities. Connect plugins, automate workflows, and scale your communication.",
+    title: "2Bot - No-Code Workflow Automation & Backend Builder",
+    description: "Build powerful workflow automations with AI capabilities. Connect messaging APIs, automate backend processes, and scale your operations.",
     url: "https://www.2bot.org",
     siteName: "2Bot",
     type: "website",
@@ -30,8 +30,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "2Bot - AI-Powered Telegram Automation",
-    description: "Build powerful Telegram bots with AI capabilities.",
+    title: "2Bot - No-Code Workflow Automation & Backend Builder",
+    description: "Build powerful workflow automations with AI capabilities.",
   },
   robots: {
     index: true,

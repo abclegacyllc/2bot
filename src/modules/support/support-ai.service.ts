@@ -94,6 +94,7 @@ export async function processSupportChat(
       stream: false,
       maxTokens: 1024,
       temperature: 0.7,
+      feature: "support",
     });
     reply = aiResponse.content;
 

@@ -21,13 +21,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { CreditUsageCategory } from "@/modules/credits";
 import { formatCredits } from "@/shared/lib/format";
-import { Bot, PieChart, ShoppingBag, Sparkles, Zap } from "lucide-react";
+import { Bot, Cpu, MessageSquare, PieChart, Plug, ShoppingBag, Sparkles, Terminal, Zap, Headphones } from "lucide-react";
 
 export interface UsageBreakdown {
   byCategory: Record<CreditUsageCategory, number>;
   aiUsage?: {
     byCapability: Record<string, number>;
     byModel: Record<string, number>;
+    byFeature: Record<string, number>;
   };
 }
 
@@ -114,6 +115,51 @@ function getCategoryColor(category: CreditUsageCategory): string {
 }
 
 /**
+ * Get human-readable label for feature
+ */
+function getFeatureLabel(feature: string): string {
+  const labels: Record<string, string> = {
+    cursor: "Cursor Agent",
+    chat: "2Bot AI Chat",
+    "plugin-ipc": "Plugin IPC",
+    agent: "AI Agent",
+    support: "Support AI",
+    other: "Other / Legacy",
+  };
+  return labels[feature] || feature.charAt(0).toUpperCase() + feature.slice(1).replace(/-/g, " ");
+}
+
+/**
+ * Get icon for feature
+ */
+function getFeatureIcon(feature: string) {
+  const icons: Record<string, typeof Bot> = {
+    cursor: Terminal,
+    chat: MessageSquare,
+    "plugin-ipc": Plug,
+    agent: Cpu,
+    support: Headphones,
+    other: Sparkles,
+  };
+  return icons[feature] || Sparkles;
+}
+
+/**
+ * Get color for feature
+ */
+function getFeatureColor(feature: string): string {
+  const colors: Record<string, string> = {
+    cursor: "bg-violet-500",
+    chat: "bg-blue-500",
+    "plugin-ipc": "bg-emerald-500",
+    agent: "bg-orange-500",
+    support: "bg-pink-500",
+    other: "bg-gray-400",
+  };
+  return colors[feature] || "bg-gray-400";
+}
+
+/**
  * Simple horizontal bar
  */
 function BreakdownBar({
@@ -175,7 +221,7 @@ export function CreditsUsageBreakdown({
 }: CreditsUsageBreakdownProps) {
   if (loading) {
     return (
-      <div className={cn("grid gap-4 md:grid-cols-2", className)}>
+      <div className={cn("grid gap-4 md:grid-cols-2 lg:grid-cols-3", className)}>
         <Card>
           <CardHeader>
             <Skeleton className="h-5 w-32" />
@@ -211,8 +257,16 @@ export function CreditsUsageBreakdown({
   // Always using capability names now
   const isUsingCapabilities = true;
 
+  // AI breakdown by feature
+  const aiFeatureData = data.aiUsage?.byFeature || {};
+  const aiFeatureTotal = Object.values(aiFeatureData).reduce((a, b) => a + b, 0);
+  const featureItems = Object.entries(aiFeatureData)
+    .filter(([_, v]) => v > 0)
+    .map(([k, v]) => ({ key: k, value: v }))
+    .sort((a, b) => b.value - a.value);
+
   return (
-    <div className={cn("grid gap-4 md:grid-cols-2", className)}>
+    <div className={cn("grid gap-4 md:grid-cols-2 lg:grid-cols-3", className)}>
       {/* By Category */}
       <Card>
         <CardHeader>
@@ -296,6 +350,47 @@ export function CreditsUsageBreakdown({
                 total={aiModelTotal}
                 getLabel={(k) => k}
               />
+            </div>
+          </CardContent>
+        </Card> : null}
+
+      {/* By Feature (Cursor, Chat, etc.) */}
+      {data.aiUsage && featureItems.length > 0 ? <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Zap className="h-4 w-4" />
+              By Feature
+            </CardTitle>
+            <CardDescription>
+              Credit usage per product feature
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {featureItems.map((item) => {
+                const Icon = getFeatureIcon(item.key);
+                const percent = aiFeatureTotal > 0 ? (item.value / aiFeatureTotal) * 100 : 0;
+
+                return (
+                  <div key={item.key} className="space-y-1">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-2">
+                        <Icon className="h-4 w-4 text-muted-foreground" />
+                        {getFeatureLabel(item.key)}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {formatCredits(item.value)} ({percent.toFixed(0)}%)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                      <div
+                        className={cn("h-full transition-all", getFeatureColor(item.key))}
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card> : null}

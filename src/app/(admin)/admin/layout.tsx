@@ -20,6 +20,7 @@ import {
     BarChart3,
     BookOpen,
     Bot,
+    Box,
     Brain,
     Building2,
     ChevronLeft,
@@ -31,6 +32,7 @@ import {
     Home,
     LogOut,
     Menu,
+    Network,
     Shield,
     Users
 } from "lucide-react";
@@ -45,6 +47,8 @@ const navItems = [
   { href: "/admin/organizations", label: "Organizations", icon: Building2 },
   { href: "/admin/credits", label: "Credits", icon: Coins },
   { href: "/admin/gateways", label: "Gateways", icon: Bot },
+  { href: "/admin/workspaces", label: "Workspaces", icon: Box },
+  { href: "/admin/workspaces/egress", label: "Network", icon: Network },
   { href: "/admin/ai-usage", label: "AI Usage", icon: Brain },
   { href: "/admin/pricing-monitor", label: "Price Monitor", icon: DollarSign },
   { href: "/admin/audit-logs", label: "Audit Logs", icon: FileText },

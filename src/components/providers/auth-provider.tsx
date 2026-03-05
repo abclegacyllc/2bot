@@ -52,6 +52,7 @@ interface User {
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
+  aiRoutingPreference?: string;
 }
 
 // Active context type (Phase 4)

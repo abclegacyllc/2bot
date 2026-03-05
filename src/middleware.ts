@@ -8,7 +8,9 @@
  * - dash.{ROOT_DOMAIN} → Dashboard (/(dashboard)/*)
  * - admin.{ROOT_DOMAIN} → Admin panel (/(admin)/*)
  * 
- * Also handles authentication redirects for protected routes.
+ * Note: This middleware handles subdomain routing ONLY.
+ * Authentication is enforced at the API layer (Express requireAuth middleware),
+ * not here. /api routes are skipped entirely by this middleware.
  * 
  * Environment Variables:
  * - NEXT_PUBLIC_ROOT_DOMAIN: Base domain (default: 2bot.org)

@@ -51,6 +51,7 @@ interface UsageData {
   aiUsage?: {
     byCapability: Record<string, number>;
     byModel: Record<string, number>;
+    byFeature: Record<string, number>;
   };
   byDay: Array<{ date: string; credits: number }>;
 }

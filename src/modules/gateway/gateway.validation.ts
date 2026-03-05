@@ -83,13 +83,20 @@ export const aiCredentialsSchema = z
   );
 
 /**
- * Webhook credentials schema
+ * Custom Gateway credentials schema — flexible key-value store.
+ * Max 20 keys, key max 64 chars, value max 4096 chars.
+ * Example: { signingSecret: "whsec_...", apiKey: "sk_..." }
  */
-export const webhookCredentialsSchema = z.object({
-  url: z.string().url("Invalid webhook URL"),
-  secret: z.string().min(16, "Secret must be at least 16 characters").optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-});
+export const customGatewayCredentialsSchema = z.record(
+  z.string().max(64, "Credential key too long (max 64 chars)"),
+  z.string().max(4096, "Credential value too long (max 4096 chars)")
+).refine(
+  (obj) => Object.keys(obj).length <= 20,
+  { message: "Maximum 20 credential keys" }
+);
+
+/** @deprecated Use customGatewayCredentialsSchema */
+export const webhookCredentialsSchema = customGatewayCredentialsSchema;
 
 // ===========================================
 // Configuration Schemas
@@ -114,13 +121,16 @@ export const aiGatewayConfigSchema = z.object({
 });
 
 /**
- * Webhook configuration schema
+ * Custom Gateway configuration schema
  */
-export const webhookConfigSchema = z.object({
+export const customGatewayConfigSchema = z.object({
   retryCount: z.number().int().min(0, "Retry count must be non-negative").max(10, "Max 10 retries").optional(),
   retryDelay: z.number().int().min(100, "Min delay is 100ms").max(60000, "Max delay is 60 seconds").optional(),
   timeout: z.number().int().min(1000, "Min timeout is 1 second").max(60000, "Max timeout is 60 seconds").optional(),
 });
+
+/** @deprecated Use customGatewayConfigSchema */
+export const webhookConfigSchema = customGatewayConfigSchema;
 
 // ===========================================
 // Request Validation Schemas
@@ -147,14 +157,17 @@ export const createAIGatewaySchema = z.object({
 });
 
 /**
- * Create Webhook gateway request
+ * Create Custom Gateway request
  */
-export const createWebhookGatewaySchema = z.object({
+export const createCustomGatewaySchema = z.object({
   name: gatewayNameSchema,
-  type: z.literal(GatewayType.WEBHOOK),
-  credentials: webhookCredentialsSchema,
-  config: webhookConfigSchema.optional(),
+  type: z.literal(GatewayType.CUSTOM_GATEWAY),
+  credentials: customGatewayCredentialsSchema,
+  config: customGatewayConfigSchema.optional(),
 });
+
+/** @deprecated Use createCustomGatewaySchema */
+export const createWebhookGatewaySchema = createCustomGatewaySchema;
 
 /**
  * Create gateway request - discriminated union based on type
@@ -162,7 +175,7 @@ export const createWebhookGatewaySchema = z.object({
 export const createGatewaySchema = z.discriminatedUnion("type", [
   createTelegramBotGatewaySchema,
   createAIGatewaySchema,
-  createWebhookGatewaySchema,
+  createCustomGatewaySchema,
 ]);
 
 /**
@@ -172,10 +185,10 @@ export const createGatewaySchema = z.discriminatedUnion("type", [
 export const updateGatewaySchema = z.object({
   name: gatewayNameSchema.optional(),
   credentials: z
-    .union([telegramBotCredentialsSchema, aiCredentialsSchema, webhookCredentialsSchema])
+    .union([telegramBotCredentialsSchema, aiCredentialsSchema, customGatewayCredentialsSchema])
     .optional(),
   config: z
-    .union([telegramBotConfigSchema, aiGatewayConfigSchema, webhookConfigSchema, z.record(z.string(), z.unknown())])
+    .union([telegramBotConfigSchema, aiGatewayConfigSchema, customGatewayConfigSchema, z.record(z.string(), z.unknown())])
     .optional(),
 });
 
@@ -192,7 +205,8 @@ export const gatewayIdSchema = z.object({
 
 export type CreateTelegramBotGatewayInput = z.infer<typeof createTelegramBotGatewaySchema>;
 export type CreateAIGatewayInput = z.infer<typeof createAIGatewaySchema>;
-export type CreateWebhookGatewayInput = z.infer<typeof createWebhookGatewaySchema>;
+export type CreateWebhookGatewayInput = z.infer<typeof createCustomGatewaySchema>;
+export type CreateCustomGatewayInput = z.infer<typeof createCustomGatewaySchema>;
 export type CreateGatewayInput = z.infer<typeof createGatewaySchema>;
 export type UpdateGatewayInput = z.infer<typeof updateGatewaySchema>;
 

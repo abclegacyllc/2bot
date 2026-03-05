@@ -11,3 +11,6 @@ export {
     GatewayStatusIndicator,
     StatusDot
 } from "./gateway-status";
+
+export { AIProviderInfoCard } from "./ai-provider-info-card";
+export { TelegramBotProfileCard } from "./telegram-bot-profile-card";

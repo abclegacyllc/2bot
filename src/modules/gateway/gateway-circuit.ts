@@ -9,7 +9,8 @@
  */
 
 import type {
-    CircuitBreaker} from "@/lib/circuit-breaker";
+    CircuitBreaker
+} from "@/lib/circuit-breaker";
 import {
     CircuitOpenError,
     circuitRegistry,
@@ -45,7 +46,7 @@ const GATEWAY_CIRCUIT_CONFIGS: Record<GatewayType, {
     monitorWindowMs: 60000,   // 1 minute window
     halfOpenMaxAttempts: 3,   // Standard attempts
   },
-  WEBHOOK: {
+  CUSTOM_GATEWAY: {
     failureThreshold: 5,      // Standard threshold
     resetTimeoutMs: 30000,    // 30 seconds
     monitorWindowMs: 60000,   // 1 minute window

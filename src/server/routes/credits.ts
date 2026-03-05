@@ -18,12 +18,12 @@
 import { logger } from "@/lib/logger";
 import { getCurrentBillingPeriod } from "@/modules/2bot-ai-provider";
 import {
-    creditService,
-    twoBotAICreditService,
-    type CreditUsageCategory,
-    type WalletType
+  creditService,
+  twoBotAICreditService,
+  type CreditUsageCategory,
+  type WalletType
 } from "@/modules/credits";
-import { BadRequestError } from "@/shared/errors";
+import { BadRequestError, InternalError } from "@/shared/errors";
 import { formatCredits } from "@/shared/lib/format";
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
@@ -165,11 +165,12 @@ creditsRouter.get(
     });
 
     // Filter by category if specified (from metadata)
-    const filteredTransactions = result.transactions;
-    if (category) {
-      // Note: In future, move this to service layer for better performance
-      // For now, metadata-based filtering works for moderate transaction counts
-    }
+    const filteredTransactions = category
+      ? result.transactions.filter((t: Record<string, unknown>) => {
+          const meta = t.metadata as Record<string, unknown> | null;
+          return meta?.category === category;
+        })
+      : result.transactions;
 
     res.json({
       success: true,
@@ -197,6 +198,7 @@ interface CreditsUsageResponse {
     /** Usage grouped by capability (universal naming) */
     byCapability: Record<string, number>;
     byModel: Record<string, number>;
+    byFeature: Record<string, number>;
   };
   byDay: Array<{
     date: string;
@@ -232,7 +234,7 @@ creditsRouter.get(
       other: 0,
     };
     
-    let aiUsage: { byCapability: Record<string, number>; byModel: Record<string, number> } | undefined;
+    let aiUsage: { byCapability: Record<string, number>; byModel: Record<string, number>; byFeature: Record<string, number> } | undefined;
     let byDay: Array<{ date: string; credits: number }> = [];
     let totalCredits = 0;
 
@@ -250,6 +252,7 @@ creditsRouter.get(
       // Include AI-specific breakdown
       const byCapability: Record<string, number> = {};
       const byModel: Record<string, number> = {};
+      const byFeature: Record<string, number> = {};
 
       for (const item of stats.byCapability) {
         byCapability[item.capability] = item.credits;
@@ -259,7 +262,11 @@ creditsRouter.get(
         byModel[item.model] = item.credits;
       }
 
-      aiUsage = { byCapability, byModel };
+      for (const item of stats.byFeature) {
+        byFeature[item.feature] = item.credits;
+      }
+
+      aiUsage = { byCapability, byModel, byFeature };
 
       // Use AI usage for daily breakdown
       byDay = stats.byDay.map((d: { date: string; credits: number }) => ({
@@ -334,7 +341,7 @@ creditsRouter.post(
 
     // Create Stripe checkout session
     const stripe = (await import("stripe")).default;
-    if (!process.env.STRIPE_SECRET_KEY) throw new BadRequestError("Stripe is not configured");
+    if (!process.env.STRIPE_SECRET_KEY) throw new InternalError("Payment service is not configured");
     const stripeClient = new stripe(process.env.STRIPE_SECRET_KEY);
 
     const session = await stripeClient.checkout.sessions.create({

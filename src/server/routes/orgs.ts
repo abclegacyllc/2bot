@@ -241,7 +241,7 @@ orgsRouter.get(
  *
  * @param {string} orgId - Organization ID from URL
  * @body {string} name - Gateway name
- * @body {GatewayType} type - Gateway type (TELEGRAM_BOT, AI, WEBHOOK)
+ * @body {GatewayType} type - Gateway type (TELEGRAM_BOT, AI, CUSTOM_GATEWAY)
  * @body {object} credentials - Type-specific credentials
  * @body {object} [config] - Optional type-specific config
  * @returns {SafeGateway} Created gateway
@@ -407,6 +407,21 @@ orgsRouter.put(
       success: true,
       data: userPlugin,
     });
+  })
+);
+
+/**
+ * GET /api/orgs/:orgId/plugins/storage-stats
+ *
+ * Get per-plugin KV storage usage from the running container.
+ */
+orgsRouter.get(
+  "/:orgId/plugins/storage-stats",
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const orgId = getPathParam(req, "orgId");
+    const ctx = getOrgContext(req, orgId);
+    const stats = await pluginService.getStorageStats(ctx);
+    res.json({ success: true, data: stats });
   })
 );
 

@@ -20,22 +20,22 @@
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import type {
-  AICapability,
-  TwoBotImageGenerationUsageData as ImageGenerationUsageData,
-  RecordTwoBotUsageData,
-  TwoBotSpeechRecognitionUsageData as SpeechRecognitionUsageData,
-  TwoBotSpeechSynthesisUsageData as SpeechSynthesisUsageData,
-  TwoBotTextGenerationUsageData as TextGenerationUsageData,
+    AICapability,
+    TwoBotImageGenerationUsageData as ImageGenerationUsageData,
+    RecordTwoBotUsageData,
+    TwoBotSpeechRecognitionUsageData as SpeechRecognitionUsageData,
+    TwoBotSpeechSynthesisUsageData as SpeechSynthesisUsageData,
+    TwoBotTextGenerationUsageData as TextGenerationUsageData,
 } from "@/modules/2bot-ai-provider";
 import {
-  calculateCreditsForUsageByCapability,
-  getModelPricingByCapability,
-  twoBotAIUsageService,
-  type ImageGenerationModelPricing,
-  type SpeechRecognitionModelPricing,
-  type SpeechSynthesisModelPricing,
-  type TextEmbeddingModelPricing,
-  type TextGenerationModelPricing
+    calculateCreditsForUsageByCapability,
+    getModelPricingByCapability,
+    twoBotAIUsageService,
+    type ImageGenerationModelPricing,
+    type SpeechRecognitionModelPricing,
+    type SpeechSynthesisModelPricing,
+    type TextEmbeddingModelPricing,
+    type TextGenerationModelPricing
 } from "@/modules/2bot-ai-provider";
 import { allocationService, usageTracker } from "@/modules/resource";
 import { BadRequestError } from "@/shared/errors";
@@ -188,7 +188,7 @@ class TwoBotAICreditService {
     }
 
     // Use centralized pricing calculation
-    if (data.capability === "text-generation" || data.capability === "text-embedding" || data.capability === "image-understanding") {
+    if (data.capability === "text-generation" || data.capability === "code-generation" || data.capability === "text-embedding" || data.capability === "image-understanding") {
       const textGenData = data as TextGenerationUsageData;
       return calculateCreditsForUsageByCapability(data.capability, data.model, {
         inputTokens: textGenData.inputTokens,
@@ -262,7 +262,7 @@ class TwoBotAICreditService {
   ): RecordUsageData {
     const base = { userId: "", model, capability };
     
-    if (capability === "text-generation" || capability === "text-embedding" || capability === "image-understanding") {
+    if (capability === "text-generation" || capability === "code-generation" || capability === "text-embedding" || capability === "image-understanding") {
       return { ...base, capability, inputTokens: usage.inputTokens || 0, outputTokens: usage.outputTokens || 0 } as TextGenerationUsageData;
     } else if (capability === "image-generation") {
       return { ...base, capability: "image-generation", imageCount: usage.imageCount || 1 } as ImageGenerationUsageData;
@@ -281,7 +281,7 @@ class TwoBotAICreditService {
   private calculateCreditsWithRate(data: RecordUsageData, rate: CreditRateConfig): number {
     let credits = 0;
 
-    if (data.capability === "text-generation" || data.capability === "text-embedding" || data.capability === "image-understanding") {
+    if (data.capability === "text-generation" || data.capability === "code-generation" || data.capability === "text-embedding" || data.capability === "image-understanding") {
       const textGenData = data as TextGenerationUsageData;
       const inputCredits = textGenData.inputTokens * (rate.creditsPerInputToken || 0);
       const outputCredits = textGenData.outputTokens * (rate.creditsPerOutputToken || 0);

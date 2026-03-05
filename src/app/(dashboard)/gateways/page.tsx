@@ -42,7 +42,7 @@ const AIIcon = () => (
   </svg>
 );
 
-const WebhookIcon = () => (
+const CustomGatewayIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
   </svg>
@@ -63,8 +63,8 @@ function getGatewayIcon(type: string) {
       return <BotIcon />;
     case "AI":
       return <AIIcon />;
-    case "WEBHOOK":
-      return <WebhookIcon />;
+    case "CUSTOM_GATEWAY":
+      return <CustomGatewayIcon />;
     default:
       return <BotIcon />;
   }
@@ -79,8 +79,8 @@ function getGatewayTypeName(type: string): string {
       return "Telegram Bot";
     case "AI":
       return "AI Provider";
-    case "WEBHOOK":
-      return "Webhook";
+    case "CUSTOM_GATEWAY":
+      return "Custom Gateway";
     default:
       return type;
   }
@@ -113,7 +113,7 @@ function formatRelativeTime(date: Date | string | null): string {
 function GatewayCard({ gateway }: { gateway: GatewayListItem }) {
   return (
     <Link href={`/gateways/${gateway.id}`}>
-      <Card className="border-border bg-card/50 hover:bg-card/80 hover:border-border transition-colors cursor-pointer group">
+      <Card className="border-border bg-card/50 hover:bg-card/80 hover:border-border transition-colors cursor-pointer group" data-ai-target={`gateway-card-${gateway.id}`}>
         <CardContent className="p-4">
           <div className="flex items-center gap-4">
             {/* Icon */}
@@ -158,7 +158,7 @@ function EmptyState() {
         </div>
         <h3 className="text-lg font-medium text-foreground mb-2">No gateways yet</h3>
         <p className="text-muted-foreground mb-4 max-w-sm mx-auto">
-          Connect your first gateway to start automating with Telegram bots and AI providers.
+          Connect your first gateway to start automating with Telegram bots, AI providers, or custom integrations.
         </p>
         <Link href="/gateways/create">
           <Button className="bg-blue-600 hover:bg-blue-700">
@@ -247,11 +247,11 @@ function GatewaysContent() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">Gateways</h1>
             <p className="text-muted-foreground">
-              Manage your Telegram bots and AI provider connections
+              Manage your Telegram bots, AI providers, and custom gateway connections
             </p>
           </div>
           <Link href="/gateways/create">
-            <Button className="bg-blue-600 hover:bg-blue-700">
+            <Button className="bg-blue-600 hover:bg-blue-700" data-ai-target="create-gateway-btn">
               <PlusIcon />
               <span className="ml-2">Add Gateway</span>
             </Button>

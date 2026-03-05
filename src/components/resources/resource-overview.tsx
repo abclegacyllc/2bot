@@ -129,28 +129,14 @@ function PersonalOverview({ status }: { status: PersonalResourceStatus }) {
     },
   ];
   
-  // Workspace Pool Items (if available)
+  // Workspace Pool Items (if available) — show container count, not allocation bars
+  // (allocation = plan max which always shows 100%, which is misleading)
   const workspaceItems: ResourcePoolItem[] = workspace ? [
     {
-      label: "RAM",
-      icon: MemoryStick,
-      current: workspace.compute.ram.allocated,
-      limit: workspace.compute.ram.limit,
-      unit: workspace.compute.ram.unit,
-    },
-    {
-      label: "CPU",
-      icon: Cpu,
-      current: workspace.compute.cpu.allocated,
-      limit: workspace.compute.cpu.limit,
-      unit: workspace.compute.cpu.unit,
-    },
-    {
-      label: "Storage",
-      icon: HardDrive,
-      current: workspace.storage.allocation.allocated,
-      limit: workspace.storage.allocation.limit,
-      unit: workspace.storage.allocation.unit,
+      label: "Active Containers",
+      icon: Server,
+      current: workspace.containers?.used ?? 0,
+      limit: 1,
     },
   ] : [];
   
@@ -203,10 +189,10 @@ function PersonalOverview({ status }: { status: PersonalResourceStatus }) {
       {workspace ? (
         <ResourcePoolCard
           title="Workspace"
-          description="Compute resources for dedicated execution"
+          description={`${(workspace.compute.ram.limit ?? 0) >= 1024 ? `${((workspace.compute.ram.limit ?? 0) / 1024).toFixed(0)} GB` : `${workspace.compute.ram.limit ?? 0} MB`} RAM · ${workspace.compute.cpu.limit ?? 0} ${(workspace.compute.cpu.limit ?? 0) === 1 ? 'core' : 'cores'} · ${(workspace.storage.allocation.limit ?? 0) >= 1024 ? `${((workspace.storage.allocation.limit ?? 0) / 1024).toFixed(0)} GB` : `${workspace.storage.allocation.limit ?? 0} MB`} storage`}
           icon={Server}
           items={workspaceItems}
-          columns={3}
+          columns={1}
         />
       ) : (
         <ResourcePoolCard

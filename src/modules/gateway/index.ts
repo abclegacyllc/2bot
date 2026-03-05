@@ -21,6 +21,12 @@ export * from "./gateway.validation";
 // Service
 export { gatewayService } from "./gateway.service";
 
+// Chat Tracking (Phase 7)
+export { gatewayChatService, type ActiveChat, type ChatMemberUpdate, type ChatStats } from "./gateway-chats.service";
+
+// Gateway Metrics (Phase 8)
+export { gatewayMetricService, type MetricRow, type MetricSummary } from "./gateway-metrics.service";
+
 // Monitoring
 export { gatewayMonitor } from "./gateway-monitor";
 

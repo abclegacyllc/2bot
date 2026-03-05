@@ -13,10 +13,14 @@ import { prisma } from "@/lib/prisma";
 import { twoBotAIUsageService } from "@/modules/2bot-ai-provider/2bot-ai-usage.service";
 import type { PricingAuditReport } from "@/modules/2bot-ai-provider/pricing-monitor";
 import { getLastAuditReport, getRegisteredProviders, runPricingAudit } from "@/modules/2bot-ai-provider/pricing-monitor";
+import { workspaceService } from '@/modules/workspace';
+import { workspaceAuditService } from '@/modules/workspace/audit.service';
+import { egressProxyService } from '@/modules/workspace/egress-proxy.service';
+import { workspaceMetricsService } from '@/modules/workspace/metrics.service';
 import { BadRequestError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext } from "@/shared/types/context";
-import type { Request, Response} from "express";
+import type { Request, Response } from "express";
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
@@ -1916,4 +1920,188 @@ adminRouter.get(
       data: providers,
     });
   })
+);
+
+// ===========================================
+// WORKSPACE ADMIN ROUTES
+// ===========================================
+
+// GET /api/admin/workspaces - List all workspaces
+adminRouter.get(
+  "/workspaces",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const ctx = getServiceContext(req);
+    const workspaces = await workspaceService.adminListAll(ctx);
+    res.json({ success: true, data: workspaces });
+  }),
+);
+
+// POST /api/admin/workspaces/:id/force-stop - Force stop a workspace
+adminRouter.post(
+  "/workspaces/:id/force-stop",
+  requirePermission('admin:workspaces:write'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const ctx = getServiceContext(req);
+    const result = await workspaceService.adminForceStop(ctx, req.params.id as string);
+    res.json({ success: result.success, data: result });
+  }),
+);
+
+// GET /api/admin/workspaces/:id/metrics - Get metrics for a container
+adminRouter.get(
+  "/workspaces/:id/metrics",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const containerId = req.params.id as string;
+    const since = req.query.since ? new Date(req.query.since as string) : undefined;
+    const until = req.query.until ? new Date(req.query.until as string) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+    const metrics = await workspaceMetricsService.getMetrics({ containerId, since, until, limit });
+    res.json({ success: true, data: metrics });
+  }),
+);
+
+// GET /api/admin/workspaces/:id/metrics/summary - Get metrics summary
+adminRouter.get(
+  "/workspaces/:id/metrics/summary",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const containerId = req.params.id as string;
+    const since = req.query.since ? new Date(req.query.since as string) : undefined;
+    const until = req.query.until ? new Date(req.query.until as string) : undefined;
+
+    const summary = await workspaceMetricsService.getSummary(containerId, since, until);
+    res.json({ success: true, data: summary });
+  }),
+);
+
+// GET /api/admin/workspaces/audit - Get recent workspace audit logs
+adminRouter.get(
+  "/workspaces/audit",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const containerId = req.query.containerId as string | undefined;
+    const logs = containerId
+      ? await workspaceAuditService.getByContainer(containerId, limit)
+      : await workspaceAuditService.getRecent(limit);
+    res.json({ success: true, data: logs });
+  }),
+);
+
+// GET /api/admin/workspaces/egress-logs - Get egress logs across all containers
+adminRouter.get(
+  "/workspaces/egress-logs",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const query = {
+      containerId: req.query.containerId as string | undefined,
+      domain: req.query.domain as string | undefined,
+      action: req.query.action as 'ALLOWED' | 'BLOCKED' | 'RATE_LIMITED' | undefined,
+      direction: req.query.direction as 'INBOUND' | 'OUTBOUND' | undefined,
+      since: req.query.since ? new Date(req.query.since as string) : undefined,
+      until: req.query.until ? new Date(req.query.until as string) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : 100,
+      offset: req.query.offset ? Number(req.query.offset) : 0,
+    };
+
+    const result = await egressProxyService.getLogs(query);
+    res.json({ success: true, data: result });
+  }),
+);
+
+// GET /api/admin/workspaces/egress-logs/summary - Get egress summary stats
+adminRouter.get(
+  "/workspaces/egress-logs/summary",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const containerId = req.query.containerId as string | undefined;
+    const since = req.query.since ? new Date(req.query.since as string) : undefined;
+
+    const summary = await egressProxyService.getSummary(containerId, since);
+    res.json({ success: true, data: summary });
+  }),
+);
+
+// GET /api/admin/workspaces/proxy-status - Get proxy container status
+adminRouter.get(
+  "/workspaces/proxy-status",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (_req: Request, res: Response<ApiResponse>) => {
+    const status = await egressProxyService.getProxyStatus();
+    res.json({ success: true, data: status });
+  }),
+);
+
+// POST /api/admin/workspaces/egress-reparse - Reparse the entire egress log
+adminRouter.post(
+  "/workspaces/egress-reparse",
+  requirePermission('admin:workspaces:write'),
+  asyncHandler(async (_req: Request, res: Response<ApiResponse>) => {
+    await egressProxyService.reparseFromStart();
+    res.json({ success: true, data: { message: 'Reparse triggered' } });
+  }),
+);
+
+// GET /api/admin/workspaces/allowed-domains - View all user-allowed domains
+adminRouter.get(
+  "/workspaces/allowed-domains",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const status = req.query.status as string | undefined;
+    const domains = await egressProxyService.getAllDomains(status);
+    res.json({ success: true, data: domains });
+  }),
+);
+
+// PATCH /api/admin/workspaces/allowed-domains/:id - Review a user's domain request
+adminRouter.patch(
+  "/workspaces/allowed-domains/:id",
+  requirePermission('admin:workspaces:write'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const ctx = getServiceContext(req);
+    const { action, reviewNote } = req.body as { action: string; reviewNote?: string };
+    if (!action || !['APPROVED', 'REJECTED', 'REVOKED'].includes(action)) {
+      throw new BadRequestError('Invalid action — must be APPROVED, REJECTED, or REVOKED');
+    }
+    const result = await egressProxyService.reviewUserDomain(
+      ctx.userId, req.params.id as string, action as 'APPROVED' | 'REJECTED' | 'REVOKED', reviewNote
+    );
+    res.json({ success: true, data: result });
+  }),
+);
+
+// GET /api/admin/workspaces/blocked-domains - List all globally blocked domains
+adminRouter.get(
+  "/workspaces/blocked-domains",
+  requirePermission('admin:workspaces:read'),
+  asyncHandler(async (_req: Request, res: Response<ApiResponse>) => {
+    const domains = await egressProxyService.getBlockedDomains();
+    res.json({ success: true, data: domains });
+  }),
+);
+
+// POST /api/admin/workspaces/blocked-domains - Add a globally blocked domain
+adminRouter.post(
+  "/workspaces/blocked-domains",
+  requirePermission('admin:workspaces:write'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    const ctx = getServiceContext(req);
+    const { domain, reason } = req.body as { domain: string; reason?: string };
+    if (!domain) throw new BadRequestError('Domain is required');
+    const result = await egressProxyService.addBlockedDomain(ctx.userId, domain, reason);
+    res.json({ success: true, data: result });
+  }),
+);
+
+// DELETE /api/admin/workspaces/blocked-domains/:id - Remove a globally blocked domain
+adminRouter.delete(
+  "/workspaces/blocked-domains/:id",
+  requirePermission('admin:workspaces:write'),
+  asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
+    await egressProxyService.removeBlockedDomain(req.params.id as string);
+    res.json({ success: true });
+  }),
 );

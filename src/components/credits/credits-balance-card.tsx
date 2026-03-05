@@ -62,7 +62,7 @@ export function CreditsBalanceCard({
   const isUnlimited = planLimit === null || planLimit === -1;
 
   return (
-    <Card className={cn("", className)}>
+    <Card className={cn("", className)} data-ai-target="credits-balance-card">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">
           {variant === "organization" ? "Organization Credits" : "Credit Balance"}

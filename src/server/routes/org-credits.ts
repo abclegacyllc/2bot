@@ -207,6 +207,7 @@ interface OrgCreditsUsageResponse {
     /** Usage grouped by capability (universal naming) */
     byCapability: Record<string, number>;
     byModel: Record<string, number>;
+    byFeature: Record<string, number>;
   };
   byMember: Array<{
     userId: string;
@@ -245,6 +246,7 @@ orgCreditsRouter.get(
     const totalCredits = stats.totals.credits;
     const byCapability: Record<string, number> = {};
     const byModel: Record<string, number> = {};
+    const byFeature: Record<string, number> = {};
 
     for (const item of stats.byCapability) {
       byCapability[item.capability] = item.credits;
@@ -252,6 +254,10 @@ orgCreditsRouter.get(
 
     for (const item of stats.byModel) {
       byModel[item.model] = item.credits;
+    }
+
+    for (const item of stats.byFeature) {
+      byFeature[item.feature] = item.credits;
     }
 
     const byDay = stats.byDay.map((d: { date: string; credits: number }) => ({
@@ -276,6 +282,7 @@ orgCreditsRouter.get(
         aiUsage: {
           byCapability,
           byModel,
+          byFeature,
         },
         byMember,
         byDay,

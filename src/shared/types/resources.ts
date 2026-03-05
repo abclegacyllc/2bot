@@ -95,7 +95,7 @@ export interface UsageMetric {
 export interface AllocationQuota {
   allocated: number;     // Current allocation
   limit: number | null;  // Max allowed
-  unit: 'MB' | 'GB' | 'cores' | 'vCPU';
+  unit: 'MB' | 'GB' | 'cores' | 'vCPU' | '%';
   percentage: number;
   isUnlimited: boolean;
 }

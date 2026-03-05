@@ -69,6 +69,17 @@ export interface GatewayProvider<TCredentials = unknown, TConfig = unknown> {
    * Used for documentation and UI
    */
   getSupportedActions(): GatewayAction[];
+
+  /**
+   * Check if a gateway is currently connected (in-memory state)
+   */
+  isConnected(gatewayId: string): boolean;
+
+  /**
+   * Get provider-specific info for a gateway (live API call)
+   * Returns enriched metadata for the dashboard /info endpoint
+   */
+  getProviderInfo(gatewayId: string, credentials: TCredentials): Promise<Record<string, unknown>>;
 }
 
 /**

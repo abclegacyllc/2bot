@@ -15,6 +15,7 @@ import {
     GatewayUnavailableError,
     removeGatewayCircuit,
 } from "../gateway-circuit";
+import { gatewayMetricService } from "../gateway-metrics.service";
 import type { GatewayAction, GatewayProvider } from "../gateway.registry";
 import { gatewayService } from "../gateway.service";
 
@@ -104,6 +105,19 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
       // Update gateway status in database
       await gatewayService.updateStatus(gatewayId, "CONNECTED");
 
+      // Persist provider-specific metadata to DB (non-blocking)
+      try {
+        const metadata = this.getProviderMetadata(gatewayId, credentials);
+        if (metadata && Object.keys(metadata).length > 0) {
+          await gatewayService.updateMetadata(gatewayId, metadata);
+        }
+      } catch (metaErr) {
+        this.log.warn(
+          { gatewayId, error: (metaErr as Error).message },
+          "Failed to persist gateway metadata (non-blocking)"
+        );
+      }
+
       this.log.info({ gatewayId }, "Gateway connected successfully");
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -188,29 +202,41 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
       throw new GatewayNotConnectedError(gatewayId, this.type);
     }
 
+    const startMs = Date.now();
+
     try {
       // Execute action through circuit breaker
       const result = await executeWithCircuit(gatewayId, this.type, async () => {
         return this.doExecute<TParams, TResult>(gatewayId, action, params);
       });
+      const durationMs = Date.now() - startMs;
 
       // Update last activity
       connection.lastActivity = new Date();
 
+      // Phase 8: Record success metric (fire-and-forget)
+      void gatewayMetricService.recordSuccess(gatewayId, action, durationMs);
+
       this.log.debug({ gatewayId, action }, "Action executed successfully");
       return result;
     } catch (error) {
+      const durationMs = Date.now() - startMs;
       // Convert circuit open error to gateway unavailable error
       if (error instanceof CircuitOpenError) {
         this.log.warn(
           { gatewayId, action, retryAfterMs: error.retryAfterMs },
           "Circuit breaker is OPEN - gateway temporarily unavailable"
         );
+        void gatewayMetricService.recordError(gatewayId, action, durationMs);
         throw new GatewayUnavailableError(this.type, error.retryAfterMs, gatewayId);
       }
 
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       this.log.error({ gatewayId, action, error: errorMessage }, "Action execution failed");
+
+      // Phase 8: Record error metric (fire-and-forget)
+      void gatewayMetricService.recordError(gatewayId, action, durationMs);
+
       throw error;
     }
   }
@@ -296,6 +322,31 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
     gatewayId: string,
     credentials: TCredentials
   ): Promise<{ healthy: boolean; latency?: number; error?: string }>;
+
+  /**
+   * Return provider-specific metadata to persist in the DB.
+   * Called after a successful connect. Override in subclasses.
+   * Default implementation returns empty object.
+   */
+  protected getProviderMetadata(
+    _gatewayId: string,
+    _credentials: TCredentials
+  ): Record<string, unknown> {
+    return {};
+  }
+
+  /**
+   * Return live provider-specific info for the /info API endpoint.
+   * Override in subclasses to return type-specific details.
+   * Default returns stored metadata from connection state.
+   */
+  async getProviderInfo(
+    gatewayId: string,
+    credentials: TCredentials
+  ): Promise<Record<string, unknown>> {
+    // Default: return persisted metadata via getProviderMetadata
+    return this.getProviderMetadata(gatewayId, credentials);
+  }
 
   // ==========================================
   // Helper Methods

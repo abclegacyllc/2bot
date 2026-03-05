@@ -16,7 +16,7 @@
  */
 
 import { cn } from "@/lib/utils";
-import { formatNumber } from "@/shared/lib/format";
+import { formatNumber, formatResourceValue } from "@/shared/lib/format";
 import type { LucideIcon } from "lucide-react";
 
 export type WarningLevel = "normal" | "warning" | "critical" | "blocked";
@@ -127,9 +127,13 @@ export function ResourceItemBar({
 
   const displayLimit = isUnlimited 
     ? "Unlimited" 
-    : `${formatNumber(limit)}${unit ? ` ${unit}` : ""}`;
+    : unit
+      ? (() => { const r = formatResourceValue(limit, unit); return `${r.display} ${r.unit}`; })()
+      : formatNumber(limit);
 
-  const displayCurrent = `${formatNumber(current)}${unit && !isUnlimited ? ` ${unit}` : ""}`;
+  const displayCurrent = unit
+    ? (() => { const r = formatResourceValue(current, unit); return `${r.display} ${r.unit}`; })()
+    : formatNumber(current);
 
   return (
     <div className={cn("space-y-1.5", className)}>

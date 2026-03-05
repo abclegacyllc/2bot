@@ -66,6 +66,13 @@ const LoadingIcon = () => (
 /**
  * Gateway type options
  */
+const CustomGatewayIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </svg>
+);
+
 const GATEWAY_TYPES = [
   {
     type: "TELEGRAM_BOT" as GatewayType,
@@ -78,6 +85,12 @@ const GATEWAY_TYPES = [
     name: "AI Provider",
     description: "Connect AI providers like OpenAI, Anthropic, or others",
     icon: AIIcon,
+  },
+  {
+    type: "CUSTOM_GATEWAY" as GatewayType,
+    name: "Custom Gateway",
+    description: "Create an inbound endpoint for external services (Stripe, GitHub, etc.)",
+    icon: CustomGatewayIcon,
   },
 ] as const;
 
@@ -394,6 +407,302 @@ function AIProviderForm({
 }
 
 /**
+ * Custom Gateway form with dynamic key-value credentials
+ */
+/**
+ * Credential presets for common integrations.
+ */
+const CREDENTIAL_PRESETS = [
+  {
+    id: "stripe",
+    name: "Stripe",
+    description: "Verify Stripe webhook signatures",
+    keys: [
+      { key: "signingSecret", label: "Webhook Signing Secret", placeholder: "whsec_...", helpUrl: "https://dashboard.stripe.com/webhooks" },
+    ],
+  },
+  {
+    id: "github",
+    name: "GitHub",
+    description: "Verify GitHub webhook signatures",
+    keys: [
+      { key: "webhookSecret", label: "Webhook Secret", placeholder: "your-webhook-secret", helpUrl: "https://docs.github.com/en/webhooks" },
+    ],
+  },
+  {
+    id: "slack",
+    name: "Slack",
+    description: "Verify Slack event requests",
+    keys: [
+      { key: "signingSecret", label: "Signing Secret", placeholder: "8f742231b10e...", helpUrl: "https://api.slack.com/apps" },
+    ],
+  },
+  {
+    id: "shopify",
+    name: "Shopify",
+    description: "Verify Shopify webhook HMAC",
+    keys: [
+      { key: "apiSecret", label: "API Secret Key", placeholder: "shpss_...", helpUrl: "https://shopify.dev/docs/apps/webhooks" },
+    ],
+  },
+  {
+    id: "generic-token",
+    name: "API with Token",
+    description: "Generic service that uses a bearer token or API key",
+    keys: [
+      { key: "apiKey", label: "API Key / Token", placeholder: "sk-..., tok-..., or any secret" },
+    ],
+  },
+  {
+    id: "two-keys",
+    name: "API with Key + Secret",
+    description: "Service that needs both an ID/key and a secret",
+    keys: [
+      { key: "apiKey", label: "API Key / Client ID", placeholder: "your-api-key" },
+      { key: "apiSecret", label: "API Secret", placeholder: "your-api-secret" },
+    ],
+  },
+] as const;
+
+function CustomGatewayForm({
+  onSubmit,
+  onBack,
+  loading,
+  error,
+}: {
+  onSubmit: (data: { name: string; credentials: Record<string, string> }) => void;
+  onBack: () => void;
+  loading: boolean;
+  error: string | null;
+}) {
+  const [name, setName] = useState("");
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
+  const [credentials, setCredentials] = useState<{ key: string; value: string; label?: string; placeholder?: string; helpUrl?: string }[]>([]);
+
+  const handlePresetSelect = (presetId: string) => {
+    if (presetId === "manual") {
+      setSelectedPreset("manual");
+      setCredentials([{ key: "", value: "" }]);
+      return;
+    }
+    const preset = CREDENTIAL_PRESETS.find(p => p.id === presetId);
+    if (preset) {
+      setSelectedPreset(presetId);
+      setCredentials(preset.keys.map(k => ({
+        key: k.key,
+        value: "",
+        label: k.label,
+        placeholder: k.placeholder,
+        helpUrl: "helpUrl" in k ? k.helpUrl : undefined,
+      })));
+    }
+  };
+
+  const addManualCredential = () => {
+    setCredentials(prev => [...prev, { key: "", value: "" }]);
+  };
+
+  const removeCredential = (index: number) => {
+    setCredentials(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const updateCredential = (index: number, field: "key" | "value", val: string) => {
+    setCredentials(prev => prev.map((item, i) =>
+      i === index ? { ...item, [field]: val } : item
+    ));
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const creds: Record<string, string> = {};
+    for (const { key, value } of credentials) {
+      const k = key.trim();
+      if (k) creds[k] = value;
+    }
+    onSubmit({ name: name.trim(), credentials: creds });
+  };
+
+  const isManual = selectedPreset === "manual";
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="flex items-center gap-4 mb-6">
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeftIcon />
+        </button>
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">Create Custom Gateway</h2>
+          <p className="text-muted-foreground text-sm">
+            Set up an inbound endpoint for external services
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="gw-name" className="text-foreground">
+          Gateway Name
+        </Label>
+        <Input
+          id="gw-name"
+          placeholder="e.g. stripe-payments"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="bg-card border-border text-foreground placeholder:text-muted-foreground"
+        />
+        <p className="text-xs text-muted-foreground">
+          1-64 alphanumeric characters with hyphens/underscores
+        </p>
+      </div>
+
+      {/* Credential Preset Selector */}
+      <div className="space-y-3">
+        <Label className="text-foreground">
+          What service are you connecting?
+        </Label>
+        <div className="grid grid-cols-2 gap-2">
+          {CREDENTIAL_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => handlePresetSelect(preset.id)}
+              className={`text-left p-3 rounded-lg border transition-colors ${
+                selectedPreset === preset.id
+                  ? "border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/30"
+                  : "border-border bg-card/50 hover:bg-card hover:border-border"
+              }`}
+            >
+              <p className="text-sm font-medium text-foreground">{preset.name}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => handlePresetSelect("manual")}
+            className={`text-left p-3 rounded-lg border transition-colors col-span-2 ${
+              selectedPreset === "manual"
+                ? "border-blue-500 bg-blue-950/30 ring-1 ring-blue-500/30"
+                : "border-border border-dashed bg-card/30 hover:bg-card/50 hover:border-border"
+            }`}
+          >
+            <p className="text-sm font-medium text-foreground">Custom / Manual</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Enter your own key names and values</p>
+          </button>
+        </div>
+      </div>
+
+      {/* Credential Input Fields */}
+      {selectedPreset && credentials.length > 0 ? (
+        <div className="space-y-3 rounded-lg border border-border bg-card/30 p-4">
+          <div className="flex items-center justify-between">
+            <Label className="text-foreground">
+              {isManual ? "Credentials" : `${CREDENTIAL_PRESETS.find(p => p.id === selectedPreset)?.name} Credentials`}
+            </Label>
+            {isManual ? (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={addManualCredential}
+                className="text-xs text-blue-400 hover:text-blue-300 h-auto py-1 px-2"
+              >
+                + Add Another
+              </Button>
+            ) : null}
+          </div>
+
+          {credentials.map((cred, index) => (
+            <div key={index} className="space-y-1.5">
+              {!isManual && cred.label ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">{cred.label}</span>
+                  {cred.helpUrl ? (
+                    <a href={cred.helpUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:underline">
+                      Where to find this?
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="flex gap-2 items-start">
+                {isManual ? (
+                  <Input
+                    placeholder="Key name"
+                    value={cred.key}
+                    onChange={(e) => updateCredential(index, "key", e.target.value)}
+                    className="bg-card border-border text-sm flex-1"
+                  />
+                ) : null}
+                <Input
+                  placeholder={cred.placeholder || "Paste secret value here"}
+                  type="password"
+                  value={cred.value}
+                  onChange={(e) => updateCredential(index, "value", e.target.value)}
+                  className={`bg-card border-border text-sm font-mono ${isManual ? "flex-[2]" : "w-full"}`}
+                />
+                {isManual && credentials.length > 1 ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => removeCredential(index)}
+                    className="text-red-400 hover:text-red-300 h-9 w-9 p-0 shrink-0"
+                  >
+                    &times;
+                  </Button>
+                ) : null}
+              </div>
+              {!isManual ? (
+                <p className="text-xs text-muted-foreground">
+                  Your plugin reads this as <code className="text-emerald-400/80 bg-muted px-1 rounded">event.data.credentials.{cred.key}</code>
+                </p>
+              ) : null}
+            </div>
+          ))}
+
+          {isManual ? (
+            <p className="text-xs text-muted-foreground mt-1">
+              Your plugin reads credentials via <code className="text-emerald-400/80 bg-muted px-1 rounded">event.data.credentials.yourKeyName</code>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!selectedPreset ? (
+        <div className="rounded-md border border-border/50 bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground text-center">
+            Select a service above, or choose &quot;Custom / Manual&quot; to enter your own credentials
+          </p>
+        </div>
+      ) : null}
+
+      {error ? <div className="bg-red-950/20 border border-red-900/30 rounded-md p-3">
+          <p className="text-sm text-red-400">{error}</p>
+        </div> : null}
+
+      <div className="flex gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onBack}
+          className="border-border text-foreground"
+        >
+          Back
+        </Button>
+        <Button
+          type="submit"
+          disabled={loading || !name.trim()}
+          className="flex-1 bg-blue-600 hover:bg-blue-700"
+        >
+          {loading ? <LoadingIcon /> : <CheckIcon />}
+          <span className="ml-2">{loading ? "Creating..." : "Create Gateway"}</span>
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
  * Add Gateway page content for organization
  */
 function AddGatewayContent() {
@@ -494,6 +803,14 @@ function AddGatewayContent() {
     });
   };
 
+  const handleCustomGatewaySubmit = (data: { name: string; credentials: Record<string, string> }) => {
+    createGateway({
+      type: "CUSTOM_GATEWAY" as GatewayType,
+      name: data.name,
+      credentials: data.credentials,
+    });
+  };
+
   if (orgLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -519,8 +836,8 @@ function AddGatewayContent() {
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-lg mx-auto space-y-6">
         <PageHeader
-          title={step === "type" ? "Add Gateway" : `Configure ${selectedType === "TELEGRAM_BOT" ? "Telegram Bot" : "AI Provider"}`}
-          description={step === "type" ? "Connect a new Telegram bot or AI provider" : "Enter your credentials and configuration"}
+          title={step === "type" ? "Add Gateway" : `Configure ${selectedType === "TELEGRAM_BOT" ? "Telegram Bot" : selectedType === "AI" ? "AI Provider" : "Custom Gateway"}`}
+          description={step === "type" ? "Connect a new gateway to your workspace" : "Enter your credentials and configuration"}
           breadcrumbs={[{ label: "Gateways", href: buildOrgUrl("/gateways") }]}
         />
         <Card className="border-border bg-card/50">
@@ -537,6 +854,14 @@ function AddGatewayContent() {
             {step === "form" && selectedType === "AI" && (
               <AIProviderForm
                 onSubmit={handleAISubmit}
+                onBack={handleBack}
+                loading={loading}
+                error={error}
+              />
+            )}
+            {step === "form" && selectedType === "CUSTOM_GATEWAY" && (
+              <CustomGatewayForm
+                onSubmit={handleCustomGatewaySubmit}
                 onBack={handleBack}
                 loading={loading}
                 error={error}

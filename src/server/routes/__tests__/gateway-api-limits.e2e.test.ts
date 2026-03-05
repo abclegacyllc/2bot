@@ -206,7 +206,7 @@ describe('API: POST /api/user/gateways - FREE Plan', () => {
         } as any,
         {
           name: 'Test Gateway 2',
-          type: 'WEBHOOK',
+          type: 'CUSTOM_GATEWAY',
           credentials: { url: 'https://example.com', secret: 'test' },
         }
       );
@@ -389,7 +389,7 @@ describe('API: POST /api/orgs/:orgId/gateways - Org Limits', () => {
         } as any,
         {
           name: 'Org Gateway 3',
-          type: 'WEBHOOK',
+          type: 'CUSTOM_GATEWAY',
           credentials: { url: 'https://example.com', secret: 'test-3' },
         }
       )

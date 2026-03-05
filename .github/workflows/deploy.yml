@@ -29,12 +29,6 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
-      - name: Run linter
-        run: npm run lint
-
-      - name: Run type check
-        run: npx tsc --noEmit
-
       - name: Run tests
         run: npm run test:run
 

@@ -99,3 +99,58 @@ export function formatLimit(limit: number | null, compact = true): string {
   }
   return formatNumber(limit);
 }
+
+// ===========================================
+// Resource Value Formatting
+// ===========================================
+
+/**
+ * Format a resource value with its unit, converting to
+ * human-readable units where appropriate.
+ *
+ * - MB values ≥ 1024: convert to GB (e.g., 2048 MB → "2 GB", 20480 MB → "20 GB")
+ * - MB values < 1024: show as-is with commas (e.g., "512 MB")
+ * - Other units: show as-is with commas (e.g., "1 cores", "50 %")
+ * - No unit: use formatNumber (with K/M abbreviation)
+ *
+ * Returns { display: string; unit: string } so caller can style differently.
+ *
+ * Examples:
+ *   formatResourceValue(2048, "MB") → { display: "2", unit: "GB" }
+ *   formatResourceValue(20480, "MB") → { display: "20", unit: "GB" }
+ *   formatResourceValue(512, "MB") → { display: "512", unit: "MB" }
+ *   formatResourceValue(1, "cores") → { display: "1", unit: "cores" }
+ *   formatResourceValue(100, "%") → { display: "100", unit: "%" }
+ *   formatResourceValue(1500) → { display: "1.5K", unit: "" }
+ */
+export function formatResourceValue(value: number, unit?: string): { display: string; unit: string } {
+  if (!unit) {
+    return { display: formatNumber(value), unit: "" };
+  }
+
+  if (unit === "MB") {
+    if (value >= 1024) {
+      const gb = value / 1024;
+      // Show clean integer if whole number, otherwise 1 decimal
+      const display = gb % 1 === 0 ? gb.toFixed(0) : gb.toFixed(1);
+      return { display, unit: "GB" };
+    }
+    return { display: value.toLocaleString(), unit: "MB" };
+  }
+
+  // For all other units (cores, %, etc.), show raw value
+  return { display: value.toLocaleString(), unit };
+}
+
+/**
+ * Format a resource value as a single string (value + unit).
+ *
+ * Examples:
+ *   formatResourceDisplay(2048, "MB") → "2 GB"
+ *   formatResourceDisplay(512, "MB") → "512 MB"
+ *   formatResourceDisplay(1, "cores") → "1 cores"
+ */
+export function formatResourceDisplay(value: number, unit?: string): string {
+  const { display, unit: fmtUnit } = formatResourceValue(value, unit);
+  return fmtUnit ? `${display} ${fmtUnit}` : display;
+}

@@ -66,18 +66,19 @@ export interface AICredentials {
 }
 
 /**
- * Webhook credentials (for future use)
+ * Custom Gateway credentials — flexible key-value store for API keys, tokens, secrets.
+ * Examples: { signingSecret: "whsec_...", apiKey: "sk_..." }
+ * Stored encrypted (AES-256-GCM) in credentialsEnc, same as Telegram/AI gateways.
  */
-export interface WebhookCredentials {
-  url: string;
-  secret?: string; // For signature verification
-  headers?: Record<string, string>;
-}
+export type CustomGatewayCredentials = Record<string, string>;
+
+/** @deprecated Use CustomGatewayCredentials */
+export type WebhookCredentials = CustomGatewayCredentials;
 
 /**
  * Union of all credential types
  */
-export type GatewayCredentials = TelegramBotCredentials | AICredentials | WebhookCredentials;
+export type GatewayCredentials = TelegramBotCredentials | AICredentials | CustomGatewayCredentials;
 
 // ===========================================
 // Gateway Configuration Types (non-sensitive)
@@ -90,6 +91,8 @@ export interface TelegramBotConfig {
   webhookUrl?: string;
   allowedUpdates?: string[];
   dropPendingUpdates?: boolean;
+  /** Secret token sent by Telegram in X-Telegram-Bot-Api-Secret-Token header */
+  webhookSecretToken?: string;
 }
 
 /**
@@ -102,18 +105,72 @@ export interface AIGatewayConfig {
 }
 
 /**
- * Webhook configuration
+ * Custom Gateway configuration
  */
-export interface WebhookConfig {
+export interface CustomGatewayConfig {
   retryCount?: number;
   retryDelay?: number;
   timeout?: number;
 }
 
+/** @deprecated Use CustomGatewayConfig */
+export type WebhookConfig = CustomGatewayConfig;
+
 /**
  * Union of all config types
  */
-export type GatewayConfig = TelegramBotConfig | AIGatewayConfig | WebhookConfig | Record<string, unknown>;
+export type GatewayConfig = TelegramBotConfig | AIGatewayConfig | CustomGatewayConfig | Record<string, unknown>;
+
+// ===========================================
+// Gateway Metadata Types (persisted on connect)
+// ===========================================
+
+/**
+ * Telegram Bot metadata — persisted from getMe on connect
+ */
+export interface TelegramBotMetadata {
+  botId: number;
+  botUsername: string;
+  botFirstName: string;
+  botLastName?: string;
+  canJoinGroups?: boolean;
+  canReadGroupMessages?: boolean;
+  supportsInlineQueries?: boolean;
+}
+
+/**
+ * AI Provider metadata — persisted on connect
+ */
+export interface AIGatewayMetadata {
+  provider: AIProvider;
+  providerName: string;
+  defaultModel: string;
+  availableModels?: string[];
+  lastValidatedAt?: string;
+}
+
+/**
+ * Custom Gateway metadata
+ */
+export interface CustomGatewayMetadata {
+  /** Computed webhook URL: https://webhook.2bot.org/custom/{gatewayId} */
+  webhookUrl?: string;
+  /** Credential key names (for display, not values) */
+  credentialKeys?: string[];
+  lastDeliveredAt?: string;
+}
+
+/** @deprecated Use CustomGatewayMetadata */
+export type WebhookMetadata = CustomGatewayMetadata;
+
+/**
+ * Union of all gateway metadata types
+ */
+export type GatewayMetadata =
+  | TelegramBotMetadata
+  | AIGatewayMetadata
+  | CustomGatewayMetadata
+  | Record<string, unknown>;
 
 // ===========================================
 // Request DTOs
@@ -153,7 +210,11 @@ export type SafeGateway = Omit<Gateway, "credentialsEnc"> & {
     hasApiKey?: boolean;
     hasBotToken?: boolean;
     baseUrl?: string; // Non-sensitive, useful for display
+    credentialKeys?: string[]; // For CUSTOM_GATEWAY — key names (no secrets)
+    webhookUrl?: string; // For CUSTOM_GATEWAY — computed inbound URL
   };
+  // Provider-specific metadata (bot info, AI provider details, etc.)
+  providerMetadata: GatewayMetadata;
 };
 
 /**
@@ -190,10 +251,14 @@ export function isAICredentials(credentials: GatewayCredentials): credentials is
 }
 
 /**
- * Check if credentials are for Webhook
+ * Check if credentials are for Custom Gateway.
+ * Custom gateways use a plain Record<string, string> — they don't have botToken or provider.
  */
-export function isWebhookCredentials(
+export function isCustomGatewayCredentials(
   credentials: GatewayCredentials
-): credentials is WebhookCredentials {
-  return "url" in credentials && !("provider" in credentials) && !("botToken" in credentials);
+): credentials is CustomGatewayCredentials {
+  return !("provider" in credentials) && !("botToken" in credentials) && !("apiKey" in credentials);
 }
+
+/** @deprecated Use isCustomGatewayCredentials */
+export const isWebhookCredentials = isCustomGatewayCredentials;

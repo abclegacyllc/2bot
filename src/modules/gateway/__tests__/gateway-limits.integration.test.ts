@@ -193,7 +193,7 @@ describe('Gateway Limits - FREE Plan (Personal)', () => {
       // Try second gateway
       await gatewayService.create(ctx, {
         name: 'Test Gateway 2',
-        type: 'WEBHOOK',
+        type: 'CUSTOM_GATEWAY',
         credentials: { url: 'https://test.com/webhook', secret: 'test-secret' },
       });
       throw new Error('Should have thrown PlanLimitError');
@@ -235,7 +235,7 @@ describe('Gateway Limits - FREE Plan (Personal)', () => {
 
     const gateway2 = await gatewayService.create(ctx, {
       name: 'Test Gateway 2',
-      type: 'WEBHOOK',
+      type: 'CUSTOM_GATEWAY',
       credentials: { url: 'https://test.com/webhook', secret: 'test-secret' },
     });
 
@@ -358,7 +358,7 @@ describe('Gateway Limits - Organization Context', () => {
     await expect(
       gatewayService.create(ctx, {
         name: 'Org Gateway 3',
-        type: 'WEBHOOK',
+        type: 'CUSTOM_GATEWAY',
         credentials: { url: 'https://test.com/webhook', secret: 'test-3' },
       })
     ).rejects.toThrow(OrgPlanLimitError);

@@ -1,7 +1,8 @@
 /**
  * Privacy Policy Page
  *
- * Privacy policy explaining how 2Bot collects, uses, and protects user data.
+ * Privacy policy explaining how ABC Legacy LLC (operating as 2Bot) collects,
+ * uses, and protects user data.
  *
  * @module app/privacy/page
  */
@@ -40,15 +41,18 @@ export default function PrivacyPolicyPage() {
           <div>
             <h1 className="text-4xl font-bold text-foreground">Privacy Policy</h1>
             <p className="mt-2 text-muted-foreground">
-              Last updated: January 18, 2026
+              Last updated: February 15, 2026
             </p>
           </div>
 
           {/* Introduction */}
           <p className="text-muted-foreground leading-relaxed">
-            At 2Bot, we take your privacy seriously. This Privacy Policy explains how
-            we collect, use, disclose, and safeguard your information when you use
-            our platform. Please read this policy carefully.
+            ABC Legacy LLC (&quot;Company,&quot; &quot;we,&quot; &quot;us,&quot; or &quot;our&quot;), operating the 2Bot
+            platform, is committed to protecting your privacy. This Privacy Policy
+            explains how we collect, use, disclose, and safeguard your information
+            when you use our cloud-based workflow automation and backend building
+            platform (&quot;Service&quot;) accessible at 2bot.org. Please read this policy
+            carefully.
           </p>
 
           {/* Content Sections */}
@@ -69,19 +73,25 @@ export default function PrivacyPolicyPage() {
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
                 <li>
                   <strong className="text-foreground">Account Information:</strong> Name,
-                  email address, password when you register
+                  email address, and password when you register for an account
+                </li>
+                <li>
+                  <strong className="text-foreground">Organization Information:</strong> Company
+                  name and team member details for organization accounts
                 </li>
                 <li>
                   <strong className="text-foreground">Payment Information:</strong> Billing
-                  address and payment details (processed securely by Stripe)
+                  address and payment details (processed securely by Stripe; we do not
+                  store full card numbers)
                 </li>
                 <li>
-                  <strong className="text-foreground">Bot Credentials:</strong> Telegram bot
-                  tokens and API keys you connect
+                  <strong className="text-foreground">API Credentials:</strong> API keys,
+                  access tokens, and webhook URLs you configure for third-party
+                  messaging services
                 </li>
                 <li>
                   <strong className="text-foreground">Configuration Data:</strong> Plugin
-                  settings, automation rules, and preferences
+                  settings, workflow rules, automation configurations, and preferences
                 </li>
               </ul>
 
@@ -91,16 +101,15 @@ export default function PrivacyPolicyPage() {
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
                 <li>
                   <strong className="text-foreground">Usage Data:</strong> Features used,
-                  actions taken, timestamps
+                  actions taken, workflow execution logs, and timestamps
                 </li>
                 <li>
                   <strong className="text-foreground">Device Information:</strong> Browser
-                  type, operating system, IP address
+                  type, operating system, IP address, and device identifiers
                 </li>
                 <li>
-                  <strong className="text-foreground">Message Metadata:</strong> Message
-                  counts and types (not message content unless required for plugin
-                  functionality)
+                  <strong className="text-foreground">Performance Metrics:</strong> API
+                  response times, error rates, and credit consumption data
                 </li>
               </ul>
             </section>
@@ -111,49 +120,52 @@ export default function PrivacyPolicyPage() {
                 2. How We Use Information
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                We use the information we collect to:
+                We use the information we collect for the following purposes:
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
-                <li>Provide, maintain, and improve our Service</li>
-                <li>Process transactions and send related information</li>
-                <li>Send technical notices, updates, and support messages</li>
-                <li>Respond to your comments and questions</li>
-                <li>Monitor and analyze usage patterns and trends</li>
-                <li>Detect, prevent, and address technical issues</li>
-                <li>Protect against fraudulent or illegal activity</li>
-                <li>Comply with legal obligations</li>
+                <li>Provide, operate, maintain, and improve our Service</li>
+                <li>Process subscriptions, transactions, and credit-based billing</li>
+                <li>Send technical notices, security alerts, and support communications</li>
+                <li>Respond to your comments, questions, and customer service requests</li>
+                <li>Monitor and analyze usage patterns, trends, and performance</li>
+                <li>Detect, investigate, and prevent fraudulent or unauthorized activity</li>
+                <li>Enforce our Terms of Service and protect our legal rights</li>
+                <li>Comply with applicable laws, regulations, and legal obligations</li>
               </ul>
             </section>
 
             {/* Section 3 */}
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold text-foreground">
-                3. Information Sharing
+                3. Information Sharing and Disclosure
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                We do not sell your personal information. We may share information in
-                the following circumstances:
+                We do not sell, rent, or trade your personal information to third
+                parties. We may share information in the following limited circumstances:
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
                 <li>
-                  <strong className="text-foreground">Service Providers:</strong> Third-party
-                  services that help us operate (payment processing, analytics, hosting)
+                  <strong className="text-foreground">Service Providers:</strong> Trusted
+                  third-party vendors that help us operate our business (payment
+                  processing, cloud hosting, analytics, error monitoring)
                 </li>
                 <li>
                   <strong className="text-foreground">Legal Requirements:</strong> When
-                  required by law, subpoena, or legal process
+                  required by law, regulation, subpoena, court order, or legal process
                 </li>
                 <li>
-                  <strong className="text-foreground">Safety:</strong> To protect the
-                  rights, property, or safety of 2Bot, our users, or others
+                  <strong className="text-foreground">Safety and Protection:</strong> To
+                  protect the rights, property, safety, or security of ABC Legacy LLC,
+                  our users, or the public
                 </li>
                 <li>
                   <strong className="text-foreground">Business Transfers:</strong> In
-                  connection with a merger, acquisition, or sale of assets
+                  connection with a merger, acquisition, reorganization, or sale of
+                  assets, with advance notice to affected users
                 </li>
                 <li>
-                  <strong className="text-foreground">With Consent:</strong> When you
-                  explicitly agree to share information
+                  <strong className="text-foreground">With Your Consent:</strong> When you
+                  explicitly authorize us to share information
                 </li>
               </ul>
             </section>
@@ -164,30 +176,33 @@ export default function PrivacyPolicyPage() {
                 4. Data Security
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                We implement appropriate technical and organizational security measures
-                to protect your information:
+                We implement industry-standard technical and organizational security
+                measures to protect your information:
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
-                <li>Encryption of data in transit (TLS/SSL) and at rest</li>
-                <li>Secure password hashing using industry-standard algorithms</li>
-                <li>Regular security audits and vulnerability assessments</li>
-                <li>Access controls and authentication requirements</li>
-                <li>Encrypted storage of sensitive credentials (bot tokens, API keys)</li>
+                <li>Encryption of data in transit (TLS 1.2+) and at rest (AES-256)</li>
+                <li>Secure password hashing using bcrypt with appropriate work factors</li>
+                <li>Regular security assessments and vulnerability scanning</li>
+                <li>Role-based access controls and multi-factor authentication</li>
+                <li>Encrypted storage of API credentials and access tokens</li>
+                <li>Automated monitoring and alerting for suspicious activity</li>
               </ul>
               <p className="text-muted-foreground leading-relaxed">
-                While we strive to protect your information, no method of transmission
-                over the Internet is 100% secure. We cannot guarantee absolute security.
+                While we employ robust security measures, no method of electronic
+                transmission or storage is 100% secure. We cannot guarantee absolute
+                security but will promptly notify affected users and relevant authorities
+                in the event of a data breach, as required by applicable law.
               </p>
             </section>
 
             {/* Section 5 */}
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold text-foreground">
-                5. Your Rights
+                5. Your Rights and Choices
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                Depending on your location, you may have the following rights regarding
-                your personal information:
+                Depending on your jurisdiction, you may have the following rights
+                regarding your personal information:
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
                 <li>
@@ -200,15 +215,19 @@ export default function PrivacyPolicyPage() {
                 </li>
                 <li>
                   <strong className="text-foreground">Deletion:</strong> Request deletion
-                  of your personal data
+                  of your personal data (&quot;right to be forgotten&quot;)
                 </li>
                 <li>
                   <strong className="text-foreground">Portability:</strong> Request a copy
-                  of your data in a machine-readable format
+                  of your data in a structured, machine-readable format
+                </li>
+                <li>
+                  <strong className="text-foreground">Restriction:</strong> Request
+                  restriction of processing of your personal data
                 </li>
                 <li>
                   <strong className="text-foreground">Objection:</strong> Object to
-                  processing of your personal data
+                  processing of your personal data for certain purposes
                 </li>
                 <li>
                   <strong className="text-foreground">Withdrawal:</strong> Withdraw consent
@@ -223,14 +242,15 @@ export default function PrivacyPolicyPage() {
                 >
                   support@2bot.org
                 </a>
-                .
+                . We will respond to valid requests within 30 days, or as required
+                by applicable law.
               </p>
             </section>
 
             {/* Section 6 */}
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold text-foreground">
-                6. Cookies and Tracking
+                6. Cookies and Tracking Technologies
               </h2>
               <p className="text-muted-foreground leading-relaxed">
                 We use cookies and similar tracking technologies to collect and track
@@ -243,20 +263,23 @@ export default function PrivacyPolicyPage() {
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
                 <li>
                   <strong className="text-foreground">Essential Cookies:</strong> Required
-                  for the Service to function (authentication, security)
+                  for the Service to function (authentication, session management,
+                  security)
                 </li>
                 <li>
                   <strong className="text-foreground">Preference Cookies:</strong> Remember
-                  your settings and preferences (theme, language)
+                  your settings and preferences (theme, language, display options)
                 </li>
                 <li>
                   <strong className="text-foreground">Analytics Cookies:</strong> Help us
-                  understand how you use the Service
+                  understand how you use the Service to improve functionality and
+                  performance
                 </li>
               </ul>
               <p className="text-muted-foreground leading-relaxed">
                 You can control cookie preferences through your browser settings.
-                Disabling certain cookies may affect Service functionality.
+                Disabling certain cookies may affect Service functionality. We do not
+                use cookies for targeted advertising.
               </p>
             </section>
 
@@ -267,20 +290,9 @@ export default function PrivacyPolicyPage() {
               </h2>
               <p className="text-muted-foreground leading-relaxed">
                 Our Service integrates with third-party services that have their own
-                privacy policies:
+                privacy policies. We encourage you to review them:
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
-                <li>
-                  <strong className="text-foreground">Telegram:</strong> Subject to{" "}
-                  <a
-                    href="https://telegram.org/privacy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-purple-400 hover:text-purple-300"
-                  >
-                    Telegram&apos;s Privacy Policy
-                  </a>
-                </li>
                 <li>
                   <strong className="text-foreground">Stripe:</strong> Payment processing
                   subject to{" "}
@@ -295,13 +307,25 @@ export default function PrivacyPolicyPage() {
                 </li>
                 <li>
                   <strong className="text-foreground">AI Providers:</strong> When using AI
-                  features, data may be processed according to the respective AI
-                  provider&apos;s privacy policies
+                  features, data may be processed by third-party AI providers (e.g.,
+                  OpenAI, Anthropic, Google) in accordance with their respective privacy
+                  policies
+                </li>
+                <li>
+                  <strong className="text-foreground">Messaging APIs:</strong> When
+                  connecting to third-party messaging platforms, your data may be subject
+                  to those platforms&apos; privacy policies
+                </li>
+                <li>
+                  <strong className="text-foreground">Cloud Infrastructure:</strong> Our
+                  Service is hosted on secure cloud infrastructure with its own data
+                  processing agreements
                 </li>
               </ul>
               <p className="text-muted-foreground leading-relaxed">
-                We encourage you to review the privacy policies of any third-party
-                services you connect to our platform.
+                We are not responsible for the privacy practices of third-party services.
+                We recommend reviewing the privacy policies of any services you connect
+                through our platform.
               </p>
             </section>
 
@@ -312,15 +336,20 @@ export default function PrivacyPolicyPage() {
               </h2>
               <p className="text-muted-foreground leading-relaxed">
                 We retain your information for as long as your account is active or as
-                needed to provide the Service. We may retain certain information as
-                required by law or for legitimate business purposes.
+                needed to provide the Service. Specific retention periods:
               </p>
               <ul className="list-disc list-inside text-muted-foreground space-y-2 ml-4">
-                <li>Account data: Retained until account deletion</li>
-                <li>Usage logs: Retained for 90 days</li>
-                <li>Payment records: Retained for 7 years (legal requirement)</li>
-                <li>Backups: Retained for 30 days after deletion</li>
+                <li>Account data: Retained until account deletion request is fulfilled</li>
+                <li>Usage and workflow logs: Retained for 90 days</li>
+                <li>Payment and billing records: Retained for 7 years (legal/tax requirement)</li>
+                <li>Security and audit logs: Retained for 1 year</li>
+                <li>Backups: Retained for 30 days after data deletion</li>
               </ul>
+              <p className="text-muted-foreground leading-relaxed">
+                After account deletion, we will remove or anonymize your personal data
+                within 30 days, except where retention is required by law or for
+                legitimate business purposes documented above.
+              </p>
             </section>
 
             {/* Section 9 */}
@@ -329,30 +358,57 @@ export default function PrivacyPolicyPage() {
                 9. Children&apos;s Privacy
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                Our Service is not intended for children under 18 years of age. We do
-                not knowingly collect personal information from children under 18. If
-                we become aware that we have collected personal information from a
-                child under 18, we will take steps to delete that information.
+                Our Service is designed for business use and is not intended for
+                children under 18 years of age. We do not knowingly collect personal
+                information from children under 18. If we become aware that we have
+                collected personal information from a child under 18, we will take
+                immediate steps to delete that information and terminate the associated
+                account.
               </p>
             </section>
 
             {/* Section 10 */}
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold text-foreground">
-                10. International Transfers
+                10. International Data Transfers
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                Your information may be transferred to and processed in countries other
-                than your country of residence. These countries may have different data
-                protection laws. We take appropriate measures to ensure your
-                information remains protected in accordance with this Privacy Policy.
+                Your information may be transferred to and processed in the United
+                States or other countries where our service providers operate. These
+                countries may have different data protection laws than your country of
+                residence. We implement appropriate safeguards — including standard
+                contractual clauses and data processing agreements — to ensure your
+                information remains protected in accordance with this Privacy Policy
+                and applicable data protection laws.
               </p>
             </section>
 
             {/* Section 11 */}
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold text-foreground">
-                11. Changes to This Policy
+                11. California Privacy Rights (CCPA)
+              </h2>
+              <p className="text-muted-foreground leading-relaxed">
+                If you are a California resident, you have additional rights under the
+                California Consumer Privacy Act (CCPA), including the right to know
+                what personal information we collect, the right to request deletion,
+                and the right to opt out of the sale of personal information. As stated
+                above, we do not sell personal information. To exercise your CCPA
+                rights, contact us at{" "}
+                <a
+                  href="mailto:support@2bot.org"
+                  className="text-purple-400 hover:text-purple-300"
+                >
+                  support@2bot.org
+                </a>
+                .
+              </p>
+            </section>
+
+            {/* Section 12 */}
+            <section className="space-y-4">
+              <h2 className="text-2xl font-semibold text-foreground">
+                12. Changes to This Policy
               </h2>
               <p className="text-muted-foreground leading-relaxed">
                 We may update this Privacy Policy from time to time. We will notify you
@@ -362,19 +418,29 @@ export default function PrivacyPolicyPage() {
               <p className="text-muted-foreground leading-relaxed">
                 For material changes, we will provide additional notice via email or
                 through the Service at least 30 days before the changes take effect.
+                Your continued use of the Service after the updated policy becomes
+                effective constitutes acceptance of the changes.
               </p>
             </section>
 
-            {/* Section 12 */}
+            {/* Section 13 */}
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold text-foreground">
-                12. Contact Us
+                13. Contact Us
               </h2>
               <p className="text-muted-foreground leading-relaxed">
-                If you have questions about this Privacy Policy or our data practices,
-                please contact us:
+                If you have questions about this Privacy Policy, our data practices,
+                or wish to exercise your data rights, please contact us:
               </p>
               <ul className="list-none text-muted-foreground space-y-2">
+                <li>
+                  <strong className="text-foreground">Company:</strong>{" "}
+                  ABC Legacy LLC
+                </li>
+                <li>
+                  <strong className="text-foreground">Address:</strong>{" "}
+                  30 N Gould St Ste R, Sheridan, WY 82801, United States
+                </li>
                 <li>
                   <strong className="text-foreground">Email:</strong>{" "}
                   <a
@@ -382,6 +448,15 @@ export default function PrivacyPolicyPage() {
                     className="text-purple-400 hover:text-purple-300"
                   >
                     support@2bot.org
+                  </a>
+                </li>
+                <li>
+                  <strong className="text-foreground">Website:</strong>{" "}
+                  <a
+                    href="https://2bot.org"
+                    className="text-purple-400 hover:text-purple-300"
+                  >
+                    https://2bot.org
                   </a>
                 </li>
               </ul>
@@ -396,14 +471,14 @@ export default function PrivacyPolicyPage() {
             >
               Terms of Service
             </Link>
-            <span className="text-muted-foreground">•</span>
+            <span className="text-muted-foreground">&bull;</span>
             <Link
               href="/"
               className="text-muted-foreground hover:text-foreground"
             >
               Home
             </Link>
-            <span className="text-muted-foreground">•</span>
+            <span className="text-muted-foreground">&bull;</span>
             <Link
               href="/register"
               className="text-muted-foreground hover:text-foreground"

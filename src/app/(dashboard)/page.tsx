@@ -245,7 +245,7 @@ function QuickActions() {
       title: "Browse Plugins",
       description: "Discover new plugins",
       icon: Plug,
-      href: "/plugins",
+      href: "/plugins/create",
       color: "text-green-400",
       bgColor: "bg-green-400/10",
     },
@@ -406,7 +406,7 @@ function DashboardContent() {
               icon={Plug}
               current={stats.plugins.current}
               max={stats.plugins.max}
-              href="/my-plugins"
+              href="/plugins"
             />
             <StatsCard
               title="Credits Used"

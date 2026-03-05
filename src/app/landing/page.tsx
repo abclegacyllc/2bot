@@ -3,15 +3,15 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { serviceUrl } from "@/shared/config/urls";
 import { getAllPlansForDisplay } from "@/shared/constants/plans";
 import {
-    ArrowRight,
-    Bot,
-    Check,
-    LineChart,
-    MessageSquare,
-    Plug,
-    Rocket,
-    Shield,
-    Sparkles
+  ArrowRight,
+  Box,
+  Check,
+  Globe,
+  LineChart,
+  Plug,
+  Rocket,
+  Shield,
+  Sparkles
 } from "lucide-react";
 import Link from "next/link";
 
@@ -23,7 +23,8 @@ const dashboardRegisterUrl = serviceUrl('dashboard', '/register');
  * Landing Page
  *
  * Public marketing page with hero, features, pricing, and footer.
- * Showcases the platform's value proposition.
+ * Positions 2Bot as a B2B SaaS workflow automation and backend builder
+ * for messaging APIs.
  *
  * @module app/page
  */
@@ -46,23 +47,23 @@ function HeroSection() {
           {/* Badge */}
           <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-500/10 px-4 py-2 text-sm text-purple-300">
             <Sparkles className="h-4 w-4" />
-            <span>AI-Powered Telegram Automation</span>
+            <span>AI-Powered Workflow Automation</span>
           </div>
 
           {/* Headline */}
           <h1 className="text-5xl font-bold tracking-tight text-foreground sm:text-6xl lg:text-7xl">
-            Automate Your{" "}
+            No-Code{" "}
             <span className="bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
-              Telegram
+              Backend Builder
             </span>{" "}
-            with AI
+            for APIs
           </h1>
 
           {/* Subheadline */}
           <p className="mt-6 text-lg leading-8 text-muted-foreground sm:text-xl">
-            Build powerful Telegram bots with AI capabilities. Connect plugins,
-            automate workflows, and scale your communication — all without
-            writing code.
+            Build powerful workflow automations with AI capabilities. Connect messaging
+            APIs, automate backend processes, and scale your operations — all
+            without writing code.
           </p>
 
           {/* CTA Buttons */}
@@ -114,17 +115,17 @@ function HeroSection() {
 
 const features = [
   {
-    name: "Telegram Bot Integration",
+    name: "Messaging API Gateway",
     description:
-      "Connect your Telegram bots instantly. Manage multiple bots from one dashboard with real-time status monitoring.",
-    icon: Bot,
+      "Connect to messaging APIs instantly. Manage multiple channels from one dashboard with real-time monitoring and routing.",
+    icon: Globe,
     color: "text-blue-400",
     bgColor: "bg-blue-400/10",
   },
   {
     name: "AI-Powered Automation",
     description:
-      "Leverage OpenAI, Claude, and 100+ open-source models to create intelligent responses and automate conversations.",
+      "Leverage OpenAI, Claude, and 100+ AI models to create intelligent workflows and automate backend processes.",
     icon: Sparkles,
     color: "text-purple-400",
     bgColor: "bg-purple-400/10",
@@ -132,7 +133,7 @@ const features = [
   {
     name: "Plugin Marketplace",
     description:
-      "Extend functionality with plugins. Analytics, moderation, auto-replies, and more — install with one click.",
+      "Extend functionality with plugins. Analytics, moderation, auto-responses, and more — install with one click.",
     icon: Plug,
     color: "text-green-400",
     bgColor: "bg-green-400/10",
@@ -140,7 +141,7 @@ const features = [
   {
     name: "Analytics & Insights",
     description:
-      "Track message volume, user engagement, and bot performance with detailed analytics dashboards.",
+      "Track message volume, user engagement, and workflow performance with detailed analytics dashboards.",
     icon: LineChart,
     color: "text-amber-400",
     bgColor: "bg-amber-400/10",
@@ -148,7 +149,7 @@ const features = [
   {
     name: "Enterprise Security",
     description:
-      "End-to-end encryption, role-based access control, and SOC 2 compliant infrastructure.",
+      "End-to-end encryption, role-based access control, and enterprise-grade security infrastructure for your business.",
     icon: Shield,
     color: "text-red-400",
     bgColor: "bg-red-400/10",
@@ -156,7 +157,7 @@ const features = [
   {
     name: "Simple Setup",
     description:
-      "No coding required. Connect your bot token, install plugins, and you're ready to go in minutes.",
+      "No coding required. Connect your API credentials, install plugins, and you're ready to go in minutes.",
     icon: Rocket,
     color: "text-cyan-400",
     bgColor: "bg-cyan-400/10",
@@ -175,7 +176,7 @@ function FeaturesSection() {
             Powerful features for modern automation
           </p>
           <p className="mt-6 text-lg leading-8 text-muted-foreground">
-            Build, deploy, and scale your Telegram bots with our comprehensive
+            Build, deploy, and scale your backend workflows with our comprehensive
             platform designed for both beginners and power users.
           </p>
         </div>
@@ -226,7 +227,7 @@ function PricingSection() {
             Choose the right plan for you
           </p>
           <p className="mt-6 text-lg leading-8 text-muted-foreground">
-            Start free and scale as you grow. All plans include a 14-day free
+            Start free and scale as you grow. All paid plans include a 14-day free
             trial.
           </p>
         </div>
@@ -309,11 +310,11 @@ function CTASection() {
 
           <div className="relative mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-              Ready to automate your Telegram?
+              Ready to automate your workflows?
             </h2>
             <p className="mt-6 text-lg leading-8 text-foreground">
-              Join thousands of users who are already using 2Bot to power their
-              Telegram automation. Get started in minutes.
+              Join businesses already using 2Bot to power their backend
+              automation. Get started in minutes.
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <a href={dashboardRegisterUrl}>
@@ -354,11 +355,11 @@ function Footer() {
           {/* Logo and tagline */}
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-600">
-              <MessageSquare className="h-5 w-5 text-foreground" />
+              <Box className="h-5 w-5 text-foreground" />
             </div>
             <div>
               <span className="text-lg font-bold text-foreground">2Bot</span>
-              <p className="text-xs text-muted-foreground">AI-Powered Telegram Automation</p>
+              <p className="text-xs text-muted-foreground">Workflow Automation &amp; Backend Builder</p>
             </div>
           </div>
 
@@ -376,6 +377,12 @@ function Footer() {
             >
               Privacy Policy
             </Link>
+            <Link
+              href="/terms#refund-policy"
+              className="text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Refund Policy
+            </Link>
             <a
               href="mailto:support@2bot.org"
               className="text-muted-foreground transition-colors hover:text-foreground"
@@ -384,9 +391,14 @@ function Footer() {
             </a>
           </nav>
 
+          {/* Address */}
+          <p className="text-xs text-muted-foreground text-center sm:text-right">
+            ABC Legacy LLC &bull; 30 N Gould St Ste R, Sheridan, WY 82801
+          </p>
+
           {/* Copyright */}
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} 2Bot. All rights reserved.
+            &copy; {new Date().getFullYear()} ABC Legacy LLC. All rights reserved.
           </p>
         </div>
       </div>

@@ -11,9 +11,10 @@
  * @module app/(dashboard)/layout
  */
 
-import { TwoBotAIAssistantWidget } from "@/components/2bot-ai-assistant";
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { CreditsBalanceDisplay } from "@/components/credits";
+import { Cursor, CursorProvider } from "@/components/cursor";
+import { CursorPanel } from "@/components/cursor/cursor-panel";
 import { ContextSwitcher } from "@/components/layouts";
 import { useAuth } from "@/components/providers/auth-provider";
 import { SupportWidget } from "@/components/support";
@@ -23,6 +24,8 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import {
     Activity,
     Bot,
+    Box,
+    Brain,
     Building2,
     ChevronDown,
     ChevronLeft,
@@ -37,7 +40,6 @@ import {
     Plug,
     Settings,
     Shield,
-    ShoppingBag,
     User,
     Users
 } from "lucide-react";
@@ -48,9 +50,10 @@ import { useState, type ReactNode } from "react";
 // Shared navigation items (both contexts) - base paths
 const sharedNavItemsBase = [
   { path: "", label: "Dashboard", icon: Home },
+  { path: "/2bot-ai", label: "2Bot AI", icon: Brain },
   { path: "/gateways", label: "Gateways", icon: Bot },
-  { path: "/plugins", label: "Plugin Store", icon: ShoppingBag },
-  { path: "/my-plugins", label: "My Plugins", icon: Plug },
+  { path: "/plugins", label: "Plugins", icon: Plug },
+  { path: "/workspace", label: "Workspace", icon: Box },
 ];
 
 // Build shared nav items based on context
@@ -180,6 +183,7 @@ function Sidebar({
             <Link
               key={item.href}
               href={item.href}
+              data-ai-target={`nav-${item.href.replace(/\//g, "-").replace(/^-/, "") || "dashboard"}`}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                 isActive
                   ? "bg-purple-600/20 text-purple-400"
@@ -374,9 +378,6 @@ function DashboardLayoutContent({ children }: { children: ReactNode }) {
 
       {/* Support Widget */}
       <SupportWidget position="bottom-left" />
-
-      {/* 2Bot AI Assistant Widget */}
-      <TwoBotAIAssistantWidget position="bottom-right" />
     </div>
   );
 }
@@ -384,7 +385,11 @@ function DashboardLayoutContent({ children }: { children: ReactNode }) {
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <ProtectedRoute>
-      <DashboardLayoutContent>{children}</DashboardLayoutContent>
+      <CursorProvider>
+        <DashboardLayoutContent>{children}</DashboardLayoutContent>
+        <CursorPanel />
+        <Cursor />
+      </CursorProvider>
     </ProtectedRoute>
   );
 }

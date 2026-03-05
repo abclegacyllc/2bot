@@ -184,6 +184,11 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
    */
   private gatewayUserMap: Map<string, string> = new Map();
 
+  /**
+   * Models cache: gatewayId -> available model list (populated on connect)
+   */
+  private modelsCache: Map<string, string[]> = new Map();
+
   // ==========================================
   // Abstract Method Implementations
   // ==========================================
@@ -258,6 +263,14 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
       { gatewayId, provider: credentials.provider },
       "Connected to AI provider"
     );
+
+    // Cache available models for metadata (non-blocking, best-effort)
+    try {
+      const models = await this.listModels(credentials);
+      this.modelsCache.set(gatewayId, models.slice(0, 50)); // Cap at 50
+    } catch {
+      this.log.debug({ gatewayId }, "Could not fetch model list during connect");
+    }
   }
 
   /**
@@ -268,7 +281,60 @@ export class AIProvider extends BaseGatewayProvider<AICredentials, AIGatewayConf
     this.credentialsCache.delete(gatewayId);
     this.configCache.delete(gatewayId);
     this.gatewayUserMap.delete(gatewayId);
+    this.modelsCache.delete(gatewayId);
     this.log.debug({ gatewayId }, "Disconnected from AI provider");
+  }
+
+  /**
+   * Return metadata to persist in Gateway.metadata on connect
+   */
+  protected getProviderMetadata(
+    gatewayId: string,
+    _credentials: AICredentials
+  ): Record<string, unknown> {
+    const credentials = this.credentialsCache.get(gatewayId);
+    if (!credentials) return {};
+    const config = this.configCache.get(gatewayId);
+    return {
+      provider: credentials.provider,
+      providerName: AI_PROVIDERS[credentials.provider]?.name ?? credentials.provider,
+      defaultModel:
+        credentials.model || config?.defaultModel || DEFAULT_MODELS[credentials.provider],
+      availableModels: this.modelsCache.get(gatewayId) ?? [],
+      lastValidatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Return live provider info for the /info endpoint.
+   * Refreshes model list to get current data.
+   */
+  async getProviderInfo(
+    gatewayId: string,
+    credentials: AICredentials
+  ): Promise<Record<string, unknown>> {
+    const config = this.configCache.get(gatewayId);
+
+    // Refresh model list (best-effort)
+    let models: string[] = this.modelsCache.get(gatewayId) ?? [];
+    try {
+      models = await this.listModels(credentials);
+      this.modelsCache.set(gatewayId, models.slice(0, 50));
+    } catch {
+      this.log.debug({ gatewayId }, "Could not refresh model list for info");
+    }
+
+    return {
+      provider: credentials.provider,
+      providerName: AI_PROVIDERS[credentials.provider]?.name ?? credentials.provider,
+      defaultModel:
+        credentials.model || config?.defaultModel || DEFAULT_MODELS[credentials.provider],
+      baseUrl: credentials.baseUrl || PROVIDER_BASE_URLS[credentials.provider],
+      availableModels: models,
+      configuredMaxTokens: config?.maxTokens,
+      configuredTemperature: config?.temperature,
+      hasSystemPrompt: !!config?.systemPrompt,
+    };
   }
 
   /**

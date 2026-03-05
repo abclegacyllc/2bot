@@ -13,11 +13,12 @@ import { adminGuard } from "../middleware/admin-guard";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
 import { twoBotAIRouter } from "./2bot-ai";
 import { adminRouter } from "./admin";
-import { aiUsageRouter } from "./ai-usage";
+// ai-usage routes removed — dead code (replaced by /credits/* routes)
 import { alertRouter } from "./alerts";
 import { authRouter } from "./auth";
 import { billingRouter } from "./billing";
 import { creditsRouter } from "./credits";
+import { cursorRouter } from "./cursor";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
 import { invitesRouter } from "./invites";
@@ -31,6 +32,7 @@ import { ticketsRouter } from "./tickets";
 import { usageRouter } from "./usage";
 import { userRouter } from "./user";
 import { webhookRouter } from "./webhook";
+import { workspaceRouter } from "./workspace";
 
 /**
  * Route mode detection:
@@ -138,9 +140,12 @@ router.use("/2bot-ai", twoBotAIRouter);
 router.use("/credits", creditsRouter);
 
 /**
- * AI Usage routes
+ * Cursor routes (AI cursor actions)
  */
-router.use("/ai/usage", aiUsageRouter);
+router.use("/cursor", cursorRouter);
+
+// NOTE: AI Usage routes removed — all 4 endpoints were dead code
+// (replaced by /credits/* routes). File deleted 2026-02-15.
 
 /**
  * Knowledge Base routes (public - no auth required for reading)
@@ -156,6 +161,11 @@ router.use("/tickets", ticketsRouter);
  * Support routes (AI chat + admin management)
  */
 router.use("/support", supportRouter);
+
+/**
+ * Workspace routes (Phase 13)
+ */
+router.use("/workspace", workspaceRouter);
 
 // ===========================================
 // ADMIN ROUTES (dev mode only, under /admin prefix)

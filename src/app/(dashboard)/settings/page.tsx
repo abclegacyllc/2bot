@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { useRoutingPreference } from "@/hooks/use-routing-preference";
 import { apiUrl } from "@/shared/config/urls";
 import { getPlanDisplayName, PAID_PLAN_TYPES, type PlanType } from "@/shared/constants/plans";
 import {
@@ -34,6 +35,7 @@ import {
     Loader2,
     Mail,
     Settings,
+    Sparkles,
     User
 } from "lucide-react";
 import Link from "next/link";
@@ -55,10 +57,14 @@ function SettingsContent() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
+  // AI Routing Preference — shared hook syncs with Chat popover via auth context
+  const { routingPreference, isSaving: isSavingPreference, setRoutingPreference: updateRoutingPreference } = useRoutingPreference();
+
   // Update name when user loads
   useEffect(() => {
     if (user?.name) setName(user.name);
   }, [user?.name]);
+
 
   // Redirect to org settings if in org context
   useEffect(() => {
@@ -143,6 +149,16 @@ function SettingsContent() {
       toast.error(error instanceof Error ? error.message : "Failed to change password");
     } finally {
       setIsChangingPassword(false);
+    }
+  };
+
+  // Handle AI routing preference change
+  const handleRoutingPreferenceChange = async (newPreference: string) => {
+    try {
+      await updateRoutingPreference(newPreference as "cost" | "balanced" | "quality");
+      toast.success("AI routing preference updated!");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update preference");
     }
   };
 
@@ -313,6 +329,64 @@ function SettingsContent() {
           </CardContent>
         </Card>
 
+        {/* AI Routing Preference Card */}
+        <Card className="border-border bg-card/50">
+          <CardHeader>
+            <CardTitle className="text-foreground flex items-center gap-2">
+              <Sparkles className="h-5 w-5" />
+              AI Routing Preference
+            </CardTitle>
+            <CardDescription className="text-muted-foreground">
+              Choose how the AI model router selects models within your tier
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {[
+                {
+                  value: "cost",
+                  label: "Save Credits",
+                  icon: "💰",
+                  description: "Pick the cheapest model in your tier. Best for routine tasks.",
+                },
+                {
+                  value: "balanced",
+                  label: "Balanced",
+                  icon: "⚖️",
+                  description: "Pick a mid-range model. Good default for most users.",
+                },
+                {
+                  value: "quality",
+                  label: "Best Quality",
+                  icon: "⭐",
+                  description: "Pick the highest-quality model. Uses more credits.",
+                },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => handleRoutingPreferenceChange(option.value)}
+                  disabled={isSavingPreference}
+                  className={`relative flex flex-col items-center gap-2 rounded-lg border-2 p-4 text-center transition-all ${
+                    routingPreference === option.value
+                      ? "border-purple-500 bg-purple-500/10 shadow-sm"
+                      : "border-border bg-muted/30 hover:border-muted-foreground/30 hover:bg-muted/50"
+                  } ${isSavingPreference ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                >
+                  <span className="text-2xl">{option.icon}</span>
+                  <span className="font-medium text-foreground">{option.label}</span>
+                  <span className="text-xs text-muted-foreground">{option.description}</span>
+                  {routingPreference === option.value && (
+                    <Badge className="absolute -top-2 -right-2 bg-purple-600 text-xs">Active</Badge>
+                  )}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              Affects all text, reasoning &amp; code models. Only free-tier models are unaffected.
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Account Info Card */}
         <Card className="border-border bg-card/50">
           <CardHeader>
@@ -376,7 +450,7 @@ function SettingsContent() {
             </Card>
           </Link>
 
-          <Link href="/my-plugins">
+          <Link href="/plugins">
             <Card className="border-border bg-card/50 hover:bg-muted/50 transition-colors cursor-pointer h-full">
               <CardHeader>
                 <CardTitle className="text-foreground text-lg">🔌 My Plugins</CardTitle>
