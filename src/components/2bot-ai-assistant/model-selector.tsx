@@ -2,50 +2,23 @@
  * 2Bot AI Assistant Widget - Model Selector
  *
  * Dropdown to select AI model for chat.
- * Shows 2Bot AI branded models with tier badges.
- * Provider details are hidden from users.
+ * Shows Auto mode + real model names with price multipliers.
+ * Compact primary list with expandable "Other Models" section.
  *
  * @module components/2bot-ai-assistant/model-selector
  */
 
 "use client";
 
+import { Button } from "@/components/ui/button";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
-import {
-    Tooltip,
-    TooltipContent,
-    TooltipProvider,
-    TooltipTrigger,
-} from "@/components/ui/tooltip";
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Boxes, Brain, Crown, Eye, Sparkles, Star, Zap } from "lucide-react";
-
-/**
- * Format per-token pricing for display
- * Converts tiny per-token values to readable "per 1K tokens" format
- */
-function _formatPricing(inputPerToken?: number, outputPerToken?: number): string {
-  if (!inputPerToken && !outputPerToken) return "Free";
-  
-  // Convert per-token to per-1K for readability
-  const inputPer1k = (inputPerToken || 0) * 1000;
-  const outputPer1k = (outputPerToken || 0) * 1000;
-  
-  // Format nicely
-  const formatValue = (v: number) => {
-    if (v >= 1) return v.toFixed(2);
-    if (v >= 0.01) return v.toFixed(3);
-    return v.toFixed(4);
-  };
-  
-  return `${formatValue(inputPer1k)}/${formatValue(outputPer1k)} credits/1K tokens`;
-}
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Search, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface ModelCapabilities {
   inputTypes?: string[];
@@ -117,6 +90,20 @@ export interface TwoBotAIModelOption {
 }
 
 /**
+ * Real model (from /real-models endpoint)
+ */
+export interface RealModelOption {
+  id: string;
+  displayName: string;
+  author: string;
+  capability: string;
+  priceMultiplier: number;
+  providers: string[];
+  isPreview?: boolean;
+  deprecated?: boolean;
+}
+
+/**
  * Unified model option type (supports both formats)
  */
 export type ModelOption = LegacyModelOption | TwoBotAIModelOption;
@@ -128,16 +115,6 @@ function isTwoBotAIModel(model: ModelOption): model is TwoBotAIModelOption {
   return 'tierInfo' in model && 'displayName' in model;
 }
 
-/**
- * Get display name for a model
- */
-function getModelDisplayName(model: ModelOption): string {
-  if (isTwoBotAIModel(model)) {
-    return model.displayName;
-  }
-  return model.name;
-}
-
 interface ModelSelectorProps {
   models: ModelOption[];
   value: string;
@@ -146,272 +123,275 @@ interface ModelSelectorProps {
   compact?: boolean;
   /** Show "Auto Mode" option at top for smart routing */
   showAutoMode?: boolean;
+  /** Real models from /real-models endpoint */
+  realModels?: RealModelOption[];
 }
 
 // Special value for Auto Mode
 export const AUTO_MODE_VALUE = "auto";
 
-// Legacy provider icons (for backward compatibility)
-const PROVIDER_ICONS: Record<string, React.ReactNode> = {
-  openai: <Sparkles className="h-3 w-3" />,
-  anthropic: <Brain className="h-3 w-3" />,
-  together: <Boxes className="h-3 w-3" />,
-};
-
-// 2Bot AI tier icons
-const TIER_ICONS: Record<string, React.ReactNode> = {
-  lite: <Zap className="h-3 w-3" />,
-  pro: <Star className="h-3 w-3" />,
-  ultra: <Crown className="h-3 w-3" />,
-};
-
-// Tier badge colors
-const TIER_BADGE_COLORS: Record<string, string> = {
-  gray: "bg-gray-500/20 text-gray-600 dark:text-gray-400",
-  blue: "bg-blue-500/20 text-blue-600 dark:text-blue-400",
-  purple: "bg-purple-500/20 text-purple-600 dark:text-purple-400",
-  gold: "bg-amber-500/20 text-amber-600 dark:text-amber-400",
-};
-
-// Capability level indicator dots
-function CapabilityDots({ level }: { level?: string }) {
-  const levelMap: Record<string, number> = {
-    none: 0,
-    low: 1,
-    medium: 2,
-    high: 3,
-    highest: 4,
-  };
-  const filled = levelMap[level || "medium"] || 2;
-
-  return (
-    <div className="flex gap-0.5">
-      {[1, 2, 3, 4].map((i) => (
-        <div
-          key={i}
-          className={cn(
-            "w-1.5 h-1.5 rounded-full",
-            i <= filled ? "bg-primary" : "bg-muted"
-          )}
-        />
-      ))}
-    </div>
-  );
+/**
+ * Format price multiplier for display
+ */
+function formatPrice(multiplier: number): string {
+  if (multiplier === 0) return "0x";
+  if (multiplier < 0.01) return "<0.01x";
+  if (multiplier >= 100) return `${Math.round(multiplier)}x`;
+  // Show 2 decimal places only if needed
+  if (Number.isInteger(multiplier)) return `${multiplier}x`;
+  return `${parseFloat(multiplier.toFixed(2))}x`;
 }
 
 /**
- * Legacy badge component (for old model format)
+ * Get price color class based on multiplier
  */
-function ModelBadge({ badge }: { badge: string }) {
-  const badgeColors: Record<string, string> = {
-    FAST: "bg-green-500/20 text-green-600 dark:text-green-400",
-    REASONING: "bg-purple-500/20 text-purple-600 dark:text-purple-400",
-    BEST: "bg-amber-500/20 text-amber-600 dark:text-amber-400",
-    HD: "bg-blue-500/20 text-blue-600 dark:text-blue-400",
-    NEW: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
-  };
-
-  return (
-    <span className={cn(
-      "text-[9px] px-1 py-0.5 rounded font-medium",
-      badgeColors[badge] || "bg-muted text-muted-foreground"
-    )}>
-      {badge}
-    </span>
-  );
+function getPriceColor(multiplier: number): string {
+  if (multiplier === 0) return "text-emerald-400";
+  if (multiplier <= 0.5) return "text-emerald-400";
+  if (multiplier <= 1.5) return "text-foreground/60";
+  if (multiplier <= 5) return "text-amber-400";
+  return "text-red-400";
 }
 
 /**
- * 2Bot AI Tier Badge component
+ * Model row in the selector dropdown
  */
-function TierBadge({ tier, tierInfo }: { tier: string; tierInfo: TwoBotAITierInfo }) {
+function ModelRow({
+  model,
+  isSelected,
+  onClick,
+}: {
+  model: RealModelOption;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
   return (
-    <span className={cn(
-      "text-[9px] px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5",
-      TIER_BADGE_COLORS[tierInfo.badgeColor] || "bg-muted text-muted-foreground"
-    )}>
-      {TIER_ICONS[tier]}
-      {tierInfo.displayName}
-    </span>
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center justify-between px-3 py-1.5 text-sm hover:bg-accent/50 rounded-sm transition-colors",
+        isSelected && "bg-accent/30"
+      )}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        {isSelected ? (
+          <Check className="h-3 w-3 text-foreground shrink-0" />
+        ) : (
+          <span className="w-3 shrink-0" />
+        )}
+        <span className={cn("truncate", isSelected && "font-medium")}>
+          {model.displayName}
+        </span>
+        {model.isPreview && (
+          <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
+        )}
+      </div>
+      <span className={cn("text-xs tabular-nums shrink-0 ml-2", getPriceColor(model.priceMultiplier))}>
+        {formatPrice(model.priceMultiplier)}
+      </span>
+    </button>
   );
 }
 
-export function ModelSelector({ models, value, onChange, disabled, compact, showAutoMode }: ModelSelectorProps) {
+export function ModelSelector({ models, value, onChange, disabled, compact, showAutoMode, realModels }: ModelSelectorProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [otherModelsExpanded, setOtherModelsExpanded] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset search and collapse when dropdown closes
+  useEffect(() => {
+    if (!open) {
+      setSearch("");
+      setOtherModelsExpanded(false);
+    }
+  }, [open]);
+
+  // Focus search input when dropdown opens
+  useEffect(() => {
+    if (open) {
+      // Small delay to let the popover render
+      const timer = setTimeout(() => searchInputRef.current?.focus(), 50);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [open]);
+
+  // Find the currently selected real model
+  const selectedRealModel = useMemo(() =>
+    realModels?.find((m) => m.id === value),
+    [realModels, value]
+  );
+
+  // Find the selected catalog model (legacy support)
+  const selectedCatalogModel = useMemo(() =>
+    models.find((m) => m.id === value),
+    [models, value]
+  );
+
   const isAutoMode = value === AUTO_MODE_VALUE;
-  const selectedModel = models.find((m) => m.id === value);
-  const isTwoBotAI = selectedModel && isTwoBotAIModel(selectedModel);
+
+  // Filter real models by search
+  const filteredRealModels = useMemo(() => {
+    if (!realModels) return [];
+    const q = search.toLowerCase().trim();
+    if (!q) return realModels;
+    return realModels.filter((m) =>
+      m.displayName.toLowerCase().includes(q) ||
+      m.author.toLowerCase().includes(q)
+    );
+  }, [realModels, search]);
+
+  // Split into "active" (currently selected) and "other" models
+  const otherModels = useMemo(() =>
+    filteredRealModels.filter((m) => m.id !== value),
+    [filteredRealModels, value]
+  );
+
+  // Get display name for the trigger button
+  const triggerLabel = useMemo(() => {
+    if (isAutoMode) return "Auto";
+    if (selectedRealModel) return selectedRealModel.displayName;
+    if (selectedCatalogModel) {
+      return isTwoBotAIModel(selectedCatalogModel)
+        ? selectedCatalogModel.displayName.replace("2Bot AI ", "")
+        : (selectedCatalogModel as LegacyModelOption).name;
+    }
+    return "Select model";
+  }, [isAutoMode, selectedRealModel, selectedCatalogModel]);
+
+  const handleSelect = useCallback((modelId: string) => {
+    onChange(modelId);
+    setOpen(false);
+  }, [onChange]);
+
+  // When search is active, show all matching models flat (no sections)
+  const isSearching = search.trim().length > 0;
 
   return (
-    <TooltipProvider>
-      <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger className={cn(
-          "text-xs",
-          compact ? "w-[160px] h-7" : "w-[200px] h-8"
-        )}>
-          <SelectValue>
-            <div className="flex items-center gap-1.5">
-              {isAutoMode ? (
-                <>
-                  <Sparkles className="h-3 w-3 text-green-500" />
-                  <span className={cn(compact && "truncate")}>Auto Mode</span>
-                  {!compact && (
-                    <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-green-500/20 text-green-600 dark:text-green-400">
-                      Smart
-                    </span>
-                  )}
-                </>
-              ) : isTwoBotAI ? (
-                <>
-                  {TIER_ICONS[selectedModel.tier]}
-                  <span className={cn(compact && "truncate")}>
-                    {selectedModel.displayName.replace("2Bot AI ", "")}
-                  </span>
-                  {!compact && (
-                    <TierBadge tier={selectedModel.tier} tierInfo={selectedModel.tierInfo} />
-                  )}
-                </>
-              ) : selectedModel ? (
-                <>
-                  {PROVIDER_ICONS[(selectedModel as LegacyModelOption).provider || "openai"]}
-                  <span className={cn(compact && "truncate")}>
-                    {(selectedModel as LegacyModelOption).name || "Select model"}
-                  </span>
-                  {(selectedModel as LegacyModelOption).badge && !compact ? <ModelBadge badge={(selectedModel as LegacyModelOption).badge ?? ""} /> : null}
-                </>
-              ) : (
-                <span>Select model</span>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          className={cn(
+            "text-xs gap-1 px-2",
+            compact ? "h-7" : "h-8"
+          )}
+        >
+          {isAutoMode && <Sparkles className="h-3 w-3 text-green-500" />}
+          <span className="truncate max-w-[140px]">{triggerLabel}</span>
+          <ChevronDown className="h-3 w-3 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-[300px] p-0 overflow-hidden"
+        align="start"
+        sideOffset={4}
+      >
+        {/* Search input */}
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50">
+          <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search models"
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          />
+        </div>
+
+        <div className="max-h-[350px] overflow-y-auto py-1">
+          {/* Auto Mode option */}
+          {showAutoMode && !isSearching && (
+            <button
+              type="button"
+              onClick={() => handleSelect(AUTO_MODE_VALUE)}
+              className={cn(
+                "w-full flex items-center justify-between px-3 py-1.5 text-sm hover:bg-accent/50 rounded-sm transition-colors",
+                isAutoMode && "bg-accent/30"
               )}
-            </div>
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent className="w-[340px]">
-          {/* Auto Mode Option */}
-          {showAutoMode ? <Tooltip>
-              <TooltipTrigger asChild>
-                <SelectItem value={AUTO_MODE_VALUE} className="border-b mb-1">
-                  <div className="flex items-start gap-2 py-1">
-                    <div className="mt-0.5">
-                      <Sparkles className="h-3 w-3 text-green-500" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium">Auto Mode</span>
-                        <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-green-500/20 text-green-600 dark:text-green-400">
-                          Recommended
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-muted-foreground mt-0.5">
-                        Smart routing picks the best model for each message
-                      </div>
-                      <div className="flex items-center gap-2 mt-1.5 text-[9px] text-muted-foreground">
-                        <span>💰 Saves credits on simple queries</span>
-                      </div>
-                    </div>
-                  </div>
-                </SelectItem>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="max-w-[220px]">
-                <p className="text-xs font-medium">🧠 Smart Routing</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  AI analyzes your message and picks the optimal model - uses Lite for simple questions, Pro/Ultra for complex tasks.
-                </p>
-              </TooltipContent>
-            </Tooltip> : null}
-          
-          {models.map((model) => {
-            const is2BotAI = isTwoBotAIModel(model);
-            const isDeprecated = is2BotAI ? !model.isAvailable : (model as LegacyModelOption).deprecated;
-            
-            return (
-              <Tooltip key={model.id}>
-                <TooltipTrigger asChild>
-                  <SelectItem
-                    value={model.id}
-                    className={cn(isDeprecated && "opacity-60")}
-                  >
-                    <div className="flex items-start gap-2 py-1">
-                      <div className="mt-0.5">
-                        {is2BotAI 
-                          ? TIER_ICONS[model.tier]
-                          : PROVIDER_ICONS[(model as LegacyModelOption).provider]
-                        }
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-medium">
-                            {getModelDisplayName(model)}
-                          </span>
-                          {is2BotAI ? (
-                            <TierBadge tier={model.tier} tierInfo={model.tierInfo} />
-                          ) : (model as LegacyModelOption).badge && (
-                            <ModelBadge badge={(model as LegacyModelOption).badge ?? ""} />
-                          )}
-                          {isDeprecated ? <AlertTriangle className="h-3 w-3 text-amber-500" /> : null}
-                        </div>
-                        
-                        {/* Description */}
-                        <div className="text-[10px] text-muted-foreground mt-0.5">
-                          {model.description}
-                        </div>
-                        
-                        {/* Feature indicators for 2Bot AI models */}
-                        {is2BotAI ? <div className="flex items-center gap-2 mt-1.5">
-                            {model.features.vision ? <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground">
-                                <Eye className="h-2.5 w-2.5" />
-                                <span>Vision</span>
-                              </div> : null}
-                            {model.features.reasoning ? <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground">
-                                <Brain className="h-2.5 w-2.5" />
-                                <span>Reasoning</span>
-                              </div> : null}
-                            {model.features.codeExecution ? <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground">
-                                <Zap className="h-2.5 w-2.5" />
-                                <span>Code</span>
-                              </div> : null}
-                          </div> : null}
-                        
-                        {/* Legacy capability indicators */}
-                        {!is2BotAI && (model as LegacyModelOption).capabilities ? <div className="flex items-center gap-3 mt-1">
-                            {(model as LegacyModelOption).capabilities?.canAnalyzeImages ? <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground">
-                                <Eye className="h-2.5 w-2.5" />
-                                <span>Vision</span>
-                              </div> : null}
-                            {(model as LegacyModelOption).capabilities?.reasoning ? <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
-                                <Zap className="h-2.5 w-2.5" />
-                                <CapabilityDots level={(model as LegacyModelOption).capabilities?.reasoning} />
-                              </div> : null}
-                          </div> : null}
-                      </div>
-                    </div>
-                  </SelectItem>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-[220px]">
-                  {is2BotAI ? (
-                    <>
-                      <p className="text-xs font-medium">{model.displayName}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{model.tierInfo.description}</p>
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {model.tags.map((tag) => (
-                          <span key={tag} className="text-[9px] bg-muted px-1 py-0.5 rounded">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-xs">{model.description}</p>
-                      {(model as LegacyModelOption).deprecated && (model as LegacyModelOption).deprecationMessage ? <p className="text-xs text-amber-500 mt-1">
-                          ⚠️ {(model as LegacyModelOption).deprecationMessage}
-                        </p> : null}
-                    </>
-                  )}
-                </TooltipContent>
-              </Tooltip>
-            );
-          })}
-        </SelectContent>
-      </Select>
-    </TooltipProvider>
+            >
+              <div className="flex items-center gap-2">
+                {isAutoMode ? (
+                  <Check className="h-3 w-3 text-foreground shrink-0" />
+                ) : (
+                  <span className="w-3 shrink-0" />
+                )}
+                <Sparkles className="h-3 w-3 text-green-500" />
+                <span className={cn(isAutoMode && "font-medium")}>Auto</span>
+              </div>
+              <span className="text-xs text-emerald-400">10% discount</span>
+            </button>
+          )}
+
+          {/* Currently selected real model (shown directly, not inside "Other Models") */}
+          {selectedRealModel && !isSearching && !isAutoMode && (
+            <ModelRow
+              model={selectedRealModel}
+              isSelected={true}
+              onClick={() => handleSelect(selectedRealModel.id)}
+            />
+          )}
+
+          {/* Separator before Other Models if we have content above */}
+          {!isSearching && (showAutoMode || (selectedRealModel && !isAutoMode)) && otherModels.length > 0 && (
+            <div className="my-1 border-t border-border/30" />
+          )}
+
+          {/* Search results (flat list) */}
+          {isSearching && (
+            filteredRealModels.length > 0 ? (
+              filteredRealModels.map((model) => (
+                <ModelRow
+                  key={model.id}
+                  model={model}
+                  isSelected={value === model.id}
+                  onClick={() => handleSelect(model.id)}
+                />
+              ))
+            ) : (
+              <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                No models found
+              </div>
+            )
+          )}
+
+          {/* Other Models (collapsible) */}
+          {!isSearching && otherModels.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setOtherModelsExpanded(!otherModelsExpanded)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {otherModelsExpanded ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                <span>Other Models</span>
+              </button>
+
+              {otherModelsExpanded && (
+                <div>
+                  {otherModels.map((model) => (
+                    <ModelRow
+                      key={model.id}
+                      model={model}
+                      isSelected={value === model.id}
+                      onClick={() => handleSelect(model.id)}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

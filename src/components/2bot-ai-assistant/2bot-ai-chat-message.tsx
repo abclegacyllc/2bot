@@ -1,7 +1,7 @@
 /**
- * 2Bot AI Assistant Widget - Chat Message
+ * 2Bot AI Assistant - Chat Message
  *
- * Individual message bubble in the chat with speech synthesis support.
+ * Individual message in the chat with copy, speech synthesis, and error boundary.
  * Includes image preview lightbox and download for generated images.
  *
  * @module components/2bot-ai-assistant/2bot-ai-chat-message
@@ -12,14 +12,50 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogTitle,
 } from "@/components/ui/dialog";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { Bot, Download, User, X, ZoomIn } from "lucide-react";
-import { useCallback, useState } from "react";
+import { Bot, Check, Copy, Download, User, X, ZoomIn } from "lucide-react";
+import { Component, type ErrorInfo, type ReactNode, useCallback, useState } from "react";
 import ReactMarkdown from "react-markdown";
+
+// Error boundary to prevent malformed markdown from crashing the chat
+class MessageErrorBoundary extends Component<
+  { children: ReactNode; fallback?: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode; fallback?: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Message render error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+          Failed to render message content.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export interface ChatMessageData {
   id: string;
@@ -32,6 +68,8 @@ export interface ChatMessageData {
   imageUrl?: string;
   /** Attached images for vision analysis (base64 data URLs) */
   attachedImages?: string[];
+  /** Which 2Bot tier was used (free, lite, pro, ultra) */
+  tierUsed?: string;
 }
 
 interface TwoBotAIChatMessageProps {
@@ -43,6 +81,26 @@ export function TwoBotAIChatMessage({ message, isStreaming }: TwoBotAIChatMessag
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  /** Copy message text to clipboard */
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement("textarea");
+      textarea.value = message.content;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [message.content]);
 
   /**
    * Download a generated image.
@@ -91,30 +149,35 @@ export function TwoBotAIChatMessage({ message, isStreaming }: TwoBotAIChatMessag
     <>
     <div
       className={cn(
-        "flex gap-3 p-3",
+        "flex gap-3 py-5",
         isUser ? "flex-row-reverse" : "flex-row"
       )}
     >
-      <Avatar className="h-8 w-8 shrink-0">
-        <AvatarFallback className={cn(
-          isUser ? "bg-primary text-primary-foreground" : "bg-secondary"
-        )}>
-          {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-        </AvatarFallback>
-      </Avatar>
+      {/* User: avatar circle. AI: small inline icon, no circle */}
+      {isUser ? (
+        <Avatar className="h-8 w-8 shrink-0">
+          <AvatarFallback className="bg-primary text-primary-foreground">
+            <User className="h-4 w-4" />
+          </AvatarFallback>
+        </Avatar>
+      ) : (
+        <div className="shrink-0 mt-1">
+          <Bot className="h-5 w-5 text-muted-foreground" />
+        </div>
+      )}
 
       <div
         className={cn(
-          "flex flex-col max-w-[80%]",
-          isUser ? "items-end" : "items-start"
+          "flex flex-col",
+          isUser ? "items-end max-w-[80%]" : "items-start flex-1 min-w-0"
         )}
       >
         <div
           className={cn(
-            "rounded-lg px-3 py-2 text-sm",
+            "text-sm",
             isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted"
+              ? "rounded-lg px-3 py-2 bg-primary text-primary-foreground max-w-full"
+              : "text-foreground"
           )}
         >
           {isUser ? (
@@ -135,68 +198,116 @@ export function TwoBotAIChatMessage({ message, isStreaming }: TwoBotAIChatMessag
               {message.content ? <p className="whitespace-pre-wrap">{message.content}</p> : null}
             </div>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown>
-                {message.content}
-              </ReactMarkdown>
-
-              {/* Render generated image from imageUrl (not via markdown) */}
-              {message.imageUrl ? <div className="relative group my-2 inline-block">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={message.imageUrl}
-                    alt="Generated image"
-                    className="rounded-lg max-w-full h-auto cursor-pointer transition-opacity group-hover:opacity-90"
-                    onClick={() => setPreviewImage(message.imageUrl ?? null)}
-                  />
-                  {/* Hover overlay with actions */}
-                  <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/30 transition-colors flex items-end justify-end p-2 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
-                    <div className="flex gap-1.5">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="h-7 px-2 text-xs bg-white/90 hover:bg-white text-black shadow-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPreviewImage(message.imageUrl ?? null);
-                        }}
-                      >
-                        <ZoomIn className="h-3.5 w-3.5 mr-1" />
-                        Preview
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="h-7 px-2 text-xs bg-white/90 hover:bg-white text-black shadow-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (message.imageUrl) handleDownload(message.imageUrl);
-                        }}
-                      >
-                        <Download className="h-3.5 w-3.5 mr-1" />
-                        Save
-                      </Button>
-                    </div>
+            <MessageErrorBoundary>
+              <div className="prose prose-sm dark:prose-invert max-w-none">
+                {/* Typing indicator when streaming with no content yet */}
+                {isStreaming && !message.content ? (
+                  <div className="flex items-center gap-1 py-1">
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:0ms]" />
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:150ms]" />
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:300ms]" />
                   </div>
-                </div> : null}
+                ) : (
+                  <ReactMarkdown>
+                    {message.content}
+                  </ReactMarkdown>
+                )}
 
-              {isStreaming ? <span className="inline-block w-2 h-4 ml-1 bg-current animate-pulse" /> : null}
-            </div>
+                {/* Render generated image from imageUrl (not via markdown) */}
+                {message.imageUrl ? <div className="relative group my-2 inline-block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={message.imageUrl}
+                      alt="Generated image"
+                      className="rounded-lg max-w-full h-auto cursor-pointer transition-opacity group-hover:opacity-90"
+                      onClick={() => setPreviewImage(message.imageUrl ?? null)}
+                    />
+                    {/* Hover overlay with actions */}
+                    <div className="absolute inset-0 rounded-lg bg-black/0 group-hover:bg-black/30 transition-colors flex items-end justify-end p-2 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto">
+                      <div className="flex gap-1.5">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="h-7 px-2 text-xs bg-white/90 hover:bg-white text-black shadow-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewImage(message.imageUrl ?? null);
+                          }}
+                        >
+                          <ZoomIn className="h-3.5 w-3.5 mr-1" />
+                          Preview
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="h-7 px-2 text-xs bg-white/90 hover:bg-white text-black shadow-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (message.imageUrl) handleDownload(message.imageUrl);
+                          }}
+                        >
+                          <Download className="h-3.5 w-3.5 mr-1" />
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                  </div> : null}
+
+                {isStreaming && message.content ? <span className="inline-block w-2 h-4 ml-1 bg-current animate-pulse" /> : null}
+              </div>
+            </MessageErrorBoundary>
           )}
         </div>
 
-        {/* Footer with credits and speech synthesis button */}
-        {!isUser && (
+        {/* Footer with copy, credits, and cached indicator */}
+        {!isUser && !isStreaming && message.content && (
           <div className="flex items-center gap-2 mt-1">
+            {/* Copy button */}
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    onClick={handleCopy}
+                  >
+                    {copied ? (
+                      <Check className="h-3 w-3 text-green-500" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <p className="text-xs">{copied ? "Copied!" : "Copy message"}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
             {message.cached ? <span className="text-[10px] text-green-600 dark:text-green-400 font-medium bg-green-500/10 px-1.5 py-0.5 rounded-full flex items-center gap-1">
                  ⚡ Cached
                </span> : null}
 
-            {!message.cached && message.creditsUsed !== undefined && message.creditsUsed > 0 && (
+            {!message.cached && message.creditsUsed !== undefined && (
               <span className="text-[10px] text-muted-foreground">
-                {message.creditsUsed < 1 
-                  ? `${message.creditsUsed.toFixed(4)} credits`
-                  : `${message.creditsUsed.toLocaleString()} credits`}
+                {message.tierUsed && (
+                  <span className={cn(
+                    "font-medium mr-1",
+                    message.tierUsed === 'free' && "text-emerald-600 dark:text-emerald-400",
+                    message.tierUsed === 'lite' && "text-gray-500 dark:text-gray-400",
+                    message.tierUsed === 'pro' && "text-blue-600 dark:text-blue-400",
+                    message.tierUsed === 'ultra' && "text-amber-600 dark:text-amber-400",
+                  )}>
+                    {message.tierUsed.charAt(0).toUpperCase() + message.tierUsed.slice(1)}
+                    {" · "}
+                  </span>
+                )}
+                {message.creditsUsed === 0
+                  ? "Free"
+                  : message.creditsUsed < 1 
+                    ? `${message.creditsUsed.toFixed(4)} credits`
+                    : `${message.creditsUsed.toLocaleString()} credits`}
               </span>
             )}
           </div>

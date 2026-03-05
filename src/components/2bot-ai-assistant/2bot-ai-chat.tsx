@@ -12,7 +12,13 @@
 
 "use client";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -21,9 +27,11 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useRoutingPreference } from "@/hooks/use-routing-preference";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
 import {
+    Bot,
     Brain,
     History,
     ImageIcon,
@@ -33,6 +41,7 @@ import {
     MicOff,
     Paperclip,
     Send,
+    SlidersHorizontal,
     StopCircle,
     Video,
     Volume2,
@@ -40,6 +49,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TwoBotAIChatMessage, type ChatMessageData } from "./2bot-ai-chat-message";
+import { AgentChat } from "./agent-chat";
 import { ChatHistoryList } from "./chat-history-list";
 import { chatStorage, type ChatSession } from "./chat-storage";
 import {
@@ -47,6 +57,7 @@ import {
     ModelSelector,
     type LegacyModelOption,
     type ModelOption,
+    type RealModelOption,
     type TwoBotAIModelOption,
 } from "./model-selector";
 
@@ -66,7 +77,7 @@ interface TwoBotAIChatProps {
 type InputMode = "chat" | "image" | "recording";
 
 // Capability mode - which type of AI models to show
-type CapabilityMode = "text" | "image" | "video";
+type CapabilityMode = "text" | "image" | "video" | "agent";
 
 // Image attachment limits
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB max
@@ -88,6 +99,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [realModels, setRealModels] = useState<RealModelOption[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>("chat");
@@ -95,9 +107,43 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   
-  // Capability mode - which type of models to show (text/image/video)
+  // Capability mode - which type of models to show
   const [capabilityMode, setCapabilityMode] = useState<CapabilityMode>("text");
-  
+
+  // Agent mode — workspace connection state
+  const [agentWorkspaceId, setAgentWorkspaceId] = useState<string | null>(null);
+  const [agentWsLoading, setAgentWsLoading] = useState(false);
+  const [agentFetchKey, setAgentFetchKey] = useState(0);
+
+  // Fetch workspace ID when agent mode is selected
+  useEffect(() => {
+    if (capabilityMode !== "agent") return;
+    let cancelled = false;
+    (async () => {
+      setAgentWsLoading(true);
+      try {
+        const orgParam = organizationId ? `?organizationId=${organizationId}` : "";
+        const res = await fetch(apiUrl(`/workspace/status${orgParam}`), {
+          headers: {
+            "Content-Type": "application/json",
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+        });
+        if (cancelled) return;
+        if (!res.ok) { setAgentWorkspaceId(null); return; }
+        const json = await res.json();
+        if (cancelled) return;
+        const data = "data" in json ? json.data : json;
+        setAgentWorkspaceId(data?.id ?? null);
+      } catch {
+        if (!cancelled) setAgentWorkspaceId(null);
+      } finally {
+        if (!cancelled) setAgentWsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [capabilityMode, organizationId, authToken, agentFetchKey]);
+
   // Clear attached images when switching away from text mode (attachment only works with vision models)
   useEffect(() => {
     if (capabilityMode !== "text") {
@@ -117,6 +163,43 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
     }
   }, [userId, organizationId]);
 
+  // AI-generated session title (replaces naive first-word title)
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  const titleGeneratedRef = useRef(false);
+
+  // Generate an AI title after the first assistant response completes
+  const generateSessionTitle = useCallback(async (userMsg: string, assistantMsg: string) => {
+    if (titleGeneratedRef.current || !authToken) return;
+    titleGeneratedRef.current = true;
+    try {
+      const res = await fetch(apiUrl("/2bot-ai/text-generation"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          messages: [
+            { role: "user", content: `Generate a concise 3-5 word title summarizing this conversation. Reply with ONLY the title, nothing else.\n\nUser: ${userMsg.slice(0, 200)}\nAssistant: ${assistantMsg.slice(0, 200)}` },
+          ],
+          model: "2bot-ai-text-lite",
+          stream: false,
+          smartRouting: false,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const title = (data.data?.content || data.data?.text || "").trim().replace(/^["']|["']$/g, "").slice(0, 50);
+        if (title) {
+          setSessionTitle(title);
+        }
+      }
+    } catch {
+      // Silently fail — fall back to user message as title
+    }
+  }, [authToken]);
+
   // Save session when messages change (only if we have messages)
   useEffect(() => {
     if (!userId) return;
@@ -134,9 +217,18 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       setCurrentSessionId(sessionId);
     }
 
-    // Determine title (first user message)
+    // Use AI-generated title if available, otherwise fall back to first user message
     const firstUserMsg = messages.find(m => m.role === "user");
-    const title = firstUserMsg ? firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? "..." : "") : "New Chat";
+    const fallbackTitle = firstUserMsg ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? "..." : "") : "New Chat";
+    const title = sessionTitle || fallbackTitle;
+
+    // Trigger AI title generation when first assistant response is complete
+    if (!sessionTitle && !titleGeneratedRef.current) {
+      const firstAssistant = messages.find(m => m.role === "assistant" && m.content.length > 0 && m.creditsUsed !== undefined);
+      if (firstUserMsg && firstAssistant) {
+        generateSessionTitle(firstUserMsg.content, firstAssistant.content);
+      }
+    }
 
     const session: ChatSession = {
       id: sessionId,
@@ -149,13 +241,15 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
 
     chatStorage.saveSession(session, userId, organizationId);
     setSessions(chatStorage.getSessions(userId, organizationId));
-  }, [messages, currentSessionId, selectedModel, userId, organizationId]);
+  }, [messages, currentSessionId, selectedModel, userId, organizationId, sessionTitle, generateSessionTitle]);
 
   // Handle loading a session
   const handleSelectSession = useCallback((session: ChatSession) => {
     setMessages(session.messages);
     setCurrentSessionId(session.id);
     setSelectedModel(session.model || selectedModel);
+    setSessionTitle(session.title);
+    titleGeneratedRef.current = true; // Don't regenerate title for loaded sessions
     setShowHistory(false);
   }, [selectedModel]);
 
@@ -174,6 +268,8 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
   const handleNewChat = useCallback(() => {
     setMessages([]);
     setCurrentSessionId(null);
+    setSessionTitle(null);
+    titleGeneratedRef.current = false;
     setError(null);
     setShowHistory(false);
     setAttachedImages([]);
@@ -184,6 +280,10 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
   
   // Reasoning mode - use extended thinking models when enabled
   const [reasoningEnabled, setReasoningEnabled] = useState(false);
+
+  // AI Routing Preference — shared hook syncs with Settings page via auth context
+  const { routingPreference, isSaving: isSavingPreference, setRoutingPreference: handleRoutingPreferenceChange } = useRoutingPreference(authToken);
+  const [routingPopoverOpen, setRoutingPopoverOpen] = useState(false);
   
   // Auto-disable reasoning when in auto mode or switching to lite tier (no reasoning-lite exists)
   useEffect(() => {
@@ -198,12 +298,6 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       setReasoningEnabled(false);
     }
   }, [selectedModel, models, reasoningEnabled, smartRouting]);
-
-  const _handleClearChat = useCallback(() => {
-    setMessages([]);
-    setError(null);
-    setAttachedImages([]);
-  }, []);
   
   // Available features based on configured providers
   const [features, setFeatures] = useState<AvailableFeatures>({
@@ -302,20 +396,21 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
    * Get allowed model tiers based on user or organization plan
    * 
    * Tier access rules:
-   * - FREE / ORG_FREE: lite only
-   * - STARTER / ORG_STARTER: lite, pro
-   * - PRO+ / ORG_GROWTH+: lite, pro, ultra (all tiers)
+   * - ALL plans: free tier always available (zero cost)
+   * - FREE / ORG_FREE: free, lite
+   * - STARTER / ORG_STARTER: free, lite, pro
+   * - PRO+ / ORG_GROWTH+: free, lite, pro, ultra (all tiers)
    */
   const getAllowedTiers = (plan: string): string[] => {
     switch (plan) {
-      // Free tier - lite models only
+      // Free tier - free + lite models
       case 'FREE':
       case 'ORG_FREE':
-        return ['lite'];
-      // Starter tier - lite + pro models
+        return ['free', 'lite'];
+      // Starter tier - free + lite + pro models
       case 'STARTER':
       case 'ORG_STARTER':
-        return ['lite', 'pro'];
+        return ['free', 'lite', 'pro'];
       // Pro tier and above - all model tiers
       case 'PRO':
       case 'BUSINESS':
@@ -324,10 +419,10 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       case 'ORG_PRO':
       case 'ORG_BUSINESS':
       case 'ORG_ENTERPRISE':
-        return ['lite', 'pro', 'ultra'];
+        return ['free', 'lite', 'pro', 'ultra'];
       // Default to free tier limits for unknown plans
       default:
-        return ['lite'];
+        return ['free', 'lite'];
     }
   };
 
@@ -361,6 +456,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       // Video models don't exist yet - show empty state
       if (capabilityMode === 'video') {
         setModels([]);
+        setRealModels([]);
         setSelectedModel('');
         return;
       }
@@ -368,16 +464,33 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
       try {
         // Use /catalog for 2Bot AI branded models (preferred)
         const capability = getApiCapability(capabilityMode);
-        const res = await fetch(apiUrl(`/2bot-ai/catalog?capability=${capability}`), {
-          credentials: "include",
-          headers: authToken ? { "Authorization": `Bearer ${authToken}` } : {},
-        });
-        if (res.status === 401) {
+        const headers: Record<string, string> = authToken ? { "Authorization": `Bearer ${authToken}` } : {};
+        
+        // Fetch catalog models and real models in parallel
+        const [catalogRes, realRes] = await Promise.all([
+          fetch(apiUrl(`/2bot-ai/catalog?capability=${capability}`), {
+            credentials: "include",
+            headers,
+          }),
+          fetch(apiUrl(`/2bot-ai/real-models?capability=${capability}`), {
+            credentials: "include",
+            headers,
+          }),
+        ]);
+
+        if (catalogRes.status === 401) {
           setError("Authentication required");
           return;
         }
-        if (res.ok) {
-          const data = await res.json();
+
+        // Process real models
+        if (realRes.ok) {
+          const realData = await realRes.json();
+          setRealModels(realData.data?.models ?? []);
+        }
+
+        if (catalogRes.ok) {
+          const data = await catalogRes.json();
           
           // Set available features from API (only on first load / text mode)
           if (data.data.features && capabilityMode === 'text') {
@@ -483,7 +596,6 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
     // Prepare messages for API with System Prompt injection
     // For messages with images, use multimodal parts format
     const apiMessages = [
-      { role: "system", content: "You are 2Bot AI, a helpful and intelligent assistant for the 2Bot Automation Platform. You are NOT Claude, NOT GPT, and NOT any other specific model. You are simply 2Bot AI. Always identify yourself as 2Bot AI if asked." },
       ...messages.map((m) => ({
         role: m.role,
         content: m.content,
@@ -541,21 +653,12 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
 
       let fullContent = "";
       let creditsUsed = 0;
+      let tierUsed: string | undefined;
       let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        // Decode chunk and append to buffer
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Process lines in buffer
-        const lines = buffer.split("\n\n");
-        // Keep the last incomplete part in the buffer
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
+      // Process a batch of SSE lines from the buffer
+      const processSSELines = (lineBatch: string[]) => {
+        for (const line of lineBatch) {
           const trimmedLine = line.trim();
           if (!trimmedLine.startsWith("data: ")) continue;
           
@@ -570,9 +673,14 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
             }
 
             if (parsed.type === "done") {
-              creditsUsed = parsed.creditsUsed || 0;
-              // Always trigger update if field exists, even if 0 (handling cases where cost is <1 but tracking logic handles it)
-              if (creditsUsed >= 0 && parsed.creditsUsed !== undefined) {
+              creditsUsed = parsed.creditsUsed ?? 0;
+              // Extract tier from 2Bot model ID (e.g., "2bot-ai-text-free" → "free")
+              if (parsed.twobotAIModel) {
+                const parts = (parsed.twobotAIModel as string).split('-');
+                tierUsed = parts[parts.length - 1];
+              }
+              // Always trigger update if field exists, even if 0
+              if (parsed.creditsUsed !== undefined) {
                 onTokenUsage?.(creditsUsed);
               }
             } else if (parsed.id?.startsWith("cached_")) {
@@ -604,13 +712,33 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
             // Skip invalid JSON chunks silently (expected during partial streaming)
           }
         }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Decode chunk and append to buffer
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Process lines in buffer
+        const lines = buffer.split("\n\n");
+        // Keep the last incomplete part in the buffer
+        buffer = lines.pop() || "";
+        processSSELines(lines);
       }
 
-      // Update final message with credits
+      // Process any remaining data in the buffer after stream ends
+      // This ensures the final "done" event is always processed
+      if (buffer.trim()) {
+        processSSELines([buffer]);
+      }
+
+      // Update final message with credits and tier
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMessageId
-            ? { ...m, content: fullContent, creditsUsed }
+            ? { ...m, content: fullContent, creditsUsed, tierUsed }
             : m
         )
       );
@@ -907,89 +1035,125 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
 
   return (
     <div className="flex flex-col h-full bg-background relative">
-      {/* History Overlay */}
-      {showHistory ? <div className="absolute inset-0 z-50 bg-background">
-          <ChatHistoryList
-            sessions={sessions}
-            currentSessionId={currentSessionId}
-            onSelectSession={handleSelectSession}
-            onDeleteSession={handleDeleteSession}
-            onNewChat={handleNewChat}
-            onClose={() => setShowHistory(false)}
-          />
-        </div> : null}
-
-      {/* Header Controls */}
-      <div className="absolute top-2 right-2 z-10 flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowHistory(true)}
-          disabled={isLoading}
-          className="text-xs h-7 bg-background/80 backdrop-blur px-2"
-          title="Chat History"
-        >
-          <History className="h-3 w-3" />
-        </Button>
-        
-        {messages.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleNewChat}
-            disabled={isLoading}
-            className="text-xs h-7 bg-background/80 backdrop-blur"
-          >
-            Clear
-          </Button>
-        )}
-      </div>
-
-      {/* Messages */}
-      <ScrollArea className="flex-1" ref={scrollRef}>
-        <div className="p-2">
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[300px] text-center text-muted-foreground">
-              <p className="text-sm">Ask me anything!</p>
-              <p className="text-xs mt-1">Chat, generate images, or use voice input.</p>
+      {capabilityMode === "agent" ? (
+        /* Agent Mode — full-height agent chat */
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {agentWsLoading ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
+              <Loader2 className="h-6 w-6 animate-spin" />
+              <p className="text-sm">Connecting to workspace...</p>
+            </div>
+          ) : !agentWorkspaceId ? (
+            <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
+              <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted">
+                <Bot className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-foreground">No Workspace Running</h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Start your workspace first, then the AI agent can help you
+                  write code, manage plugins, and configure gateways.
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setAgentFetchKey(k => k + 1)}>
+                Retry Connection
+              </Button>
             </div>
           ) : (
-            messages.map((msg) => (
-              <TwoBotAIChatMessage
-                key={msg.id}
-                message={msg}
-                isStreaming={isStreaming && msg.role === "assistant" ? !msg.creditsUsed : undefined}
-              />
-            ))
+            <AgentChat workspaceId={agentWorkspaceId} organizationId={organizationId} />
           )}
         </div>
-      </ScrollArea>
+      ) : (
+        /* Chat / Image / Video Modes */
+        <>
+          {/* History Overlay */}
+          {showHistory ? <div className="absolute inset-0 z-50 bg-background">
+              <ChatHistoryList
+                sessions={sessions}
+                currentSessionId={currentSessionId}
+                onSelectSession={handleSelectSession}
+                onDeleteSession={handleDeleteSession}
+                onNewChat={handleNewChat}
+                onClose={() => setShowHistory(false)}
+              />
+            </div> : null}
 
-      {/* Error */}
-      {error ? <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm flex items-center justify-between">
-          <span>{error}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0"
-            onClick={() => setError(null)}
-          >
-            <X className="h-3 w-3" />
-          </Button>
-        </div> : null}
+          {/* Header Controls */}
+          <div className="absolute top-2 right-2 z-10 flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowHistory(true)}
+              disabled={isLoading}
+              className="text-xs h-7 bg-background/80 backdrop-blur px-2"
+              title="Chat History"
+            >
+              <History className="h-3 w-3" />
+            </Button>
+            
+            {messages.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleNewChat}
+                disabled={isLoading}
+                className="text-xs h-7 bg-background/80 backdrop-blur"
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+
+          {/* Messages */}
+          <ScrollArea className="flex-1" ref={scrollRef}>
+            <div className="p-4 max-w-3xl mx-auto">
+              {messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-[calc(100vh-12rem)] text-center text-muted-foreground">
+                  <Bot className="h-12 w-12 mb-4 text-muted-foreground/50" />
+                  <p className="text-lg font-medium text-foreground">Ask me anything!</p>
+                  <p className="text-sm mt-1 mb-6">Chat, generate images, or use voice input.</p>
+                </div>
+              ) : (
+                messages.map((msg) => (
+                  <TwoBotAIChatMessage
+                    key={msg.id}
+                    message={msg}
+                    isStreaming={isStreaming && msg.role === "assistant" ? !msg.creditsUsed : undefined}
+                  />
+                ))
+              )}
+            </div>
+          </ScrollArea>
+
+          {/* Error */}
+          {error ? <div className="px-3 py-2 bg-destructive/10 text-destructive text-sm flex items-center justify-between">
+              <span>{error}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0"
+                onClick={() => setError(null)}
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div> : null}
+        </>
+      )}
 
       {/* Input area with inline controls */}
-      <div className="p-3 border-t">
-        {/* Recording indicator */}
-        {inputMode === "recording" && (
-          <div className="flex items-center gap-2 mb-2 text-xs bg-destructive/10 text-destructive px-2 py-1 rounded animate-pulse">
-            <Mic className="h-3 w-3" />
-            <span>Recording... Click mic to stop</span>
-          </div>
-        )}
-
+      <div className="p-3 border-t max-w-3xl mx-auto w-full">
         <div className="flex flex-col gap-2">
-          {/* Hidden file input for image attachments */}
+          {capabilityMode !== "agent" && (
+            <>
+              {/* Recording indicator */}
+              {inputMode === "recording" && (
+                <div className="flex items-center gap-2 mb-2 text-xs bg-destructive/10 text-destructive px-2 py-1 rounded animate-pulse">
+                  <Mic className="h-3 w-3" />
+                  <span>Recording... Click mic to stop</span>
+                </div>
+              )}
+
+              {/* Hidden file input for image attachments */}
           <input
             ref={fileInputRef}
             type="file"
@@ -1053,11 +1217,13 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
             className="min-h-[60px] max-h-[120px] resize-none text-sm"
             disabled={isLoading || inputMode === "recording" || capabilityMode === "video"}
           />
+            </>
+          )}
 
           {/* Bottom toolbar with model selector and action buttons */}
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             {/* Left side: Capability Mode + Model selector/preview */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap min-w-0">
               {/* Capability Mode Icons - Text/Image/Video */}
               <div className="flex items-center gap-0.5 p-0.5 bg-muted/50 rounded-md">
                 <TooltipProvider delayDuration={300}>
@@ -1133,6 +1299,30 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
                       <p className="text-[10px] text-muted-foreground">🚧 Coming Soon</p>
                     </TooltipContent>
                   </Tooltip>
+                  
+                  {/* Agent Mode */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-6 w-6 transition-all",
+                          capabilityMode === "agent"
+                            ? "bg-gradient-to-br from-purple-600 to-blue-600 text-white shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                        onClick={() => setCapabilityMode("agent")}
+                        disabled={isLoading}
+                      >
+                        <Bot className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs font-medium">AI Agent</p>
+                      <p className="text-[10px] text-muted-foreground">Autonomous workspace operator</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </TooltipProvider>
               </div>
               
@@ -1145,6 +1335,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
                   disabled={isLoading}
                   compact
                   showAutoMode
+                  realModels={realModels}
                 />
               )}
               
@@ -1157,6 +1348,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
                     onChange={setSelectedModel}
                     disabled={isLoading}
                     compact
+                    realModels={realModels}
                   />
                 ) : (
                   <div className="text-[10px] text-muted-foreground px-2 py-1 bg-muted/50 rounded">
@@ -1165,6 +1357,76 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
                 )
               )}
               
+              {/* AI Routing Preference Popover */}
+              {capabilityMode !== "agent" && (<Popover open={routingPopoverOpen} onOpenChange={setRoutingPopoverOpen}>
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <PopoverTrigger asChild>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "h-7 w-7 transition-all",
+                            routingPopoverOpen
+                              ? "bg-purple-500/20 text-purple-400"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                          disabled={isLoading}
+                        >
+                          <SlidersHorizontal className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                    </PopoverTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs font-medium">Routing Preference</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {routingPreference === "cost" ? "💰 Save Credits" : routingPreference === "quality" ? "⭐ Best Quality" : "⚖️ Balanced"}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <PopoverContent side="top" align="start" className="w-[340px] p-3">
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-foreground">AI Routing Preference</p>
+                    <p className="text-[10px] text-muted-foreground">How the model router selects within your tier</p>
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      {([
+                        { value: "cost" as const, label: "Save Credits", icon: "💰", desc: "Cheapest model" },
+                        { value: "balanced" as const, label: "Balanced", icon: "⚖️", desc: "Mid-range model" },
+                        { value: "quality" as const, label: "Best Quality", icon: "⭐", desc: "Highest quality" },
+                      ]).map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => {
+                            handleRoutingPreferenceChange(opt.value);
+                            setRoutingPopoverOpen(false);
+                          }}
+                          disabled={isSavingPreference}
+                          className={cn(
+                            "relative flex flex-col items-center gap-1.5 rounded-lg border-2 p-2.5 text-center transition-all",
+                            routingPreference === opt.value
+                              ? "border-purple-500 bg-purple-500/10"
+                              : "border-border bg-muted/30 hover:border-muted-foreground/30 hover:bg-muted/50",
+                            isSavingPreference && "opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          <span className="text-lg">{opt.icon}</span>
+                          <span className="text-[11px] font-medium text-foreground leading-tight">{opt.label}</span>
+                          <span className="text-[9px] text-muted-foreground leading-tight">{opt.desc}</span>
+                          {routingPreference === opt.value && (
+                            <Badge className="absolute -top-1.5 -right-1.5 bg-purple-600 text-[8px] px-1 py-0 h-4">Active</Badge>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-muted-foreground pt-1">
+                      Affects all text, reasoning &amp; code models. Free tier unaffected.
+                    </p>
+                  </div>
+                </PopoverContent>
+              </Popover>)}
+
               {/* Reasoning Toggle Button - only for text mode pro/ultra tiers (not in auto mode) */}
               {capabilityMode === "text" && !smartRouting && (() => {
                 const currentModel = models.find(m => m.id === selectedModel);
@@ -1218,8 +1480,8 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
               })()}
             </div>
 
-            {/* Right side: Action buttons */}
-            <div className="flex items-center gap-1">
+            {/* Right side: Action buttons (hidden in agent mode) */}
+            {capabilityMode !== "agent" && (<div className="flex items-center gap-1">
               <TooltipProvider delayDuration={300}>
                 {/* Image attachment button - only for text mode with vision-capable models */}
                 {capabilityMode === "text" && (currentModelSupportsVision || smartRouting) ? <Tooltip>
@@ -1318,16 +1580,16 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
                   </Button>
                 )}
               </TooltipProvider>
-            </div>
+            </div>)}
           </div>
           
            {/* Legal & Terms Link */}
-           <div className="text-[10px] text-center text-muted-foreground pt-1 pb-1">
+           {capabilityMode !== "agent" && (<div className="text-[10px] text-center text-muted-foreground pt-1 pb-1">
              AI can make mistakes. By using 2Bot AI, you agree to our{' '}
              <a href="/doc/terms" target="_blank" className="underline hover:text-primary">
                Terms of Service
              </a>.
-           </div>
+           </div>)}
         </div>
       </div>
     </div>

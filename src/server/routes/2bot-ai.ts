@@ -9,31 +9,45 @@
 
 import { logger } from "@/lib/logger";
 import {
-    checkAllProviders,
-    getAvailableFeatures,
-    getCachedHealthStatus,
-    getProvidersStatus,
-    isTwoBotAIModelId,
-    TwoBotAIError,
-    twoBotAIProvider,
-    type AICapability,
-    type ImageQuality,
-    type ImageSize,
-    type ImageStyle,
-    type SpeechSynthesisFormat,
-    type SpeechSynthesisVoice,
-    type TextGenerationMessage,
-    type TwoBotAIModel,
-    type TwoBotAIModelId,
-    type TwoBotAIModelInfo
+  agentService,
+  clearSessionApprovals,
+  getSessionActions,
+  resolveApproval,
+  restoreSession as restoreAgentSession,
+  type AgentStreamEvent,
+} from "@/modules/2bot-ai-agent";
+import {
+  checkAllProviders,
+  classifyQueryComplexity,
+  getAvailableFeatures,
+  getCachedHealthStatus,
+  getProvidersStatus,
+  getRegistryEntry,
+  getTwoBotAIModel,
+  getTwoBotAIModelsByCapability,
+  isTwoBotAIModelId,
+  MODEL_REGISTRY,
+  TwoBotAIError,
+  twoBotAIProvider,
+  type AICapability,
+  type ImageQuality,
+  type ImageSize,
+  type ImageStyle,
+  type SpeechSynthesisFormat,
+  type SpeechSynthesisVoice,
+  type TextGenerationMessage,
+  type TwoBotAIModel,
+  type TwoBotAIModelId,
+  type TwoBotAIModelInfo
 } from "@/modules/2bot-ai-provider";
+import { isProviderConfigured } from "@/modules/2bot-ai-provider/provider-config";
 import { BadRequestError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
+import { createServiceContext, type ServiceContext } from "@/shared/types/context";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
-
 export const twoBotAIRouter = Router();
 
 // Multer for file uploads (STT)
@@ -54,72 +68,32 @@ function getMimeType(format: string): string {
   return mimeTypes[format] || "audio/mpeg";
 }
 
-// ===========================================
-// GET /api/2bot-ai/image-proxy
-// Proxies external AI-generated images through our domain.
-// Solves CORS download issues and hides provider URLs from users.
-// No auth required — secured by domain allowlist instead,
-// since <img> tags and download links can't send auth headers.
-// ===========================================
-twoBotAIRouter.get(
-  "/image-proxy",
-  asyncHandler(async (req: Request, res: Response) => {
-    const imageUrl = req.query.url as string;
-    const download = req.query.download === "true";
+/**
+ * Resolve a canonical registry model ID (e.g., "deepseek-v3") to the cheapest
+ * configured provider's model ID (e.g., "deepseek-ai/DeepSeek-V3.1").
+ * Returns undefined if the ID isn't a registry entry or has no configured providers.
+ */
+function resolveRegistryModelId(canonicalId: string): string | undefined {
+  const entry = getRegistryEntry(canonicalId);
+  if (!entry) return undefined;
 
-    if (!imageUrl) {
-      throw new BadRequestError("Missing 'url' query parameter");
+  // Find cheapest configured provider
+  let bestModelId: string | undefined;
+  let bestCost = Infinity;
+
+  for (const [provider, cost] of Object.entries(entry.providers) as Array<[string, { modelId: string; inputPer1M?: number; perImage?: number }]>) {
+    if (!isProviderConfigured(provider as Parameters<typeof isProviderConfigured>[0])) continue;
+    const effectiveCost = cost.inputPer1M ?? cost.perImage ?? 0;
+    if (effectiveCost < bestCost) {
+      bestCost = effectiveCost;
+      bestModelId = cost.modelId;
     }
+  }
 
-    // Only allow proxying from known AI provider domains
-    const allowedDomains = [
-      "api.together.ai",
-      "api.together.xyz",
-      "oaidalleapiprodscus.blob.core.windows.net", // OpenAI DALL-E
-      "dalleprodsec.blob.core.windows.net",
-    ];
+  return bestModelId;
+}
 
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(imageUrl);
-    } catch {
-      throw new BadRequestError("Invalid URL");
-    }
-
-    if (!allowedDomains.some((d) => parsedUrl.hostname.endsWith(d))) {
-      throw new BadRequestError("URL domain not allowed");
-    }
-
-    logger.info({ domain: parsedUrl.hostname, download }, "Proxying AI image");
-
-    const response = await fetch(imageUrl);
-
-    if (!response.ok) {
-      res.status(502).json({
-        success: false,
-        error: { code: "IMAGE_FETCH_FAILED", message: "Failed to fetch image from provider" },
-      });
-      return;
-    }
-
-    const contentType = response.headers.get("content-type") || "image/png";
-    const buffer = Buffer.from(await response.arrayBuffer());
-
-    // Set appropriate headers
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Length", buffer.length);
-    res.setHeader("Cache-Control", "public, max-age=86400"); // Cache 24h
-
-    if (download) {
-      const ext = contentType.includes("png") ? "png" : contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : "png";
-      res.setHeader("Content-Disposition", `attachment; filename="2bot-ai-image-${Date.now()}.${ext}"`);
-    }
-
-    res.send(buffer);
-  })
-);
-
-// All other routes require authentication
+// All routes require authentication
 twoBotAIRouter.use(requireAuth);
 
 // ===========================================
@@ -312,6 +286,93 @@ twoBotAIRouter.get(
 );
 
 // ===========================================
+// GET /api/2bot-ai/real-models
+// ===========================================
+
+interface RealModelResponse {
+  id: string;
+  displayName: string;
+  author: string;
+  capability: string;
+  /** Price multiplier relative to baseline (1x = $3/M input). 0x = free tier. */
+  priceMultiplier: number;
+  providers: string[];
+  isPreview?: boolean;
+  deprecated?: boolean;
+}
+
+interface RealModelsResponse {
+  models: RealModelResponse[];
+}
+
+/**
+ * GET /api/2bot-ai/real-models
+ *
+ * Get real provider models from the model registry.
+ * Returns actual model names (Claude Sonnet 4.6, GPT-4o, etc.)
+ * with relative price multipliers for the frontend selector.
+ *
+ * @query {string} [capability] - Filter by capability (text-generation, image-generation, etc.)
+ */
+twoBotAIRouter.get(
+  "/real-models",
+  asyncHandler(async (req: Request, res: Response<ApiResponse<RealModelsResponse>>) => {
+    const capability = req.query.capability as string | undefined;
+
+    // Baseline: $3/M input tokens ≈ Claude Sonnet 4.6 / GPT-4o level = 1x
+    const BASELINE_INPUT_PER_1M = 3;
+
+    const models: RealModelResponse[] = [];
+
+    for (const entry of MODEL_REGISTRY) {
+      if (capability && entry.capability !== capability) continue;
+      if (entry.deprecated) continue;
+
+      // Only include models that have at least one configured provider
+      const configuredProviders = (Object.keys(entry.providers) as Array<keyof typeof entry.providers>)
+        .filter((p) => isProviderConfigured(p));
+      if (configuredProviders.length === 0) continue;
+
+      // Compute price multiplier from cheapest configured provider
+      let priceMultiplier = 1;
+      const costs = configuredProviders
+        .map((p) => entry.providers[p])
+        .filter(Boolean);
+
+      if (entry.capability === "text-generation") {
+        const cheapestInput = Math.min(...costs.map((c) => c!.inputPer1M ?? Infinity));
+        priceMultiplier = cheapestInput === Infinity ? 1 : Math.round((cheapestInput / BASELINE_INPUT_PER_1M) * 100) / 100;
+      } else if (entry.capability === "image-generation") {
+        const cheapestImage = Math.min(...costs.map((c) => c!.perImage ?? Infinity));
+        // Image baseline: $0.04 per image
+        priceMultiplier = cheapestImage === Infinity ? 1 : Math.round((cheapestImage / 0.04) * 100) / 100;
+      }
+
+      const isPreview = entry.displayName.includes("Preview") || entry.badge === "NEW";
+
+      models.push({
+        id: entry.id,
+        displayName: entry.displayName,
+        author: entry.author,
+        capability: entry.capability,
+        priceMultiplier,
+        providers: configuredProviders,
+        isPreview,
+        deprecated: entry.deprecated,
+      });
+    }
+
+    // Sort: cheapest first within each author group
+    models.sort((a, b) => a.priceMultiplier - b.priceMultiplier);
+
+    res.json({
+      success: true,
+      data: { models },
+    });
+  })
+);
+
+// ===========================================
 // GET /api/2bot-ai/health
 // ===========================================
 
@@ -433,6 +494,7 @@ twoBotAIRouter.post(
     const log = logger.child({ module: "2bot-ai-route", capability: "text-generation" });
     if (!req.user) throw new BadRequestError("Not authenticated");
     const userId = req.user.id;
+    const routingPreference = (req.user.aiRoutingPreference as 'quality' | 'balanced' | 'cost') || 'balanced';
     const body = req.body as TextGenerationRequestBody;
 
     // Validate messages
@@ -450,30 +512,70 @@ twoBotAIRouter.post(
       }
     }
 
-    // Resolve model: Support both 2Bot AI model IDs and legacy provider models
+    // Inject 2Bot AI system prompt server-side (security: don't trust client system prompts)
+    const SYSTEM_PROMPT = "You are 2Bot AI, a helpful and intelligent assistant for the 2Bot Automation Platform. You are NOT Claude, NOT GPT, and NOT any other specific model. You are simply 2Bot AI. Always identify yourself as 2Bot AI if asked.";
+    const messagesWithSystem: TextGenerationMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...body.messages.filter((m: TextGenerationMessage) => m.role !== "system"),
+    ];
+
+    // Resolve model: Support both 2Bot AI model IDs, "auto", and legacy provider models
     let model: TwoBotAIModel;
     let twobotAIModelId: TwoBotAIModelId | undefined;
-    const requestedModel = body.model || "2bot-ai-text-lite";
+    let requestedModel = body.model || "2bot-ai-text-lite";
+
+    // 🧠 Auto Mode: analyze query complexity and pick the right 2Bot tier
+    // Simple queries → free (zero cost), medium → pro (balanced), complex → ultra (best)
+    if (requestedModel === "auto") {
+      const complexity = classifyQueryComplexity(messagesWithSystem);
+      const complexityToTier: Record<string, string> = {
+        simple: 'free',
+        medium: 'pro',
+        complex: 'ultra',
+      };
+      const targetTier = complexityToTier[complexity] || 'pro';
+
+      // Find the text model for this tier
+      const textModels = getTwoBotAIModelsByCapability('text-generation')
+        .filter(m => m.id.startsWith('2bot-ai-text-'));
+      const targetModel = textModels.find(m => m.tier === targetTier);
+
+      if (targetModel) {
+        requestedModel = targetModel.id;
+        log.info({
+          complexity,
+          resolvedModel: requestedModel,
+          tier: targetModel.tier,
+        }, `🧠 Auto Mode: query=${complexity} → tier=${targetTier}`);
+      } else {
+        // Fallback: use any available text model, preferring pro
+        const fallback = textModels.find(m => m.tier === 'pro') || textModels[0];
+        requestedModel = fallback?.id || '2bot-ai-text-lite';
+        log.warn({ complexity, targetTier, fallbackModel: requestedModel },
+          "Auto Mode: target tier not available, using fallback");
+      }
+
+      // Disable legacy smart routing — Auto Mode already picked the right tier
+      // The 2Bot model catalog handles provider selection within the tier
+      body.smartRouting = false;
+    }
 
     if (isTwoBotAIModelId(requestedModel)) {
-      // 2Bot AI model ID - resolve to provider model
+      // 2Bot AI model ID — pass directly to provider methods
+      // Provider handles resolution + automatic failover across providers internally
       twobotAIModelId = requestedModel;
-      try {
-        const resolution = twoBotAIProvider.resolveModel(requestedModel);
-        model = resolution.providerModelId as TwoBotAIModel;
-        log.info({
-          twobotAIModel: requestedModel,
-          resolvedModel: model,
-          provider: resolution.provider,
-        }, "Resolved 2Bot AI model to provider model");
-      } catch (error) {
-        throw new BadRequestError(
-          `Model "${requestedModel}" is not available. ${error instanceof Error ? error.message : ""}`
-        );
-      }
-    } else {
-      // Legacy provider model - use directly
       model = requestedModel as TwoBotAIModel;
+      log.info({ twobotAIModel: requestedModel }, "Using 2Bot AI model (provider will resolve with failover)");
+    } else {
+      // Try canonical registry ID resolution (e.g., "deepseek-v3" → "deepseek-ai/DeepSeek-V3.1")
+      const resolvedProviderModel = resolveRegistryModelId(requestedModel);
+      if (resolvedProviderModel) {
+        model = resolvedProviderModel as TwoBotAIModel;
+        log.info({ canonicalId: requestedModel, resolvedModel: resolvedProviderModel }, "Resolved registry model to provider");
+      } else {
+        // Direct provider model ID — use as-is
+        model = requestedModel as TwoBotAIModel;
+      }
     }
 
     // Streaming response
@@ -485,7 +587,7 @@ twoBotAIRouter.post(
 
       try {
         const generator = twoBotAIProvider.textGenerationStream({
-          messages: body.messages,
+          messages: messagesWithSystem,
           model,
           temperature: body.temperature,
           maxTokens: body.maxTokens,
@@ -494,6 +596,8 @@ twoBotAIRouter.post(
           conversationId: body.conversationId,
           smartRouting: body.smartRouting,
           organizationId: body.organizationId,
+          routingPreference,
+          feature: "chat",
         });
 
         let result: IteratorResult<
@@ -512,13 +616,13 @@ twoBotAIRouter.post(
           type: "done", 
           ...finalResponse,
           twobotAIModel: twobotAIModelId,
-          resolvedModel: twobotAIModelId ? model : undefined,
+          resolvedModel: twobotAIModelId ? finalResponse.model : undefined,
         })}\n\n`);
         res.end();
 
         log.info({
           userId,
-          model,
+          model: finalResponse.model,
           twobotAIModel: twobotAIModelId,
           creditsUsed: finalResponse.creditsUsed,
         }, "2Bot AI chat stream completed");
@@ -537,7 +641,7 @@ twoBotAIRouter.post(
     // Non-streaming response
     try {
       const response = await twoBotAIProvider.textGeneration({
-        messages: body.messages,
+        messages: messagesWithSystem,
         model,
         temperature: body.temperature,
         maxTokens: body.maxTokens,
@@ -546,6 +650,8 @@ twoBotAIRouter.post(
         conversationId: body.conversationId,
         smartRouting: body.smartRouting,
         organizationId: body.organizationId,
+        routingPreference,
+        feature: "chat",
       });
 
       res.json({
@@ -553,7 +659,7 @@ twoBotAIRouter.post(
         data: {
           ...response,
           twobotAIModel: twobotAIModelId,
-          resolvedModel: twobotAIModelId ? model : undefined,
+          resolvedModel: twobotAIModelId ? response.model : undefined,
         },
       });
     } catch (error) {
@@ -571,6 +677,414 @@ twoBotAIRouter.post(
       throw error;
     }
   })
+);
+
+// ===========================================
+// POST /api/2bot-ai/agent
+// ===========================================
+
+interface AgentRequestBody {
+  /** User's task / prompt for the AI agent */
+  prompt: string;
+  /** Conversation history for context (optional) */
+  conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+  /** 2Bot AI model ID or provider model ID (must support function calling) */
+  model?: TwoBotAIModel | TwoBotAIModelId;
+  /** Workspace container ID the agent will operate on */
+  workspaceId: string;
+  /** Organization ID for org-level credits */
+  organizationId?: string;
+  /** Override agent config (optional) */
+  config?: {
+    maxIterations?: number;
+    maxCreditsPerSession?: number;
+    maxToolCallsPerIteration?: number;
+    toolExecutionTimeoutMs?: number;
+    sessionTimeoutMs?: number;
+  };
+}
+
+/**
+ * POST /api/2bot-ai/agent
+ *
+ * Start an AI agent session that can autonomously read/write files,
+ * run commands, and interact with the workspace container.
+ *
+ * Streams SSE events back to the client:
+ * - iteration_start: A new AI reasoning iteration began
+ * - text_delta: Incremental text from the AI
+ * - tool_use_start: AI is calling a tool
+ * - tool_use_result: Tool execution result
+ * - done: Agent session completed
+ * - error: Agent session failed
+ *
+ * @body {string} prompt - Task description for the agent
+ * @body {string} workspaceId - Workspace container ID
+ * @body {string} [model] - Model to use (default: "2bot-ai-code-pro")
+ * @body {Array} [conversationHistory] - Prior conversation for context
+ * @body {string} [organizationId] - Org ID for org credit billing
+ * @body {object} [config] - Override agent config (maxIterations, etc.)
+ */
+twoBotAIRouter.post(
+  "/agent",
+  asyncHandler(async (req: Request, res: Response) => {
+    const log = logger.child({ module: "2bot-ai-route", capability: "agent" });
+    if (!req.user) throw new BadRequestError("Not authenticated");
+    const userId = req.user.id;
+    const body = req.body as AgentRequestBody;
+
+    // --- Validate prompt ---
+    if (!body.prompt || typeof body.prompt !== "string" || body.prompt.trim().length === 0) {
+      throw new BadRequestError("Prompt is required");
+    }
+    if (body.prompt.length > 50_000) {
+      throw new BadRequestError("Prompt too long (max 50,000 characters)");
+    }
+
+    // --- Validate workspaceId ---
+    if (!body.workspaceId || typeof body.workspaceId !== "string") {
+      throw new BadRequestError("workspaceId is required");
+    }
+
+    // --- Resolve model ---
+    const requestedModel = (body.model || "2bot-ai-code-pro") as string;
+    let model: TwoBotAIModel;
+
+    if (isTwoBotAIModelId(requestedModel)) {
+      // Validate the 2Bot model supports function calling
+      const modelInfo = getTwoBotAIModel(requestedModel);
+      if (modelInfo && !modelInfo.features.functionCalling) {
+        throw new BadRequestError(
+          `Model "${requestedModel}" does not support function calling (required for agent mode). Use a Pro or Ultra tier model.`
+        );
+      }
+      model = requestedModel as TwoBotAIModel;
+    } else {
+      // Try canonical registry ID resolution
+      const resolvedProviderModel = resolveRegistryModelId(requestedModel);
+      model = (resolvedProviderModel || requestedModel) as TwoBotAIModel;
+    }
+
+    // --- Validate conversation history ---
+    if (body.conversationHistory) {
+      if (!Array.isArray(body.conversationHistory)) {
+        throw new BadRequestError("conversationHistory must be an array");
+      }
+      for (const msg of body.conversationHistory) {
+        if (!msg.role || !["user", "assistant"].includes(msg.role)) {
+          throw new BadRequestError("conversationHistory entries must have role 'user' or 'assistant'");
+        }
+        if (typeof msg.content !== "string") {
+          throw new BadRequestError("conversationHistory entries must have string content");
+        }
+      }
+    }
+
+    // --- Build ServiceContext for workspace access ---
+    const ctx: ServiceContext = body.organizationId
+      ? createServiceContext(
+          {
+            userId: req.user.id,
+            role: req.user.role,
+            plan: req.user.plan,
+          },
+          {
+            ipAddress: req.ip,
+            userAgent: req.headers["user-agent"] as string | undefined,
+            requestId: req.headers["x-request-id"] as string | undefined,
+          },
+          {
+            contextType: "organization",
+            organizationId: body.organizationId,
+          },
+        )
+      : createServiceContext(
+          {
+            userId: req.user.id,
+            role: req.user.role,
+            plan: req.user.plan,
+            activeContext: {
+              type: "personal",
+              plan: req.user.plan,
+            },
+          },
+          {
+            ipAddress: req.ip,
+            userAgent: req.headers["user-agent"] as string | undefined,
+            requestId: req.headers["x-request-id"] as string | undefined,
+          },
+        );
+
+    log.info(
+      {
+        userId,
+        workspaceId: body.workspaceId,
+        model,
+        hasHistory: !!body.conversationHistory?.length,
+        orgContext: !!body.organizationId,
+      },
+      "🤖 Agent session requested",
+    );
+
+    // --- Set up SSE streaming ---
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+    res.flushHeaders();
+
+    try {
+      const agentStream = agentService.runAgentStream(
+        {
+          prompt: body.prompt.trim(),
+          conversationHistory: body.conversationHistory,
+          model: model as string,
+          workspaceId: body.workspaceId,
+          userId,
+          organizationId: body.organizationId,
+          config: body.config,
+        },
+        ctx,
+      );
+
+      // Stream each event to the client
+      for await (const event of agentStream) {
+        // Check if client disconnected
+        if (res.writableEnded) {
+          log.warn({ userId }, "Client disconnected during agent session");
+          break;
+        }
+
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      }
+
+      // End the stream
+      if (!res.writableEnded) {
+        res.end();
+      }
+
+      log.info({ userId, workspaceId: body.workspaceId }, "🤖 Agent SSE stream ended");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "An error occurred";
+      const code = error instanceof TwoBotAIError ? error.code : "AGENT_ERROR";
+
+      log.error({ userId, error: message }, "❌ Agent session failed");
+
+      // Clean up pending approvals on error
+      clearSessionApprovals(body.workspaceId);
+
+      // Send error event if stream is still open
+      if (!res.writableEnded) {
+        const errorEvent: AgentStreamEvent = {
+          type: "error",
+          error: message,
+          code,
+        };
+        res.write(`data: ${JSON.stringify(errorEvent)}\n\n`);
+        res.end();
+      }
+    }
+  })
+);
+
+// ===========================================
+// POST /api/2bot-ai/agent/approve
+// ===========================================
+
+interface AgentApproveBody {
+  sessionId: string;
+  toolCallId: string;
+  approved: boolean;
+}
+
+/**
+ * POST /api/2bot-ai/agent/approve
+ *
+ * Approve or reject a pending tool execution (terminal commands,
+ * package installs, git clones). The agent loop pauses until this
+ * endpoint is called.
+ *
+ * @body {string} sessionId - Agent session ID
+ * @body {string} toolCallId - Tool call ID to approve/reject
+ * @body {boolean} approved - true to approve, false to reject
+ */
+twoBotAIRouter.post(
+  "/agent/approve",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const log2 = logger.child({ module: "2bot-ai-route", capability: "agent-approve" });
+    if (!req.user) throw new BadRequestError("Not authenticated");
+
+    const body = req.body as AgentApproveBody;
+
+    if (!body.sessionId || typeof body.sessionId !== "string") {
+      throw new BadRequestError("sessionId is required");
+    }
+    if (!body.toolCallId || typeof body.toolCallId !== "string") {
+      throw new BadRequestError("toolCallId is required");
+    }
+    if (typeof body.approved !== "boolean") {
+      throw new BadRequestError("approved must be a boolean");
+    }
+
+    const resolved = resolveApproval(body.sessionId, body.toolCallId, {
+      approved: body.approved,
+    });
+
+    if (!resolved) {
+      log2.warn(
+        { sessionId: body.sessionId, toolCallId: body.toolCallId },
+        "No pending approval found (may have timed out)",
+      );
+      const response: ApiResponse = {
+        success: false,
+        error: { code: "APPROVAL_NOT_FOUND", message: "No pending approval found — it may have timed out" },
+      };
+      res.status(404).json(response);
+      return;
+    }
+
+    log2.info(
+      { sessionId: body.sessionId, toolCallId: body.toolCallId, approved: body.approved },
+      `Agent tool ${body.approved ? "approved" : "rejected"} by user`,
+    );
+
+    const response: ApiResponse = { success: true };
+    res.json(response);
+  }),
+);
+
+// ===========================================
+// POST /api/2bot-ai/agent/restore
+// ===========================================
+
+interface AgentRestoreBody {
+  sessionId: string;
+  /** Optional: restore a single action by ID. If omitted, restores all. */
+  actionId?: string;
+  /** Force restore even if conflicts detected */
+  force?: boolean;
+}
+
+/**
+ * POST /api/2bot-ai/agent/restore
+ *
+ * Undo AI file modifications from a session.
+ * Restores files to their original state before the AI modified them.
+ * Detects conflicts (if files were manually edited after AI changes).
+ *
+ * @body {string} sessionId - Agent session ID
+ * @body {string} [actionId] - Specific action to undo (optional)
+ * @body {boolean} [force] - Force restore even with conflicts
+ */
+twoBotAIRouter.post(
+  "/agent/restore",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const log2 = logger.child({ module: "2bot-ai-route", capability: "agent-restore" });
+    if (!req.user) throw new BadRequestError("Not authenticated");
+
+    const body = req.body as AgentRestoreBody;
+
+    if (!body.sessionId || typeof body.sessionId !== "string") {
+      throw new BadRequestError("sessionId is required");
+    }
+
+    // Build service context
+    const ctx: ServiceContext = createServiceContext(
+      {
+        userId: req.user.id,
+        role: req.user.role,
+        plan: req.user.plan,
+      },
+      {
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"] as string | undefined,
+        requestId: req.headers["x-request-id"] as string | undefined,
+      },
+    );
+
+    // Check if session has any actions
+    const actions = getSessionActions(body.sessionId);
+    if (actions.length === 0) {
+      const response: ApiResponse = {
+        success: false,
+        error: { code: "NO_ACTIONS", message: "No AI actions found for this session" },
+      };
+      res.status(404).json(response);
+      return;
+    }
+
+    log2.info(
+      { sessionId: body.sessionId, actionCount: actions.length, force: body.force },
+      "📝 Restoring AI actions",
+    );
+
+    const result = await restoreAgentSession(
+      body.sessionId,
+      ctx,
+      body.force ?? false,
+    );
+
+    log2.info(
+      {
+        sessionId: body.sessionId,
+        restored: result.restoredCount,
+        conflicts: result.conflictCount,
+      },
+      "📝 Restore completed",
+    );
+
+    const response: ApiResponse<typeof result> = {
+      success: true,
+      data: result,
+    };
+    res.json(response);
+  }),
+);
+
+// ===========================================
+// GET /api/2bot-ai/agent/actions
+// ===========================================
+
+/**
+ * GET /api/2bot-ai/agent/actions?sessionId=xxx
+ *
+ * Get all tracked AI file actions for a session.
+ * Returns the list of file modifications with before/after previews.
+ */
+twoBotAIRouter.get(
+  "/agent/actions",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw new BadRequestError("Not authenticated");
+
+    const sessionId = req.query.sessionId as string;
+    if (!sessionId) {
+      throw new BadRequestError("sessionId query parameter is required");
+    }
+
+    const actions = getSessionActions(sessionId);
+
+    // Return actions with previews (strip full content for the API response)
+    const actionSummaries = actions.map((a) => ({
+      id: a.id,
+      type: a.type,
+      path: a.path,
+      newPath: a.newPath,
+      hasOriginalContent: a.originalContent !== null,
+      hasNewContent: a.newContent !== null,
+      contentTruncated: a.contentTruncated,
+      toolCallId: a.toolCallId,
+      timestamp: a.timestamp,
+    }));
+
+    const response: ApiResponse<typeof actionSummaries> = {
+      success: true,
+      data: actionSummaries,
+    };
+    res.json(response);
+  }),
 );
 
 // ===========================================
@@ -614,6 +1128,7 @@ twoBotAIRouter.post(
     const log = logger.child({ module: "2bot-ai-route", capability: "image-generation" });
     if (!req.user) throw new BadRequestError("Not authenticated");
     const userId = req.user.id;
+    const routingPreference = (req.user.aiRoutingPreference as 'quality' | 'balanced' | 'cost') || 'balanced';
     const body = req.body as ImageGenerationRequestBody;
 
     // Validate prompt
@@ -633,6 +1148,7 @@ twoBotAIRouter.post(
         quality: body.quality,
         style: body.style,
         userId,
+        routingPreference,
       });
 
       log.info({
