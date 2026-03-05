@@ -20,16 +20,53 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 import { loggers } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { pluginIpcService } from "@/modules/plugin/plugin-ipc.service";
+import { bridgeClientManager } from "@/modules/workspace";
+import { bridgeLeaseService, SERVER_INSTANCE_ID } from "@/modules/workspace/bridge-lease.service";
+import { containerLifecycleService } from "@/modules/workspace/container-lifecycle.service";
+import { egressProxyService } from "@/modules/workspace/egress-proxy.service";
+import { gatewayRouteService } from "@/modules/workspace/gateway-route.service";
+import { workspaceMetricsService } from "@/modules/workspace/metrics.service";
 import { createApp, startServer } from "./app";
 import { initializeGatewayProviders } from "./init-providers";
+import { initWorkspaceWebSocket } from "./ws/workspace-terminal";
 
 const serverLogger = loggers.server;
 
 // Initialize gateway providers before starting server
 initializeGatewayProviders();
 
+// Start bridge lease service (prevents dev+prod connection storm)
+bridgeLeaseService.start();
+serverLogger.info({ instanceId: SERVER_INSTANCE_ID }, 'Bridge lease service started — this server instance identified');
+
+// Register Plugin IPC handler so workspace plugins can call storage/gateway APIs
+bridgeClientManager.setIpcHandler((containerDbId, request) =>
+  pluginIpcService.handleRequest(containerDbId, request),
+);
+serverLogger.info('Plugin IPC handler registered for workspace bridge clients');
+
 const app = createApp();
 const server = startServer(app);
+
+// Initialize workspace terminal WebSocket handler (Phase 13)
+initWorkspaceWebSocket(server);
+
+// Start workspace lifecycle monitoring (health checks, auto-stop, restart recovery)
+containerLifecycleService.start();
+
+// Start workspace metrics collection (periodic resource usage polling)
+workspaceMetricsService.start();
+
+// Start egress proxy service (log parsing + proxy container management)
+egressProxyService.start().catch(err => {
+  serverLogger.warn({ error: err.message }, 'Egress proxy service failed to start — will retry on next cycle');
+});
+
+// Rebuild custom-gateway routes for any running containers (Phase A: direct delivery)
+gatewayRouteService.rebuildRoutes().catch(err => {
+  serverLogger.warn({ error: err.message }, 'Gateway route rebuild failed — fallback still active');
+});
 
 // ===========================================
 // Graceful Shutdown Handler
@@ -65,6 +102,14 @@ const gracefulShutdown = async (signal: string) => {
     serverLogger.info("HTTP server closed. No longer accepting connections.");
 
     try {
+      // Stop workspace services and release bridge leases
+      serverLogger.info("Stopping workspace services...");
+      containerLifecycleService.stop();
+      workspaceMetricsService.stop();
+      egressProxyService.stop();
+      await bridgeLeaseService.stop();
+      serverLogger.info('Bridge leases released.');
+
       // Disconnect database connections
       serverLogger.info("Disconnecting from database...");
       await prisma.$disconnect();

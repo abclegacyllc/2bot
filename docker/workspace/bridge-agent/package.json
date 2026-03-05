@@ -1,0 +1,21 @@
+{
+  "name": "2bot-bridge-agent",
+  "version": "1.0.0",
+  "description": "Bridge agent running inside 2Bot user workspace containers. Handles file ops, plugin management, git, terminal, and platform communication.",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "ws": "^8.18.0",
+    "node-pty": "^1.0.0",
+    "chokidar": "^4.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

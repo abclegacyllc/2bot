@@ -191,12 +191,21 @@ services:
     restart: unless-stopped
     ports:
       - "3002:3002"
+    volumes:
+      # Phase 13: Docker socket for workspace container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Phase 13: Persistent workspace data volumes
+      - workspace_data:/var/lib/2bot-workspaces
     environment:
       - NODE_ENV=production
       - SERVER_PORT=3002
       - SERVER_HOST=0.0.0.0
       # Phase 6.7.5.3: No /api prefix for subdomain deployment
       - API_PREFIX=
+      # Phase 13: Workspace configuration
+      - WORKSPACE_IMAGE=2bot-workspace:latest
+      - WORKSPACE_VOLUME_BASE=/var/lib/2bot-workspaces
+      - WORKSPACE_NETWORK=2bot-workspace-net
       # Database
       - DATABASE_URL=${DATABASE_URL}
       # Redis
@@ -234,6 +243,8 @@ services:
       start_period: 40s
     networks:
       - 2bot-network
+      # Phase 13: API needs access to workspace container network
+      - 2bot-workspace-net
 
   # ===========================================
   # Admin Panel (admin.2bot.org) - Port :3007
@@ -323,6 +334,9 @@ volumes:
     driver: local
   redis_data:
     driver: local
+  # Phase 13: Persistent storage for workspace containers
+  workspace_data:
+    driver: local
 
 # ===========================================
 # Networks
@@ -330,3 +344,8 @@ volumes:
 networks:
   2bot-network:
     driver: bridge
+  # Phase 13: Isolated network for workspace containers
+  # Workspace containers communicate with API via bridge agent on this network
+  2bot-workspace-net:
+    driver: bridge
+    internal: true  # No external internet access for workspace containers

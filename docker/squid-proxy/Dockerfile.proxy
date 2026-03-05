@@ -1,0 +1,44 @@
+# ============================================
+# 2Bot Egress Proxy — Squid Forward Proxy
+# ============================================
+# Lightweight Squid proxy for workspace container egress.
+# Provides domain whitelisting, access logging, and rate limiting.
+#
+# Build: docker build -t 2bot-proxy:latest -f docker/squid-proxy/Dockerfile.proxy docker/squid-proxy
+# ============================================
+
+FROM ubuntu:22.04
+
+# Install Squid
+RUN apt-get update -qq \
+    && apt-get install -y --no-install-recommends squid \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create log and cache directories with world-readable permissions
+# so the host server process can parse access.log without root
+RUN mkdir -p /var/log/squid /var/spool/squid /var/run/squid \
+    && chown -R proxy:proxy /var/log/squid /var/spool/squid /var/run/squid \
+    && chmod 755 /var/log/squid
+
+# Copy custom config
+COPY squid.conf /etc/squid/squid.conf
+
+# Create config directory for per-user domain files and ACL snippets
+# (will be bind-mounted from host at runtime, but needs to exist for Squid startup)
+RUN mkdir -p /etc/squid/config \
+    && touch /etc/squid/config/admin-blocked-domains.txt \
+    && touch /etc/squid/config/per-container-acls.conf \
+    && chown -R proxy:proxy /etc/squid/config
+
+# Initialize cache dirs
+RUN squid -z 2>/dev/null || true
+
+# Squid runs as 'proxy' user by default
+EXPOSE 3128
+
+# Health check — verify Squid is listening on port 3128
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD bash -c 'echo > /dev/tcp/127.0.0.1/3128' || exit 1
+
+# Run Squid in foreground with umask 022 so log files are world-readable
+CMD ["sh", "-c", "umask 022 && exec squid -N -f /etc/squid/squid.conf"]

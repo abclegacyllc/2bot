@@ -31,9 +31,15 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Create non-root user
+# Phase 13: Install Docker CLI for workspace container management
+# dockerode communicates via Docker socket; CLI is for admin/debugging
+RUN apk add --no-cache docker-cli
+
+# Create non-root user with Docker socket access
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 expressjs
+# Phase 13: Add expressjs user to docker group for socket access
+RUN addgroup expressjs docker 2>/dev/null || addgroup -S docker && addgroup expressjs docker
 
 # Copy only production dependencies and compiled code
 COPY --from=builder /app/node_modules ./node_modules

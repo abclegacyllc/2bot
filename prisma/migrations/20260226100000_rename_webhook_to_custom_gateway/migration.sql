@@ -1,0 +1,2 @@
+-- Rename GatewayType enum value: WEBHOOK → CUSTOM_GATEWAY
+ALTER TYPE "GatewayType" RENAME VALUE 'WEBHOOK' TO 'CUSTOM_GATEWAY';

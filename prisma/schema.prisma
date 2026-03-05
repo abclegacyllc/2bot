@@ -57,7 +57,7 @@ enum DatabaseType {
 enum GatewayType {
   TELEGRAM_BOT    // Telegram Bot API (uses botToken)
   AI              // All AI providers (OpenAI, Anthropic, DeepSeek, Grok, Gemini, Mistral, Groq, Ollama)
-  WEBHOOK         // Generic webhooks
+  CUSTOM_GATEWAY  // Custom inbound gateways (receive HTTP POST from external services like Stripe, GitHub)
   // TELEGRAM_ACCOUNT - MTProto user accounts (V2 - requires phone auth flow)
 }
 
@@ -86,6 +86,35 @@ enum AllocationMode {
   SOFT_CAP      // Warning at limit, can request more
   HARD_CAP      // Blocked at limit
   RESERVED      // Guaranteed allocation, others can't use
+}
+
+// ===========================================
+// Workspace Container Status (Phase 13: Workspace)
+// ===========================================
+enum ContainerStatus {
+  CREATING      // Docker image being pulled / container being created
+  STARTING      // Container starting up, bridge agent initializing
+  RUNNING       // Container healthy, bridge agent connected
+  STOPPING      // Graceful shutdown in progress
+  STOPPED       // Container exited, data preserved
+  ERROR         // Container crashed or health check failed
+  DESTROYED     // Container removed (data may be preserved in volume)
+}
+
+enum WorkspaceFileType {
+  FILE
+  DIRECTORY
+}
+
+enum WorkspaceOwnerType {
+  PERSONAL      // User's personal workspace
+  ORGANIZATION  // Organization shared workspace
+}
+
+enum PluginAuthorType {
+  SYSTEM    // Built-in platform plugins
+  USER      // Human-created custom plugins
+  AI        // AI-agent created (future)
 }
 
 // ===========================================
@@ -123,6 +152,9 @@ model User {
   workspaceCpuCores  Float?    @map("workspace_cpu_cores")
   workspaceStorageMb Int?      @map("workspace_storage_mb")
 
+  // AI Routing Preference (quality=best models first, balanced=default, cost=cheapest first)
+  aiRoutingPreference  String  @default("balanced") @map("ai_routing_preference")
+
   // Status
   isActive    Boolean   @default(true) @map("is_active")
   lastLoginAt DateTime? @map("last_login_at")
@@ -154,6 +186,16 @@ model User {
   assignedTickets      SupportTicket[]  @relation("AssignedTickets")
   ticketMessages       TicketMessage[]  @relation("TicketMessageSender")
   kbArticles           KBArticle[]      @relation("KBArticleAuthor")
+
+  // Workspace relations (Phase 13)
+  workspaceContainers  WorkspaceContainer[]
+  allowedDomains       WorkspaceAllowedDomain[]
+
+  // AI Agent relations
+  agentSessions        AgentSession[]
+
+  // Admin domain blacklist
+  adminBlockedDomains  AdminBlockedDomain[] @relation("AdminBlockedDomains")
 
   @@index([email])
   @@index([stripeCustomerId])
@@ -288,6 +330,9 @@ model Organization {
   subscription     Subscription?
   orgInvites       OrgInvite[]
   creditWallet     CreditWallet?
+
+  // Workspace relations (Phase 13)
+  workspaceContainers  WorkspaceContainer[]
   
   @@index([slug])
   @@index([databaseType])
@@ -668,6 +713,10 @@ model Gateway {
   // Provider-specific configuration
   config Json @default("{}")
 
+  // Provider-specific metadata (bot info, AI provider details, etc.)
+  // Persisted on connect so it survives server restarts
+  metadata Json @default("{}")
+
   // Connection tracking
   lastConnectedAt DateTime? @map("last_connected_at")
   lastErrorAt     DateTime? @map("last_error_at")
@@ -683,12 +732,85 @@ model Gateway {
   workflows     Workflow[]
   workflowSteps WorkflowStep[]
   aiUsage       AIUsage[]
+  userPlugins   UserPlugin[]
+  gatewayChats  GatewayChat[]
+  gatewayMetrics GatewayMetric[]
 
   @@index([userId])
   @@index([organizationId])
   @@index([type])
   @@index([status])
   @@map("gateways")
+}
+
+// ===========================================
+// Gateway Chat Tracking (Phase 7)
+// Tracks which Telegram chats the bot has been added to / removed from
+// ===========================================
+model GatewayChat {
+  id          String    @id @default(cuid())
+  gatewayId   String    @map("gateway_id")
+
+  // Telegram chat info
+  chatId      BigInt    @map("chat_id")        // Telegram chat ID (can be negative for groups)
+  chatType    String    @map("chat_type")      // "private", "group", "supergroup", "channel"
+  chatTitle   String?   @map("chat_title")     // Chat/group/channel title
+  chatUsername String?  @map("chat_username")  // @username if public
+  memberCount Int?      @map("member_count")   // Approximate member count
+
+  // Status tracking
+  isActive    Boolean   @default(true) @map("is_active")
+  joinedAt    DateTime  @default(now()) @map("joined_at")
+  leftAt      DateTime? @map("left_at")
+
+  // Bot status in this chat
+  botStatus   String    @default("member") @map("bot_status") // "member", "administrator", "kicked", "left"
+
+  // Timestamps
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  gateway     Gateway   @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+
+  @@unique([gatewayId, chatId])
+  @@index([gatewayId, isActive])
+  @@index([chatType])
+  @@map("gateway_chats")
+}
+
+// ===========================================
+// Gateway Metrics (Phase 8)
+// Tracks action execution counts per gateway for analytics dashboards
+// ===========================================
+model GatewayMetric {
+  id          String    @id @default(cuid())
+  gatewayId   String    @map("gateway_id")
+
+  // Action tracking
+  action      String                            // e.g. "sendMessage", "getMe", "text-generation"
+  
+  // Counters
+  successCount Int      @default(0) @map("success_count")
+  errorCount   Int      @default(0) @map("error_count")
+  
+  // Performance
+  totalDurationMs BigInt @default(0) @map("total_duration_ms") // Sum of all durations for avg calc
+
+  // Period bucketing — one row per gateway+action+period
+  period      String                            // "2026-02-09" (daily) or "2026-02-09T08" (hourly)
+
+  // Timestamps
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  gateway     Gateway   @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+
+  @@unique([gatewayId, action, period])
+  @@index([gatewayId, period])
+  @@index([action])
+  @@index([createdAt])
+  @@map("gateway_metrics")
 }
 
 // ===========================================
@@ -825,6 +947,15 @@ model Plugin {
   tags          String[]      @default([])         // Discovery tags: "sport", "blog", "ecommerce"
   isBuiltin     Boolean       @default(true)       // Built-in vs marketplace (V2)
   
+  // Catalog template code for first-time installs to workspace containers
+  // This is NOT user-specific code — the container filesystem is the source of truth for user code
+  codeBundle    String?       @db.Text @map("code_bundle")
+  
+  // Authorship and visibility
+  authorId      String?       @map("author_id")    // userId of creator (null for SYSTEM)
+  authorType    PluginAuthorType @default(SYSTEM)   @map("author_type")
+  isPublic      Boolean       @default(false)      @map("is_public")  // Marketplace visibility
+  
   // Input/Output schemas for workflow integration (Phase 5+)
   inputSchema   Json?         @map("input_schema")   // What plugin accepts
   outputSchema  Json?         @map("output_schema")  // What plugin outputs
@@ -861,6 +992,12 @@ model UserPlugin {
   // Gateway binding - which gateway this plugin uses (if any)
   gatewayId     String?       @map("gateway_id")
   
+  // Workspace entry file path (relative to workspace root, e.g. "plugins/my-bot.js" or "plugins/my-bot/index.js")
+  entryFile     String?       @map("entry_file") @db.VarChar(500)
+  
+  // Storage quota for local KV store in MB (0 = unlimited, default 50)
+  storageQuotaMb Int          @default(50) @map("storage_quota_mb")
+  
   // Status
   isEnabled     Boolean       @default(true) @map("is_enabled")
   
@@ -877,6 +1014,8 @@ model UserPlugin {
   user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   plugin        Plugin        @relation(fields: [pluginId], references: [id])
   organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  gateway       Gateway?      @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
+  aiUsages      AIUsage[]
   
   // Unique per user+plugin OR per organization+plugin
   @@unique([userId, pluginId, organizationId])
@@ -1085,6 +1224,7 @@ model AIUsage {
   organizationId  String?   @map("organization_id")
   departmentId    String?   @map("department_id")  // Track dept for budget enforcement
   gatewayId       String?   @map("gateway_id")
+  userPluginId    String?   @map("user_plugin_id") // Track which plugin made this AI call
   
   // What was used - using universal capability naming
   capability      String    @map("capability") // "text-generation", "image-generation", "speech-synthesis", "speech-recognition", "text-embedding", "image-understanding"
@@ -1092,6 +1232,9 @@ model AIUsage {
   
   // Source - determines if credits apply
   source          String    // "byok" = user's key (no credits), "2bot" = platform key (credits)
+  
+  // Feature - which platform feature triggered this usage
+  feature         String?   @map("feature") // "chat", "cursor", "plugin-ipc", "api" — null for legacy rows
   
   // Raw metrics - store ALL for analytics (nullable based on capability type)
   inputTokens     Int?      @map("input_tokens")      // Chat/embedding input
@@ -1117,13 +1260,16 @@ model AIUsage {
   // Relations
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   gateway         Gateway?  @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+  userPlugin      UserPlugin? @relation(fields: [userPluginId], references: [id], onDelete: SetNull)
   
   @@index([userId, billingPeriod])
   @@index([organizationId, billingPeriod])
   @@index([departmentId, billingPeriod])
   @@index([gatewayId, createdAt])
+  @@index([userPluginId, billingPeriod])
   @@index([source, billingPeriod])
   @@index([capability, createdAt])
+  @@index([feature, billingPeriod])
   @@map("ai_usage")
 }
 
@@ -1307,6 +1453,366 @@ model QuickIssue {
 }
 
 // ===========================================
+// Workspace Container (Phase 13: Workspace System)
+// Tracks Docker containers for user/org workspaces
+// ===========================================
+// 
+// PERSONAL workspace: userId set, organizationId null
+//   → User pays via personal plan/addons
+//   → Resources from user's workspaceRamMb/CpuCores/StorageMb
+//
+// ORGANIZATION workspace: both userId and organizationId set
+//   → userId = member who owns this container within the org
+//   → Resources drawn from org's workspacePool
+//   → Subject to DeptAllocation / MemberAllocation limits
+//
+// An org can have MULTIPLE containers (one per member who needs it)
+// A user can have ONE personal container + ONE per org they belong to
+// ===========================================
+model WorkspaceContainer {
+  id                String           @id @default(cuid())
+  
+  // Owner references
+  userId            String           @map("user_id")
+  organizationId    String?          @map("organization_id")
+  
+  // Ownership type (determines billing & resource source)
+  ownerType         WorkspaceOwnerType @default(PERSONAL) @map("owner_type")
+  
+  // Docker container info
+  containerId       String?          @map("container_id")         // Docker container ID (null before creation)
+  containerName     String           @unique @map("container_name") // Unique name: "ws-{userId}" or "ws-{orgSlug}-{userId}"
+  imageName         String           @default("2bot-workspace:latest") @map("image_name")
+  
+  // Status
+  status            ContainerStatus  @default(CREATING)
+  errorMessage      String?          @map("error_message")        // Last error details
+  
+  // Allocated resources (snapshot at creation, may differ from plan if resized)
+  ramMb             Int              @map("ram_mb")               // Allocated RAM in MB
+  cpuCores          Float            @map("cpu_cores")            // Allocated CPU cores
+  storageMb         Int              @map("storage_mb")           // Allocated storage in MB
+  
+  // Runtime info
+  ipAddress         String?          @map("ip_address")           // Internal container IP
+  bridgePort        Int?             @map("bridge_port")          // Bridge agent WebSocket port
+  bridgeAuthToken   String?          @map("bridge_auth_token")    // Encrypted auth token for bridge reconnection
+  volumePath        String?          @map("volume_path")          // Host path for persistent volume
+  
+  // Health monitoring
+  lastHealthCheck   DateTime?        @map("last_health_check")
+  healthCheckFails  Int              @default(0) @map("health_check_fails")
+  autoRestart       Boolean          @default(true) @map("auto_restart")
+  maxRestarts       Int              @default(5) @map("max_restarts")
+  restartCount      Int              @default(0) @map("restart_count")
+  
+  // Lifecycle timestamps
+  startedAt         DateTime?        @map("started_at")
+  stoppedAt         DateTime?        @map("stopped_at")
+  lastActivityAt    DateTime?        @map("last_activity_at")     // For auto-stop idle containers
+  
+  // Auto-stop settings (save resources when idle)
+  autoStopMinutes   Int?             @map("auto_stop_minutes")    // null = never auto-stop
+  
+  // Webhook routing (Phase A: direct container webhook delivery)
+  webhookRoutingActive Boolean       @default(false) @map("webhook_routing_active")
+  
+  // Timestamps
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  
+  // Relations
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization      Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  files             WorkspaceFile[]
+  logs              WorkspaceLog[]
+  egressLogs        WorkspaceEgressLog[]
+  
+  // Personal: one container per user (no org)
+  // Org: one container per user per org
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([ownerType])
+  @@index([containerId])
+  @@map("workspace_containers")
+}
+
+// ===========================================
+// Workspace File (Phase 13: Workspace System)
+// Metadata tracking for files in user workspaces
+// ===========================================
+// 
+// NOTE: File CONTENT lives inside the Docker container volume.
+// This model tracks metadata for:
+//   - Search / discovery across workspaces (admin)
+//   - Plugin file tracking (which files are plugins)
+//   - Storage quota enforcement
+//   - File history / audit trail
+// ===========================================
+model WorkspaceFile {
+  id                String           @id @default(cuid())
+  containerId       String           @map("container_id")
+  
+  // File info
+  path              String                                        // Full path inside container: /workspace/plugins/bot.js
+  name              String                                        // File/folder name: bot.js
+  type              WorkspaceFileType @default(FILE)
+  sizeBytes         Int              @default(0) @map("size_bytes")
+  mimeType          String?          @map("mime_type")            // "application/javascript", "application/json"
+  
+  // Plugin tracking
+  isPlugin          Boolean          @default(false) @map("is_plugin")  // Registered as a runnable plugin
+  pluginStatus      String?          @map("plugin_status")              // "running", "stopped", "error" (null if not plugin)
+  pluginPid         Int?             @map("plugin_pid")                 // Process ID when running
+  
+  // Source tracking
+  source            String           @default("upload")                 // "upload", "ai-generated", "github-import", "plugin-store", "manual"
+  sourceUrl         String?          @map("source_url")                 // GitHub URL if imported
+  
+  // Timestamps
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  
+  // Relations
+  container         WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  
+  @@unique([containerId, path])
+  @@index([containerId])
+  @@index([isPlugin])
+  @@index([source])
+  @@map("workspace_files")
+}
+
+// ===========================================
+// Workspace Log (Phase 13: Workspace System)
+// Execution and system logs from containers
+// ===========================================
+model WorkspaceLog {
+  id                String           @id @default(cuid())
+  containerId       String           @map("container_id")
+  
+  // Log entry
+  level             String           @default("info")             // "debug", "info", "warn", "error", "fatal"
+  source            String           @default("system")           // "system", "bridge", "plugin", "terminal", "git", "npm"
+  message           String           @db.Text
+  
+  // Optional structured metadata
+  metadata          Json?                                         // { pluginFile, pid, exitCode, command, etc. }
+  
+  // Source plugin (if from a plugin)
+  pluginFile        String?          @map("plugin_file")          // "plugins/bot.js"
+  
+  // Timestamps
+  createdAt         DateTime         @default(now()) @map("created_at")
+  
+  // Relations
+  container         WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  
+  @@index([containerId, createdAt])
+  @@index([containerId, level])
+  @@index([containerId, source])
+  @@index([createdAt])
+  @@map("workspace_logs")
+}
+
+// ===========================================
+// Workspace Audit Log (Phase 13: Workspace System)
+// Records all lifecycle actions for compliance and debugging
+// ===========================================
+model WorkspaceAuditLog {
+  id                String           @id @default(cuid())
+  
+  // Who performed the action
+  userId            String?          @map("user_id")              // null for system-initiated actions (auto-stop, auto-restart)
+  
+  // Which container was affected
+  containerId       String           @map("container_id")         // Workspace container DB ID
+  containerName     String?          @map("container_name")       // Snapshot of container name at time of action
+  
+  // What happened
+  action            String                                        // CREATE, START, STOP, DESTROY, FORCE_STOP, AUTO_STOP, AUTO_RESTART, ERROR
+  
+  // Outcome
+  success           Boolean          @default(true)
+  errorMessage      String?          @map("error_message")
+  
+  // Optional structured metadata (resources, reason, etc.)
+  metadata          Json?
+  
+  // Request context
+  ipAddress         String?          @map("ip_address")
+  userAgent         String?          @map("user_agent")
+  
+  // Timestamp
+  createdAt         DateTime         @default(now()) @map("created_at")
+  
+  @@index([userId])
+  @@index([containerId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("workspace_audit_logs")
+}
+
+// ===========================================
+// Workspace Metrics (Phase 13: Workspace System)
+// Periodic snapshots of container resource usage for time-series analysis
+// ===========================================
+model WorkspaceMetric {
+  id                String           @id @default(cuid())
+  
+  containerId       String           @map("container_id")         // Workspace container DB ID
+  
+  // Resource usage snapshot
+  memoryUsedMb      Float            @map("memory_used_mb")
+  memoryPercent     Float            @map("memory_percent")       // 0-100
+  cpuPercent        Float            @map("cpu_percent")          // 0-100
+  diskUsedMb        Float            @map("disk_used_mb")
+  diskPercent       Float            @map("disk_percent")         // 0-100
+  
+  // Process info
+  runningPlugins    Int              @default(0) @map("running_plugins")
+  
+  // Timestamp
+  createdAt         DateTime         @default(now()) @map("created_at")
+  
+  @@index([containerId, createdAt])
+  @@index([createdAt])
+  @@map("workspace_metrics")
+}
+
+// ===========================================
+// Workspace Egress Log (Phase 13.2: Egress Proxy)
+// Records outbound network requests from workspace containers
+// Parsed from Squid proxy access.log for per-user attribution
+// ===========================================
+model WorkspaceEgressLog {
+  id                String           @id @default(cuid())
+  containerId       String           @map("container_id")         // Workspace container DB ID
+  
+  // Request info (parsed from Squid access.log or webhook delivery)
+  timestamp         DateTime                                      // When the request was made
+  domain            String                                        // "api.telegram.org", "github.com"
+  url               String?          @db.Text                     // Full URL (HTTP) or CONNECT domain (HTTPS)
+  method            String           @default("CONNECT")          // GET, POST, CONNECT, etc.
+  httpStatus        Int              @map("http_status")          // 200, 403, 407, 503, etc.
+  squidStatus       String           @map("squid_status")         // TCP_TUNNEL, TCP_DENIED, etc.  (empty for inbound)
+  bytesTransferred  Int              @default(0) @map("bytes_transferred")
+  elapsedMs         Int              @default(0) @map("elapsed_ms")  // Response time in ms
+  
+  // Classification
+  action            String           @default("ALLOWED")          // "ALLOWED", "BLOCKED", "RATE_LIMITED"
+  direction         String           @default("OUTBOUND")         // "OUTBOUND" or "INBOUND"
+  
+  // Inbound-specific fields
+  sourceType        String?          @map("source_type")          // "telegram", "custom", etc.
+  pluginFile        String?          @map("plugin_file")          // Which plugin(s) received this webhook
+  
+  // Timestamps
+  createdAt         DateTime         @default(now()) @map("created_at")
+  
+  // Relations
+  container         WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  
+  @@index([containerId, timestamp])
+  @@index([containerId, domain])
+  @@index([domain, timestamp])
+  @@index([action, timestamp])
+  @@index([timestamp])
+  @@index([direction, containerId, timestamp])
+  @@map("workspace_egress_logs")
+}
+
+// ===========================================
+// Custom Gateway — REMOVED (unified into Gateway model)
+// ===========================================
+// Custom gateways now live in the `gateways` table with type = CUSTOM_GATEWAY.
+// They use the same Gateway model, UserPlugin.gatewayId relation, credentialsEnc
+// encryption, and routeEventToPlugins() pipeline as Telegram bots.
+// The old `plugin_webhooks` table has been dropped.
+
+// ===========================================
+// Workspace Allowed Domains (User-controlled egress allowlist)
+// ===========================================
+// Users can request additional domains beyond the system-wide allowlist.
+// When approved (or auto-approved), these domains are injected into the
+// Squid proxy's dynamic ACL and take effect after a config reload.
+
+model WorkspaceAllowedDomain {
+  id              String    @id @default(cuid())
+
+  // Owner — domains are per-user (apply to their workspace container)
+  userId          String    @map("user_id")
+
+  // The domain pattern (e.g. ".example.com" for example.com + subdomains)
+  domain          String    // Stored with leading dot for subdomain matching
+
+  // Approval status
+  status          DomainAllowStatus @default(APPROVED)
+
+  // Justification from user (why they need this domain)
+  reason          String?
+
+  // Consent: user accepted responsibility for external traffic
+  consentAccepted Boolean   @default(false) @map("consent_accepted")
+  consentAt       DateTime? @map("consent_at")
+
+  // Admin review (optional — auto-approved by default)
+  reviewedBy      String?   @map("reviewed_by")
+  reviewedAt      DateTime? @map("reviewed_at")
+  reviewNote      String?   @map("review_note")
+
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, domain])
+  @@index([userId])
+  @@index([status])
+  @@map("workspace_allowed_domains")
+}
+
+enum DomainAllowStatus {
+  PENDING   // Awaiting admin approval (if admin-review mode enabled)
+  APPROVED  // Active — domain is in the proxy allowlist
+  REJECTED  // Admin rejected the request
+  REVOKED   // Was approved but later revoked
+}
+
+// ===========================================
+// Admin-Blocked Domains (Global Blacklist)
+// ===========================================
+// Domains that are always blocked regardless of user approval.
+// Admin-blocked domains override any user allowlist entries.
+
+model AdminBlockedDomain {
+  id          String   @id @default(cuid())
+
+  // The blocked domain pattern (e.g. ".malware.com")
+  domain      String   @unique
+
+  // Why this domain is blocked
+  reason      String?
+
+  // Who added it
+  createdBy   String   @map("created_by")
+
+  // Timestamps
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  admin       User     @relation("AdminBlockedDomains", fields: [createdBy], references: [id])
+
+  @@index([domain])
+  @@map("admin_blocked_domains")
+}
+
+// ===========================================
 // Support AI Cost Tracking (Phase 7: Support)
 // ===========================================
 model SupportAICost {
@@ -1334,4 +1840,96 @@ model SupportAICost {
   @@index([createdAt])
   @@index([userId])
   @@map("support_ai_costs")
+}
+
+// ===========================================
+// AI Agent Session Tracking
+// ===========================================
+
+/**
+ * AgentSession — Tracks the full lifecycle of an AI agent task.
+ *
+ * One user prompt → multiple AI iterations → multiple tool calls → final response.
+ * Used for billing audit, usage history, debugging, and admin analytics.
+ */
+model AgentSession {
+  id               String    @id @default(cuid())
+
+  // Owner
+  userId           String    @map("user_id")
+  organizationId   String?   @map("organization_id")
+  workspaceId      String    @map("workspace_id")
+
+  // AI model used
+  model            String
+
+  // Session lifecycle
+  status           String    @default("running")  // running, completed, max_iterations, max_credits, error, cancelled
+
+  // Metrics
+  iterationCount   Int       @default(0) @map("iteration_count")
+  toolCallCount    Int       @default(0) @map("tool_call_count")
+  totalCreditsUsed Float     @default(0) @map("total_credits_used")
+  inputTokens      Int       @default(0) @map("input_tokens")
+  outputTokens     Int       @default(0) @map("output_tokens")
+
+  // Content
+  prompt           String    @db.Text          // User's original prompt
+  finalResponse    String?   @map("final_response") @db.Text  // AI's final text (on completion)
+  error            String?   @db.Text          // Error message (on failure)
+
+  // Duration
+  durationMs       Int?      @map("duration_ms")
+
+  // Timestamps
+  startedAt        DateTime  @default(now()) @map("started_at")
+  completedAt      DateTime? @map("completed_at")
+
+  // Relations
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolCalls        AgentToolCall[]
+
+  @@index([userId, startedAt])
+  @@index([organizationId, startedAt])
+  @@index([workspaceId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("agent_sessions")
+}
+
+/**
+ * AgentToolCall — Individual tool invocation within an agent session.
+ *
+ * Records what the AI asked to do, what happened, and how long it took.
+ * Used for debugging, audit trail, and understanding agent behavior.
+ */
+model AgentToolCall {
+  id             String    @id @default(cuid())
+
+  // Parent session
+  sessionId      String    @map("session_id")
+
+  // Tool details
+  toolName       String    @map("tool_name")     // e.g. "read_file", "run_command"
+  toolCallId     String    @map("tool_call_id")   // AI provider's tool call ID
+  input          Json                              // Tool arguments (JSON)
+  output         String    @db.Text               // Tool execution output (truncated)
+  isError        Boolean   @default(false) @map("is_error")
+
+  // Performance
+  durationMs     Int       @default(0) @map("duration_ms")
+
+  // Ordering within the session
+  sequence       Int       @default(0)            // 0-based order within session
+
+  // Timestamps
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  session        AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, sequence])
+  @@index([toolName])
+  @@index([createdAt])
+  @@map("agent_tool_calls")
 }

@@ -28,9 +28,7 @@ const prisma = new PrismaClient({ adapter });
 const SALT_ROUNDS = 12;
 
 async function main() {
-  // eslint-disable-next-line no-console
   console.log("🌱 Starting database seed...");
-  // eslint-disable-next-line no-console
   console.log(`📍 Using database: ${DATABASE_URL?.replace(/:[^:@]+@/, ':***@') || 'Unknown'}`);
 
   // Clean existing data (for development only)
@@ -76,7 +74,6 @@ async function main() {
     },
   });
 
-  // eslint-disable-next-line no-console
   console.log("✅ Created test user:", testUser.email);
 
   // Create admin user
@@ -90,7 +87,6 @@ async function main() {
     },
   });
 
-  // eslint-disable-next-line no-console
   console.log("✅ Created admin user:", adminUser.email);
 
   // ===========================================
@@ -106,7 +102,6 @@ async function main() {
       monthlyUsed: 0,
     },
   });
-  // eslint-disable-next-line no-console
   console.log("✅ Created credit wallet for test user (FREE: 15 credits)");
 
   await prisma.creditWallet.create({
@@ -118,14 +113,12 @@ async function main() {
       monthlyUsed: 0,
     },
   });
-  // eslint-disable-next-line no-console
   console.log("✅ Created credit wallet for admin user (PRO: 2000 credits)");
 
   // ===========================================
   // Seed Built-in Plugins (from handler definitions)
   // ===========================================
   
-  // eslint-disable-next-line no-console
   console.log("\n📦 Seeding plugins...");
 
   const pluginSeeds = getAllBuiltinPluginSeedData();
@@ -136,18 +129,13 @@ async function main() {
       update: seedData,
       create: seedData,
     });
-    // eslint-disable-next-line no-console
     console.log(`✅ Seeded plugin: ${plugin.name}`);
   }
 
-  // eslint-disable-next-line no-console
   console.log(`\n📦 Total plugins seeded: ${pluginSeeds.length}`);
 
-  // eslint-disable-next-line no-console
   console.log("\n🎉 Database seeded successfully!");
-  // eslint-disable-next-line no-console
   console.log("📝 Test credentials: test@example.com / 12345678test");
-  // eslint-disable-next-line no-console
   console.log("📝 Admin credentials: admin@2bot.org / 12345678admin");
 }
 
@@ -160,7 +148,6 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
     await pool.end();
-    // eslint-disable-next-line no-console
     console.log("👋 Database connection closed");
     process.exit(0);
   });

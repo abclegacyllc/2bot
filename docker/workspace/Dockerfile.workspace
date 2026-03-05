@@ -1,0 +1,105 @@
+# ============================================
+# 2Bot Workspace - User Container Base Image
+# ============================================
+# This image runs inside each user's workspace container.
+# It provides:
+#   - Node.js 20 runtime for plugin execution
+#   - Git for repo cloning
+#   - Bridge agent for platform communication
+#   - Pre-created workspace directory structure
+#
+# Size: ~80MB (Alpine-based)
+# Security: Non-root user, no privileged access
+# ============================================
+
+FROM node:20-alpine AS base
+
+# Install system tools the bridge agent and users need
+# git: for GitHub repo imports
+# bash: for terminal sessions (alpine default is ash)
+# curl: for health checks and HTTP requests
+# python3: some npm packages need it for node-gyp builds
+# openssh-client: for git SSH operations (future)
+# iptables: for network egress control (container-side rules)
+RUN apk add --no-cache \
+    git \
+    bash \
+    curl \
+    python3 \
+    openssh-client \
+    iptables \
+    && rm -rf /var/cache/apk/*
+
+# ============================================
+# Bridge Agent Setup
+# ============================================
+# The bridge agent is the ONLY process that communicates
+# with the 2Bot platform. It runs on port 9000 and handles:
+#   - File operations (CRUD)
+#   - Plugin process management (start/stop)
+#   - Git operations
+#   - Package installation
+#   - Terminal PTY sessions
+#   - Health reporting
+# ============================================
+
+WORKDIR /opt/bridge-agent
+
+# Copy bridge agent code
+COPY bridge-agent/package.json bridge-agent/package-lock.json* ./
+
+# Install bridge agent dependencies
+# better-sqlite3 requires native compilation (build-base provides gcc/g++/make)
+RUN apk add --no-cache --virtual .build-deps build-base \
+    && npm ci --production 2>/dev/null || npm install --production \
+    && apk del .build-deps
+
+# Copy bridge agent source
+COPY bridge-agent/*.js ./
+
+# ============================================
+# Workspace Setup
+# ============================================
+# /workspace is the user's persistent directory
+# mounted as a Docker volume for data persistence
+# ============================================
+
+# Create workspace structure
+RUN mkdir -p /workspace/plugins \
+             /workspace/data \
+             /workspace/imports \
+             /workspace/.2bot \
+    && chmod -R 755 /workspace
+
+# Default .gitignore for workspace — prevent committing internal data
+RUN printf '.2bot/\nnode_modules/\n*.log\n' > /workspace/.gitignore
+
+# Create symlink so plugins can require('/bridge-agent/plugin-sdk')
+RUN ln -s /opt/bridge-agent /bridge-agent
+
+# Use the existing 'node' user (uid 1000) from the base image
+# This matches common host user UID for volume permissions
+RUN chown -R node:node /workspace \
+    && chown -R node:node /opt/bridge-agent
+
+# Set workspace as the default directory for terminal sessions
+WORKDIR /workspace
+
+# Switch to non-root user
+USER node
+
+# Bridge agent WebSocket port
+EXPOSE 9000
+
+# Health check - bridge agent exposes HTTP health endpoint
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -sf http://localhost:9000/health || exit 1
+
+# Environment
+ENV NODE_ENV=production \
+    BRIDGE_PORT=9000 \
+    WORKSPACE_DIR=/workspace \
+    LOG_LEVEL=info
+
+# Start bridge agent
+CMD ["node", "/opt/bridge-agent/index.js"]

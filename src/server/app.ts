@@ -9,6 +9,7 @@ import { errorHandler } from "./middleware/error-handler";
 import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { pinoHttpMiddleware } from "./middleware/request-logger";
 import { router } from "./routes";
+import { internalRouter } from "./routes/internal";
 import stripeWebhookRouter from "./routes/stripe-webhook";
 
 const serverLogger = loggers.server;
@@ -56,6 +57,10 @@ export function createApp(): Express {
 
   // Rate limiting (apply early to protect all routes)
   app.use(rateLimitMiddleware());
+
+  // Internal API routes (container → platform, no user auth)
+  // Mounted before API routes so /internal/* is not caught by auth middleware.
+  app.use("/internal", internalRouter);
 
   // API routes
   // Phase 6.7.5.3: Support configurable prefix
