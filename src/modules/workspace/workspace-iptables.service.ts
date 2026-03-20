@@ -26,7 +26,7 @@
  *   - Squid proxy must be running as a container on the workspace network
  *   - iptables conntrack and limit modules must be available
  * 
- * @module modules/workspace/network-egress.service
+ * @module modules/workspace/workspace-iptables.service
  */
 
 import { execFile } from 'child_process';
@@ -34,10 +34,10 @@ import { promisify } from 'util';
 
 import { logger } from '@/lib/logger';
 
-import { dockerService } from './docker.service';
+import { dockerService } from './workspace-docker.service';
 
 const execFileAsync = promisify(execFile);
-const log = logger.child({ module: 'workspace:network-egress' });
+const log = logger.child({ module: 'workspace:iptables' });
 
 // ===========================================
 // Configuration

@@ -37,13 +37,14 @@ import type { ServiceContext } from '@/shared/types/context';
 import type { BridgeAction, WorkspaceResourceAllocation, WorkspaceStatus } from '@/shared/types/workspace';
 
 import { pluginDeployService } from '@/modules/plugin/plugin-deploy.service';
-import { pluginIpcService } from '@/modules/plugin/plugin-ipc.service';
-import { workspaceAuditService } from './audit.service';
+import { pluginWorkspaceSyncService } from '@/modules/plugin/plugin-workspace-sync.service';
+import { pushAllWorkflowCaches } from '@/modules/workflow/workflow-cache.service';
 import { bridgeClientManager, type BridgeClient } from './bridge-client.service';
-import { dockerService } from './docker.service';
-import { egressProxyService } from './egress-proxy.service';
 import { gatewayRouteService } from './gateway-route.service';
-import { networkEgressService } from './network-egress.service';
+import { workspaceAuditService } from './workspace-audit.service';
+import { dockerService } from './workspace-docker.service';
+import { networkEgressService } from './workspace-iptables.service';
+import { egressProxyService } from './workspace-squid.service';
 import {
     BRIDGE_AUTH_TOKEN_LENGTH,
     BRIDGE_PORT,
@@ -298,7 +299,7 @@ class WorkspaceService {
       const bridgePort = await dockerService.getBridgePort(containerId);
       const containerInfo = await dockerService.inspectContainer(containerId);
 
-      // 12. Update DB with final status
+      // 12. Update DB with final status + encrypted bridge auth token for reconnection
       await prisma.workspaceContainer.update({
         where: { id: container.id },
         data: {
@@ -309,13 +310,8 @@ class WorkspaceService {
           lastActivityAt: new Date(),
           healthCheckFails: 0,
           errorMessage: null,
+          bridgeAuthToken: encrypt(bridgeAuthToken),
         },
-      });
-
-      // 13. Store bridge auth token (encrypted) in DB for reconnection after platform restart
-      await prisma.workspaceContainer.update({
-        where: { id: container.id },
-        data: { bridgeAuthToken: encrypt(bridgeAuthToken) },
       });
 
       // 14. Establish bridge connection
@@ -356,6 +352,9 @@ class WorkspaceService {
       }).catch((err) => {
         log.warn({ containerDbId: container.id, error: (err as Error).message }, 'Plugin start after create failed (non-blocking)');
       });
+
+      // Push workflow caches to new container (non-blocking)
+      void pushAllWorkflowCaches(ctx.userId, options.organizationId ?? null);
 
       // Audit: successful creation
       workspaceAuditService.log({
@@ -482,6 +481,9 @@ class WorkspaceService {
       }).catch((err) => {
         log.warn({ containerDbId, error: (err as Error).message }, 'Plugin start after workspace start failed (non-blocking)');
       });
+
+      // Push workflow caches to container (non-blocking)
+      void pushAllWorkflowCaches(ctx.userId, container.organizationId ?? null);
 
       workspaceAuditService.log({ userId: ctx.userId, containerId: containerDbId, action: 'START', ipAddress: ctx.ipAddress, userAgent: ctx.userAgent });
       return { success: true, message: 'Workspace started', containerId: containerDbId, status: 'RUNNING' };
@@ -939,78 +941,7 @@ class WorkspaceService {
     const client = await this.getBridgeClient(ctx, containerDbId);
     this.touchActivity(containerDbId);
     const result = await client.fileDelete(path);
-
-    // If deleted path is a plugin file or directory, fully uninstall from DB + storage
-    const isPluginFile = path.startsWith('plugins/') && /\.(js|ts|mjs|cjs)$/.test(path);
-    const isPluginDir = path.startsWith('plugins/') && /^plugins\/[^/]+\/?$/.test(path);
-
-    if (isPluginFile || isPluginDir) {
-      try {
-        // Stop the plugin process if running (ignore errors — file already gone)
-        await client.pluginStop(path, true).catch(() => {});
-
-        // Derive slug from path
-        const slugFromFile = path
-          .replace(/^plugins\//, '')
-          .replace(/\.(js|ts|mjs|cjs)$/, '')
-          .replace(/\/index$/, '')
-          .replace(/\/$/, '');  // strip trailing slash for directory deletes
-
-        // Sync DB: fully uninstall the matching UserPlugin
-        const container = await prisma.workspaceContainer.findUnique({
-          where: { id: containerDbId },
-          select: { userId: true, organizationId: true },
-        });
-        if (container) {
-          const userPlugin = await prisma.userPlugin.findFirst({
-            where: {
-              userId: container.userId,
-              organizationId: container.organizationId ?? null,
-              OR: [
-                { entryFile: path },
-                { plugin: { slug: slugFromFile } },
-              ],
-            },
-            include: { plugin: true },
-          });
-
-          if (userPlugin) {
-            const plugin = userPlugin.plugin;
-            const isCustomPlugin = plugin.authorType === 'USER' && !plugin.isBuiltin;
-
-            // Check if this is the last installation (for catalog cleanup)
-            let shouldDeleteCatalogEntry = false;
-            if (isCustomPlugin) {
-              const installCount = await prisma.userPlugin.count({
-                where: { pluginId: plugin.id },
-              });
-              shouldDeleteCatalogEntry = installCount <= 1;
-            }
-
-            // Delete records in a transaction
-            await prisma.$transaction(async (tx) => {
-              await tx.userPlugin.delete({ where: { id: userPlugin.id } });
-              if (shouldDeleteCatalogEntry) {
-                await tx.plugin.delete({ where: { id: plugin.id } });
-              }
-            });
-
-            // Clear container-local SQLite storage for this plugin
-            const pluginFile = userPlugin.entryFile ?? `plugins/${slugFromFile}.js`;
-            await client.send('storage.clearPlugin', { pluginFile }).catch(() => {});
-
-            // Clear server-side Redis storage (non-blocking)
-            void pluginIpcService.clearPluginRedisKeys(userPlugin.id).catch(() => {});
-
-            // Invalidate IPC context cache
-            pluginIpcService.clearCache();
-          }
-        }
-      } catch {
-        // Non-critical — file deletion still succeeded
-      }
-    }
-
+    await pluginWorkspaceSyncService.handlePluginFileDeleted(containerDbId, path, client).catch(() => {});
     return result;
   }
 
@@ -1034,43 +965,7 @@ class WorkspaceService {
     const client = await this.getBridgeClient(ctx, containerDbId);
     this.touchActivity(containerDbId);
     const result = await client.pluginStart(file, env, storageQuotaMb);
-
-    // Sync DB: mark the matching UserPlugin as enabled so My Plugins reflects the start.
-    try {
-      const container = await prisma.workspaceContainer.findUnique({
-        where: { id: containerDbId },
-        select: { userId: true, organizationId: true },
-      });
-      if (container) {
-        const slugFromFile = file
-          .replace(/^plugins\//, '')
-          .replace(/\.(js|ts|mjs|cjs)$/, '')
-          .replace(/\/index$/, '');
-
-        const userPlugin = await prisma.userPlugin.findFirst({
-          where: {
-            userId: container.userId,
-            organizationId: container.organizationId ?? null,
-            isEnabled: false,
-            OR: [
-              { entryFile: file },
-              { plugin: { slug: slugFromFile } },
-            ],
-          },
-          select: { id: true },
-        });
-
-        if (userPlugin) {
-          await prisma.userPlugin.update({
-            where: { id: userPlugin.id },
-            data: { isEnabled: true },
-          });
-        }
-      }
-    } catch {
-      // Non-critical — workspace start still succeeded
-    }
-
+    await pluginWorkspaceSyncService.handlePluginStarted(containerDbId, file).catch(() => {});
     return result;
   }
 
@@ -1078,45 +973,7 @@ class WorkspaceService {
     const client = await this.getBridgeClient(ctx, containerDbId);
     this.touchActivity(containerDbId);
     const result = await client.pluginStop(file, force);
-
-    // Sync DB: mark the matching UserPlugin as disabled so My Plugins reflects the stop.
-    // Extract slug from file path: "plugins/my-slug.js" → "my-slug"
-    try {
-      const container = await prisma.workspaceContainer.findUnique({
-        where: { id: containerDbId },
-        select: { userId: true, organizationId: true },
-      });
-      if (container) {
-        const slugFromFile = file
-          .replace(/^plugins\//, '')
-          .replace(/\.(js|ts|mjs|cjs)$/, '')
-          .replace(/\/index$/, '');
-
-        // Find matching UserPlugin by entryFile or by plugin slug
-        const userPlugin = await prisma.userPlugin.findFirst({
-          where: {
-            userId: container.userId,
-            organizationId: container.organizationId ?? null,
-            isEnabled: true,
-            OR: [
-              { entryFile: file },
-              { plugin: { slug: slugFromFile } },
-            ],
-          },
-          select: { id: true },
-        });
-
-        if (userPlugin) {
-          await prisma.userPlugin.update({
-            where: { id: userPlugin.id },
-            data: { isEnabled: false },
-          });
-        }
-      }
-    } catch {
-      // Non-critical — workspace stop still succeeded
-    }
-
+    await pluginWorkspaceSyncService.handlePluginStopped(containerDbId, file).catch(() => {});
     return result;
   }
 
@@ -1129,58 +986,7 @@ class WorkspaceService {
   async pluginList(ctx: ServiceContext, containerDbId: string) {
     const client = await this.getBridgeClient(ctx, containerDbId);
     const plugins = await client.pluginList() as Array<{ file: string; name: string; displayName?: string; [key: string]: unknown }>;
-
-    // Enrich with display names from DB (Plugin.name)
-    // Bridge agent returns slug-based names for single-file plugins;
-    // DB stores the human-readable name.
-    try {
-      const container = await prisma.workspaceContainer.findUnique({
-        where: { id: containerDbId },
-        select: { userId: true, organizationId: true },
-      });
-
-      if (container) {
-        const userPlugins = await prisma.userPlugin.findMany({
-          where: {
-            userId: container.userId,
-            organizationId: container.organizationId ?? null,
-          },
-          select: {
-            entryFile: true,
-            plugin: { select: { name: true, slug: true } },
-          },
-        });
-
-        // Build maps: slug → displayName, entryFile → displayName
-        const nameBySlug = new Map<string, string>();
-        const nameByFile = new Map<string, string>();
-        for (const up of userPlugins) {
-          nameBySlug.set(up.plugin.slug, up.plugin.name);
-          if (up.entryFile) {
-            nameByFile.set(up.entryFile, up.plugin.name);
-          }
-        }
-
-        for (const p of plugins) {
-          // Try direct entryFile match first
-          const byFile = nameByFile.get(p.file);
-          if (byFile) { p.displayName = byFile; continue; }
-
-          // Extract slug from file path:
-          //   "plugins/my-slug.js"      → "my-slug"
-          //   "plugins/my-slug/index.js" → "my-slug"
-          const slugFromFile = p.file
-            .replace(/^plugins\//, '')
-            .replace(/\.(js|ts|mjs|cjs)$/, '')
-            .replace(/\/index$/, '');
-          const bySlug = nameBySlug.get(slugFromFile);
-          if (bySlug) { p.displayName = bySlug; }
-        }
-      }
-    } catch {
-      // Non-critical — fall back to bridge-provided name
-    }
-
+    await pluginWorkspaceSyncService.enrichPluginList(containerDbId, plugins).catch(() => {});
     return plugins;
   }
 

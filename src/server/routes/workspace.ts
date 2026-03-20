@@ -60,35 +60,37 @@
 
 import { prisma } from '@/lib/prisma';
 import { workspaceService } from '@/modules/workspace';
-import { workspaceBackupService } from '@/modules/workspace/backup.service';
-import { egressProxyService } from '@/modules/workspace/egress-proxy.service';
-import { workspaceMetricsService } from '@/modules/workspace/metrics.service';
+import { workspaceBackupService } from '@/modules/workspace/workspace-backup.service';
+import { workspaceMetricsService } from '@/modules/workspace/workspace-metrics.service';
+import { egressProxyService } from '@/modules/workspace/workspace-squid.service';
 import {
-  autoStopSchema,
-  backupRestoreSchema,
-  createWorkspaceSchema,
-  fileDeleteSchema,
-  fileListSchema,
-  fileMkdirSchema,
-  fileReadSchema,
-  fileRenameSchema,
-  fileWriteSchema,
-  gitCloneSchema,
-  gitPullSchema,
-  logQuerySchema,
-  packageInstallSchema,
-  packageUninstallSchema,
-  pluginStartSchema,
-  pluginStopSchema,
-  terminalCloseSchema,
-  terminalCreateSchema,
-  terminalResizeSchema,
+    autoStopSchema,
+    backupRestoreSchema,
+    createWorkspaceSchema,
+    fileDeleteSchema,
+    fileListSchema,
+    fileMkdirSchema,
+    fileReadSchema,
+    fileRenameSchema,
+    fileWriteSchema,
+    gitCloneSchema,
+    gitPullSchema,
+    logQuerySchema,
+    packageInstallSchema,
+    packageUninstallSchema,
+    pluginStartSchema,
+    pluginStopSchema,
+    terminalCloseSchema,
+    terminalCreateSchema,
+    terminalResizeSchema,
 } from '@/modules/workspace/workspace.validation';
 import { BadRequestError, RateLimitError } from '@/shared/errors';
 import type { ApiResponse } from '@/shared/types';
+import type { WorkspaceFileEntry } from '@/shared/types/workspace';
 import { createServiceContext, type ServiceContext } from '@/shared/types/context';
 import type { NextFunction } from 'express';
 import { Router, type Request, type Response } from 'express';
+import { RateLimiterRes } from 'rate-limiter-flexible';
 import type { ZodError } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import { asyncHandler } from '../middleware/error-handler';
@@ -143,8 +145,13 @@ workspaceRouter.use(async (req: Request, _res: Response, next: NextFunction) => 
   try {
     await limiter.consume(key);
     next();
-  } catch {
-    next(new RateLimitError('Too many workspace requests. Please slow down.', 60));
+  } catch (err) {
+    if (err instanceof RateLimiterRes) {
+      next(new RateLimitError('Too many workspace requests. Please slow down.', 60));
+    } else {
+      // Redis error — fail open
+      next();
+    }
   }
 });
 
@@ -435,10 +442,107 @@ workspaceRouter.get(
     const parsed = fileListSchema.safeParse(req.query);
     if (!parsed.success) throw new BadRequestError('Invalid query parameters');
 
-    const files = await workspaceService.fileList(ctx, param(req, 'id'), parsed.data.path, parsed.data.recursive);
+    const files = await workspaceService.fileList(ctx, param(req, 'id'), parsed.data.path, parsed.data.recursive) as WorkspaceFileEntry[];
+
+    // Enrich file tree with human-readable display names
+    await enrichFileDisplayNames(files, ctx.userId, ctx.organizationId ?? null);
+
     res.json({ success: true, data: files });
   }),
 );
+
+/**
+ * Walk the file tree and inject displayName + group bots by gateway type.
+ * Also hides the legacy top-level plugins/ folder (content migrated to bots/).
+ *
+ * Virtual tree structure:
+ *   bots/
+ *     telegram/          ← virtual grouping folder by gateway type (lowercase)
+ *       @my_bot/         ← gateway folder, displayName = bot username or gateway name
+ *         plugins/
+ *           AI Chat Bot  ← plugin file, displayName = plugin display name
+ *
+ * Real filesystem paths are preserved in each entry's `path` property so
+ * all file operations (read, write, delete) continue to work.
+ */
+async function enrichFileDisplayNames(
+  entries: WorkspaceFileEntry[],
+  userId: string,
+  organizationId: string | null,
+): Promise<void> {
+  // Build lookup maps from DB
+  const [gateways, userPlugins] = await Promise.all([
+    prisma.gateway.findMany({
+      where: { userId, organizationId: organizationId ?? undefined },
+      select: { id: true, name: true, type: true, metadata: true },
+    }),
+    prisma.userPlugin.findMany({
+      where: { userId, organizationId: organizationId ?? null, isEnabled: true },
+      select: { entryFile: true, plugin: { select: { name: true, slug: true } } },
+    }),
+  ]);
+
+  const gatewayById = new Map(gateways.map(g => [g.id, g]));
+  const pluginNameBySlug = new Map(userPlugins.map(up => [up.plugin.slug, up.plugin.name]));
+
+  // Hide legacy top-level plugins/ folder (content migrated to bots/)
+  const pluginsDirIdx = entries.findIndex(e => e.type === 'DIRECTORY' && e.name === 'plugins');
+  if (pluginsDirIdx !== -1) entries.splice(pluginsDirIdx, 1);
+
+  // Restructure bots/ folder into type-grouped virtual tree
+  const botsDir = entries.find(e => e.type === 'DIRECTORY' && e.name === 'bots');
+  if (botsDir?.children) {
+    const byType = new Map<string, WorkspaceFileEntry[]>();
+    const other: WorkspaceFileEntry[] = [];
+
+    for (const child of botsDir.children) {
+      if (child.type !== 'DIRECTORY') { other.push(child); continue; }
+
+      const gw = gatewayById.get(child.name);
+      if (!gw) { other.push(child); continue; }
+
+      // Set display name: prefer @botUsername, fall back to gateway name
+      const meta = gw.metadata as Record<string, unknown> | null;
+      const botUsername = meta?.botUsername as string | undefined;
+      child.displayName = botUsername ? `@${botUsername}` : gw.name;
+
+      const typeKey = gw.type; // e.g. "TELEGRAM_BOT"
+      if (!byType.has(typeKey)) byType.set(typeKey, []);
+      byType.get(typeKey)!.push(child);
+    }
+
+    // Build virtual type folders sorted alphabetically (all lowercase)
+    const typeFolders: WorkspaceFileEntry[] = [...byType.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([typeKey, gwFolders]) => ({
+        name: typeKey.replace(/_BOT$/, '').toLowerCase(), // TELEGRAM_BOT → telegram
+        path: `/bots/${typeKey.replace(/_BOT$/, '').toLowerCase()}`,
+        type: 'DIRECTORY' as const,
+        sizeBytes: 0,
+        isPlugin: false,
+        source: 'manual' as const,
+        updatedAt: new Date().toISOString(),
+        children: gwFolders.sort((a, b) => (a.displayName ?? a.name).localeCompare(b.displayName ?? b.name)),
+      }));
+
+    botsDir.children = [...typeFolders, ...other];
+  }
+
+  // Walk full tree for plugin file display names
+  function walkPlugins(items: WorkspaceFileEntry[]) {
+    for (const entry of items) {
+      if (entry.type === 'DIRECTORY') {
+        if (entry.children) walkPlugins(entry.children);
+      } else {
+        const baseName = entry.name.replace(/\.js$/, '');
+        const displayName = pluginNameBySlug.get(baseName);
+        if (displayName) entry.displayName = displayName;
+      }
+    }
+  }
+
+  walkPlugins(entries);
+}
 
 /**
  * GET /workspace/:id/files/read - Read a file
@@ -1010,8 +1114,6 @@ const handleGatewaysOverview = asyncHandler(async (req: Request, res: Response<A
   const containerId = param(req, 'id');
   await workspaceService.getWorkspace(ctx, containerId);
 
-  const CUSTOM_GW_BASE = process.env.WEBHOOK_BASE_URL || process.env.TELEGRAM_WEBHOOK_BASE_URL || 'https://webhook.2bot.org';
-
   const allGateways = await prisma.gateway.findMany({
     where: { userId: ctx.userId },
     select: {
@@ -1047,13 +1149,6 @@ const handleGatewaysOverview = asyncHandler(async (req: Request, res: Response<A
         isEnabled: up.isEnabled,
       })),
     };
-
-    // Add webhook URL for custom gateways
-    if (g.type === 'CUSTOM_GATEWAY') {
-      base.url = `${CUSTOM_GW_BASE}/custom/${g.id}`;
-      const meta = (g.metadata ?? {}) as Record<string, unknown>;
-      base.credentialKeys = (meta.credentialKeys as string[]) ?? [];
-    }
 
     return base;
   });

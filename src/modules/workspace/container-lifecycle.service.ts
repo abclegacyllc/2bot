@@ -17,15 +17,16 @@ import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 
 import { pluginDeployService } from '@/modules/plugin/plugin-deploy.service';
-import { workspaceAuditService } from './audit.service';
+import { pushAllWorkflowCaches } from '@/modules/workflow/workflow-cache.service';
+import { workspaceAuditService } from './workspace-audit.service';
 
 import { bridgeClientManager } from './bridge-client.service';
-import { dockerService } from './docker.service';
+import { dockerService } from './workspace-docker.service';
 import {
-  HEALTH_CHECK_INTERVAL,
-  IDLE_CHECK_INTERVAL,
-  MAX_HEALTH_FAILURES,
-  RESTART_COOLDOWN
+    HEALTH_CHECK_INTERVAL,
+    IDLE_CHECK_INTERVAL,
+    MAX_HEALTH_FAILURES,
+    RESTART_COOLDOWN
 } from './workspace.constants';
 import type { HealthCheckResult, RestartDecision } from './workspace.types';
 
@@ -42,6 +43,10 @@ class ContainerLifecycleService {
 
   // Track last restart time per container to enforce cooldown
   private lastRestartTime: Map<string, number> = new Map();
+
+  // Track containers that have been synced (plugin migration + start) this server lifetime.
+  // Health check triggers startAllForUser once per container to ensure bot-dir migration runs.
+  private syncedContainers: Set<string> = new Set();
 
   // ===========================================
   // Lifecycle Loop
@@ -114,6 +119,7 @@ class ContainerLifecycleService {
         containerId: true,
         containerName: true,
         userId: true,
+        organizationId: true,
         healthCheckFails: true,
         autoRestart: true,
         maxRestarts: true,
@@ -147,6 +153,7 @@ class ContainerLifecycleService {
     containerId: string | null;
     containerName: string;
     userId: string;
+    organizationId: string | null;
     healthCheckFails: number;
     autoRestart: boolean;
     maxRestarts: number;
@@ -227,6 +234,21 @@ class ContainerLifecycleService {
           // The bridge client will handle its own reconnection
           result.healthy = true;
           log.debug({ containerDbId: container.id }, 'Bridge health check failed but Docker is running');
+        }
+
+        // One-time plugin sync per container per server lifetime.
+        // Ensures bot-dir migration + plugin autostart runs even if
+        // the container was already running when this server started.
+        if (!this.syncedContainers.has(container.id)) {
+          this.syncedContainers.add(container.id);
+          void pluginDeployService.startAllForUser(
+            container.userId,
+            container.organizationId ?? null,
+            container.id,
+          ).catch((err) => {
+            log.warn({ containerDbId: container.id, error: (err as Error).message }, 'Plugin sync on health check failed (non-blocking)');
+          });
+          void pushAllWorkflowCaches(container.userId, container.organizationId ?? null);
         }
       } else {
         // No bridge client but Docker container is running — healthy at Docker level.
@@ -653,6 +675,9 @@ class ContainerLifecycleService {
           reconnected++;
           log.info({ containerDbId: container.id, containerName: container.containerName }, 'Bridge client reconnected');
 
+          // Mark as synced so health check doesn't re-trigger startAllForUser
+          this.syncedContainers.add(container.id);
+
           // Start all enabled plugins (recover missing files from template if needed)
           void pluginDeployService.startAllForUser(
             container.userId,
@@ -665,6 +690,9 @@ class ContainerLifecycleService {
           }).catch((err) => {
             log.warn({ containerDbId: container.id, error: (err as Error).message }, 'Plugin start after reconnect failed (non-blocking)');
           });
+
+          // Push workflow caches to container (non-blocking)
+          void pushAllWorkflowCaches(container.userId, container.organizationId ?? null);
         }
       } catch (err) {
         const msg = (err as Error).message ?? '';

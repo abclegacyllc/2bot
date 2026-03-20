@@ -56,7 +56,8 @@ export class BridgeClient extends EventEmitter {
   private static readonly PONG_TIMEOUT_MS = 60_000;
 
   // Request queue — serializes WebSocket operations to prevent interleaving
-  private readonly requestQueue = new PQueue({ concurrency: 1 });
+  // concurrency: 5 allows parallel plugin executions while still bounding load
+  private readonly requestQueue = new PQueue({ concurrency: 5 });
 
   /** Handler for IPC requests from plugins running inside this container */
   private ipcHandler:
@@ -374,8 +375,8 @@ export class BridgeClient extends EventEmitter {
   }
 
   /** Push an event to a running plugin (event-driven model). */
-  async pluginEvent(file: string, event: unknown): Promise<{ success: boolean; error?: string }> {
-    return this.send('plugin.event', { file, event }) as Promise<{ success: boolean; error?: string }>;
+  async pluginEvent(file: string, event: unknown): Promise<{ success: boolean; error?: string; output?: unknown }> {
+    return this.send('plugin.event', { file, event }) as Promise<{ success: boolean; error?: string; output?: unknown }>;
   }
 
   // --- Git Operations ---
@@ -738,7 +739,7 @@ class BridgeClientManager {
     // Listen for inbound traffic events and store them
     client.on('traffic.inbound', (data: Record<string, unknown>) => {
       // Lazy import to avoid circular deps
-      import('./egress-proxy.service').then(({ egressProxyService }) => {
+      import('./workspace-squid.service').then(({ egressProxyService }) => {
         egressProxyService.storeInboundLog(containerDbId, data as {
           timestamp: string;
           domain: string;

@@ -7,7 +7,7 @@
  * Provides query APIs with time-range filtering for dashboards, admin views,
  * and usage billing.
  * 
- * @module modules/workspace/metrics.service
+ * @module modules/workspace/workspace-metrics.service
  */
 
 import { logger } from '@/lib/logger';

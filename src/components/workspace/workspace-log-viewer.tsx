@@ -21,7 +21,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import type { WorkspaceLogEntry, WorkspaceLogQuery } from "@/shared/types/workspace";
-import { AlertTriangle, FileText, Info, RefreshCw, Search, XCircle } from "lucide-react";
+import { AlertTriangle, Download, FileText, Info, RefreshCw, Search, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // ===========================================
@@ -132,6 +132,9 @@ export function WorkspaceLogViewer({ logs, onFetch, loading }: WorkspaceLogViewe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [levelFilter, sourceFilter]);
 
+  // The logs prop is already server-filtered; alias for export button
+  const filteredLogs = logs;
+
   return (
     <div className="flex flex-col h-full">
       {/* Filters */}
@@ -174,6 +177,31 @@ export function WorkspaceLogViewer({ logs, onFetch, loading }: WorkspaceLogViewe
             onKeyDown={(e) => e.key === "Enter" && doFetch()}
           />
         </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => {
+            const text = filteredLogs
+              .map((e) => {
+                const t = new Date(e.createdAt || (e as unknown as Record<string, unknown>).timestamp as string).toISOString();
+                return `${t} [${e.level.toUpperCase()}] [${e.source}] ${e.message}`;
+              })
+              .join("\n");
+            const blob = new Blob([text], { type: "text/plain" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `workspace-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          disabled={filteredLogs.length === 0}
+          title="Export logs"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </Button>
 
         <Button
           variant="ghost"

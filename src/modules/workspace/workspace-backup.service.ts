@@ -7,7 +7,7 @@
  * Backup naming: {containerName}-{timestamp}.tar.gz
  * Backup location: /var/lib/2bot/backups/{containerName}/
  * 
- * @module modules/workspace/backup.service
+ * @module modules/workspace/workspace-backup.service
  */
 
 import { execFile } from 'child_process';

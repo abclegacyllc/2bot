@@ -27,14 +27,14 @@ export * from './workspace.validation';
 export * from './workspace.constants';
 
 // Services
-export { workspaceBackupService } from './backup.service';
 export { BridgeClient, bridgeClientManager } from './bridge-client.service';
-export { SERVER_INSTANCE_ID, bridgeLeaseService } from './bridge-lease.service';
+export { bridgeLeaseService, SERVER_INSTANCE_ID } from './bridge-lease.service';
 export { containerLifecycleService } from './container-lifecycle.service';
-export { dockerService } from './docker.service';
-export { egressProxyService } from './egress-proxy.service';
 export { gatewayRouteService } from './gateway-route.service';
-export { workspaceMetricsService } from './metrics.service';
-export { networkEgressService } from './network-egress.service';
+export { workspaceBackupService } from './workspace-backup.service';
+export { dockerService } from './workspace-docker.service';
+export { networkEgressService } from './workspace-iptables.service';
+export { workspaceMetricsService } from './workspace-metrics.service';
+export { egressProxyService } from './workspace-squid.service';
 export { workspaceService } from './workspace.service';
 

@@ -144,7 +144,12 @@ function TreeNode({
         )}
 
         {/* Name */}
-        <span className="truncate flex-1">{entry.name}</span>
+        <span className="truncate flex-1">
+          {entry.displayName ?? entry.name}
+          {entry.displayName && entry.type === 'FILE' ? (
+            <span className="text-muted-foreground/50 text-[10px] ml-1">({entry.name})</span>
+          ) : null}
+        </span>
 
         {/* Plugin badge */}
         {isPlugin ? (

@@ -5,7 +5,7 @@
  * debugging, and admin visibility. Fire-and-forget — audit failures
  * never block workspace operations.
  * 
- * @module modules/workspace/audit.service
+ * @module modules/workspace/workspace-audit.service
  */
 
 import { logger } from '@/lib/logger';

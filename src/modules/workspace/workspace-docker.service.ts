@@ -8,16 +8,14 @@
  * This service does NOT manage database state — it only talks to Docker.
  * The workspace.service.ts orchestrates DB + Docker together.
  * 
- * @module modules/workspace/docker.service
+ * @module modules/workspace/workspace-docker.service
  */
 
-import crypto from 'crypto';
 import Docker from 'dockerode';
 
 import { logger } from '@/lib/logger';
 
 import {
-    BRIDGE_AUTH_TOKEN_LENGTH,
     BRIDGE_PORT,
     CONTAINER_LABELS,
     CONTAINER_STOP_TIMEOUT,
@@ -82,12 +80,10 @@ class DockerService {
    */
   async createContainer(options: DockerCreateOptions): Promise<{
     containerId: string;
-    bridgeAuthToken: string;
   }> {
     const docker = getDocker();
 
-    // Generate bridge auth token
-    const bridgeAuthToken = options.bridgeAuthToken || crypto.randomBytes(BRIDGE_AUTH_TOKEN_LENGTH).toString('hex');
+    const { bridgeAuthToken } = options;
 
     // Build environment variables
     const envArray = [
@@ -174,7 +170,7 @@ class DockerService {
     const containerId = container.id;
     log.info({ containerId, name: options.name }, 'Container created');
 
-    return { containerId, bridgeAuthToken };
+    return { containerId };
   }
 
   /**

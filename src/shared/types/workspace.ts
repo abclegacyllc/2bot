@@ -102,6 +102,8 @@ export type WorkspaceFileType = 'FILE' | 'DIRECTORY';
 export interface WorkspaceFileEntry {
   /** File/folder name */
   name: string;
+  /** Human-readable display name (e.g. bot name instead of gateway ID) */
+  displayName?: string;
   /** Full path inside container */
   path: string;
   /** File or directory */
@@ -368,6 +370,7 @@ export type BridgeAction =
   // Storage operations (platform-initiated)
   | 'storage.stats'
   | 'storage.clearPlugin'
+  | 'storage.deletePluginDb'
   | 'storage.setQuota';
 
 /** Response from bridge agent to platform */

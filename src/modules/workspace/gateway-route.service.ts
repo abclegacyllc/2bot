@@ -86,11 +86,15 @@ class GatewayRouteService {
       }
 
       // Find all gateways owned by this user (scoped to org if applicable)
+      // Only route "plugin" mode gateways directly to the container.
+      // "workflow" mode gateways must go through the API server's workflow
+      // trigger system, so they must NOT have a direct container route.
       const gateways = await prisma.gateway.findMany({
         where: {
           userId: container.userId,
           organizationId: container.organizationId ?? null,
           status: 'CONNECTED',
+          mode: { not: 'workflow' },
         },
         select: { id: true },
       });
@@ -222,6 +226,7 @@ class GatewayRouteService {
             userId: container.userId,
             organizationId: container.organizationId ?? null,
             status: 'CONNECTED',
+            mode: { not: 'workflow' },
           },
           select: { id: true },
         });

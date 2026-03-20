@@ -677,8 +677,9 @@ function WorkspaceGatewaysPanel({ containerId }: { containerId: string | null })
   const getTypeIcon = (type: string) => {
     switch (type) {
       case "TELEGRAM_BOT": return <Network className="h-3 w-3 text-blue-400 flex-shrink-0" />;
-      case "AI": return <Globe className="h-3 w-3 text-amber-400 flex-shrink-0" />;
-      case "CUSTOM_GATEWAY": return <Link2 className="h-3 w-3 text-purple-400 flex-shrink-0" />;
+      case "DISCORD_BOT": return <Network className="h-3 w-3 text-indigo-400 flex-shrink-0" />;
+      case "SLACK_BOT": return <Network className="h-3 w-3 text-green-400 flex-shrink-0" />;
+      case "WHATSAPP_BOT": return <Network className="h-3 w-3 text-emerald-400 flex-shrink-0" />;
       default: return <Network className="h-3 w-3 text-muted-foreground flex-shrink-0" />;
     }
   };
@@ -686,8 +687,9 @@ function WorkspaceGatewaysPanel({ containerId }: { containerId: string | null })
   const getTypeLabel = (type: string) => {
     switch (type) {
       case "TELEGRAM_BOT": return "Telegram";
-      case "AI": return "AI";
-      case "CUSTOM_GATEWAY": return "Custom";
+      case "DISCORD_BOT": return "Discord";
+      case "SLACK_BOT": return "Slack";
+      case "WHATSAPP_BOT": return "WhatsApp";
       default: return type;
     }
   };
@@ -735,7 +737,7 @@ function WorkspaceGatewaysPanel({ containerId }: { containerId: string | null })
               <Network className="h-6 w-6 mx-auto opacity-40" />
               <p>No gateways configured yet.</p>
               <p className="text-[10px] max-w-xs mx-auto">
-                Go to <strong>Gateways → Add Gateway</strong> to create Telegram bots, AI providers, or custom gateways.
+                Go to <strong>Gateways → Add Gateway</strong> to create Telegram bots, Discord bots, Slack bots, or WhatsApp bots.
               </p>
             </div>
           ) : (
@@ -803,23 +805,7 @@ function WorkspaceGatewaysPanel({ containerId }: { containerId: string | null })
                             </Button>
                           </div>
                         ) : null}
-                        {gw.type === "CUSTOM_GATEWAY" ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground w-14 flex-shrink-0">Plugin:</span>
-                            <span className="font-mono text-[10px]">
-                              {gw.pluginFile || <span className="italic text-muted-foreground/50">no plugin connected — assign in plugin config</span>}
-                            </span>
-                          </div>
-                        ) : null}
-                        {gw.type === "CUSTOM_GATEWAY" && gw.credentialKeys && gw.credentialKeys.length > 0 ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-muted-foreground w-14 flex-shrink-0">Creds:</span>
-                            <span className="font-mono text-[10px]">
-                              {gw.credentialKeys.join(", ")}
-                            </span>
-                          </div>
-                        ) : null}
-                        {gw.plugins.length > 0 && gw.type !== "CUSTOM_GATEWAY" ? (
+                        {gw.plugins.length > 0 ? (
                           <div className="space-y-1">
                             <span className="text-muted-foreground text-[10px]">Connected Plugins:</span>
                             {gw.plugins.map((p, i) => (
@@ -1124,7 +1110,7 @@ export default function WorkspacePage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-ai-target="workspace-overview">
       <PageHeader
         title="Workspace"
         description={

@@ -17,7 +17,7 @@
  *   Example:
  *   1706000000.123 45 172.20.0.2 TCP_TUNNEL/200 5234 CONNECT api.telegram.org:443 api.telegram.org
  * 
- * @module modules/workspace/egress-proxy.service
+ * @module modules/workspace/workspace-squid.service
  */
 
 import { execFile } from 'child_process';
@@ -33,7 +33,7 @@ import { prisma } from '@/lib/prisma';
 import { WORKSPACE_NETWORK } from './workspace.constants';
 
 const execFileAsync = promisify(execFile);
-const log = logger.child({ module: 'workspace:egress-proxy' });
+const log = logger.child({ module: 'workspace:squid' });
 
 // ===========================================
 // Configuration
