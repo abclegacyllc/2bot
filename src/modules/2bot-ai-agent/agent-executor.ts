@@ -360,7 +360,7 @@ async function dispatchPlatformToolCall(
 
     case "create_gateway": {
       const gwName = args.name as string;
-      const gwType = args.type as "TELEGRAM_BOT" | "AI" | "CUSTOM_GATEWAY";
+      const gwType = args.type as "TELEGRAM_BOT" | "DISCORD_BOT" | "SLACK_BOT" | "WHATSAPP_BOT";
 
       // Build credentials based on type
       let credentials: GatewayCredentials;
@@ -373,30 +373,10 @@ async function dispatchPlatformToolCall(
           });
         }
         credentials = { botToken };
-      } else if (gwType === "AI") {
-        const provider = args.provider as string | undefined;
-        const apiKey = args.apiKey as string | undefined;
-        if (!provider || !apiKey) {
-          return JSON.stringify({
-            success: false,
-            error: "provider and apiKey are required for AI gateways.",
-          });
-        }
-        credentials = { provider, apiKey } as GatewayCredentials;
-      } else if (gwType === "CUSTOM_GATEWAY") {
-        // Custom gateways use flexible key-value credentials.
-        // The agent can pass any credentials the user provides.
-        const credPairs: Record<string, string> = {};
-        if (args.credentials && typeof args.credentials === "object") {
-          for (const [k, v] of Object.entries(args.credentials as Record<string, unknown>)) {
-            if (typeof v === "string") credPairs[k] = v;
-          }
-        }
-        credentials = credPairs as GatewayCredentials;
       } else {
         return JSON.stringify({
           success: false,
-          error: `Unknown gateway type: "${gwType}". Must be TELEGRAM_BOT, AI, or CUSTOM_GATEWAY.`,
+          error: `Unknown gateway type: "${gwType}". Must be TELEGRAM_BOT, DISCORD_BOT, SLACK_BOT, or WHATSAPP_BOT.`,
         });
       }
 
@@ -437,10 +417,6 @@ async function dispatchPlatformToolCall(
       // Build credentials if any credential field provided
       if (args.botToken) {
         updateData.credentials = { botToken: args.botToken as string };
-      } else if (args.apiKey) {
-        updateData.credentials = { provider: (args.provider as string) || "", apiKey: args.apiKey as string } as GatewayCredentials;
-      } else if (args.url) {
-        updateData.credentials = { url: args.url as string };
       }
 
       const updated = await gatewayService.update(ctx, gwId, updateData);

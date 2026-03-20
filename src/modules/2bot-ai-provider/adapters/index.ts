@@ -28,3 +28,18 @@ export {
     openrouterTextGeneration,
     openrouterTextGenerationStream
 } from "./openrouter.adapter";
+
+export {
+    vertexImageGeneration,
+    vertexTextGeneration,
+    vertexTextGenerationStream
+} from "./vertex-ai.adapter";
+
+export {
+    genLangTextGeneration,
+    genLangTextGenerationStream
+} from "./google-genlang.adapter";
+
+export {
+    veoVideoGeneration
+} from "./google-veo.adapter";

@@ -89,6 +89,7 @@ async function genericDiscover(provider: TwoBotAIProvider): Promise<ModelInfo[]>
 const CUSTOM_DISCOVERERS: Partial<Record<TwoBotAIProvider, () => Promise<ModelInfo[]>>> = {
   openai: discoverOpenAIModels,
   anthropic: discoverAnthropicModels,
+  google: discoverGoogleAIModels,
 };
 
 // ===========================================
@@ -214,6 +215,75 @@ async function discoverAnthropicModels(): Promise<ModelInfo[]> {
 }
 
 // ===========================================
+// Google Vertex AI Model Discovery (Custom)
+// ===========================================
+
+/**
+ * Known mappings from Vertex AI model IDs to our registry canonical IDs.
+ * Vertex AI Model Garden hosts Gemini + third-party models (Claude, Llama, Mistral, etc.)
+ *
+ * Key: substring to match in Vertex AI's model name
+ * Value: canonical model ID in our registry
+ */
+const _VERTEX_MODEL_MAP: Record<string, string> = {
+  // Gemini native
+  "gemini-2.5-flash": "google/gemini-2.5-flash-preview",
+  "gemini-3-flash": "google/gemini-3-flash-preview",
+  "gemini-2.5-pro": "google/gemini-2.5-pro-preview",
+  "gemini-3-pro": "google/gemini-3-pro-preview",
+  "gemma-3n": "google/gemma-3n-E4B-it",
+  // Claude on Vertex AI (Model Garden)
+  "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+  "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+  "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
+  "claude-sonnet-4-6": "claude-sonnet-4-6",
+  "claude-opus-4-5": "claude-opus-4-5-20251101",
+  "claude-opus-4-6": "claude-opus-4-6",
+  // Llama on Vertex AI (Model Garden)
+  "llama-4-maverick": "llama-4-maverick",
+  "llama-4-scout": "llama-4-scout",
+  "llama-3.3-70b": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+  "llama-3.2-3b": "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+  "llama-3.1-8b": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+  // Mistral on Vertex AI (Model Garden)
+  "mistral-large": "mistralai/mistral-large-2411",
+  // DeepSeek on Vertex AI (Model Garden)
+  "deepseek-r1": "deepseek-ai/DeepSeek-R1",
+  "deepseek-v3": "deepseek-v3",
+};
+
+/**
+ * Discover available models from Google Vertex AI.
+ *
+ * Since Vertex AI models list requires heavier API setup, we use a static
+ * registry-based approach: return all models that have a `google` provider entry.
+ * The health check already validates the credentials work.
+ *
+ * Third-party models available on Vertex AI Model Garden are pre-registered
+ * in the model registry with their google provider modelIds.
+ */
+async function discoverGoogleAIModels(): Promise<ModelInfo[]> {
+  const serviceAccount = process.env.TWOBOT_VERTEX_AI_SERVICE_ACCOUNT;
+  const project = process.env.TWOBOT_VERTEX_AI_PROJECT;
+
+  if (!serviceAccount || !project) {
+    log.warn("Vertex AI credentials not configured, skipping discovery");
+    return [];
+  }
+
+  // Return all models registered with the google provider
+  const entries = getRegistryEntriesByProvider("google");
+  const discoveredModels: ModelInfo[] = entries.map((e) => registryToModelInfo(e, "google"));
+
+  log.info(
+    { count: discoveredModels.length, models: discoveredModels.map((m) => m.id) },
+    "Discovered Vertex AI models (Gemini + Model Garden third-party)",
+  );
+
+  return discoveredModels;
+}
+
+// ===========================================
 // Unified Discovery Dispatch
 // ===========================================
 
@@ -274,10 +344,15 @@ export async function discoverAllModels(forceRefresh = false): Promise<ModelInfo
 
   const allModels = results.flatMap((r) => r.models);
 
-  // Sort by provider, then by tier
+  // Provider priority (lower = preferred). Must match tier-auto-curator.ts.
+  const PROVIDER_PRIORITY: Record<string, number> = {
+    google: 1, anthropic: 2, together: 3, openai: 4, fireworks: 4, openrouter: 5,
+  };
+
+  // Sort by provider priority, then by tier
   allModels.sort((a, b) => {
     if (a.provider !== b.provider) {
-      return a.provider.localeCompare(b.provider);
+      return (PROVIDER_PRIORITY[a.provider] ?? 99) - (PROVIDER_PRIORITY[b.provider] ?? 99);
     }
     return (a.tier || 99) - (b.tier || 99);
   });

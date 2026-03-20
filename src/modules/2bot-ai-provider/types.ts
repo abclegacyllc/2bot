@@ -36,12 +36,10 @@ export type TwoBotAIModel =
   // TTS
   | "tts-1"
   | "tts-1-hd"
-  // STT
-  | "whisper-1"
   // Allow any string for dynamically discovered models
   | (string & {});
 
-export type TwoBotAIProvider = "openai" | "anthropic" | "together" | "fireworks" | "openrouter";
+export type TwoBotAIProvider = "openai" | "anthropic" | "together" | "fireworks" | "openrouter" | "google";
 
 // ===========================================
 // Model Capabilities - What each model can do
@@ -321,6 +319,36 @@ export interface SpeechRecognitionResponse {
 }
 
 // ===========================================
+// Video Generation Types
+// ===========================================
+
+export interface VideoGenerationRequest {
+  prompt: string;
+  /** Model ID (e.g. 'veo-3.0-generate-001') */
+  model?: string;
+  /** Video duration in seconds — Veo supports 4, 6, or 8 (default: 4) */
+  durationSeconds?: number;
+  /** Aspect ratio: '16:9', '9:16', or '1:1' */
+  aspectRatio?: string;
+  userId: string;
+  /** Organization ID for org-level credit deduction */
+  organizationId?: string;
+  /** User plugin ID for per-plugin AI usage tracking */
+  userPluginId?: string;
+}
+
+export interface VideoGenerationResponse {
+  id: string;
+  /** Data URL or hosted URL for the generated video */
+  videoUrl: string;
+  mimeType: string;
+  durationSeconds: number;
+  model: string;
+  creditsUsed: number;
+  newBalance: number;
+}
+
+// ===========================================
 // Model Info (Enhanced with Capabilities)
 // ===========================================
 
@@ -339,6 +367,7 @@ export interface ModelInfo {
   creditsPerImage?: number;
   creditsPerChar?: number;
   creditsPerMinute?: number;
+  creditsPerSecond?: number;
   // Limits
   maxTokens?: number;
   contextWindow?: number;

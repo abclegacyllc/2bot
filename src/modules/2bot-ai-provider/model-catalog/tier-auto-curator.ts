@@ -12,16 +12,16 @@
  */
 
 import {
-    getAllImageGenPricing,
-    getAllTextGenPricing,
+  getAllImageGenPricing,
+  getAllTextGenPricing,
 } from '../model-pricing';
 import type { TwoBotAIProvider } from '../types';
 import type {
-    ModelSelectionStrategy,
-    ProviderModelOption,
-    TwoBotAIModelId,
-    TwoBotAIModelMapping,
-    TwoBotAIModelTier,
+  ModelSelectionStrategy,
+  ProviderModelOption,
+  TwoBotAIModelId,
+  TwoBotAIModelMapping,
+  TwoBotAIModelTier,
 } from './model-catalog.types';
 import { TWOBOT_AI_MODEL_TIERS } from './model-catalog.types';
 import { TWOBOT_AI_MODELS } from './twobot-models';
@@ -41,11 +41,12 @@ import { TWOBOT_AI_MODELS } from './twobot-models';
  * - OpenRouter: Last resort aggregator
  */
 const PROVIDER_DEFAULTS: Record<TwoBotAIProvider, { priority: number; weight: number }> = {
-  anthropic: { priority: 1, weight: 0.5 },
-  together: { priority: 2, weight: 0.3 },
-  openai: { priority: 3, weight: 0.5 },
-  fireworks: { priority: 3, weight: 0.2 },
-  openrouter: { priority: 4, weight: 0.1 },
+  google: { priority: 1, weight: 0.6 },
+  anthropic: { priority: 2, weight: 0.5 },
+  together: { priority: 3, weight: 0.3 },
+  openai: { priority: 4, weight: 0.5 },
+  fireworks: { priority: 4, weight: 0.2 },
+  openrouter: { priority: 5, weight: 0.1 },
 };
 
 // ============================================================================
@@ -59,11 +60,6 @@ const PROVIDER_DEFAULTS: Record<TwoBotAIProvider, { priority: number; weight: nu
 const REASONING_MODELS = new Set<string>([
   // OpenAI
   'o3-mini',
-  'o1',
-  'o1-pro',
-  // OpenAI via OpenRouter
-  'openai/o3',
-  'openai/o4-mini',
   // Anthropic — Claude 4+ supports extended thinking via API
   'claude-opus-4-6',
   'claude-sonnet-4-6',
@@ -73,7 +69,6 @@ const REASONING_MODELS = new Set<string>([
   'moonshotai/Kimi-K2-Thinking',
   'deepseek-ai/DeepSeek-R1',
   // OpenRouter
-  'deepseek/deepseek-r1-0528',
   'google/gemini-2.5-flash-preview',
   'google/gemini-2.5-pro-preview',
   'google/gemini-3-pro-preview',
@@ -114,9 +109,6 @@ const CODE_GENERATION_MODELS = new Set<string>([
   'Qwen/Qwen2.5-Coder-32B-Instruct',
   // GPT-5 Nano — lightweight GPT-5, tools ✅ (OpenRouter)
   'openai/gpt-5-nano',
-  // GPT-OSS 120B — large code-capable, tools ✅ (Together + Fireworks + OpenRouter)
-  'openai/gpt-oss-120b',
-  'accounts/fireworks/models/gpt-oss-120b',
   // Llama 3.3 70B — strong medium code model, tools ✅ (Together)
   'meta-llama/Llama-3.3-70B-Instruct-Turbo',
   // DeepSeek V3.2 — excellent code, tools ✅ (OpenRouter)

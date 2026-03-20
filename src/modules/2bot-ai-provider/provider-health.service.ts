@@ -16,6 +16,8 @@ import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { discoverAllModels } from "./model-discovery.service";
+import { recordModelFailure } from "./model-health-tracker";
+import { MODEL_REGISTRY } from "./model-registry";
 import { setProviderValidated } from "./provider-config";
 import type { TwoBotAIProvider } from "./types";
 
@@ -279,9 +281,8 @@ async function validateOpenRouterKey(): Promise<{ valid: boolean; error?: string
 
   const startTime = Date.now();
   try {
-    // Use models endpoint (no auth required but validates connectivity)
-    // Use auth/key endpoint to validate key specifically
-    const response = await fetch("https://openrouter.ai/api/v1/models", {
+    // Validate key AND check credit balance via auth/key endpoint
+    const response = await fetch("https://openrouter.ai/api/v1/auth/key", {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10000),
     });
@@ -302,7 +303,30 @@ async function validateOpenRouterKey(): Promise<{ valid: boolean; error?: string
       return { valid: false, error: `OpenRouter API returned ${response.status}`, latencyMs };
     }
 
-    log.info({ latencyMs }, "OpenRouter API key validated successfully");
+    // Check credit balance
+    try {
+      const body = await response.json() as { data?: { limit_remaining?: number; usage?: number; limit?: number } };
+      const remaining = body.data?.limit_remaining;
+      if (remaining !== undefined && remaining !== null && remaining <= 0) {
+        log.warn({ remaining, usage: body.data?.usage, limit: body.data?.limit }, "OpenRouter has insufficient credits — disabling OpenRouter models");
+        // Mark all OpenRouter models as unhealthy
+        for (const entry of MODEL_REGISTRY) {
+          if (entry.providers.openrouter) {
+            recordModelFailure(entry.id, "OpenRouter insufficient credits");
+            recordModelFailure(entry.id, "OpenRouter insufficient credits");
+            recordModelFailure(entry.id, "OpenRouter insufficient credits");
+          }
+        }
+        // Key is valid but balance is depleted — still mark provider as valid
+        // (individual models are disabled via model-health-tracker)
+        return { valid: true, latencyMs };
+      }
+      log.info({ latencyMs, creditRemaining: remaining }, "OpenRouter API key validated successfully");
+    } catch {
+      // If we can't parse balance, key is still valid
+      log.info({ latencyMs }, "OpenRouter API key validated (balance check unavailable)");
+    }
+
     return { valid: true, latencyMs };
   } catch (error) {
     const latencyMs = Date.now() - startTime;
@@ -311,6 +335,90 @@ async function validateOpenRouterKey(): Promise<{ valid: boolean; error?: string
       return { valid: false, error: "Connection timed out", latencyMs };
     }
     log.error({ error }, "OpenRouter validation failed with unknown error");
+    return { valid: false, error: `Validation failed: ${error}`, latencyMs };
+  }
+}
+
+/**
+ * Validate Google Vertex AI credentials by exchanging service account key for a token.
+ * Also checks that the project ID is configured.
+ */
+async function validateVertexAICredentials(): Promise<{ valid: boolean; error?: string; latencyMs: number }> {
+  const serviceAccount = process.env.TWOBOT_VERTEX_AI_SERVICE_ACCOUNT;
+  const project = process.env.TWOBOT_VERTEX_AI_PROJECT;
+
+  if (!serviceAccount) {
+    return { valid: false, error: "TWOBOT_VERTEX_AI_SERVICE_ACCOUNT not set", latencyMs: 0 };
+  }
+
+  if (!project) {
+    return { valid: false, error: "TWOBOT_VERTEX_AI_PROJECT not set", latencyMs: 0 };
+  }
+
+  // Verify it's valid JSON with required fields
+  let sa: { client_email?: string; private_key?: string; token_uri?: string };
+  try {
+    sa = JSON.parse(serviceAccount) as typeof sa;
+  } catch {
+    return { valid: false, error: "TWOBOT_VERTEX_AI_SERVICE_ACCOUNT is not valid JSON", latencyMs: 0 };
+  }
+
+  if (!sa.client_email || !sa.private_key) {
+    return { valid: false, error: "Service account JSON missing client_email or private_key", latencyMs: 0 };
+  }
+
+  const startTime = Date.now();
+  try {
+    // Exchange service account key for access token via JWT
+    const now = Math.floor(Date.now() / 1000);
+    const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(JSON.stringify({
+      iss: sa.client_email,
+      scope: "https://www.googleapis.com/auth/cloud-platform",
+      aud: sa.token_uri || "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+    })).toString("base64url");
+
+    const { createSign } = await import("crypto");
+    const sign = createSign("RSA-SHA256");
+    sign.update(`${header}.${payload}`);
+    const signature = sign.sign(sa.private_key, "base64url");
+
+    const jwt = `${header}.${payload}.${signature}`;
+
+    const tokenResponse = await fetch(sa.token_uri || "https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: jwt,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const latencyMs = Date.now() - startTime;
+
+    if (!tokenResponse.ok) {
+      const errText = await tokenResponse.text().catch(() => "");
+      log.error({ status: tokenResponse.status, error: errText }, "Vertex AI token exchange failed");
+      return { valid: false, error: `Token exchange failed (HTTP ${tokenResponse.status})`, latencyMs };
+    }
+
+    const tokenData = (await tokenResponse.json()) as { access_token?: string };
+    if (!tokenData.access_token) {
+      return { valid: false, error: "Token exchange returned no access_token", latencyMs };
+    }
+
+    log.info({ latencyMs, project }, "Vertex AI credentials validated successfully");
+    return { valid: true, latencyMs };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    if (error instanceof Error && error.name === "AbortError") {
+      log.error("Vertex AI token exchange timed out");
+      return { valid: false, error: "Connection timed out", latencyMs };
+    }
+    log.error({ error }, "Vertex AI validation failed");
     return { valid: false, error: `Validation failed: ${error}`, latencyMs };
   }
 }
@@ -364,6 +472,9 @@ export async function checkProviderHealth(provider: TwoBotAIProvider): Promise<P
     case "openrouter":
       result = await validateOpenRouterKey();
       break;
+    case "google":
+      result = await validateVertexAICredentials();
+      break;
     default:
       result = { valid: false, error: `Unknown provider: ${provider}`, latencyMs: 0 };
   }
@@ -389,7 +500,7 @@ export async function checkProviderHealth(provider: TwoBotAIProvider): Promise<P
  * Check all providers and return their health status
  */
 export async function checkAllProviders(): Promise<ProviderHealthStatus[]> {
-  const providers: TwoBotAIProvider[] = ["openai", "anthropic", "together", "fireworks", "openrouter"];
+  const providers: TwoBotAIProvider[] = ["openai", "anthropic", "together", "fireworks", "openrouter", "google"];
 
   // Check all providers in parallel for faster startup (~10s vs ~50s)
   const results = await Promise.all(
@@ -402,6 +513,18 @@ export async function checkAllProviders(): Promise<ProviderHealthStatus[]> {
   );
 
   return results;
+}
+
+/**
+ * Synchronous, cache-only health check.
+ * Returns true if provider was healthy at last check, or if never checked (optimistic).
+ * Unlike isProviderHealthy(), this never triggers an API call — safe for hot paths.
+ */
+export function isProviderHealthyCached(provider: TwoBotAIProvider): boolean {
+  const cached = healthCache.get(provider);
+  if (!cached) return true; // Optimistic: never checked = assume healthy
+  if (Date.now() - cached.lastChecked.getTime() > CACHE_TTL_MS) return true; // Expired = assume healthy
+  return cached.healthy;
 }
 
 /**

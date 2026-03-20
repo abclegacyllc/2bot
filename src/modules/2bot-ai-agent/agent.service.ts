@@ -117,7 +117,7 @@ const AGENT_SYSTEM_PROMPT = `You are a 2Bot AI platform operator. You have tools
 - **check_credits** — Check credit balance and monthly usage.
 
 ### Write Tools
-- **create_gateway** — Create a new gateway. For Telegram: provide name, type=TELEGRAM_BOT, and botToken. For AI: provide name, type=AI, provider, and apiKey. For Custom Gateway: provide name, type=CUSTOM_GATEWAY, and credentials.
+- **create_gateway** — Create a new gateway. For Telegram: provide name, type=TELEGRAM_BOT, and botToken.
 - **delete_gateway** — Delete a gateway by ID.
 - **update_gateway** — Update a gateway's name or credentials by ID.
 - **create_custom_plugin** — Create a new custom plugin with name, description, and JavaScript code.

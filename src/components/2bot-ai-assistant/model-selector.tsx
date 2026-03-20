@@ -17,7 +17,7 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Search, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface ModelCapabilities {
@@ -97,10 +97,19 @@ export interface RealModelOption {
   displayName: string;
   author: string;
   capability: string;
-  priceMultiplier: number;
+  /** Credits per 1K input tokens (text) or per unit (image/TTS/STT) */
+  creditsInput: number;
+  /** Credits per 1K output tokens (text/code only) */
+  creditsOutput?: number;
+  /** Unit label for non-text display */
+  creditUnit: string;
+  /** Cost tier */
+  tier: "free" | "lite" | "pro" | "ultra";
   providers: string[];
   isPreview?: boolean;
   deprecated?: boolean;
+  /** Whether the model is currently healthy (not auto-disabled due to repeated failures) */
+  isHealthy?: boolean;
 }
 
 /**
@@ -131,26 +140,38 @@ interface ModelSelectorProps {
 export const AUTO_MODE_VALUE = "auto";
 
 /**
- * Format price multiplier for display
+ * Format credits per unit for display
  */
-function formatPrice(multiplier: number): string {
-  if (multiplier === 0) return "0x";
-  if (multiplier < 0.01) return "<0.01x";
-  if (multiplier >= 100) return `${Math.round(multiplier)}x`;
-  // Show 2 decimal places only if needed
-  if (Number.isInteger(multiplier)) return `${multiplier}x`;
-  return `${parseFloat(multiplier.toFixed(2))}x`;
+function fmtNum(n: number): string {
+  if (n === 0) return "0";
+  if (n >= 100) return String(Math.round(n));
+  if (n >= 1) return parseFloat(n.toFixed(1)).toString();
+  if (n >= 0.01) return parseFloat(n.toFixed(2)).toString();
+  return parseFloat(n.toPrecision(2)).toString();
 }
 
+function formatCredits(input: number, output: number | undefined, unit: string): string {
+  if (input === 0 && (!output || output === 0)) return "Free";
+  // Text/code: show input/output per 1K tokens
+  if (output !== null && output !== undefined && output > 0) return `${fmtNum(input)}/${fmtNum(output)}`;
+  // Non-text: show value/unit
+  if (input < 0.01) return `<0.01/${unit}`;
+  return `${fmtNum(input)}/${unit}`;
+}
+
+const TIER_ORDER = ["free", "lite", "pro", "ultra"] as const;
+const TIER_META: Record<string, { label: string; color: string }> = {
+  free:  { label: "Free",  color: "text-emerald-400" },
+  lite:  { label: "Lite",  color: "text-foreground/60" },
+  pro:   { label: "Pro",   color: "text-blue-400" },
+  ultra: { label: "Ultra", color: "text-amber-400" },
+};
+
 /**
- * Get price color class based on multiplier
+ * Get credit color class based on tier
  */
-function getPriceColor(multiplier: number): string {
-  if (multiplier === 0) return "text-emerald-400";
-  if (multiplier <= 0.5) return "text-emerald-400";
-  if (multiplier <= 1.5) return "text-foreground/60";
-  if (multiplier <= 5) return "text-amber-400";
-  return "text-red-400";
+function getCreditColor(tier: string): string {
+  return TIER_META[tier]?.color ?? "text-foreground/60";
 }
 
 /**
@@ -187,8 +208,8 @@ function ModelRow({
           <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
         )}
       </div>
-      <span className={cn("text-xs tabular-nums shrink-0 ml-2", getPriceColor(model.priceMultiplier))}>
-        {formatPrice(model.priceMultiplier)}
+      <span className={cn("text-xs tabular-nums shrink-0 ml-2", getCreditColor(model.tier))}>
+        {formatCredits(model.creditsInput, model.creditsOutput, model.creditUnit)}
       </span>
     </button>
   );
@@ -197,14 +218,12 @@ function ModelRow({
 export function ModelSelector({ models, value, onChange, disabled, compact, showAutoMode, realModels }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [otherModelsExpanded, setOtherModelsExpanded] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset search and collapse when dropdown closes
+  // Reset search when dropdown closes
   useEffect(() => {
     if (!open) {
       setSearch("");
-      setOtherModelsExpanded(false);
     }
   }, [open]);
 
@@ -235,19 +254,29 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
   // Filter real models by search
   const filteredRealModels = useMemo(() => {
     if (!realModels) return [];
+    // Filter out unhealthy models (auto-disabled due to repeated failures)
+    const healthy = realModels.filter((m) => m.isHealthy !== false);
     const q = search.toLowerCase().trim();
-    if (!q) return realModels;
-    return realModels.filter((m) =>
+    if (!q) return healthy;
+    return healthy.filter((m) =>
       m.displayName.toLowerCase().includes(q) ||
       m.author.toLowerCase().includes(q)
     );
   }, [realModels, search]);
 
-  // Split into "active" (currently selected) and "other" models
-  const otherModels = useMemo(() =>
-    filteredRealModels.filter((m) => m.id !== value),
-    [filteredRealModels, value]
-  );
+  // Group models by author/provider (preserving server sort within each group)
+  const authorGroups = useMemo(() => {
+    const order: string[] = [];
+    const groups: Record<string, RealModelOption[]> = {};
+    for (const m of filteredRealModels) {
+      if (!groups[m.author]) {
+        groups[m.author] = [];
+        order.push(m.author);
+      }
+      groups[m.author]!.push(m);
+    }
+    return { order, groups };
+  }, [filteredRealModels]);
 
   // Get display name for the trigger button
   const triggerLabel = useMemo(() => {
@@ -328,22 +357,8 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
             </button>
           )}
 
-          {/* Currently selected real model (shown directly, not inside "Other Models") */}
-          {selectedRealModel && !isSearching && !isAutoMode && (
-            <ModelRow
-              model={selectedRealModel}
-              isSelected={true}
-              onClick={() => handleSelect(selectedRealModel.id)}
-            />
-          )}
-
-          {/* Separator before Other Models if we have content above */}
-          {!isSearching && (showAutoMode || (selectedRealModel && !isAutoMode)) && otherModels.length > 0 && (
-            <div className="my-1 border-t border-border/30" />
-          )}
-
           {/* Search results (flat list) */}
-          {isSearching && (
+          {isSearching ? (
             filteredRealModels.length > 0 ? (
               filteredRealModels.map((model) => (
                 <ModelRow
@@ -358,27 +373,17 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
                 No models found
               </div>
             )
-          )}
-
-          {/* Other Models (collapsible) */}
-          {!isSearching && otherModels.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setOtherModelsExpanded(!otherModelsExpanded)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {otherModelsExpanded ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
-                <span>Other Models</span>
-              </button>
-
-              {otherModelsExpanded && (
-                <div>
-                  {otherModels.map((model) => (
+          ) : (
+            /* Provider-grouped model list */
+            authorGroups.order.map((author) => {
+              const models = authorGroups.groups[author];
+              if (!models || models.length === 0) return null;
+              return (
+                <div key={author}>
+                  <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {author}
+                  </div>
+                  {models.map((model) => (
                     <ModelRow
                       key={model.id}
                       model={model}
@@ -387,8 +392,8 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
                     />
                   ))}
                 </div>
-              )}
-            </>
+              );
+            })
           )}
         </div>
       </PopoverContent>

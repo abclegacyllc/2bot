@@ -183,7 +183,7 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
           messages: [
             { role: "user", content: `Generate a concise 3-5 word title summarizing this conversation. Reply with ONLY the title, nothing else.\n\nUser: ${userMsg.slice(0, 200)}\nAssistant: ${assistantMsg.slice(0, 200)}` },
           ],
-          model: "2bot-ai-text-lite",
+          model: "auto",
           stream: false,
           smartRouting: false,
         }),
@@ -753,7 +753,11 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
           )
         );
       } else {
-        const errorMessage = err instanceof Error ? err.message : "An error occurred";
+        let errorMessage = err instanceof Error ? err.message : "An error occurred";
+        // Sanitize: if error looks like raw JSON or contains provider internals, show generic message
+        if (errorMessage.startsWith("{") || errorMessage.startsWith("[") || errorMessage.includes("\"type\":") || errorMessage.includes("\"error\":")) {
+          errorMessage = "Something went wrong. Please try again or select a different model.";
+        }
         setError(errorMessage);
         // Remove empty assistant message
         setMessages((prev) => prev.filter((m) => m.id !== assistantMessageId));
@@ -864,7 +868,10 @@ export function TwoBotAIChat({ onTokenUsage, authToken, userPlan = "FREE", organ
         return updatedMessages;
       });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to generate image";
+      let errorMessage = err instanceof Error ? err.message : "Failed to generate image";
+      if (errorMessage.startsWith("{") || errorMessage.startsWith("[") || errorMessage.includes("\"type\":")) {
+        errorMessage = "Image generation failed. Please try again or select a different model.";
+      }
       setError(errorMessage);
       setMessages((prev) => prev.filter((m) => m.id !== assistantMessageId));
     } finally {

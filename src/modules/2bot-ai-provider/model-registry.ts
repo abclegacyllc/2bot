@@ -9,8 +9,8 @@
  *
  * Dollar constants:
  *   $1 = 100 credits (1 credit = $0.01)
- *   Pricing strategy: 3× margin over API cost → MARGIN = 300
- *   Formula: creditsPerToken = (usdPer1M / 1 000 000) × 300
+ *   Pricing strategy: 2× margin over API cost → MARGIN = 200
+ *   Formula: creditsPerToken = (usdPer1M / 1 000 000) × 200
  *
  * @module modules/2bot-ai-provider/model-registry
  */
@@ -21,8 +21,8 @@ import type { AICapability, ModelCapabilities, ModelInfo, TwoBotAIProvider } fro
 // Constants
 // ===========================================
 
-/** 3× margin: $1 = 100 credits, so API cost × 300 = credits */
-export const MARGIN = 300;
+/** 2× margin: $1 = 100 credits, so API cost × 200 = credits */
+export const MARGIN = 200;
 
 // ===========================================
 // Registry Types
@@ -42,6 +42,8 @@ export interface ProviderCost {
   readonly perCharM?: number;
   /** USD per minute of audio (speech recognition) */
   readonly perMinute?: number;
+  /** USD per second of video generated */
+  readonly perSecond?: number;
 }
 
 export interface ModelRegistryEntry {
@@ -91,6 +93,11 @@ export function creditPerMinute(perMin: number): number {
   return perMin * MARGIN;
 }
 
+/** USD per second of video → credits per second */
+export function creditPerSecond(perSec: number): number {
+  return perSec * MARGIN;
+}
+
 // ===========================================
 // Capability Presets (defined ONCE)
 // ===========================================
@@ -137,6 +144,20 @@ export const EMBEDDING_CAPS: ModelCapabilities = {
   inputTypes: ["text"],
   outputTypes: ["text"],
   supportsStreaming: false,
+};
+
+export const VIDEO_GEN_CAPS: ModelCapabilities = {
+  inputTypes: ["text"],
+  outputTypes: ["video"],
+  supportsStreaming: false,
+};
+
+export const CHAT_IMAGE_CAPS: ModelCapabilities = {
+  inputTypes: ["text", "image"],
+  outputTypes: ["text", "image"],
+  canGenerateImages: true,
+  canAnalyzeImages: true,
+  supportsStreaming: true,
 };
 
 // ===========================================
@@ -189,7 +210,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 65536,
     contextWindow: 128000,
     providers: {
-      openai: { modelId: "o1-mini" },
+      openai: { modelId: "o1-mini", inputPer1M: 1.1, outputPer1M: 4.4 },
     },
   },
   {
@@ -207,68 +228,8 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       openai: { modelId: "o3-mini", inputPer1M: 1.1, outputPer1M: 4.4 },
     },
   },
-  {
-    id: "gpt-4-turbo",
-    displayName: "GPT-4 Turbo",
-    author: "OpenAI",
-    description: "Previous generation high-performance model",
-    capability: "text-generation",
-    tier: 3,
-    deprecated: true,
-    deprecationMessage: "Consider using GPT-4o for better performance",
-    capabilities: { ...VISION_CAPS, reasoning: "high", speed: "medium", creativity: "high" },
-    maxTokens: 4096,
-    contextWindow: 128000,
-    providers: {
-      openai: { modelId: "gpt-4-turbo" },
-    },
-  },
-  {
-    id: "o1",
-    displayName: "o1",
-    author: "OpenAI",
-    description: "Advanced reasoning model for complex problems",
-    capability: "text-generation",
-    tier: 3,
-    badge: "REASONING",
-    capabilities: { ...VISION_CAPS, reasoning: "highest", speed: "low", creativity: "medium" },
-    maxTokens: 100000,
-    contextWindow: 200000,
-    providers: {
-      openai: { modelId: "o1", inputPer1M: 15, outputPer1M: 60 },
-    },
-  },
-  {
-    id: "o1-pro",
-    displayName: "o1 Pro",
-    author: "OpenAI",
-    description: "Most powerful reasoning model — premium pricing",
-    capability: "text-generation",
-    tier: 3,
-    badge: "REASONING",
-    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "low", creativity: "high" },
-    maxTokens: 100000,
-    contextWindow: 200000,
-    providers: {
-      openai: { modelId: "o1-pro", inputPer1M: 150, outputPer1M: 600 },
-    },
-  },
+
   // --- Anthropic ---
-  {
-    id: "claude-3-5-haiku-20241022",
-    displayName: "Claude 3.5 Haiku",
-    author: "Anthropic",
-    description: "Fast and efficient for simple tasks",
-    capability: "text-generation",
-    tier: 1,
-    badge: "FAST",
-    capabilities: { ...VISION_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
-    maxTokens: 8192,
-    contextWindow: 200000,
-    providers: {
-      anthropic: { modelId: "claude-3-5-haiku-20241022", inputPer1M: 0.8, outputPer1M: 4 },
-    },
-  },
   {
     id: "claude-haiku-4-5-20251001",
     displayName: "Claude Haiku 4.5",
@@ -282,6 +243,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 200000,
     providers: {
       anthropic: { modelId: "claude-haiku-4-5-20251001", inputPer1M: 1, outputPer1M: 5 },
+      openrouter: { modelId: "anthropic/claude-haiku-4.5", inputPer1M: 1, outputPer1M: 5 },
     },
   },
   {
@@ -296,6 +258,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 200000,
     providers: {
       anthropic: { modelId: "claude-sonnet-4-5-20250929", inputPer1M: 3, outputPer1M: 15 },
+      openrouter: { modelId: "anthropic/claude-sonnet-4.5", inputPer1M: 3, outputPer1M: 15 },
     },
   },
   {
@@ -310,7 +273,9 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 128000,
     contextWindow: 1000000,
     providers: {
+      google: { modelId: "claude-sonnet-4-6", inputPer1M: 3, outputPer1M: 15 },
       anthropic: { modelId: "claude-sonnet-4-6", inputPer1M: 3, outputPer1M: 15 },
+      openrouter: { modelId: "anthropic/claude-sonnet-4.6", inputPer1M: 3, outputPer1M: 15 },
     },
   },
   {
@@ -325,7 +290,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 64000,
     contextWindow: 200000,
     providers: {
-      anthropic: { modelId: "claude-opus-4-5-20251101" },
+      anthropic: { modelId: "claude-opus-4-5-20251101", inputPer1M: 10, outputPer1M: 50 },
     },
   },
   {
@@ -340,7 +305,9 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 128000,
     contextWindow: 1000000,
     providers: {
+      google: { modelId: "claude-opus-4-6", inputPer1M: 5, outputPer1M: 25 },
       anthropic: { modelId: "claude-opus-4-6", inputPer1M: 5, outputPer1M: 25 },
+      openrouter: { modelId: "anthropic/claude-opus-4.6", inputPer1M: 5, outputPer1M: 25 },
     },
   },
   // --- Multi-Provider ---
@@ -355,9 +322,10 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 163840,
     providers: {
+      google: { modelId: "deepseek-v3.1-maas", inputPer1M: 0.4, outputPer1M: 1.2 },
       together: { modelId: "deepseek-ai/DeepSeek-V3.1", inputPer1M: 0.6, outputPer1M: 1.7 },
       fireworks: { modelId: "accounts/fireworks/models/deepseek-v3p1", inputPer1M: 0.2, outputPer1M: 0.6 },
-      openrouter: { modelId: "deepseek/deepseek-chat-v3-0324", inputPer1M: 0.19, outputPer1M: 0.87 },
+      openrouter: { modelId: "deepseek/deepseek-chat-v3-0324", inputPer1M: 0.2, outputPer1M: 0.77 },
     },
   },
   {
@@ -372,8 +340,9 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 8192,
     contextWindow: 1048576,
     providers: {
+      google: { modelId: "llama-4-maverick-17b-128e-instruct-maas", inputPer1M: 0.2, outputPer1M: 0.6 },
       together: { modelId: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", inputPer1M: 0.27, outputPer1M: 0.85 },
-      openrouter: { modelId: "meta-llama/llama-4-maverick", inputPer1M: 0.2, outputPer1M: 0.6 },
+      openrouter: { modelId: "meta-llama/llama-4-maverick", inputPer1M: 0.15, outputPer1M: 0.6 },
     },
   },
   {
@@ -388,24 +357,26 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 8192,
     contextWindow: 1048576,
     providers: {
+      google: { modelId: "llama-4-scout-17b-16e-instruct-maas", inputPer1M: 0.1, outputPer1M: 0.46 },
       together: { modelId: "meta-llama/Llama-4-Scout-17B-16E-Instruct", inputPer1M: 0.18, outputPer1M: 0.59 },
-      openrouter: { modelId: "meta-llama/llama-4-scout", inputPer1M: 0.1, outputPer1M: 0.46 },
+      openrouter: { modelId: "meta-llama/llama-4-scout", inputPer1M: 0.08, outputPer1M: 0.3 },
     },
   },
   {
-    id: "gpt-oss-120b",
-    displayName: "GPT-OSS 120B",
-    author: "OpenAI",
-    description: "OpenAI open-source 120B model",
+    id: "meta/llama-3.3-70b",
+    displayName: "Llama 3.3 70B",
+    author: "Meta",
+    description: "Meta's general-purpose 70B model",
     capability: "text-generation",
     tier: 2,
     capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "high" },
     maxTokens: 8192,
     contextWindow: 131072,
     providers: {
-      together: { modelId: "openai/gpt-oss-120b", inputPer1M: 0.15, outputPer1M: 0.6 },
-      fireworks: { modelId: "accounts/fireworks/models/gpt-oss-120b", inputPer1M: 0.2, outputPer1M: 0.6 },
-      openrouter: { modelId: "openai/gpt-oss-120b", inputPer1M: 0.04, outputPer1M: 0.19 },
+      google: { modelId: "llama-3.3-70b-instruct-maas", inputPer1M: 0.15, outputPer1M: 0.4 },
+      together: { modelId: "meta-llama/Llama-3.3-70B-Instruct-Turbo", inputPer1M: 0.18, outputPer1M: 0.59 },
+      fireworks: { modelId: "accounts/fireworks/models/llama-v3p3-70b-instruct", inputPer1M: 0.18, outputPer1M: 0.18 },
+      openrouter: { modelId: "meta-llama/llama-3.3-70b-instruct", inputPer1M: 0.08, outputPer1M: 0.14 },
     },
   },
   {
@@ -420,8 +391,22 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 131072,
     providers: {
       together: { modelId: "openai/gpt-oss-20b", inputPer1M: 0.05, outputPer1M: 0.2 },
-      fireworks: { modelId: "accounts/fireworks/models/gpt-oss-20b", inputPer1M: 0.05, outputPer1M: 0.2 },
       openrouter: { modelId: "openai/gpt-oss-20b", inputPer1M: 0.03, outputPer1M: 0.14 },
+    },
+  },
+  {
+    id: "openai/gpt-oss-120b",
+    displayName: "GPT-OSS 120B",
+    author: "OpenAI",
+    description: "OpenAI open-source 120B reasoning model",
+    capability: "text-generation",
+    tier: 3,
+    badge: "REASONING",
+    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "low", creativity: "high" },
+    maxTokens: 8192,
+    contextWindow: 131072,
+    providers: {
+      google: { modelId: "gpt-oss-120b-maas", inputPer1M: 1.5, outputPer1M: 5 },
     },
   },
   {
@@ -438,7 +423,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     providers: {
       together: { modelId: "moonshotai/Kimi-K2.5", inputPer1M: 0.5, outputPer1M: 2.8 },
       fireworks: { modelId: "accounts/fireworks/models/kimi-k2p5", inputPer1M: 0.5, outputPer1M: 2.8 },
-      openrouter: { modelId: "moonshotai/kimi-k2.5", inputPer1M: 0.23, outputPer1M: 3 },
+      openrouter: { modelId: "moonshotai/kimi-k2.5", inputPer1M: 0.45, outputPer1M: 2.2 },
     },
   },
   {
@@ -453,24 +438,10 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 202752,
     providers: {
+      google: { modelId: "glm-5-maas", inputPer1M: 0.8, outputPer1M: 2.5 },
       together: { modelId: "zai-org/GLM-5", inputPer1M: 1, outputPer1M: 3.2 },
       fireworks: { modelId: "accounts/fireworks/models/glm-5", inputPer1M: 1, outputPer1M: 3.2 },
-      openrouter: { modelId: "z-ai/glm-5", inputPer1M: 0.3, outputPer1M: 2.55 },
-    },
-  },
-  {
-    id: "zai-org/GLM-4.6",
-    displayName: "GLM 4.6",
-    author: "Zhipu AI",
-    description: "ZAI's mid-tier general model",
-    capability: "text-generation",
-    tier: 2,
-    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "high" },
-    maxTokens: 16384,
-    contextWindow: 202752,
-    providers: {
-      together: { modelId: "zai-org/GLM-4.6", inputPer1M: 0.6, outputPer1M: 2.2 },
-      openrouter: { modelId: "z-ai/glm-4.6", inputPer1M: 0.35, outputPer1M: 1.71 },
+      openrouter: { modelId: "z-ai/glm-5", inputPer1M: 0.72, outputPer1M: 2.3 },
     },
   },
   {
@@ -501,8 +472,22 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 196608,
     providers: {
       together: { modelId: "MiniMaxAI/MiniMax-M2.5", inputPer1M: 0.3, outputPer1M: 1.2 },
-      fireworks: { modelId: "accounts/fireworks/models/minimax-m2p5", inputPer1M: 0.3, outputPer1M: 1.2 },
-      openrouter: { modelId: "minimax/minimax-m2.5", inputPer1M: 0.3, outputPer1M: 1.1 },
+      openrouter: { modelId: "minimax/minimax-m2.5", inputPer1M: 0.27, outputPer1M: 0.95 },
+    },
+  },
+  {
+    id: "minimaxai/minimax-m2",
+    displayName: "MiniMax M2",
+    author: "MiniMax",
+    description: "MiniMax's reasoning model via Vertex AI",
+    capability: "text-generation",
+    tier: 2,
+    badge: "REASONING",
+    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "medium", creativity: "high" },
+    maxTokens: 16384,
+    contextWindow: 131072,
+    providers: {
+      google: { modelId: "minimax-m2-maas", inputPer1M: 0.5, outputPer1M: 2 },
     },
   },
   {
@@ -518,7 +503,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 262144,
     providers: {
       together: { modelId: "Qwen/Qwen3.5-397B-A17B", inputPer1M: 0.6, outputPer1M: 3.6 },
-      openrouter: { modelId: "qwen/qwen3.5-397b-a17b", inputPer1M: 0.15, outputPer1M: 1 },
+      openrouter: { modelId: "qwen/qwen3.5-397b-a17b", inputPer1M: 0.39, outputPer1M: 2.34 },
     },
   },
   // --- Together AI ---
@@ -537,20 +522,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       together: { modelId: "ServiceNow-AI/Apriel-1.6-15b-Thinker", inputPer1M: 0, outputPer1M: 0 },
     },
   },
-  {
-    id: "arcee-ai/trinity-mini",
-    displayName: "Trinity Mini",
-    author: "Arcee AI",
-    description: "Efficient small model by Arcee AI",
-    capability: "text-generation",
-    tier: 1,
-    capabilities: { ...CHAT_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
-    maxTokens: 4096,
-    contextWindow: 32768,
-    providers: {
-      together: { modelId: "arcee-ai/trinity-mini", inputPer1M: 0.045, outputPer1M: 0.15 },
-    },
-  },
+
   {
     id: "google/gemma-3n-E4B-it",
     displayName: "Gemma 3n E4B",
@@ -566,35 +538,8 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       together: { modelId: "google/gemma-3n-E4B-it", inputPer1M: 0.02, outputPer1M: 0.04 },
     },
   },
-  {
-    id: "meta-llama/Llama-3.2-3B-Instruct-Turbo",
-    displayName: "Llama 3.2 3B Turbo",
-    author: "Meta",
-    description: "Meta's fast lightweight model",
-    capability: "text-generation",
-    tier: 1,
-    badge: "FAST",
-    capabilities: { ...CHAT_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
-    maxTokens: 4096,
-    contextWindow: 131072,
-    providers: {
-      together: { modelId: "meta-llama/Llama-3.2-3B-Instruct-Turbo", inputPer1M: 0.06, outputPer1M: 0.06 },
-    },
-  },
-  {
-    id: "nvidia/NVIDIA-Nemotron-Nano-9B-v2",
-    displayName: "Nemotron Nano 9B",
-    author: "NVIDIA",
-    description: "NVIDIA's efficient 9B model",
-    capability: "text-generation",
-    tier: 1,
-    capabilities: { ...CHAT_CAPS, reasoning: "medium", speed: "high", creativity: "medium" },
-    maxTokens: 4096,
-    contextWindow: 32768,
-    providers: {
-      together: { modelId: "nvidia/NVIDIA-Nemotron-Nano-9B-v2", inputPer1M: 0.06, outputPer1M: 0.25 },
-    },
-  },
+
+
   {
     id: "Qwen/Qwen2.5-Coder-32B-Instruct",
     displayName: "Qwen2.5 Coder 32B",
@@ -611,49 +556,22 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     },
   },
   {
-    id: "Qwen/Qwen2.5-VL-72B-Instruct",
-    displayName: "Qwen2.5 VL 72B",
-    author: "Alibaba",
-    description: "Qwen's vision-language 72B model",
-    capability: "text-generation",
-    tier: 2,
-    badge: "VISION",
-    capabilities: { ...CHAT_CAPS },
-    maxTokens: 8192,
-    contextWindow: 131072,
-    providers: {
-      together: { modelId: "Qwen/Qwen2.5-VL-72B-Instruct", inputPer1M: 0.9, outputPer1M: 0.9 },
-    },
-  },
-  {
     id: "Qwen/Qwen3-235B-A22B-Instruct",
-    displayName: "Qwen3 235B Instruct",
+    displayName: "Qwen3 235B",
     author: "Alibaba",
-    description: "Qwen's largest instruct MoE model",
+    description: "Alibaba's largest instruct MoE model",
     capability: "text-generation",
     tier: 2,
-    capabilities: { ...CHAT_CAPS },
+    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "low", creativity: "high" },
     maxTokens: 16384,
     contextWindow: 131072,
     providers: {
+      google: { modelId: "qwen3-235b-a22b-instruct-2507-maas", inputPer1M: 0.8, outputPer1M: 2.4 },
       together: { modelId: "Qwen/Qwen3-235B-A22B-Instruct-2507-tput", inputPer1M: 0.2, outputPer1M: 0.6 },
+      openrouter: { modelId: "qwen/qwen3-235b-a22b-instruct", inputPer1M: 0.15, outputPer1M: 0.6 },
     },
   },
-  {
-    id: "Qwen/Qwen3-8B",
-    displayName: "Qwen3 8B",
-    author: "Alibaba",
-    description: "Qwen's fast lightweight 8B model",
-    capability: "text-generation",
-    tier: 2,
-    badge: "FAST",
-    capabilities: { ...CHAT_CAPS },
-    maxTokens: 4096,
-    contextWindow: 32768,
-    providers: {
-      together: { modelId: "Qwen/Qwen3-8B", inputPer1M: 0, outputPer1M: 0 },
-    },
-  },
+
   {
     id: "Qwen/Qwen3-Coder-Next-FP8",
     displayName: "Qwen3 Coder Next",
@@ -680,67 +598,13 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 8192,
     contextWindow: 32768,
     providers: {
+      google: { modelId: "qwen3-next-80b-a3b-instruct-maas", inputPer1M: 0.15, outputPer1M: 1.5 },
       together: { modelId: "Qwen/Qwen3-Next-80B-A3B-Instruct", inputPer1M: 0.15, outputPer1M: 1.5 },
     },
   },
-  {
-    id: "Qwen/Qwen3-VL-8B-Instruct",
-    displayName: "Qwen3 VL 8B",
-    author: "Alibaba",
-    description: "Qwen's vision-language model",
-    capability: "text-generation",
-    tier: 2,
-    badge: "VISION",
-    capabilities: { ...VISION_CAPS, reasoning: "high", speed: "high", creativity: "medium" },
-    maxTokens: 8192,
-    contextWindow: 32768,
-    providers: {
-      together: { modelId: "Qwen/Qwen3-VL-8B-Instruct", inputPer1M: 0.18, outputPer1M: 0.68 },
-    },
-  },
-  {
-    id: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-    displayName: "Llama 3.3 70B Turbo",
-    author: "Meta",
-    description: "Meta's powerful 70B model with turbo inference",
-    capability: "text-generation",
-    tier: 2,
-    capabilities: { ...CHAT_CAPS },
-    maxTokens: 8192,
-    contextWindow: 131072,
-    providers: {
-      together: { modelId: "meta-llama/Llama-3.3-70B-Instruct-Turbo", inputPer1M: 0.88, outputPer1M: 0.88 },
-    },
-  },
-  {
-    id: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-    displayName: "Llama 3.1 8B Turbo",
-    author: "Meta",
-    description: "Meta's efficient 8B model with turbo inference",
-    capability: "text-generation",
-    tier: 2,
-    badge: "FAST",
-    capabilities: { ...CHAT_CAPS },
-    maxTokens: 4096,
-    contextWindow: 131072,
-    providers: {
-      together: { modelId: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", inputPer1M: 0.05, outputPer1M: 0.05 },
-    },
-  },
-  {
-    id: "mistralai/Ministral-3-14B-Instruct-2512",
-    displayName: "Ministral 3 14B",
-    author: "Mistral AI",
-    description: "Mistral's balanced 14B model",
-    capability: "text-generation",
-    tier: 2,
-    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "high", creativity: "high" },
-    maxTokens: 8192,
-    contextWindow: 131072,
-    providers: {
-      together: { modelId: "mistralai/Ministral-3-14B-Instruct-2512", inputPer1M: 0.2, outputPer1M: 0.2 },
-    },
-  },
+
+
+
   {
     id: "zai-org/GLM-4.7",
     displayName: "GLM 4.7",
@@ -752,9 +616,10 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 8192,
     contextWindow: 202752,
     providers: {
+      google: { modelId: "glm-4.7-maas", inputPer1M: 0.38, outputPer1M: 1.5 },
       together: { modelId: "zai-org/GLM-4.7", inputPer1M: 0.45, outputPer1M: 2 },
       fireworks: { modelId: "accounts/fireworks/models/glm-4p7", inputPer1M: 0.45, outputPer1M: 2 },
-      openrouter: { modelId: "z-ai/glm-4.7", inputPer1M: 0.38, outputPer1M: 1.7 },
+      openrouter: { modelId: "z-ai/glm-4.7", inputPer1M: 0.38, outputPer1M: 1.98 },
     },
   },
   {
@@ -787,22 +652,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       together: { modelId: "Qwen/Qwen3-Next-80B-A3B-Thinking", inputPer1M: 0.15, outputPer1M: 1.5 },
     },
   },
-  {
-    id: "deepcogito/cogito-v2-1-671b",
-    displayName: "Cogito V2.1 671B",
-    author: "Deep Cogito",
-    description: "Deep Cogito's massive 671B model",
-    capability: "text-generation",
-    tier: 3,
-    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "low", creativity: "highest" },
-    maxTokens: 16384,
-    contextWindow: 163840,
-    providers: {
-      together: { modelId: "deepcogito/cogito-v2-1-671b", inputPer1M: 1.25, outputPer1M: 1.25 },
-      fireworks: { modelId: "accounts/cogito/models/cogito-671b-v2-p1", inputPer1M: 1.25, outputPer1M: 1.25 },
-      openrouter: { modelId: "deepcogito/cogito-v2.1-671b", inputPer1M: 1.25, outputPer1M: 1.25 },
-    },
-  },
+
   {
     id: "deepseek-ai/DeepSeek-R1",
     displayName: "DeepSeek R1",
@@ -815,8 +665,24 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 163840,
     providers: {
+      google: { modelId: "deepseek-r1-0528-maas", inputPer1M: 0.7, outputPer1M: 2.5 },
       together: { modelId: "deepseek-ai/DeepSeek-R1", inputPer1M: 3, outputPer1M: 7 },
       openrouter: { modelId: "deepseek/deepseek-r1", inputPer1M: 0.7, outputPer1M: 2.5 },
+    },
+  },
+  {
+    id: "deepseek-ai/deepseek-ocr",
+    displayName: "DeepSeek OCR",
+    author: "DeepSeek",
+    description: "DeepSeek's vision-text OCR model",
+    capability: "text-generation",
+    tier: 2,
+    badge: "VISION",
+    capabilities: { ...VISION_CAPS, reasoning: "high", speed: "high", creativity: "low" },
+    maxTokens: 8192,
+    contextWindow: 131072,
+    providers: {
+      google: { modelId: "deepseek-ocr-maas", inputPer1M: 0.3, outputPer1M: 1 },
     },
   },
   {
@@ -830,7 +696,6 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 262144,
     providers: {
-      together: { modelId: "moonshotai/Kimi-K2-Instruct-0905", inputPer1M: 1, outputPer1M: 3 },
       fireworks: { modelId: "accounts/fireworks/models/kimi-k2-instruct-0905", inputPer1M: 1, outputPer1M: 3 },
       openrouter: { modelId: "moonshotai/kimi-k2-0905", inputPer1M: 0.4, outputPer1M: 2 },
     },
@@ -847,58 +712,151 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 262144,
     providers: {
+      google: { modelId: "kimi-k2-thinking-maas", inputPer1M: 0.6, outputPer1M: 2.5 },
       together: { modelId: "moonshotai/Kimi-K2-Thinking", inputPer1M: 1.2, outputPer1M: 4 },
-      fireworks: { modelId: "accounts/fireworks/models/kimi-k2-thinking", inputPer1M: 1.2, outputPer1M: 4 },
       openrouter: { modelId: "moonshotai/kimi-k2-thinking", inputPer1M: 0.47, outputPer1M: 2 },
     },
   },
-  // --- Fireworks AI ---
+
+  // --- OpenRouter ---
+  // --- xAI / Grok ---
   {
-    id: "accounts/fireworks/models/deepseek-v3p2",
-    displayName: "DeepSeek V3 P2",
-    author: "DeepSeek",
-    description: "DeepSeek's latest general model via Fireworks",
-    capability: "text-generation",
-    tier: 2,
-    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "high" },
-    maxTokens: 16384,
-    contextWindow: 131072,
-    providers: {
-      fireworks: { modelId: "accounts/fireworks/models/deepseek-v3p2", inputPer1M: 0.2, outputPer1M: 0.6 },
-    },
-  },
-  {
-    id: "accounts/fireworks/models/mixtral-8x22b-instruct",
-    displayName: "Mixtral 8x22B (Fireworks)",
-    author: "Mistral AI",
-    description: "Mistral's large MoE model via Fireworks",
+    id: "grok-4",
+    displayName: "Grok 4",
+    author: "xAI",
+    description: "xAI's most capable model — top-tier reasoning",
     capability: "text-generation",
     tier: 3,
-    deprecated: true,
-    deprecationMessage: "Model no longer available — consider DeepSeek V3",
-    capabilities: { ...CHAT_CAPS },
-    maxTokens: 8192,
-    contextWindow: 65536,
+    badge: "BEST",
+    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "low", creativity: "highest" },
+    maxTokens: 128000,
+    contextWindow: 256000,
     providers: {
-      fireworks: { modelId: "accounts/fireworks/models/mixtral-8x22b-instruct" },
+      openrouter: { modelId: "x-ai/grok-4", inputPer1M: 3, outputPer1M: 15 },
     },
   },
-  // --- OpenRouter ---
   {
-    id: "google/gemma-3-27b-it",
-    displayName: "Gemma 3 27B",
-    author: "Google",
-    description: "Google's efficient model via OpenRouter",
+    id: "grok-4.20-beta",
+    displayName: "Grok 4.20",
+    author: "xAI",
+    description: "xAI's latest agent-capable model with 2M context",
+    capability: "text-generation",
+    tier: 3,
+    badge: "NEW",
+    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "medium", creativity: "highest" },
+    maxTokens: 128000,
+    contextWindow: 2000000,
+    providers: {
+      openrouter: { modelId: "x-ai/grok-4.20-beta", inputPer1M: 2, outputPer1M: 6 },
+    },
+  },
+  {
+    id: "grok-4-fast",
+    displayName: "Grok 4 Fast",
+    author: "xAI",
+    description: "Fast Grok 4 variant with 2M context",
+    capability: "text-generation",
+    tier: 2,
+    badge: "FAST",
+    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "highest", creativity: "high" },
+    maxTokens: 128000,
+    contextWindow: 2000000,
+    providers: {
+      openrouter: { modelId: "x-ai/grok-4.1-fast", inputPer1M: 0.2, outputPer1M: 0.5 },
+    },
+  },
+  {
+    id: "grok-3-mini",
+    displayName: "Grok 3 Mini",
+    author: "xAI",
+    description: "xAI's fast reasoning model — great value",
+    capability: "text-generation",
+    tier: 2,
+    badge: "REASONING",
+    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "high", creativity: "medium" },
+    maxTokens: 128000,
+    contextWindow: 131072,
+    providers: {
+      openrouter: { modelId: "x-ai/grok-3-mini", inputPer1M: 0.3, outputPer1M: 0.5 },
+    },
+  },
+  {
+    id: "grok-code-fast-1",
+    displayName: "Grok Code",
+    author: "xAI",
+    description: "xAI's code-specialized model",
+    capability: "text-generation",
+    tier: 2,
+    badge: "CODE",
+    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "high", creativity: "medium" },
+    maxTokens: 128000,
+    contextWindow: 256000,
+    providers: {
+      openrouter: { modelId: "x-ai/grok-code-fast-1", inputPer1M: 0.2, outputPer1M: 1.5 },
+    },
+  },
+  // --- Microsoft ---
+  {
+    id: "microsoft/phi-4",
+    displayName: "Phi-4",
+    author: "Microsoft",
+    description: "Microsoft's efficient small model — punches above its weight",
     capability: "text-generation",
     tier: 1,
     badge: "FAST",
-    capabilities: { ...VISION_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
+    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "highest", creativity: "medium" },
     maxTokens: 4096,
-    contextWindow: 96000,
+    contextWindow: 16384,
     providers: {
-      openrouter: { modelId: "google/gemma-3-27b-it", inputPer1M: 0.1, outputPer1M: 0.2 },
+      openrouter: { modelId: "microsoft/phi-4", inputPer1M: 0.06, outputPer1M: 0.14 },
     },
   },
+  // --- Mistral (new) ---
+  {
+    id: "codestral-2508",
+    displayName: "Codestral",
+    author: "Mistral AI",
+    description: "Mistral's dedicated coding model — 256K context",
+    capability: "text-generation",
+    tier: 2,
+    badge: "CODE",
+    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "high", creativity: "medium" },
+    maxTokens: 16384,
+    contextWindow: 256000,
+    providers: {
+      openrouter: { modelId: "mistralai/codestral-2508", inputPer1M: 0.3, outputPer1M: 0.9 },
+    },
+  },
+  {
+    id: "mistral-small-3.2",
+    displayName: "Mistral Small 3.2",
+    author: "Mistral AI",
+    description: "Very cheap and efficient — great budget choice",
+    capability: "text-generation",
+    tier: 1,
+    badge: "FAST",
+    capabilities: { ...CHAT_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
+    maxTokens: 8192,
+    contextWindow: 131072,
+    providers: {
+      openrouter: { modelId: "mistralai/mistral-small-3.2-24b-instruct", inputPer1M: 0.06, outputPer1M: 0.18 },
+    },
+  },
+  {
+    id: "mistral-medium-3.1",
+    displayName: "Mistral Medium 3.1",
+    author: "Mistral AI",
+    description: "Mistral's balanced mid-range model",
+    capability: "text-generation",
+    tier: 2,
+    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "high", creativity: "high" },
+    maxTokens: 16384,
+    contextWindow: 131072,
+    providers: {
+      openrouter: { modelId: "mistralai/mistral-medium-3.1", inputPer1M: 0.4, outputPer1M: 2 },
+    },
+  },
+  // --- Other OpenRouter models ---
   {
     id: "openai/gpt-4.1-nano",
     displayName: "GPT-4.1 Nano",
@@ -940,63 +898,22 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 32768,
     contextWindow: 32768,
     providers: {
-      openrouter: { modelId: "qwen/qwq-32b", inputPer1M: 0.12, outputPer1M: 0.18 },
+      openrouter: { modelId: "qwen/qwq-32b", inputPer1M: 0.15, outputPer1M: 0.4 },
     },
   },
-  {
-    id: "cohere/command-a",
-    displayName: "Command A",
-    author: "Cohere",
-    description: "Cohere's enterprise model via OpenRouter",
-    capability: "text-generation",
-    tier: 2,
-    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "high" },
-    maxTokens: 8192,
-    contextWindow: 256000,
-    providers: {
-      openrouter: { modelId: "cohere/command-a", inputPer1M: 2.5, outputPer1M: 10 },
-    },
-  },
-  {
-    id: "deepseek/deepseek-chat-v3-0628",
-    displayName: "DeepSeek V3 (legacy)",
-    author: "DeepSeek",
-    description: "DeepSeek V3 via OpenRouter (renamed to deepseek-v3.2)",
-    capability: "text-generation",
-    tier: 2,
-    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "high" },
-    maxTokens: 16384,
-    contextWindow: 131072,
-    providers: {
-      openrouter: { modelId: "deepseek/deepseek-chat-v3-0628", inputPer1M: 0.25, outputPer1M: 0.38 },
-    },
-  },
-  {
-    id: "deepseek/deepseek-r1-0528",
-    displayName: "DeepSeek R1 0528",
-    author: "DeepSeek",
-    description: "DeepSeek's reasoning model via OpenRouter",
-    capability: "text-generation",
-    tier: 2,
-    badge: "REASONING",
-    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "medium", creativity: "high" },
-    maxTokens: 65536,
-    contextWindow: 163840,
-    providers: {
-      openrouter: { modelId: "deepseek/deepseek-r1-0528", inputPer1M: 0.4, outputPer1M: 1.75 },
-    },
-  },
+
   {
     id: "deepseek/deepseek-v3.2",
     displayName: "DeepSeek V3.2",
     author: "DeepSeek",
-    description: "DeepSeek's latest V3.2 model via OpenRouter",
+    description: "DeepSeek's latest V3.2 model",
     capability: "text-generation",
     tier: 2,
     capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "high" },
     maxTokens: 16384,
     contextWindow: 163840,
     providers: {
+      google: { modelId: "deepseek-v3.2-maas", inputPer1M: 0.3, outputPer1M: 0.5 },
       openrouter: { modelId: "deepseek/deepseek-v3.2", inputPer1M: 0.26, outputPer1M: 0.38 },
     },
   },
@@ -1004,7 +921,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     id: "google/gemini-2.5-flash-preview",
     displayName: "Gemini 2.5 Flash",
     author: "Google",
-    description: "Google's fast Gemini model via OpenRouter",
+    description: "Google's fast Gemini model",
     capability: "text-generation",
     tier: 2,
     badge: "FAST",
@@ -1012,14 +929,30 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 8192,
     contextWindow: 1048576,
     providers: {
-      openrouter: { modelId: "google/gemini-2.5-flash-preview", inputPer1M: 0.3, outputPer1M: 2.5 },
+      google: { modelId: "gemini-2.5-flash", inputPer1M: 0.15, outputPer1M: 0.6 },
+      openrouter: { modelId: "google/gemini-2.5-flash", inputPer1M: 0.3, outputPer1M: 2.5 },
+    },
+  },
+  {
+    id: "google/gemini-2.5-flash-lite",
+    displayName: "Gemini 2.5 Flash Lite",
+    author: "Google",
+    description: "Google's lightweight fast Gemini model — budget-friendly",
+    capability: "text-generation",
+    tier: 1,
+    badge: "BUDGET",
+    capabilities: { ...VISION_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
+    maxTokens: 8192,
+    contextWindow: 1048576,
+    providers: {
+      google: { modelId: "gemini-2.5-flash-lite", inputPer1M: 0.075, outputPer1M: 0.3 },
     },
   },
   {
     id: "google/gemini-3-flash-preview",
     displayName: "Gemini 3 Flash",
     author: "Google",
-    description: "Google's next-gen Gemini fast model via OpenRouter",
+    description: "Google's next-gen Gemini fast model",
     capability: "text-generation",
     tier: 2,
     badge: "NEW",
@@ -1027,6 +960,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 8192,
     contextWindow: 1048576,
     providers: {
+      google: { modelId: "gemini-3-flash-preview", inputPer1M: 0.5, outputPer1M: 3 },
       openrouter: { modelId: "google/gemini-3-flash-preview", inputPer1M: 0.5, outputPer1M: 3 },
     },
   },
@@ -1059,21 +993,6 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     },
   },
   {
-    id: "perplexity/sonar",
-    displayName: "Perplexity Sonar",
-    author: "Perplexity",
-    description: "Perplexity's search-augmented model",
-    capability: "text-generation",
-    tier: 2,
-    badge: "SEARCH",
-    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "medium", supportsFunctionCalling: false },
-    maxTokens: 8192,
-    contextWindow: 127000,
-    providers: {
-      openrouter: { modelId: "perplexity/sonar", inputPer1M: 1, outputPer1M: 1 },
-    },
-  },
-  {
     id: "google/gemini-2.5-pro-preview",
     displayName: "Gemini 2.5 Pro",
     author: "Google",
@@ -1084,6 +1003,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 1048576,
     providers: {
+      google: { modelId: "gemini-2.5-pro", inputPer1M: 1.25, outputPer1M: 5 },
       openrouter: { modelId: "google/gemini-2.5-pro-preview", inputPer1M: 1.25, outputPer1M: 10 },
     },
   },
@@ -1091,7 +1011,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     id: "google/gemini-3-pro-preview",
     displayName: "Gemini 3 Pro",
     author: "Google",
-    description: "Google's latest Gemini Pro model via OpenRouter",
+    description: "Google's latest Gemini Pro model",
     capability: "text-generation",
     tier: 3,
     badge: "BEST",
@@ -1099,7 +1019,101 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 1048576,
     providers: {
+      google: { modelId: "gemini-3-pro-preview", inputPer1M: 2, outputPer1M: 12 },
       openrouter: { modelId: "google/gemini-3-pro-preview", inputPer1M: 2, outputPer1M: 12 },
+    },
+  },
+  // --- Gemini 3.1 (GenLang API only) ---
+  {
+    id: "google/gemini-3.1-pro-preview",
+    displayName: "Gemini 3.1 Pro",
+    author: "Google",
+    description: "Google's latest Gemini 3.1 Pro — enhanced reasoning",
+    capability: "text-generation",
+    tier: 3,
+    badge: "NEW",
+    capabilities: { ...VISION_CAPS, reasoning: "highest", speed: "medium", creativity: "highest" },
+    maxTokens: 16384,
+    contextWindow: 1048576,
+    providers: {
+      google: { modelId: "gemini-3.1-pro-preview", inputPer1M: 2.5, outputPer1M: 15 },
+    },
+  },
+  {
+    id: "google/gemini-3.1-flash-lite-preview",
+    displayName: "Gemini 3.1 Flash Lite",
+    author: "Google",
+    description: "Google's budget Gemini 3.1 model — fast and cheap",
+    capability: "text-generation",
+    tier: 1,
+    badge: "BUDGET",
+    capabilities: { ...VISION_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
+    maxTokens: 8192,
+    contextWindow: 1048576,
+    providers: {
+      google: { modelId: "gemini-3.1-flash-lite-preview", inputPer1M: 0.075, outputPer1M: 0.3 },
+    },
+  },
+  // --- Gemini Image Models (text + image generation via chat) ---
+  {
+    id: "google/gemini-3-pro-image-preview",
+    displayName: "Gemini 3 Pro Image",
+    author: "Google",
+    description: "Gemini 3 Pro with native image generation in chat",
+    capability: "text-generation",
+    tier: 3,
+    badge: "IMAGE",
+    capabilities: { ...CHAT_IMAGE_CAPS, reasoning: "highest", speed: "medium", creativity: "highest" },
+    maxTokens: 8192,
+    contextWindow: 1048576,
+    providers: {
+      google: { modelId: "gemini-3-pro-image-preview", inputPer1M: 2, outputPer1M: 12 },
+    },
+  },
+  {
+    id: "google/gemini-3.1-flash-image-preview",
+    displayName: "Gemini 3.1 Flash Image",
+    author: "Google",
+    description: "Gemini 3.1 Flash with native image generation in chat",
+    capability: "text-generation",
+    tier: 2,
+    badge: "IMAGE",
+    capabilities: { ...CHAT_IMAGE_CAPS, reasoning: "high", speed: "highest", creativity: "high" },
+    maxTokens: 8192,
+    contextWindow: 1048576,
+    providers: {
+      google: { modelId: "gemini-3.1-flash-image-preview", inputPer1M: 0.5, outputPer1M: 3 },
+    },
+  },
+  {
+    id: "google/gemini-2.5-flash-image",
+    displayName: "Gemini 2.5 Flash Image",
+    author: "Google",
+    description: "Gemini 2.5 Flash with native image generation in chat",
+    capability: "text-generation",
+    tier: 2,
+    badge: "IMAGE",
+    capabilities: { ...CHAT_IMAGE_CAPS, reasoning: "high", speed: "highest", creativity: "high" },
+    maxTokens: 8192,
+    contextWindow: 1048576,
+    providers: {
+      google: { modelId: "gemini-2.5-flash-image", inputPer1M: 0.15, outputPer1M: 0.6 },
+    },
+  },
+  // --- Nano Banana removed (experimental), Qwen3 235B merged above ---
+  {
+    id: "qwen/qwen3-coder-480b",
+    displayName: "Qwen3 Coder 480B",
+    author: "Alibaba",
+    description: "Alibaba's massive code-specialized model via Vertex AI",
+    capability: "text-generation",
+    tier: 3,
+    badge: "CODE",
+    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "low", creativity: "high" },
+    maxTokens: 8192,
+    contextWindow: 131072,
+    providers: {
+      google: { modelId: "qwen3-coder-480b-a35b-instruct-maas", inputPer1M: 1, outputPer1M: 3 },
     },
   },
   {
@@ -1143,51 +1157,6 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 400000,
     providers: {
       openrouter: { modelId: "openai/gpt-5", inputPer1M: 1.25, outputPer1M: 10 },
-    },
-  },
-  {
-    id: "openai/o3",
-    displayName: "o3",
-    author: "OpenAI",
-    description: "OpenAI's advanced reasoning model via OpenRouter",
-    capability: "text-generation",
-    tier: 3,
-    badge: "REASONING",
-    capabilities: { ...VISION_CAPS, reasoning: "highest", speed: "low", creativity: "medium" },
-    maxTokens: 100000,
-    contextWindow: 200000,
-    providers: {
-      openrouter: { modelId: "openai/o3", inputPer1M: 2, outputPer1M: 8 },
-    },
-  },
-  {
-    id: "openai/o4-mini",
-    displayName: "o4 Mini",
-    author: "OpenAI",
-    description: "OpenAI's efficient reasoning model via OpenRouter",
-    capability: "text-generation",
-    tier: 3,
-    badge: "REASONING",
-    capabilities: { ...VISION_CAPS, reasoning: "highest", speed: "medium", creativity: "medium" },
-    maxTokens: 100000,
-    contextWindow: 200000,
-    providers: {
-      openrouter: { modelId: "openai/o4-mini", inputPer1M: 1.1, outputPer1M: 4.4 },
-    },
-  },
-  {
-    id: "perplexity/sonar-pro",
-    displayName: "Perplexity Sonar Pro",
-    author: "Perplexity",
-    description: "Perplexity's premium search-augmented model",
-    capability: "text-generation",
-    tier: 3,
-    badge: "SEARCH",
-    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "medium", creativity: "high", supportsFunctionCalling: false },
-    maxTokens: 8192,
-    contextWindow: 200000,
-    providers: {
-      openrouter: { modelId: "perplexity/sonar-pro", inputPer1M: 3, outputPer1M: 15 },
     },
   },
   // ========================================
@@ -1270,6 +1239,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     badge: "FAST",
     capabilities: { ...IMAGE_GEN_CAPS },
     providers: {
+      google: { modelId: "imagen-4.0-fast-generate-001", perImage: 0.02 },
       together: { modelId: "google/imagen-4.0-fast", perImage: 0.02 },
     },
   },
@@ -1287,13 +1257,14 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
   },
   {
     id: "google/imagen-4.0-preview",
-    displayName: "Imagen 4.0 Preview",
+    displayName: "Imagen 4.0",
     author: "Google",
-    description: "Google Imagen 4 preview generation",
+    description: "Google Imagen 4 standard generation",
     capability: "image-generation",
     tier: 2,
     capabilities: { ...IMAGE_GEN_CAPS },
     providers: {
+      google: { modelId: "imagen-4.0-generate-001", perImage: 0.04 },
       together: { modelId: "google/imagen-4.0-preview", perImage: 0.04 },
     },
   },
@@ -1332,6 +1303,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     badge: "HD",
     capabilities: { ...IMAGE_GEN_CAPS },
     providers: {
+      google: { modelId: "imagen-4.0-ultra-generate-001", perImage: 0.08 },
       together: { modelId: "google/imagen-4.0-ultra", perImage: 0.08 },
     },
   },
@@ -1345,6 +1317,72 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     capabilities: { ...IMAGE_GEN_CAPS },
     providers: {
       together: { modelId: "ideogram/ideogram-3.0", perImage: 0.08 },
+    },
+  },
+  // ========================================
+  // Video Generation
+  // ========================================
+  {
+    id: "google/veo-2.0",
+    displayName: "Veo 2.0",
+    author: "Google",
+    description: "Google's previous-gen video generation model",
+    capability: "video-generation",
+    tier: 1,
+    capabilities: { ...VIDEO_GEN_CAPS },
+    providers: {
+      google: { modelId: "veo-2.0-generate-001", perSecond: 0.35 },
+    },
+  },
+  {
+    id: "google/veo-3.0-fast",
+    displayName: "Veo 3.0 Fast",
+    author: "Google",
+    description: "Google's fast video generation",
+    capability: "video-generation",
+    tier: 1,
+    badge: "FAST",
+    capabilities: { ...VIDEO_GEN_CAPS },
+    providers: {
+      google: { modelId: "veo-3.0-fast-generate-001", perSecond: 0.25 },
+    },
+  },
+  {
+    id: "google/veo-3.0",
+    displayName: "Veo 3.0",
+    author: "Google",
+    description: "Google's high-quality video generation",
+    capability: "video-generation",
+    tier: 2,
+    capabilities: { ...VIDEO_GEN_CAPS },
+    providers: {
+      google: { modelId: "veo-3.0-generate-001", perSecond: 0.40 },
+    },
+  },
+  {
+    id: "google/veo-3.1-fast",
+    displayName: "Veo 3.1 Fast",
+    author: "Google",
+    description: "Google's latest fast video generation",
+    capability: "video-generation",
+    tier: 2,
+    badge: "NEW",
+    capabilities: { ...VIDEO_GEN_CAPS },
+    providers: {
+      google: { modelId: "veo-3.1-fast-generate-preview", perSecond: 0.30 },
+    },
+  },
+  {
+    id: "google/veo-3.1",
+    displayName: "Veo 3.1",
+    author: "Google",
+    description: "Google's best video generation model",
+    capability: "video-generation",
+    tier: 3,
+    badge: "BEST",
+    capabilities: { ...VIDEO_GEN_CAPS },
+    providers: {
+      google: { modelId: "veo-3.1-generate-001", perSecond: 0.50 },
     },
   },
   // ========================================
@@ -1373,21 +1411,6 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     capabilities: { ...SPEECH_SYNTH_CAPS },
     providers: {
       openai: { modelId: "tts-1-hd", perCharM: 30 },
-    },
-  },
-  // ========================================
-  // Speech Recognition
-  // ========================================
-  {
-    id: "whisper-1",
-    displayName: "Whisper",
-    author: "OpenAI",
-    description: "Transcribe audio to text",
-    capability: "speech-recognition",
-    tier: 1,
-    capabilities: { ...SPEECH_REC_CAPS },
-    providers: {
-      openai: { modelId: "whisper-1", perMinute: 0.006 },
     },
   },
   // ========================================
@@ -1433,18 +1456,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       together: { modelId: "BAAI/bge-base-en-v1.5", inputPer1M: 0.008 },
     },
   },
-  {
-    id: "Alibaba-NLP/gte-modernbert-base",
-    displayName: "GTE ModernBERT",
-    author: "Alibaba",
-    description: "Alibaba GTE ModernBERT embedding model",
-    capability: "text-embedding",
-    tier: 2,
-    capabilities: { ...EMBEDDING_CAPS },
-    providers: {
-      together: { modelId: "Alibaba-NLP/gte-modernbert-base", inputPer1M: 0.08 },
-    },
-  },
+
   {
     id: "BAAI/bge-large-en-v1.5",
     displayName: "BGE Large EN",
@@ -1457,18 +1469,33 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       together: { modelId: "BAAI/bge-large-en-v1.5", inputPer1M: 0.016 },
     },
   },
+  // --- Google (Vertex AI) ---
   {
-    id: "intfloat/multilingual-e5-large-instruct",
-    displayName: "Multilingual E5 Large",
-    author: "Microsoft",
-    description: "Multilingual E5 embedding model",
+    id: "intfloat/e5-large",
+    displayName: "E5 Large Multilingual",
+    author: "intfloat",
+    description: "Multilingual embedding model via Vertex AI (1024 dim)",
     capability: "text-embedding",
     tier: 2,
     capabilities: { ...EMBEDDING_CAPS },
     providers: {
-      together: { modelId: "intfloat/multilingual-e5-large-instruct", inputPer1M: 0.02 },
+      google: { modelId: "multilingual-e5-large-instruct-maas", inputPer1M: 0.1 },
     },
   },
+  {
+    id: "intfloat/e5-small",
+    displayName: "E5 Small Multilingual",
+    author: "intfloat",
+    description: "Efficient multilingual embedding model via Vertex AI (384 dim)",
+    capability: "text-embedding",
+    tier: 1,
+    badge: "FAST",
+    capabilities: { ...EMBEDDING_CAPS },
+    providers: {
+      google: { modelId: "multilingual-e5-small-maas", inputPer1M: 0.05 },
+    },
+  },
+
 ] as const;
 
 // ===========================================
@@ -1568,5 +1595,6 @@ export function registryToModelInfo(entry: ModelRegistryEntry, provider: TwoBotA
     creditsPerImage: cost.perImage !== undefined ? creditPerImage(cost.perImage) : undefined,
     creditsPerChar: cost.perCharM !== undefined ? creditPerChar(cost.perCharM) : undefined,
     creditsPerMinute: cost.perMinute !== undefined ? creditPerMinute(cost.perMinute) : undefined,
+    creditsPerSecond: cost.perSecond !== undefined ? creditPerSecond(cost.perSecond) : undefined,
   };
 }

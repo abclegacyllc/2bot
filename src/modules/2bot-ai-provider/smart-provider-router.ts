@@ -33,6 +33,7 @@ import {
   getTextGenerationPricing,
 } from "./model-pricing";
 import { isProviderConfigured } from "./provider-config";
+import { isProviderHealthyCached } from "./provider-health.service";
 import type { AICapability, TwoBotAIProvider } from "./types";
 
 const log = logger.child({ module: "smart-provider-router" });
@@ -118,6 +119,27 @@ export function selectSmartProvider(
   if (configuredOptions.length === 0) {
     log.warn({ capability, totalOptions: options.length }, "No configured providers available");
     return undefined;
+  }
+
+  // 1.1. Prefer healthy providers (sync cache check — no API calls)
+  const healthyOptions = configuredOptions.filter((opt) =>
+    isProviderHealthyCached(opt.provider)
+  );
+
+  if (healthyOptions.length > 0) {
+    // At least one healthy provider — use only healthy ones for primary selection
+    // Unhealthy ones will still appear in alternatives
+    log.debug(
+      { capability, healthy: healthyOptions.length, total: configuredOptions.length },
+      "Smart router: preferring healthy providers"
+    );
+    configuredOptions = healthyOptions;
+  } else {
+    // ALL providers unhealthy — keep all configured (graceful degradation)
+    log.warn(
+      { capability, totalOptions: configuredOptions.length },
+      "Smart router: all providers unhealthy — using all configured options"
+    );
   }
 
   // 1.5. Apply tier cost guardrails — remove models outside the tier's cost bracket

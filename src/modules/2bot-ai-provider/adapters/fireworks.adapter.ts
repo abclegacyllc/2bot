@@ -43,6 +43,7 @@ function getFireworksClient(): OpenAI {
     fireworksClient = new OpenAI({
       apiKey,
       baseURL: "https://api.fireworks.ai/inference/v1",
+      timeout: 30_000,
     });
   }
   return fireworksClient;

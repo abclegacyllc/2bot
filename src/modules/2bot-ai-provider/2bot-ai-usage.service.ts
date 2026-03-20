@@ -43,6 +43,8 @@ export interface TwoBotAIUsageData {
   source?: "2bot"; // Always "2bot" for this service, optional for backwards compat
   /** Which platform feature triggered this usage ("chat", "cursor", "plugin-ipc", "api") */
   feature?: string;
+  /** Which AI provider handled the request ("openai", "anthropic", "google", "together", "fireworks", "openrouter") */
+  provider?: string;
 }
 
 /**
@@ -168,6 +170,7 @@ class TwoBotAIUsageService {
       model: data.model,
       source: "2bot", // Always 2Bot for this service
       feature: data.feature ?? null, // Which platform feature: "chat", "cursor", "plugin-ipc", "api"
+      provider: data.provider ?? null, // Which AI provider: "openai", "anthropic", "google", etc.
       billingPeriod,
       requestId: data.requestId,
       durationMs: data.durationMs,
@@ -200,6 +203,7 @@ class TwoBotAIUsageService {
         usageId: usage.id,
         capability: data.capability,
         model: data.model,
+        provider: data.provider,
         creditsUsed,
         departmentId: data.departmentId,
       },
@@ -420,10 +424,11 @@ class TwoBotAIUsageService {
     totalCredits: number;
     byCapability: Array<{ capability: string; requests: number; credits: number }>;
     byModel: Array<{ model: string; requests: number; credits: number }>;
+    byProvider: Array<{ provider: string; requests: number; credits: number }>;
   }> {
     const billingPeriod = period || getCurrentBillingPeriod();
 
-    const [totals, capabilityStats, modelStats] = await Promise.all([
+    const [totals, capabilityStats, modelStats, providerStats] = await Promise.all([
       prisma.aIUsage.aggregate({
         where: { billingPeriod, source: "2bot" },
         _count: { id: true },
@@ -443,6 +448,13 @@ class TwoBotAIUsageService {
         orderBy: { _sum: { creditsUsed: "desc" } },
         take: 20, // Top 20 models
       }),
+      prisma.aIUsage.groupBy({
+        by: ["provider"],
+        where: { billingPeriod, source: "2bot", provider: { not: null } },
+        _count: { id: true },
+        _sum: { creditsUsed: true },
+        orderBy: { _sum: { creditsUsed: "desc" } },
+      }),
     ]);
 
     return {
@@ -459,6 +471,13 @@ class TwoBotAIUsageService {
         requests: stat._count.id,
         credits: stat._sum.creditsUsed || 0,
       })),
+      byProvider: providerStats
+        .filter((stat): stat is typeof stat & { provider: string } => stat.provider !== null)
+        .map((stat) => ({
+          provider: stat.provider,
+          requests: stat._count.id,
+          credits: stat._sum.creditsUsed || 0,
+        })),
     };
   }
 

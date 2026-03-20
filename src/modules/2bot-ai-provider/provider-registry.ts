@@ -15,16 +15,18 @@
 
 import type { AICapability } from "./ai-capabilities";
 import type {
-  ImageGenerationRequest,
-  ImageGenerationResponse,
-  SpeechRecognitionRequest,
-  SpeechRecognitionResponse,
-  SpeechSynthesisRequest,
-  SpeechSynthesisResponse,
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk,
-  TwoBotAIProvider,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    SpeechRecognitionRequest,
+    SpeechRecognitionResponse,
+    SpeechSynthesisRequest,
+    SpeechSynthesisResponse,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk,
+    TwoBotAIProvider,
+    VideoGenerationRequest,
+    VideoGenerationResponse,
 } from "./types";
 
 // ===========================================
@@ -38,6 +40,7 @@ export interface ProviderAdapters {
   imageGeneration?: (req: ImageGenerationRequest) => Promise<ImageGenerationResponse>;
   speechSynthesis?: (req: SpeechSynthesisRequest) => Promise<SpeechSynthesisResponse>;
   speechRecognition?: (req: SpeechRecognitionRequest) => Promise<SpeechRecognitionResponse>;
+  videoGeneration?: (req: VideoGenerationRequest) => Promise<VideoGenerationResponse>;
 }
 
 // ===========================================
@@ -93,22 +96,27 @@ function isPlaceholderKey(key: string): boolean {
 // ===========================================
 
 import {
-  anthropicTextGeneration,
-  anthropicTextGenerationStream,
-  fireworksImageGeneration,
-  fireworksTextGeneration,
-  fireworksTextGenerationStream,
-  openaiImageGeneration,
-  openaiSpeechRecognition,
-  openaiSpeechSynthesis,
-  openaiTextGeneration,
-  openaiTextGenerationStream,
-  openrouterTextGeneration,
-  openrouterTextGenerationStream,
-  togetherImageGeneration,
-  togetherTextGeneration,
-  togetherTextGenerationStream,
+    anthropicTextGeneration,
+    anthropicTextGenerationStream,
+    fireworksImageGeneration,
+    fireworksTextGeneration,
+    fireworksTextGenerationStream,
+    openaiImageGeneration,
+    openaiSpeechRecognition,
+    openaiSpeechSynthesis,
+    openaiTextGeneration,
+    openaiTextGenerationStream,
+    openrouterTextGeneration,
+    openrouterTextGenerationStream,
+    togetherImageGeneration,
+    togetherTextGeneration,
+    togetherTextGenerationStream,
+    vertexImageGeneration,
+    vertexTextGeneration,
+    vertexTextGenerationStream,
 } from "./adapters";
+
+import { veoVideoGeneration } from "./adapters/google-veo.adapter";
 
 // ===========================================
 // The Registry — Single Source of Truth
@@ -223,6 +231,28 @@ export const PROVIDER_REGISTRY: Record<TwoBotAIProvider, ProviderRegistryEntry> 
       textGenerationStream: openrouterTextGenerationStream,
     },
     validationUrl: "https://openrouter.ai/api/v1/models",
+  },
+
+  google: {
+    provider: "google",
+    displayName: "Google Vertex AI",
+    envVar: "TWOBOT_VERTEX_AI_SERVICE_ACCOUNT",
+    keyPrefix: null,
+    minKeyLength: 20,
+    capabilities: [
+      "text-generation",
+      "image-generation",
+      "image-understanding",
+      "video-generation",
+      "tool-use",
+    ],
+    adapters: {
+      textGeneration: vertexTextGeneration,
+      textGenerationStream: vertexTextGenerationStream,
+      imageGeneration: vertexImageGeneration,
+      videoGeneration: veoVideoGeneration,
+    },
+    validationUrl: null, // Custom validation via Vertex AI token exchange
   },
 };
 

@@ -199,15 +199,24 @@ export function getCheapestProvider(
 
   if (options.length === 0) return undefined;
 
-  // Sort by cost: for text models, use (input + output) as proxy;
-  // for image models, use creditsPerImage
+  // Provider priority tiebreaker (lower = preferred). Must match tier-auto-curator.ts.
+  const PROVIDER_PRIORITY: Record<string, number> = {
+    google: 1, anthropic: 2, together: 3, openai: 4, fireworks: 4, openrouter: 5,
+  };
+
+  // Sort by cost, then by provider priority when costs are equal
   options.sort((a, b) => {
+    let diff: number;
     if (cm.capability === "image-generation") {
-      return (a.creditsPerImage ?? 0) - (b.creditsPerImage ?? 0);
+      diff = (a.creditsPerImage ?? 0) - (b.creditsPerImage ?? 0);
+    } else {
+      const costA = a.creditsPerInputToken + a.creditsPerOutputToken;
+      const costB = b.creditsPerInputToken + b.creditsPerOutputToken;
+      diff = costA - costB;
     }
-    const costA = a.creditsPerInputToken + a.creditsPerOutputToken;
-    const costB = b.creditsPerInputToken + b.creditsPerOutputToken;
-    return costA - costB;
+    if (diff !== 0) return diff;
+    // Tiebreaker: prefer higher-priority provider (lower number)
+    return (PROVIDER_PRIORITY[a.provider] ?? 99) - (PROVIDER_PRIORITY[b.provider] ?? 99);
   });
 
   const cheapest = options[0];

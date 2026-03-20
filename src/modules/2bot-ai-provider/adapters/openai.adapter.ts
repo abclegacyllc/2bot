@@ -41,7 +41,7 @@ function getOpenAIClient(): OpenAI {
         500
       );
     }
-    openaiClient = new OpenAI({ apiKey });
+    openaiClient = new OpenAI({ apiKey, timeout: 30_000 });
   }
   return openaiClient;
 }

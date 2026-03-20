@@ -37,7 +37,7 @@ function getTogetherClient(): Together {
         500
       );
     }
-    togetherClient = new Together({ apiKey });
+    togetherClient = new Together({ apiKey, timeout: 30_000 });
   }
   return togetherClient;
 }
@@ -401,10 +401,10 @@ function mapTogetherError(error: unknown): TwoBotAIError {
       );
     }
 
-    // Model not found
-    if (message.includes("not found") || message.includes("does not exist")) {
+    // Model not found / not available (including non-serverless models)
+    if (message.includes("not found") || message.includes("does not exist") || message.includes("non-serverless") || message.includes("not available") || message.includes("model_not_available")) {
       return new TwoBotAIError(
-        "Model not available on Together AI.",
+        "This model is currently unavailable. Please try a different model.",
         "MODEL_UNAVAILABLE",
         404
       );
@@ -416,14 +416,14 @@ function mapTogetherError(error: unknown): TwoBotAIError {
     }
 
     return new TwoBotAIError(
-      message || "Together AI API error",
+      "An error occurred processing your request. Please try again.",
       "PROVIDER_ERROR",
       500
     );
   }
 
   return new TwoBotAIError(
-    "Unknown Together AI error",
+    "An unexpected error occurred. Please try again.",
     "PROVIDER_ERROR",
     500
   );

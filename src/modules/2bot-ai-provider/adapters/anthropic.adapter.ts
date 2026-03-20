@@ -34,7 +34,7 @@ function getAnthropicClient(): Anthropic {
         500
       );
     }
-    anthropicClient = new Anthropic({ apiKey });
+    anthropicClient = new Anthropic({ apiKey, timeout: 30_000 });
   }
   return anthropicClient;
 }
@@ -396,9 +396,15 @@ function mapAnthropicError(error: unknown): TwoBotAIError {
         );
       case 400:
         return new TwoBotAIError(
-          error.message || "Invalid request",
+          "Invalid request. The model may not support this operation.",
           "INVALID_REQUEST",
           400
+        );
+      case 404:
+        return new TwoBotAIError(
+          "This model is currently unavailable. Please try a different model.",
+          "MODEL_UNAVAILABLE",
+          404
         );
       case 529:
         return new TwoBotAIError(
@@ -408,7 +414,7 @@ function mapAnthropicError(error: unknown): TwoBotAIError {
         );
       default:
         return new TwoBotAIError(
-          error.message || "Anthropic API error",
+          "An error occurred processing your request. Please try again.",
           "PROVIDER_ERROR",
           error.status || 500
         );

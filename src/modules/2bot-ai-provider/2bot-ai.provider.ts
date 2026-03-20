@@ -22,43 +22,46 @@ import { twoBotAICreditService } from "@/modules/credits";
 import { aiCacheService } from "./ai-cache.service";
 import type { AICapability } from "./ai-capabilities";
 import {
-    getAvailableTwoBotAIModels,
-    getTwoBotAIModel,
-    getTwoBotAIModelsByCapability,
-    isTwoBotAIModelId,
-    resolveTwoBotAIModel,
-    TWOBOT_AI_MODEL_TIERS,
-    twoBotAIModelResolver,
-    type ModelResolutionResult,
-    type TwoBotAIModelId,
-    type TwoBotAIModelInfo,
+  getAvailableTwoBotAIModels,
+  getTwoBotAIModel,
+  getTwoBotAIModelsByCapability,
+  isTwoBotAIModelId,
+  resolveTwoBotAIModel,
+  TWOBOT_AI_MODEL_TIERS,
+  twoBotAIModelResolver,
+  type ModelResolutionResult,
+  type TwoBotAIModelId,
+  type TwoBotAIModelInfo,
 } from "./model-catalog";
+import { recordModelFailure, recordModelSuccess } from "./model-health-tracker";
 import type { SmartRoutingResult } from "./model-router";
 import { getSmartRoutingDecision, validateModelAvailable } from "./model-router";
 import {
-    getAvailableModels,
-    getConfiguredProviders,
-    getModelIfAvailable,
-    getProvidersStatus,
-    isProviderConfigured
+  getAutoFallbackChain,
+  getAvailableModels,
+  getConfiguredProviders,
+  getModelIfAvailable,
+  getProvidersStatus,
+  isProviderConfigured
 } from "./provider-config";
 import {
-    getProviderAdapter,
-    getProviderEntry,
+  getProviderAdapter,
+  getProviderEntry,
 } from "./provider-registry";
+import { withRetry } from "./retry.util";
 import type {
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    ModelInfo,
-    SpeechRecognitionRequest,
-    SpeechRecognitionResponse,
-    SpeechSynthesisRequest,
-    SpeechSynthesisResponse,
-    TextGenerationRequest,
-    TextGenerationResponse,
-    TextGenerationStreamChunk,
-    TwoBotAIModel,
-    TwoBotAIProvider
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  ModelInfo,
+  SpeechRecognitionRequest,
+  SpeechRecognitionResponse,
+  SpeechSynthesisRequest,
+  SpeechSynthesisResponse,
+  TextGenerationRequest,
+  TextGenerationResponse,
+  TextGenerationStreamChunk,
+  TwoBotAIModel,
+  TwoBotAIProvider
 } from "./types";
 import { TwoBotAIError } from "./types";
 
@@ -75,6 +78,8 @@ interface TextGenPrep {
   resolution: ModelResolutionResult | null;
   routingResult: SmartRoutingResult | null;
   originalModel: TwoBotAIModel;
+  /** Ranked fallback models for "auto" mode (cheapest first, excluding the primary) */
+  autoFallbackChain: ModelInfo[];
 }
 
 /**
@@ -88,6 +93,19 @@ function prepareTextGeneration(
   logSuffix = "",
 ): TextGenPrep {
   const originalModel = request.model;
+
+  // 🔄 "auto" → cheapest available model for this capability (with fallback chain)
+  let autoFallbackChain: ModelInfo[] = [];
+  if (request.model === "auto") {
+    const chain = getAutoFallbackChain("text-generation");
+    if (chain.length === 0) {
+      throw new TwoBotAIError("No text-generation models available", "MODEL_UNAVAILABLE", 503);
+    }
+    const cheapest = chain[0]!;
+    autoFallbackChain = chain.slice(1); // remaining models for failover
+    log.info({ resolvedModel: cheapest.id, fallbackCount: autoFallbackChain.length }, `⚡ Auto mode: using cheapest available model${logSuffix}`);
+    request = { ...request, model: cheapest.id as TwoBotAIModel };
+  }
 
   // 🔄 Resolve 2Bot AI model IDs to provider models (with failover support)
   let resolution: ModelResolutionResult | null = null;
@@ -159,6 +177,7 @@ function prepareTextGeneration(
     resolution,
     routingResult,
     originalModel: originalModel as TwoBotAIModel,
+    autoFallbackChain,
   };
 }
 
@@ -222,6 +241,7 @@ async function safeDeductCredits(
     inputTokens: number;
     outputTokens: number;
     feature?: string;
+    provider?: string;
   },
   log: Logger,
 ): Promise<{ creditsUsed: number; newBalance: number; walletType: string } | null> {
@@ -383,10 +403,19 @@ export const twoBotAIProvider = {
     // Resolve model, validate, and apply smart routing
     const prep = prepareTextGeneration(request, log);
     request = prep.request;
-    const { provider, resolution, routingResult, originalModel } = prep;
+    const { provider, resolution, routingResult, originalModel, autoFallbackChain } = prep;
 
-    // 💾 Check cache first - $0.00 if hit!
-    const cachedResponse = await aiCacheService.get(request.model, request.messages);
+    // 💾 Check cache + estimate credits in parallel (saves one sequential round-trip)
+    const estimatedTokens = estimateTokens(request.messages);
+    const [cachedResponse, estimatedCost] = await Promise.all([
+      aiCacheService.get(originalModel, request.messages, request.conversationId),
+      twoBotAICreditService.calculateCreditsByCapability(
+        "text-generation",
+        request.model,
+        { inputTokens: estimatedTokens, outputTokens: estimatedTokens }
+      ),
+    ]);
+
     if (cachedResponse) {
       log.info({ model: request.model }, "Cache hit! Returning cached response (FREE)");
       const balance = request.organizationId
@@ -405,21 +434,16 @@ export const twoBotAIProvider = {
       };
     }
 
-    // Check credits
-    const estimatedTokens = estimateTokens(request.messages);
-    const estimatedCost = await twoBotAICreditService.calculateCreditsByCapability(
-      "text-generation",
-      request.model,
-      { inputTokens: estimatedTokens, outputTokens: estimatedTokens }
-    );
+    // Ensure user has sufficient credits
     await ensureCredits(request.userId, request.organizationId, estimatedCost);
 
     // Make the request (with provider failover for 2Bot AI models)
-    let response: TextGenerationResponse;
+    let response!: TextGenerationResponse;
+    let usedProvider: TwoBotAIProvider = provider;
     const callProviderAdapter = async (p: TwoBotAIProvider, req: TextGenerationRequest): Promise<TextGenerationResponse> => {
       const adapter = getProviderAdapter(p, "textGeneration");
       if (!adapter) throw new TwoBotAIError(`Provider ${p} does not support text generation`, "PROVIDER_ERROR", 500);
-      return adapter(req);
+      return withRetry(() => adapter(req), { maxRetries: 2, operationName: `${p}-text-generation` });
     };
 
     if (resolution) {
@@ -430,10 +454,13 @@ export const twoBotAIProvider = {
       while (true) {
         try {
           response = await callProviderAdapter(currentProvider, { ...request, model: currentModel });
+          recordModelSuccess(currentModel);
           request = { ...request, model: currentModel };
+          usedProvider = currentProvider;
           break;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
+          recordModelFailure(currentModel, error.message);
           if (currentResolution) {
             const next = twoBotAIModelResolver.getNextFallback(currentResolution);
             if (next) {
@@ -454,13 +481,52 @@ export const twoBotAIProvider = {
           throw err;
         }
       }
+    } else if (autoFallbackChain.length > 0) {
+      // "auto" mode: try primary model, then failover through chain
+      let currentProvider = provider;
+      let currentModel = request.model;
+      let lastError: Error | undefined;
+
+      // Try primary model first
+      try {
+        response = await callProviderAdapter(currentProvider, request);
+        recordModelSuccess(currentModel);
+        usedProvider = currentProvider;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        recordModelFailure(currentModel, lastError.message);
+        log.warn({ failedModel: currentModel, error: lastError.message }, "⚠️ Auto primary model failed, trying fallbacks");
+
+        // Try each fallback in order
+        let succeeded = false;
+        for (const fallback of autoFallbackChain) {
+          try {
+            currentProvider = fallback.provider;
+            currentModel = fallback.id;
+            response = await callProviderAdapter(currentProvider, { ...request, model: currentModel });
+            recordModelSuccess(currentModel);
+            request = { ...request, model: currentModel };
+            log.info({ fallbackModel: currentModel, fallbackProvider: currentProvider }, "✅ Auto fallback succeeded");
+            usedProvider = currentProvider;
+            succeeded = true;
+            break;
+          } catch (fallbackErr) {
+            lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
+            recordModelFailure(currentModel, lastError.message);
+            log.warn({ failedModel: currentModel, error: lastError.message }, "⚠️ Auto fallback also failed");
+          }
+        }
+        if (!succeeded) {
+          throw lastError!;
+        }
+      }
     } else {
       response = await callProviderAdapter(provider, request);
     }
 
     // 💾 Cache the response
     if (process.env.AI_CACHE_ENABLED !== "false") {
-      await aiCacheService.set(request.model, request.messages, response.content);
+      await aiCacheService.set(originalModel, request.messages, response.content, { conversationId: request.conversationId });
     }
 
     // Deduct credits
@@ -476,6 +542,7 @@ export const twoBotAIProvider = {
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
         feature: request.feature,
+        provider: usedProvider,
       },
       log
     );
@@ -510,45 +577,49 @@ export const twoBotAIProvider = {
     // Resolve model, validate, and apply smart routing
     const prep = prepareTextGeneration(request, log, " (stream)");
     request = prep.request;
-    const { provider, resolution } = prep;
+    const { provider, resolution, originalModel, autoFallbackChain } = prep;
 
-    // 💾 Check cache — for streaming we emit one big chunk
-    if (process.env.AI_CACHE_ENABLED !== "false") {
-      const cachedResponse = await aiCacheService.get(request.model, request.messages);
-      if (cachedResponse) {
-        log.info({ model: request.model }, "Cache hit! Returning cached response (FREE)");
-        yield { id: `cached_${Date.now()}`, delta: cachedResponse, finishReason: "stop" };
+    // 💾 Check cache + estimate credits in parallel
+    const estimatedTokens = estimateTokens(request.messages);
+    const [cachedResponse, estimatedCost] = await Promise.all([
+      process.env.AI_CACHE_ENABLED !== "false"
+        ? aiCacheService.get(originalModel, request.messages, request.conversationId)
+        : Promise.resolve(null),
+      twoBotAICreditService.calculateCreditsByCapability(
+        "text-generation",
+        request.model,
+        { inputTokens: estimatedTokens, outputTokens: estimatedTokens }
+      ),
+    ]);
 
-        const balance = request.organizationId
-          ? await twoBotAICreditService.getOrgBalance(request.organizationId)
-          : await twoBotAICreditService.getPersonalBalance(request.userId);
+    if (cachedResponse) {
+      log.info({ model: request.model }, "Cache hit! Returning cached response (FREE)");
+      yield { id: `cached_${Date.now()}`, delta: cachedResponse, finishReason: "stop" };
 
-        return {
-          id: `cached_${Date.now()}`,
-          model: request.model,
-          content: cachedResponse,
-          finishReason: "stop",
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          creditsUsed: 0,
-          newBalance: balance?.balance ?? 0,
-          cached: true,
-        };
-      }
+      const balance = request.organizationId
+        ? await twoBotAICreditService.getOrgBalance(request.organizationId)
+        : await twoBotAICreditService.getPersonalBalance(request.userId);
+
+      return {
+        id: `cached_${Date.now()}`,
+        model: request.model,
+        content: cachedResponse,
+        finishReason: "stop",
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        creditsUsed: 0,
+        newBalance: balance?.balance ?? 0,
+        cached: true,
+      };
     }
 
-    // Check credits
-    const estimatedTokens = estimateTokens(request.messages);
-    const estimatedCost = await twoBotAICreditService.calculateCreditsByCapability(
-      "text-generation",
-      request.model,
-      { inputTokens: estimatedTokens, outputTokens: estimatedTokens }
-    );
+    // Ensure user has sufficient credits
     await ensureCredits(request.userId, request.organizationId, estimatedCost);
 
     // Stream the response (with provider failover for 2Bot AI models)
     let lastChunk: TextGenerationStreamChunk | undefined;
     let content = "";
-    let usage: { inputTokens: number; outputTokens: number };
+    let usage!: { inputTokens: number; outputTokens: number };
+    let usedProvider: TwoBotAIProvider = provider;
 
     if (resolution) {
       let currentResolution: ModelResolutionResult | null = resolution;
@@ -573,10 +644,13 @@ export const twoBotAIProvider = {
           }
 
           usage = result.value;
+          recordModelSuccess(currentModel);
           request = { ...request, model: currentModel };
+          usedProvider = currentProvider;
           break;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
+          recordModelFailure(currentModel, error.message);
 
           // Can only failover if no chunks have been sent to the client yet
           if (!chunksYielded && currentResolution) {
@@ -599,6 +673,61 @@ export const twoBotAIProvider = {
           throw err;
         }
       }
+    } else if (autoFallbackChain.length > 0) {
+      // "auto" mode streaming: try primary, then failover through chain (only before first chunk)
+      const tryStreamModel = async function* (p: TwoBotAIProvider, model: TwoBotAIModel) {
+        const streamAdapter = getProviderAdapter(p, "textGenerationStream");
+        if (!streamAdapter) {
+          throw new TwoBotAIError(`Provider ${p} does not support text generation streaming`, "PROVIDER_ERROR", 500);
+        }
+        const generator = streamAdapter({ ...request, model });
+        let result: IteratorResult<TextGenerationStreamChunk, { inputTokens: number; outputTokens: number }>;
+        while (!(result = await generator.next()).done) {
+          yield { chunk: result.value, done: false as const };
+        }
+        yield { usage: result.value, done: true as const };
+      };
+
+      // Try primary model first
+      let succeeded = false;
+      const modelsToTry: Array<{ provider: TwoBotAIProvider; model: TwoBotAIModel }> = [
+        { provider, model: request.model },
+        ...autoFallbackChain.map((m) => ({ provider: m.provider, model: m.id })),
+      ];
+
+      for (const candidate of modelsToTry) {
+        try {
+          const stream = tryStreamModel(candidate.provider, candidate.model);
+          for await (const frame of stream) {
+            if (frame.done) {
+              usage = frame.usage;
+            } else {
+              lastChunk = frame.chunk;
+              content += lastChunk.delta;
+              yield lastChunk;
+            }
+          }
+          recordModelSuccess(candidate.model);
+          request = { ...request, model: candidate.model };
+          usedProvider = candidate.provider;
+          succeeded = true;
+          if (candidate.model !== modelsToTry[0]!.model) {
+            log.info({ fallbackModel: candidate.model, fallbackProvider: candidate.provider }, "✅ Auto stream fallback succeeded");
+          }
+          break;
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          recordModelFailure(candidate.model, error.message);
+          // Can only failover if no chunks sent yet
+          if (content.length > 0) {
+            throw err; // Already sent data to client, can't switch
+          }
+          log.warn({ failedModel: candidate.model, error: error.message }, "⚠️ Auto stream model failed, trying next");
+        }
+      }
+      if (!succeeded) {
+        throw new TwoBotAIError("All available models failed. Please try again later.", "MODEL_UNAVAILABLE", 503);
+      }
     } else {
       const streamAdapter = getProviderAdapter(provider, "textGenerationStream");
       if (!streamAdapter) {
@@ -617,7 +746,7 @@ export const twoBotAIProvider = {
 
     // 💾 Cache the full response
     if (process.env.AI_CACHE_ENABLED !== "false") {
-      await aiCacheService.set(request.model, request.messages, content);
+      await aiCacheService.set(originalModel, request.messages, content, { conversationId: request.conversationId });
     }
 
     // Deduct credits
@@ -633,6 +762,7 @@ export const twoBotAIProvider = {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         feature: request.feature,
+        provider: usedProvider,
       },
       log
     );
@@ -676,7 +806,20 @@ export const twoBotAIProvider = {
     let providerModelId: string;
     let provider: TwoBotAIProvider;
     let resolution: ModelResolutionResult | null = null;
-    const requestModel = request.model || "2bot-ai-image-pro";
+    let requestModel = request.model || "auto";
+
+    // ⚡ "auto" → cheapest available image model (with fallback chain)
+    let autoFallbackChain: ModelInfo[] = [];
+    if (requestModel === "auto") {
+      const chain = getAutoFallbackChain("image-generation");
+      if (chain.length === 0) {
+        throw new TwoBotAIError("No image generation models available", "MODEL_UNAVAILABLE", 503);
+      }
+      const cheapest = chain[0]!;
+      autoFallbackChain = chain.slice(1);
+      requestModel = cheapest.id;
+      log.info({ resolvedModel: cheapest.id, fallbackCount: autoFallbackChain.length }, "⚡ Auto mode: using cheapest image model");
+    }
 
     if (isTwoBotAIModelId(requestModel)) {
       // 2Bot model ID — use resolver to find best available provider
@@ -764,7 +907,7 @@ export const twoBotAIProvider = {
     }
 
     // Generate image (with provider failover for 2Bot AI models)
-    let response: ImageGenerationResponse;
+    let response!: ImageGenerationResponse;
 
     const callImageAdapter = async (p: TwoBotAIProvider, modelId: string): Promise<ImageGenerationResponse> => {
       const imageAdapter = getProviderAdapter(p, "imageGeneration");
@@ -783,12 +926,14 @@ export const twoBotAIProvider = {
       while (true) {
         try {
           response = await callImageAdapter(currentProvider, currentModel);
+          recordModelSuccess(currentModel);
           // Update for billing/logging
           providerModelId = currentModel;
           provider = currentProvider;
           break;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
+          recordModelFailure(currentModel, error.message);
 
           // Try next fallback provider
           if (currentResolution) {
@@ -813,6 +958,37 @@ export const twoBotAIProvider = {
           throw err;
         }
       }
+    } else if (autoFallbackChain.length > 0) {
+      // "auto" mode: try primary model, then failover through chain
+      let lastError: Error | undefined;
+      try {
+        response = await callImageAdapter(provider, providerModelId);
+        recordModelSuccess(providerModelId);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        recordModelFailure(providerModelId, lastError.message);
+        log.warn({ failedModel: providerModelId, error: lastError.message }, "⚠️ Auto primary image model failed, trying fallbacks");
+
+        let succeeded = false;
+        for (const fallback of autoFallbackChain) {
+          try {
+            response = await callImageAdapter(fallback.provider, fallback.id);
+            recordModelSuccess(fallback.id);
+            providerModelId = fallback.id;
+            provider = fallback.provider;
+            log.info({ fallbackModel: fallback.id, fallbackProvider: fallback.provider }, "✅ Auto image fallback succeeded");
+            succeeded = true;
+            break;
+          } catch (fallbackErr) {
+            lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
+            recordModelFailure(fallback.id, lastError.message);
+            log.warn({ failedModel: fallback.id, error: lastError.message }, "⚠️ Auto image fallback also failed");
+          }
+        }
+        if (!succeeded) {
+          throw lastError!;
+        }
+      }
     } else {
       // Raw provider model: single attempt (existing behavior)
       response = await callImageAdapter(provider, providerModelId);
@@ -827,6 +1003,7 @@ export const twoBotAIProvider = {
       model: providerModelId,
       source: "2bot" as const,
       imageCount: response.images.length,
+      provider,
     };
 
     try {
@@ -873,7 +1050,20 @@ export const twoBotAIProvider = {
     // Resolve 2Bot model ID to provider model
     let providerModelId: string;
     let provider: TwoBotAIProvider;
-    const requestModel = request.model || "2bot-ai-voice-pro";
+    let requestModel = request.model || "auto";
+
+    // ⚡ "auto" → cheapest available voice model (with fallback chain)
+    let autoFallbackChain: ModelInfo[] = [];
+    if (requestModel === "auto") {
+      const chain = getAutoFallbackChain("speech-synthesis");
+      if (chain.length === 0) {
+        throw new TwoBotAIError("No speech-synthesis models available", "MODEL_UNAVAILABLE", 503);
+      }
+      const cheapest = chain[0]!;
+      autoFallbackChain = chain.slice(1);
+      requestModel = cheapest.id;
+      log.info({ resolvedModel: cheapest.id, fallbackCount: autoFallbackChain.length }, "⚡ Auto mode: using cheapest voice model");
+    }
 
     if (isTwoBotAIModelId(requestModel)) {
       try {
@@ -947,17 +1137,55 @@ export const twoBotAIProvider = {
       }
     }
 
-    // Generate speech using the resolved provider model
-    const providerRequest = { ...request, model: providerModelId };
-    const speechAdapter = getProviderAdapter(provider, "speechSynthesis");
-    if (!speechAdapter) {
-      throw new TwoBotAIError(
-        `Provider ${getProviderEntry(provider).displayName} does not support speech synthesis`,
-        "PROVIDER_ERROR",
-        500
-      );
+    // Generate speech using the resolved provider model (with auto failover)
+    let response!: SpeechSynthesisResponse;
+
+    const callSpeechAdapter = async (p: TwoBotAIProvider, modelId: string): Promise<SpeechSynthesisResponse> => {
+      const adapter = getProviderAdapter(p, "speechSynthesis");
+      if (!adapter) {
+        throw new TwoBotAIError(
+          `Provider ${getProviderEntry(p).displayName} does not support speech synthesis`,
+          "PROVIDER_ERROR",
+          500
+        );
+      }
+      return adapter({ ...request, model: modelId });
+    };
+
+    if (autoFallbackChain.length > 0) {
+      // "auto" mode: try primary, then failover through chain
+      let lastError: Error | undefined;
+      try {
+        response = await callSpeechAdapter(provider, providerModelId);
+        recordModelSuccess(providerModelId);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        recordModelFailure(providerModelId, lastError.message);
+        log.warn({ failedModel: providerModelId, error: lastError.message }, "⚠️ Auto primary speech model failed, trying fallbacks");
+
+        let succeeded = false;
+        for (const fallback of autoFallbackChain) {
+          try {
+            response = await callSpeechAdapter(fallback.provider, fallback.id);
+            recordModelSuccess(fallback.id);
+            providerModelId = fallback.id;
+            provider = fallback.provider;
+            log.info({ fallbackModel: fallback.id, fallbackProvider: fallback.provider }, "✅ Auto speech fallback succeeded");
+            succeeded = true;
+            break;
+          } catch (fallbackErr) {
+            lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
+            recordModelFailure(fallback.id, lastError.message);
+            log.warn({ failedModel: fallback.id, error: lastError.message }, "⚠️ Auto speech fallback also failed");
+          }
+        }
+        if (!succeeded) {
+          throw lastError!;
+        }
+      }
+    } else {
+      response = await callSpeechAdapter(provider, providerModelId);
     }
-    const response = await speechAdapter(providerRequest);
 
     // Deduct credits based on context
     const usageData = {
@@ -968,6 +1196,7 @@ export const twoBotAIProvider = {
       model: providerModelId,
       source: "2bot" as const,
       characterCount: response.characterCount,
+      provider,
     };
 
     try {
@@ -1013,7 +1242,20 @@ export const twoBotAIProvider = {
     // Resolve 2Bot model ID to provider model
     let providerModelId: string;
     let provider: TwoBotAIProvider;
-    const requestModel = request.model || "2bot-ai-transcribe-lite";
+    let requestModel = request.model || "auto";
+
+    // ⚡ "auto" → cheapest available transcription model (with fallback chain)
+    let autoFallbackChain: ModelInfo[] = [];
+    if (requestModel === "auto") {
+      const chain = getAutoFallbackChain("speech-recognition");
+      if (chain.length === 0) {
+        throw new TwoBotAIError("No speech-recognition models available", "MODEL_UNAVAILABLE", 503);
+      }
+      const cheapest = chain[0]!;
+      autoFallbackChain = chain.slice(1);
+      requestModel = cheapest.id;
+      log.info({ resolvedModel: cheapest.id, fallbackCount: autoFallbackChain.length }, "⚡ Auto mode: using cheapest transcription model");
+    }
 
     if (isTwoBotAIModelId(requestModel)) {
       try {
@@ -1088,17 +1330,55 @@ export const twoBotAIProvider = {
       }
     }
 
-    // Transcribe using the resolved provider model
-    const providerRequest = { ...request, model: providerModelId };
-    const transcribeAdapter = getProviderAdapter(provider, "speechRecognition");
-    if (!transcribeAdapter) {
-      throw new TwoBotAIError(
-        `Provider ${getProviderEntry(provider).displayName} does not support speech recognition`,
-        "PROVIDER_ERROR",
-        500
-      );
+    // Transcribe using the resolved provider model (with auto failover)
+    let response!: SpeechRecognitionResponse;
+
+    const callTranscribeAdapter = async (p: TwoBotAIProvider, modelId: string): Promise<SpeechRecognitionResponse> => {
+      const adapter = getProviderAdapter(p, "speechRecognition");
+      if (!adapter) {
+        throw new TwoBotAIError(
+          `Provider ${getProviderEntry(p).displayName} does not support speech recognition`,
+          "PROVIDER_ERROR",
+          500
+        );
+      }
+      return adapter({ ...request, model: modelId });
+    };
+
+    if (autoFallbackChain.length > 0) {
+      // "auto" mode: try primary, then failover through chain
+      let lastError: Error | undefined;
+      try {
+        response = await callTranscribeAdapter(provider, providerModelId);
+        recordModelSuccess(providerModelId);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        recordModelFailure(providerModelId, lastError.message);
+        log.warn({ failedModel: providerModelId, error: lastError.message }, "⚠️ Auto primary transcription model failed, trying fallbacks");
+
+        let succeeded = false;
+        for (const fallback of autoFallbackChain) {
+          try {
+            response = await callTranscribeAdapter(fallback.provider, fallback.id);
+            recordModelSuccess(fallback.id);
+            providerModelId = fallback.id;
+            provider = fallback.provider;
+            log.info({ fallbackModel: fallback.id, fallbackProvider: fallback.provider }, "✅ Auto transcription fallback succeeded");
+            succeeded = true;
+            break;
+          } catch (fallbackErr) {
+            lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
+            recordModelFailure(fallback.id, lastError.message);
+            log.warn({ failedModel: fallback.id, error: lastError.message }, "⚠️ Auto transcription fallback also failed");
+          }
+        }
+        if (!succeeded) {
+          throw lastError!;
+        }
+      }
+    } else {
+      response = await callTranscribeAdapter(provider, providerModelId);
     }
-    const response = await transcribeAdapter(providerRequest);
 
     // Deduct credits based on actual duration
     const usageData = {
@@ -1109,6 +1389,7 @@ export const twoBotAIProvider = {
       model: providerModelId,
       source: "2bot" as const,
       audioSeconds: Math.ceil(response.duration),
+      provider,
     };
 
     try {

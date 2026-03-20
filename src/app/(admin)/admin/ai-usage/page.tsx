@@ -20,6 +20,7 @@ import {
     Brain,
     Building2,
     Cpu,
+    Server,
     TrendingUp,
     Users,
     Zap,
@@ -32,6 +33,7 @@ interface AIUsage {
   totalCredits: number;
   byCapability: Array<{ capability: string; requests: number; credits: number }>;
   byModel: Array<{ model: string; requests: number; credits: number }>;
+  byProvider: Array<{ provider: string; requests: number; credits: number }>;
 }
 
 interface AIUsageBreakdown {
@@ -63,6 +65,15 @@ const CAPABILITY_COLORS: Record<string, string> = {
   "text-to-speech": "bg-orange-500/10 text-orange-500",
   "embeddings": "bg-cyan-500/10 text-cyan-500",
   "moderation": "bg-red-500/10 text-red-500",
+};
+
+const PROVIDER_DISPLAY: Record<string, { name: string; color: string }> = {
+  openai: { name: "OpenAI", color: "bg-green-500/10 text-green-500" },
+  anthropic: { name: "Anthropic", color: "bg-orange-500/10 text-orange-500" },
+  google: { name: "Google Vertex AI", color: "bg-blue-500/10 text-blue-500" },
+  together: { name: "Together AI", color: "bg-purple-500/10 text-purple-500" },
+  fireworks: { name: "Fireworks AI", color: "bg-red-500/10 text-red-500" },
+  openrouter: { name: "OpenRouter", color: "bg-cyan-500/10 text-cyan-500" },
 };
 
 export default function AdminAIUsagePage() {
@@ -196,6 +207,10 @@ export default function AdminAIUsagePage() {
             <Brain className="h-4 w-4 mr-2" />
             Models
           </TabsTrigger>
+          <TabsTrigger value="providers">
+            <Server className="h-4 w-4 mr-2" />
+            Providers
+          </TabsTrigger>
           <TabsTrigger value="users">
             <Users className="h-4 w-4 mr-2" />
             Top Users
@@ -295,6 +310,53 @@ export default function AdminAIUsagePage() {
                   </tbody>
                 </table>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="providers">
+          <Card>
+            <CardHeader>
+              <CardTitle>Usage by Provider</CardTitle>
+              <CardDescription>AI provider usage breakdown</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {usage.byProvider.length === 0 ? (
+                <div className="text-muted-foreground text-sm py-4">
+                  No provider data yet. Provider tracking starts with new requests.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {usage.byProvider.map((prov) => {
+                    const display = PROVIDER_DISPLAY[prov.provider] || { name: prov.provider, color: "bg-gray-500/10 text-gray-500" };
+                    return (
+                      <div key={prov.provider} className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 flex-1">
+                          <Badge className={display.color}>
+                            {display.name}
+                          </Badge>
+                          <div className="flex-1 bg-muted rounded-full h-2">
+                            <div
+                              className="bg-purple-500 h-2 rounded-full transition-all"
+                              style={{
+                                width: `${(prov.requests / usage.totalRequests) * 100}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <div className="text-right ml-4">
+                          <div className="font-semibold text-foreground">
+                            {prov.requests.toLocaleString()}
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {prov.credits.toLocaleString()} credits
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -464,10 +464,8 @@ const checkCredits: AgentToolDefinition = {
 const createGateway: AgentToolDefinition = {
   name: "create_gateway",
   description:
-    "Create a new gateway (Telegram bot, AI provider, or custom gateway). " +
+    "Create a new gateway (Telegram bot, Discord bot, Slack bot, or WhatsApp bot). " +
     "For Telegram bots, you MUST provide the botToken. " +
-    "For AI providers, provide provider name and apiKey. " +
-    "For custom gateways, provide the target url. " +
     "Always use this tool when the user asks to add a bot or gateway — never give manual instructions.",
   parameters: {
     type: "object",
@@ -478,28 +476,12 @@ const createGateway: AgentToolDefinition = {
       },
       type: {
         type: "string",
-        enum: ["TELEGRAM_BOT", "AI", "CUSTOM_GATEWAY"],
+        enum: ["TELEGRAM_BOT", "DISCORD_BOT", "SLACK_BOT", "WHATSAPP_BOT"],
         description: "Gateway type",
       },
       botToken: {
         type: "string",
         description: "Telegram bot token (required for TELEGRAM_BOT type). Get from @BotFather.",
-      },
-      provider: {
-        type: "string",
-        description: "AI provider name (required for AI type, e.g., 'openai', 'anthropic')",
-      },
-      apiKey: {
-        type: "string",
-        description: "API key (required for AI type)",
-      },
-      url: {
-        type: "string",
-        description: "Target URL (required for CUSTOM_GATEWAY type)",
-      },
-      webhookSecret: {
-        type: "string",
-        description: "Signing secret (optional, for CUSTOM_GATEWAY type)",
       },
     },
     required: ["name", "type"],
@@ -526,7 +508,7 @@ const deleteGateway: AgentToolDefinition = {
 const updateGateway: AgentToolDefinition = {
   name: "update_gateway",
   description:
-    "Update an existing gateway's name, credentials, or configuration. " +
+    "Update an existing gateway's name or credentials. " +
     "Use list_gateways first to find the gateway ID.",
   parameters: {
     type: "object",
@@ -542,14 +524,6 @@ const updateGateway: AgentToolDefinition = {
       botToken: {
         type: "string",
         description: "New Telegram bot token (for TELEGRAM_BOT gateways)",
-      },
-      apiKey: {
-        type: "string",
-        description: "New API key (for AI gateways)",
-      },
-      url: {
-        type: "string",
-        description: "New target URL (for CUSTOM_GATEWAY gateways)",
       },
     },
     required: ["gatewayId"],

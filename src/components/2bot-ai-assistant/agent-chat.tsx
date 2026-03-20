@@ -133,7 +133,7 @@ export function AgentChat({ workspaceId, organizationId }: AgentChatProps) {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<AgentModelOption[]>([]);
-  const [selectedModel, setSelectedModel] = useState("2bot-ai-code-pro");
+  const [selectedModel, setSelectedModel] = useState("auto");
   const [metrics, setMetrics] = useState<AgentSessionMetrics>({
     status: "idle",
     iterationCount: 0,
@@ -1099,8 +1099,8 @@ export function AgentChat({ workspaceId, organizationId }: AgentChatProps) {
                   </SelectItem>
                 ))
               ) : (
-                <SelectItem value="2bot-ai-text-pro" className="text-xs">
-                  2Bot Pro
+                <SelectItem value="auto" className="text-xs">
+                  Auto
                 </SelectItem>
               )}
             </SelectContent>

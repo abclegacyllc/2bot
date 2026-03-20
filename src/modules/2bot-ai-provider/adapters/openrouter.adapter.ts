@@ -43,6 +43,7 @@ function getOpenRouterClient(): OpenAI {
     openrouterClient = new OpenAI({
       apiKey,
       baseURL: "https://openrouter.ai/api/v1",
+      timeout: 30_000,
       defaultHeaders: {
         "HTTP-Referer": "https://2bot.org",
         "X-Title": "2Bot AI",
@@ -318,21 +319,21 @@ function mapOpenRouterError(error: unknown): TwoBotAIError {
       return new TwoBotAIError("Model not available on OpenRouter.", "MODEL_UNAVAILABLE", 404);
     }
     if (status === 402) {
-      return new TwoBotAIError("Insufficient OpenRouter credits.", "PROVIDER_ERROR", 402);
+      return new TwoBotAIError("This provider is temporarily unavailable. Please try a different model.", "PROVIDER_ERROR", 402);
     }
     if (message.includes("content") && message.includes("policy")) {
       return new TwoBotAIError("Content was filtered due to policy violations.", "CONTENT_FILTERED", 400);
     }
 
-    return new TwoBotAIError(message || "OpenRouter API error", "PROVIDER_ERROR", status);
+    return new TwoBotAIError("An error occurred processing your request. Please try again.", "PROVIDER_ERROR", status);
   }
 
   if (error instanceof Error) {
     if (error.name === "AbortError" || error.message.includes("timeout")) {
       return new TwoBotAIError("Request timed out", "TIMEOUT", 408);
     }
-    return new TwoBotAIError(error.message || "OpenRouter API error", "PROVIDER_ERROR", 500);
+    return new TwoBotAIError("An error occurred processing your request. Please try again.", "PROVIDER_ERROR", 500);
   }
 
-  return new TwoBotAIError("Unknown OpenRouter error", "PROVIDER_ERROR", 500);
+  return new TwoBotAIError("An unexpected error occurred. Please try again.", "PROVIDER_ERROR", 500);
 }

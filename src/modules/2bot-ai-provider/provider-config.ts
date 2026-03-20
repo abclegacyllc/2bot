@@ -15,13 +15,14 @@
 import { logger } from "@/lib/logger";
 import { type AICapability } from "./ai-capabilities";
 import { getDiscoveredModels, hasDiscoveredModels } from "./model-discovery.service";
+import { isModelHealthy } from "./model-health-tracker";
 import { getProviderModelIds, getRegistryEntriesByProvider, registryToModelInfo } from "./model-registry";
 import {
-  getAllProviders,
-  getConfiguredProvidersForCapability,
-  getProviderEntry,
-  getProviderFeatures,
-  isProviderKeyValid,
+    getAllProviders,
+    getConfiguredProvidersForCapability,
+    getProviderEntry,
+    getProviderFeatures,
+    isProviderKeyValid,
 } from "./provider-registry";
 import type { ModelInfo, TwoBotAIProvider } from "./types";
 
@@ -191,11 +192,22 @@ export function getAvailableModels(capability?: AICapability): ModelInfo[] {
  * @param capability - AI capability (text-generation, image-generation, etc.)
  */
 export function getCheapestModel(capability: AICapability = "text-generation"): ModelInfo | undefined {
-  const models = getAvailableModels(capability);
+  const models = getAvailableModels(capability).filter((m) => !m.deprecated);
   if (models.length === 0) return undefined;
 
   // Sort by tier (lowest = cheapest)
   return models.sort((a, b) => (a.tier || 99) - (b.tier || 99))[0];
+}
+
+/**
+ * Get a ranked list of available non-deprecated models for failover.
+ * Sorted by tier (cheapest first), then by name for stable ordering.
+ * Used by "auto" mode to build a failover chain.
+ */
+export function getAutoFallbackChain(capability: AICapability = "text-generation"): ModelInfo[] {
+  return getAvailableModels(capability)
+    .filter((m) => !m.deprecated && isModelHealthy(m.id))
+    .sort((a, b) => (a.tier || 99) - (b.tier || 99) || a.id.localeCompare(b.id));
 }
 
 /**

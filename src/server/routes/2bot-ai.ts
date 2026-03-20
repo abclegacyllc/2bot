@@ -18,15 +18,15 @@ import {
 } from "@/modules/2bot-ai-agent";
 import {
   checkAllProviders,
-  classifyQueryComplexity,
   getAvailableFeatures,
   getCachedHealthStatus,
   getProvidersStatus,
   getRegistryEntry,
   getTwoBotAIModel,
-  getTwoBotAIModelsByCapability,
   isTwoBotAIModelId,
+  MARGIN,
   MODEL_REGISTRY,
+  TWOBOT_AI_MODEL_TIERS,
   TwoBotAIError,
   twoBotAIProvider,
   type AICapability,
@@ -40,6 +40,7 @@ import {
   type TwoBotAIModelId,
   type TwoBotAIModelInfo
 } from "@/modules/2bot-ai-provider";
+import { getModelHealthSummary, isModelHealthy } from "@/modules/2bot-ai-provider/model-health-tracker";
 import { isProviderConfigured } from "@/modules/2bot-ai-provider/provider-config";
 import { BadRequestError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
@@ -77,15 +78,23 @@ function resolveRegistryModelId(canonicalId: string): string | undefined {
   const entry = getRegistryEntry(canonicalId);
   if (!entry) return undefined;
 
-  // Find cheapest configured provider
+  // Provider priority tiebreaker (lower = preferred). Must match tier-auto-curator.ts.
+  const PROVIDER_PRIORITY: Record<string, number> = {
+    google: 1, anthropic: 2, together: 3, openai: 4, fireworks: 4, openrouter: 5,
+  };
+
+  // Find cheapest configured provider, with priority tiebreaker
   let bestModelId: string | undefined;
   let bestCost = Infinity;
+  let bestPriority = Infinity;
 
   for (const [provider, cost] of Object.entries(entry.providers) as Array<[string, { modelId: string; inputPer1M?: number; perImage?: number }]>) {
     if (!isProviderConfigured(provider as Parameters<typeof isProviderConfigured>[0])) continue;
     const effectiveCost = cost.inputPer1M ?? cost.perImage ?? 0;
-    if (effectiveCost < bestCost) {
+    const priority = PROVIDER_PRIORITY[provider] ?? 99;
+    if (effectiveCost < bestCost || (effectiveCost === bestCost && priority < bestPriority)) {
       bestCost = effectiveCost;
+      bestPriority = priority;
       bestModelId = cost.modelId;
     }
   }
@@ -294,11 +303,19 @@ interface RealModelResponse {
   displayName: string;
   author: string;
   capability: string;
-  /** Price multiplier relative to baseline (1x = $3/M input). 0x = free tier. */
-  priceMultiplier: number;
+  /** Credits per 1K input tokens (text/code/embed), per image, per 1K chars (TTS), per minute (STT) */
+  creditsInput: number;
+  /** Credits per 1K output tokens (text/code only) */
+  creditsOutput?: number;
+  /** Unit label for non-text display */
+  creditUnit: "1k tok" | "img" | "1k ch" | "min";
+  /** Cost tier: free / lite / pro / ultra */
+  tier: "free" | "lite" | "pro" | "ultra";
   providers: string[];
   isPreview?: boolean;
   deprecated?: boolean;
+  /** Whether the model is currently healthy (not auto-disabled due to repeated failures) */
+  isHealthy: boolean;
 }
 
 interface RealModelsResponse {
@@ -320,7 +337,27 @@ twoBotAIRouter.get(
     const capability = req.query.capability as string | undefined;
 
     // Baseline: $3/M input tokens ≈ Claude Sonnet 4.6 / GPT-4o level = 1x
-    const BASELINE_INPUT_PER_1M = 3;
+    // MARGIN = 200 (2× markup: $1 = 100 credits)
+
+    // Tier assignment based on comparable cost (same thresholds as auto-curator)
+    function assignTier(comparableCost: number, capability: string, imageCredits?: number): RealModelResponse["tier"] {
+      if (capability === "image-generation" && imageCredits !== undefined) {
+        const { free: f, lite: l, pro: p } = TWOBOT_AI_MODEL_TIERS;
+        if (imageCredits <= (f.maxImageCostThreshold ?? 0)) return "free";
+        if (imageCredits <= (l.maxImageCostThreshold ?? 5)) return "lite";
+        if (imageCredits <= (p.maxImageCostThreshold ?? 16)) return "pro";
+        return "ultra";
+      }
+      const isCode = capability === "code-generation";
+      const { free: f, lite: l, pro: p } = TWOBOT_AI_MODEL_TIERS;
+      const freeMax = isCode ? (f.maxCodeCostThreshold ?? f.maxCostThreshold) : f.maxCostThreshold;
+      const liteMax = isCode ? (l.maxCodeCostThreshold ?? l.maxCostThreshold) : l.maxCostThreshold;
+      const proMax = isCode ? (p.maxCodeCostThreshold ?? p.maxCostThreshold) : p.maxCostThreshold;
+      if (comparableCost <= freeMax) return "free";
+      if (comparableCost < liteMax) return "lite";
+      if (comparableCost < proMax) return "pro";
+      return "ultra";
+    }
 
     const models: RealModelResponse[] = [];
 
@@ -333,37 +370,84 @@ twoBotAIRouter.get(
         .filter((p) => isProviderConfigured(p));
       if (configuredProviders.length === 0) continue;
 
-      // Compute price multiplier from cheapest configured provider
-      let priceMultiplier = 1;
+      // Compute credits from cheapest configured provider
+      let creditsInput = 0;
+      let creditsOutput: number | undefined;
+      let creditUnit: RealModelResponse["creditUnit"] = "1k tok";
       const costs = configuredProviders
         .map((p) => entry.providers[p])
         .filter(Boolean);
 
-      if (entry.capability === "text-generation") {
-        const cheapestInput = Math.min(...costs.map((c) => c!.inputPer1M ?? Infinity));
-        priceMultiplier = cheapestInput === Infinity ? 1 : Math.round((cheapestInput / BASELINE_INPUT_PER_1M) * 100) / 100;
+      // Helper: USD per 1M → credits per 1K
+      const toCreditsPerK = (usdPer1M: number) =>
+        Math.round(((usdPer1M / 1_000_000) * MARGIN * 1000) * 1000) / 1000;
+
+      if (entry.capability === "text-generation" || entry.capability === "code-generation" || entry.capability === "text-embedding") {
+        // Pick cheapest provider by input cost; grab both input + output from same provider
+        let bestInputUsd = Infinity;
+        let bestOutputUsd: number | undefined;
+        for (const c of costs) {
+          const inp = c!.inputPer1M ?? Infinity;
+          if (inp < bestInputUsd) {
+            bestInputUsd = inp;
+            bestOutputUsd = c!.outputPer1M;
+          }
+        }
+        creditsInput = bestInputUsd === Infinity ? 0 : toCreditsPerK(bestInputUsd);
+        creditsOutput = bestOutputUsd !== undefined ? toCreditsPerK(bestOutputUsd) : undefined;
+        creditUnit = "1k tok";
       } else if (entry.capability === "image-generation") {
         const cheapestImage = Math.min(...costs.map((c) => c!.perImage ?? Infinity));
-        // Image baseline: $0.04 per image
-        priceMultiplier = cheapestImage === Infinity ? 1 : Math.round((cheapestImage / 0.04) * 100) / 100;
+        creditsInput = cheapestImage === Infinity ? 0 : Math.round((cheapestImage * MARGIN) * 100) / 100;
+        creditUnit = "img";
+      } else if (entry.capability === "speech-synthesis") {
+        const cheapestChar = Math.min(...costs.map((c) => c!.perCharM ?? Infinity));
+        creditsInput = cheapestChar === Infinity ? 0 : toCreditsPerK(cheapestChar);
+        creditUnit = "1k ch";
+      } else if (entry.capability === "speech-recognition") {
+        const cheapestMin = Math.min(...costs.map((c) => c!.perMinute ?? Infinity));
+        creditsInput = cheapestMin === Infinity ? 0 : Math.round((cheapestMin * MARGIN) * 100) / 100;
+        creditUnit = "min";
       }
 
       const isPreview = entry.displayName.includes("Preview") || entry.badge === "NEW";
+
+      // Compute comparable cost for tier assignment
+      let comparableCost = 0;
+      if (entry.capability === "text-generation" || entry.capability === "code-generation" || entry.capability === "text-embedding") {
+        const bestCost = costs.reduce((best, c) => {
+          const inp = c!.inputPer1M ?? Infinity;
+          return inp < best.inp ? { inp, out: c!.outputPer1M ?? 0 } : best;
+        }, { inp: Infinity, out: 0 });
+        comparableCost = bestCost.inp === Infinity ? 0
+          : (bestCost.inp / 1_000_000) * MARGIN + (bestCost.out / 1_000_000) * MARGIN;
+      }
+      const tier = assignTier(comparableCost, entry.capability, entry.capability === "image-generation" ? creditsInput : undefined);
+
+      // Skip models with no pricing data (creditsInput === 0 for text/code means no cost configured)
+      if (creditsInput === 0 && (entry.capability === "text-generation" || entry.capability === "code-generation" || entry.capability === "text-embedding")) {
+        continue;
+      }
 
       models.push({
         id: entry.id,
         displayName: entry.displayName,
         author: entry.author,
         capability: entry.capability,
-        priceMultiplier,
+        creditsInput,
+        creditsOutput,
+        creditUnit,
+        tier,
         providers: configuredProviders,
         isPreview,
         deprecated: entry.deprecated,
+        isHealthy: isModelHealthy(entry.id),
       });
     }
 
-    // Sort: cheapest first within each author group
-    models.sort((a, b) => a.priceMultiplier - b.priceMultiplier);
+    // Sort: by tier order, then cheapest first within tier
+    const tierOrder = { free: 0, lite: 1, pro: 2, ultra: 3 };
+    models.sort((a, b) => tierOrder[a.tier] - tierOrder[b.tier] || a.creditsInput - b.creditsInput);
 
     res.json({
       success: true,
@@ -442,6 +526,28 @@ twoBotAIRouter.get(
 );
 
 // ===========================================
+// GET /api/2bot-ai/model-health
+// ===========================================
+
+/**
+ * GET /api/2bot-ai/model-health
+ *
+ * Get per-model health status. Shows models that have been auto-disabled
+ * due to repeated failures, along with failure counts and last errors.
+ * Only returns models with recorded health events (healthy models with
+ * no failures are omitted).
+ */
+twoBotAIRouter.get(
+  "/model-health",
+  asyncHandler(async (_req: Request, res: Response<ApiResponse<{ models: ReturnType<typeof getModelHealthSummary> }>>) => {
+    res.json({
+      success: true,
+      data: { models: getModelHealthSummary() },
+    });
+  })
+);
+
+// ===========================================
 // POST /api/2bot-ai/text-generation
 // ===========================================
 
@@ -481,9 +587,10 @@ interface TextGenerationResponseData {
  *
  * @body {TextGenerationMessage[]} messages - Conversation messages
  * @body {string} [model] - Model to use. Can be:
- *   - 2Bot AI model ID (e.g., "2bot-ai-text-pro") - RECOMMENDED
- *   - Legacy provider model (e.g., "gpt-4o-mini") - for backward compatibility
- *   Default: "2bot-ai-text-lite"
+ *   - Real model ID from /real-models (e.g., "claude-sonnet-4-6") - RECOMMENDED
+ *   - 2Bot AI model ID (e.g., "2bot-ai-text-pro") - legacy, still supported
+ *   - "auto" - cheapest available model (DEFAULT)
+ *   Default: "auto"
  * @body {number} [temperature] - Creativity (0-2, default: 0.7)
  * @body {number} [maxTokens] - Max response tokens
  * @body {boolean} [stream] - Enable streaming response
@@ -519,48 +626,18 @@ twoBotAIRouter.post(
       ...body.messages.filter((m: TextGenerationMessage) => m.role !== "system"),
     ];
 
-    // Resolve model: Support both 2Bot AI model IDs, "auto", and legacy provider models
+    // Resolve model: Support both 2Bot AI model IDs, "auto", real model IDs, and legacy provider models
     let model: TwoBotAIModel;
     let twobotAIModelId: TwoBotAIModelId | undefined;
-    let requestedModel = body.model || "2bot-ai-text-lite";
+    const requestedModel = body.model || "auto";
 
-    // 🧠 Auto Mode: analyze query complexity and pick the right 2Bot tier
-    // Simple queries → free (zero cost), medium → pro (balanced), complex → ultra (best)
+    // "auto" passes through to the provider layer which resolves to cheapest available
+    // No need for route-level complexity analysis — provider's smart routing handles it
     if (requestedModel === "auto") {
-      const complexity = classifyQueryComplexity(messagesWithSystem);
-      const complexityToTier: Record<string, string> = {
-        simple: 'free',
-        medium: 'pro',
-        complex: 'ultra',
-      };
-      const targetTier = complexityToTier[complexity] || 'pro';
-
-      // Find the text model for this tier
-      const textModels = getTwoBotAIModelsByCapability('text-generation')
-        .filter(m => m.id.startsWith('2bot-ai-text-'));
-      const targetModel = textModels.find(m => m.tier === targetTier);
-
-      if (targetModel) {
-        requestedModel = targetModel.id;
-        log.info({
-          complexity,
-          resolvedModel: requestedModel,
-          tier: targetModel.tier,
-        }, `🧠 Auto Mode: query=${complexity} → tier=${targetTier}`);
-      } else {
-        // Fallback: use any available text model, preferring pro
-        const fallback = textModels.find(m => m.tier === 'pro') || textModels[0];
-        requestedModel = fallback?.id || '2bot-ai-text-lite';
-        log.warn({ complexity, targetTier, fallbackModel: requestedModel },
-          "Auto Mode: target tier not available, using fallback");
-      }
-
-      // Disable legacy smart routing — Auto Mode already picked the right tier
-      // The 2Bot model catalog handles provider selection within the tier
+      model = "auto" as TwoBotAIModel;
       body.smartRouting = false;
-    }
-
-    if (isTwoBotAIModelId(requestedModel)) {
+      log.info({}, "⚡ Auto mode: provider will select cheapest available model");
+    } else if (isTwoBotAIModelId(requestedModel)) {
       // 2Bot AI model ID — pass directly to provider methods
       // Provider handles resolution + automatic failover across providers internally
       twobotAIModelId = requestedModel;
@@ -720,7 +797,7 @@ interface AgentRequestBody {
  *
  * @body {string} prompt - Task description for the agent
  * @body {string} workspaceId - Workspace container ID
- * @body {string} [model] - Model to use (default: "2bot-ai-code-pro")
+ * @body {string} [model] - Model to use (default: "auto" — cheapest available)
  * @body {Array} [conversationHistory] - Prior conversation for context
  * @body {string} [organizationId] - Org ID for org credit billing
  * @body {object} [config] - Override agent config (maxIterations, etc.)
@@ -747,10 +824,13 @@ twoBotAIRouter.post(
     }
 
     // --- Resolve model ---
-    const requestedModel = (body.model || "2bot-ai-code-pro") as string;
+    const requestedModel = (body.model || "auto") as string;
     let model: TwoBotAIModel;
 
-    if (isTwoBotAIModelId(requestedModel)) {
+    if (requestedModel === "auto") {
+      // Pass through to provider layer which resolves to cheapest available
+      model = "auto" as TwoBotAIModel;
+    } else if (isTwoBotAIModelId(requestedModel)) {
       // Validate the 2Bot model supports function calling
       const modelInfo = getTwoBotAIModel(requestedModel);
       if (modelInfo && !modelInfo.features.functionCalling) {
@@ -1093,7 +1173,7 @@ twoBotAIRouter.get(
 
 interface ImageGenerationRequestBody {
   prompt: string;
-  /** 2Bot model ID (e.g. '2bot-ai-image-pro') or raw provider model ID */
+  /** Model ID: real model, 2Bot model ID, or "auto" */
   model?: string;
   size?: ImageSize;
   quality?: ImageQuality;
@@ -1184,7 +1264,7 @@ twoBotAIRouter.post(
 
 interface SpeechSynthesisRequestBody {
   text: string;
-  /** 2Bot model ID (e.g. '2bot-ai-voice-pro') or raw provider model ID */
+  /** Model ID: real model, 2Bot model ID, or "auto" */
   model?: string;
   voice?: SpeechSynthesisVoice;
   format?: SpeechSynthesisFormat;

@@ -158,7 +158,7 @@ function getModelByTier(
   preferredTier: number,
   provider?: string
 ): ModelInfo | undefined {
-  let models = getAvailableModels(capability);
+  let models = getAvailableModels(capability).filter((m) => !m.deprecated);
 
   // Filter by provider if specified
   if (provider) {
