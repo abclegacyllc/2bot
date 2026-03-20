@@ -14,27 +14,17 @@ import { Router } from "express";
 import { decryptJson } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { redis } from "@/lib/redis";
 import { gatewayRegistry, gatewayService } from "@/modules/gateway";
 import { gatewayChatService } from "@/modules/gateway/gateway-chats.service";
-import { handleCustomGatewayWebhook, handleTelegramWebhook } from "@/modules/plugin/plugin.events";
+import type { DiscordBotCredentials, SlackBotCredentials, WhatsAppBotCredentials } from "@/modules/gateway/gateway.types";
+import type { DiscordInteraction } from "@/modules/plugin/plugin.events";
+import { handleDiscordWebhook, handleSlackWebhook, handleTelegramWebhook, handleWhatsAppWebhook } from "@/modules/plugin/plugin.events";
+import { checkDiscordMessageTrigger, checkSlackMessageTrigger, checkTelegramCallbackTrigger, checkTelegramMessageTrigger, checkWhatsAppMessageTrigger, handleWebhookTrigger } from "@/modules/workflow/workflow.triggers";
 import type { ApiResponse } from "@/shared/types";
 
+import { RateLimiterRes } from 'rate-limiter-flexible';
 import { createRateLimiter } from "../middleware/rate-limit";
-
-// ===========================================
-// Custom Gateway Rate Limiter
-// ===========================================
-
-/**
- * Per-gateway rate limiter for custom gateway webhooks.
- * 60 requests per minute per gatewayId, block for 60s if exceeded.
- */
-const customGatewayRateLimiter = createRateLimiter({
-  keyPrefix: "webhook-custom",
-  points: 60,
-  duration: 60,
-  blockDuration: 60,
-});
 
 const webhookLogger = logger.child({ module: "webhook" });
 
@@ -247,6 +237,17 @@ webhookRouter.post(
     }
 
     try {
+      // Deduplicate Telegram updates — skip if we've already processed this update_id
+      const dedupKey = `tg:dedup:${gatewayId}:${update.update_id}`;
+      const alreadySeen = await redis.set(dedupKey, "1", "EX", 120, "NX");
+      if (!alreadySeen) {
+        webhookLogger.debug(
+          { gatewayId, updateId: update.update_id },
+          "Duplicate Telegram update — skipping"
+        );
+        return res.status(200).json({ success: true, data: { received: true } });
+      }
+
       // Find the gateway (no auth required - webhook auth is via gatewayId)
       const gateway = await prisma.gateway.findUnique({
         where: { id: gatewayId },
@@ -258,6 +259,7 @@ webhookRouter.post(
           config: true,
           userId: true,
           organizationId: true,
+          mode: true,
         },
       });
 
@@ -353,22 +355,88 @@ webhookRouter.post(
           }
         };
 
-        void handleTelegramWebhook(
-          gatewayId,
-          gateway.userId,
-          gateway.organizationId ?? null,
-          update,
-          executeGateway
-        ).then((result) => {
-          if (result.pluginsExecuted > 0) {
-            webhookLogger.info(
-              { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-              'Webhook routed to plugins',
-            );
+        void (async () => {
+          try {
+            // Mode-based dispatch
+            if (gateway.mode === "workflow") {
+              // Workflow mode: check workflow triggers for messages, callbacks, and edited messages
+              if (update.message) {
+                await checkTelegramMessageTrigger(
+                  gatewayId,
+                  gateway.userId,
+                  gateway.organizationId ?? null,
+                  {
+                    text: update.message.text,
+                    chatType: update.message.chat.type,
+                    chatId: update.message.chat.id,
+                    messageId: update.message.message_id,
+                    from: update.message.from ? {
+                      id: update.message.from.id,
+                      firstName: update.message.from.first_name,
+                      lastName: update.message.from.last_name,
+                      username: update.message.from.username,
+                    } : undefined,
+                  },
+                  update
+                );
+              } else if (update.callback_query) {
+                await checkTelegramCallbackTrigger(
+                  gatewayId,
+                  gateway.userId,
+                  gateway.organizationId ?? null,
+                  {
+                    data: update.callback_query.data,
+                    chatId: update.callback_query.message?.chat.id,
+                    messageId: update.callback_query.message?.message_id,
+                    from: update.callback_query.from ? {
+                      id: update.callback_query.from.id,
+                      firstName: update.callback_query.from.first_name,
+                      lastName: update.callback_query.from.last_name,
+                      username: update.callback_query.from.username,
+                    } : undefined,
+                  },
+                  update
+                );
+              } else if (update.edited_message) {
+                await checkTelegramMessageTrigger(
+                  gatewayId,
+                  gateway.userId,
+                  gateway.organizationId ?? null,
+                  {
+                    text: update.edited_message.text,
+                    chatType: update.edited_message.chat.type,
+                    chatId: update.edited_message.chat.id,
+                    messageId: update.edited_message.message_id,
+                    from: update.edited_message.from ? {
+                      id: update.edited_message.from.id,
+                      firstName: update.edited_message.from.first_name,
+                      lastName: update.edited_message.from.last_name,
+                      username: update.edited_message.from.username,
+                    } : undefined,
+                  },
+                  update
+                );
+              }
+            } else {
+              // Plugin mode: route directly to plugins (no workflow check)
+              const result = await handleTelegramWebhook(
+                gatewayId,
+                gateway.userId,
+                gateway.organizationId ?? null,
+                update,
+                executeGateway
+              );
+              if (result.pluginsExecuted > 0) {
+                webhookLogger.info(
+                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                  'Webhook routed to plugin',
+                );
+              }
+            }
+          } catch (err) {
+            webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, 'Webhook dispatch failed');
           }
-        }).catch((err: Error) => {
-          webhookLogger.error({ gatewayId, error: err.message }, 'Plugin routing failed');
-        });
+        })();
       }
 
       // ── Phase 7: Track chat membership changes (fire-and-forget) ──
@@ -490,33 +558,81 @@ webhookRouter.get(
 );
 
 // ===========================================
-// Custom Gateway Webhook (unified — same gateway table)
+// Discord Webhook (Interactions Endpoint)
 // ===========================================
 
 /**
- * Handle custom gateway incoming webhook
+ * Discord interaction rate limiter.
+ * 120 requests per minute per gatewayId.
+ */
+const discordWebhookRateLimiter = createRateLimiter({
+  keyPrefix: "webhook-discord",
+  points: 120,
+  duration: 60,
+  blockDuration: 60,
+});
+
+/**
+ * Verify Discord interaction signature using Ed25519.
+ * Discord sends X-Signature-Ed25519 and X-Signature-Timestamp headers.
+ */
+async function verifyDiscordSignature(
+  publicKey: string,
+  signature: string,
+  timestamp: string,
+  body: string,
+): Promise<boolean> {
+  try {
+    const { subtle } = await import("node:crypto").then(m => m.webcrypto);
+    const encoder = new TextEncoder();
+    const keyBytes = Uint8Array.from(
+      (publicKey.match(/.{1,2}/g) ?? []).map((byte) => parseInt(byte, 16)),
+    );
+    const key = await subtle.importKey(
+      "raw",
+      keyBytes,
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    const sigBytes = Uint8Array.from(
+      (signature.match(/.{1,2}/g) ?? []).map((byte) => parseInt(byte, 16)),
+    );
+    const message = encoder.encode(timestamp + body);
+    return subtle.verify("Ed25519", key, sigBytes, message);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Handle Discord interactions webhook
  *
- * POST /webhooks/custom/:gatewayId
+ * POST /webhooks/discord/:gatewayId
  *
- * gatewayId is the gateway.id for a CUSTOM_GATEWAY-type row in the gateways table.
- * External services POST here; we look up the gateway, decrypt credentials,
- * and route the event through the plugin execution pipeline.
+ * Discord sends interactions (slash commands, button clicks, etc.) to this endpoint.
+ * We verify the Ed25519 signature, handle PING for URL verification, then route
+ * to the plugin system for all other interaction types.
  */
 webhookRouter.post(
-  "/custom/:gatewayId",
+  "/discord/:gatewayId",
   async (req: Request<GatewayParams>, res: Response) => {
     const { gatewayId } = req.params;
 
-    // ── Rate limit: 60 req/min per gatewayId ──
+    // Rate limit
     try {
-      await customGatewayRateLimiter.consume(gatewayId);
-    } catch {
-      webhookLogger.warn({ gatewayId }, "Custom gateway webhook rate limit exceeded");
-      res.status(429).json({ success: false, error: "Too many requests. Try again later." });
-      return;
+      await discordWebhookRateLimiter.consume(gatewayId);
+    } catch (err) {
+      if (err instanceof RateLimiterRes) {
+        webhookLogger.warn({ gatewayId }, "Discord webhook rate limit exceeded");
+        res.status(429).json({ error: "Too many requests" });
+        return;
+      }
+      // Redis error — fail open
     }
 
     try {
+      // Find the gateway
       const gateway = await prisma.gateway.findUnique({
         where: { id: gatewayId },
         select: {
@@ -524,119 +640,809 @@ webhookRouter.post(
           type: true,
           status: true,
           credentialsEnc: true,
-          metadata: true,
+          config: true,
           userId: true,
           organizationId: true,
+          mode: true,
         },
       });
 
-      if (!gateway || gateway.type !== "CUSTOM_GATEWAY") {
-        res.status(404).json({ success: false, error: "Gateway not found" });
+      if (!gateway) {
+        webhookLogger.warn({ gatewayId }, "Discord webhook for unknown gateway");
+        res.status(404).json({ error: "Unknown gateway" });
         return;
       }
 
-      if (gateway.status !== "CONNECTED") {
-        res.status(503).json({ success: false, error: "Gateway not active" });
+      if (gateway.type !== "DISCORD_BOT") {
+        webhookLogger.warn({ gatewayId, type: gateway.type }, "Webhook to non-Discord gateway");
+        res.status(400).json({ error: "Not a Discord gateway" });
         return;
       }
 
-      // Decrypt stored credentials (same AES-256-GCM as Telegram bots)
-      const credentials = decryptJson<Record<string, string>>(gateway.credentialsEnc);
+      // Decrypt credentials to get the public key for signature verification
+      const credentials = decryptJson<DiscordBotCredentials>(gateway.credentialsEnc);
 
-      // ── Optional auth token verification ──
-      // If the gateway has an `_authToken` credential key, verify the
-      // incoming Authorization: Bearer header matches before proceeding.
-      if (credentials._authToken) {
-        const authHeader = req.headers.authorization;
-        const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+      // Verify Discord signature
+      const signature = req.headers["x-signature-ed25519"] as string;
+      const timestamp = req.headers["x-signature-timestamp"] as string;
 
-        if (!bearerToken || bearerToken !== credentials._authToken) {
-          webhookLogger.warn({ gatewayId }, "Custom gateway webhook auth token mismatch");
-          res.status(401).json({ success: false, error: "Unauthorized" });
-          return;
-        }
+      if (!signature || !timestamp) {
+        webhookLogger.warn({ gatewayId }, "Discord webhook missing signature headers");
+        res.status(401).json({ error: "Missing signature" });
+        return;
       }
 
-      // Build the inbound payload that plugins will receive
-      const inboundPayload = {
-        method: req.method,
-        headers: req.headers as Record<string, string>,
-        body: req.body as unknown,
-        query: req.query as Record<string, string>,
-      };
+      // We need the raw body as a string for verification
+      const rawBody = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      const isValid = await verifyDiscordSignature(
+        credentials.publicKey,
+        signature,
+        timestamp,
+        rawBody,
+      );
 
-      // Route to plugins via the shared event system (non-blocking)
-      void handleCustomGatewayWebhook(
-        gateway.id,
-        gateway.userId,
-        gateway.organizationId,
-        inboundPayload,
-        credentials as Record<string, string>,
-      ).then((result) => {
-        if (result.pluginsExecuted > 0) {
-          webhookLogger.info(
-            { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-            "Custom gateway webhook routed to plugins",
-          );
-        }
-      }).catch((err: Error) => {
-        webhookLogger.error({ gatewayId, error: err.message }, "Custom gateway plugin routing failed");
-      });
+      if (!isValid) {
+        webhookLogger.warn({ gatewayId }, "Discord webhook signature verification failed");
+        res.status(401).json({ error: "Invalid signature" });
+        return;
+      }
+
+      const interaction = req.body as DiscordInteraction;
+
+      // Handle PING (type 1) — Discord uses this to verify the endpoint
+      if (interaction.type === 1) {
+        webhookLogger.info({ gatewayId }, "Discord PING verification");
+        res.status(200).json({ type: 1 }); // PONG
+        return;
+      }
+
+      webhookLogger.info(
+        {
+          gatewayId,
+          interactionId: interaction.id,
+          interactionType: interaction.type,
+          guildId: interaction.guild_id,
+        },
+        "Processing Discord interaction",
+      );
+
+      // Route to plugin system (non-blocking)
+      if (gateway.userId) {
+        const executeGateway = async (gId: string, action: string, params: unknown) => {
+          const provider = gatewayRegistry.get("DISCORD_BOT");
+          const gw = await prisma.gateway.findUnique({ where: { id: gId } });
+          if (!gw) throw new Error(`Gateway not found: ${gId}`);
+          const creds = gatewayService.getDecryptedCredentials(gw);
+          try {
+            return await provider.execute(gId, action, params);
+          } catch (execErr) {
+            const msg = execErr instanceof Error ? execErr.message : "";
+            if (msg.includes("not connected") || msg.includes("Not connected")) {
+              await provider.connect(gId, creds, (gw.config as Record<string, unknown>) ?? {});
+              return provider.execute(gId, action, params);
+            }
+            throw execErr;
+          }
+        };
+
+        void (async () => {
+          try {
+            // Mode-based dispatch
+            if (gateway.mode === "workflow") {
+              await checkDiscordMessageTrigger(
+                gatewayId,
+                gateway.userId,
+                gateway.organizationId ?? null,
+                interaction,
+                interaction
+              );
+            } else {
+              const result = await handleDiscordWebhook(
+                gatewayId,
+                gateway.userId,
+                gateway.organizationId ?? null,
+                interaction,
+                executeGateway,
+              );
+              if (result.pluginsExecuted > 0) {
+                webhookLogger.info(
+                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                  "Discord interaction routed to plugin",
+                );
+              }
+            }
+          } catch (err) {
+            webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, "Discord dispatch failed");
+          }
+        })();
+      }
+
+      // For interactions that need an immediate response, send ACK (type 5 = DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE)
+      // Plugins can follow up using the interaction token
+      if (interaction.type === 2 || interaction.type === 3) {
+        // Application command or message component
+        res.status(200).json({ type: 5 }); // DEFERRED response — plugins will follow up
+      } else {
+        res.status(200).json({ type: 1 }); // Default ACK
+      }
 
       // Update last activity timestamp (fire and forget)
-      // Merge into existing metadata so we don't overwrite webhookUrl / credentialKeys
-      const existingMeta = (gateway.metadata ?? {}) as Record<string, unknown>;
       void prisma.gateway
         .update({
           where: { id: gatewayId },
           data: {
             lastConnectedAt: new Date(),
-            metadata: { ...existingMeta, lastDeliveredAt: new Date().toISOString() },
+            status: "CONNECTED" as GatewayStatus,
           },
         })
         .catch((err: Error) => {
           webhookLogger.error({ gatewayId, err }, "Failed to update gateway timestamp");
         });
-
-      // Return 200 immediately — plugins run asynchronously
-      res.status(200).json({ success: true, data: { received: true } });
-    } catch (err) {
-      webhookLogger.error({ gatewayId, error: (err as Error).message }, "Custom gateway webhook error");
-      res.status(502).json({ success: false, error: "Failed to deliver webhook" });
+    } catch (error) {
+      webhookLogger.error(
+        { gatewayId, error },
+        "Error processing Discord webhook",
+      );
+      res.status(500).json({ error: "Internal server error" });
     }
-  }
+  },
 );
 
 /**
- * Custom gateway health / verification check
+ * Discord webhook health check
  *
- * GET /webhooks/custom/:gatewayId
- *
- * Some external services (e.g. Stripe, GitHub) send a GET to verify the URL.
+ * GET /webhooks/discord/:gatewayId
  */
 webhookRouter.get(
-  "/custom/:gatewayId",
+  "/discord/:gatewayId",
+  async (req: Request<GatewayParams>, res: Response<ApiResponse<{ status: string }>>) => {
+    const { gatewayId } = req.params;
+
+    try {
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: { id: true, type: true, status: true },
+      });
+
+      if (!gateway || gateway.type !== "DISCORD_BOT") {
+        return res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Gateway not found" },
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: { status: gateway.status },
+      });
+    } catch (error) {
+      webhookLogger.error({ gatewayId, error }, "Error checking Discord webhook status");
+      return res.status(500).json({
+        success: false,
+        error: { code: "SERVER_ERROR", message: "Failed to check webhook status" },
+      });
+    }
+  },
+);
+
+// ===========================================
+// Custom Gateway Webhook (unified — same gateway table)
+// ===========================================
+
+// ===========================================
+// Slack Webhook (Events API + Interactions)
+// ===========================================
+
+/**
+ * Slack webhook rate limiter.
+ * 120 requests per minute per gatewayId.
+ */
+const slackWebhookRateLimiter = createRateLimiter({
+  keyPrefix: "webhook-slack",
+  points: 120,
+  duration: 60,
+  blockDuration: 60,
+});
+
+/**
+ * Verify Slack request signature using HMAC-SHA256.
+ * Slack sends X-Slack-Signature and X-Slack-Request-Timestamp headers.
+ * See: https://api.slack.com/authentication/verifying-requests-from-slack
+ */
+async function verifySlackSignature(
+  signingSecret: string,
+  signature: string,
+  timestamp: string,
+  body: string,
+): Promise<boolean> {
+  try {
+    // Check timestamp is within 5 minutes to prevent replay attacks
+    const requestTime = parseInt(timestamp, 10);
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - requestTime) > 300) {
+      return false;
+    }
+
+    const { createHmac } = await import("node:crypto");
+    const sigBasestring = `v0:${timestamp}:${body}`;
+    const mySignature = `v0=${createHmac("sha256", signingSecret)
+      .update(sigBasestring)
+      .digest("hex")}`;
+
+    // Timing-safe comparison
+    const { timingSafeEqual } = await import("node:crypto");
+    const a = Buffer.from(mySignature);
+    const b = Buffer.from(signature);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Handle Slack Events API + Interactions webhook
+ *
+ * POST /webhooks/slack/:gatewayId
+ *
+ * Slack sends:
+ * 1. url_verification challenge (on setup)
+ * 2. Event callbacks (messages, reactions, app_mention, etc.)
+ * 3. Interaction payloads (block_actions, view_submission, shortcuts)
+ *
+ * We verify the HMAC-SHA256 signature, handle url_verification,
+ * then route events to the plugin system.
+ */
+webhookRouter.post(
+  "/slack/:gatewayId",
   async (req: Request<GatewayParams>, res: Response) => {
     const { gatewayId } = req.params;
 
-    const gateway = await prisma.gateway.findUnique({
-      where: { id: gatewayId },
-      select: { id: true, name: true, type: true, status: true },
-    });
+    // Rate limit
+    try {
+      await slackWebhookRateLimiter.consume(gatewayId);
+    } catch (err) {
+      if (err instanceof RateLimiterRes) {
+        webhookLogger.warn({ gatewayId }, "Slack webhook rate limit exceeded");
+        res.status(429).json({ error: "Too many requests" });
+        return;
+      }
+      // Redis error — fail open
+    }
 
-    if (!gateway || gateway.type !== "CUSTOM_GATEWAY") {
-      res.status(404).json({ success: false, error: "Gateway not found" });
+    try {
+      // Find the gateway
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          credentialsEnc: true,
+          config: true,
+          userId: true,
+          organizationId: true,
+          mode: true,
+        },
+      });
+
+      if (!gateway) {
+        webhookLogger.warn({ gatewayId }, "Slack webhook for unknown gateway");
+        res.status(404).json({ error: "Unknown gateway" });
+        return;
+      }
+
+      if (gateway.type !== "SLACK_BOT") {
+        webhookLogger.warn({ gatewayId, type: gateway.type }, "Webhook to non-Slack gateway");
+        res.status(400).json({ error: "Not a Slack gateway" });
+        return;
+      }
+
+      // Decrypt credentials to get the signing secret
+      const credentials = decryptJson<SlackBotCredentials>(gateway.credentialsEnc);
+
+      // Get raw body for signature verification
+      const rawBody = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+
+      // Verify Slack signature
+      const signature = req.headers["x-slack-signature"] as string;
+      const timestamp = req.headers["x-slack-request-timestamp"] as string;
+
+      if (!signature || !timestamp) {
+        webhookLogger.warn({ gatewayId }, "Slack webhook missing signature headers");
+        res.status(401).json({ error: "Missing signature" });
+        return;
+      }
+
+      const isValid = await verifySlackSignature(
+        credentials.signingSecret,
+        signature,
+        timestamp,
+        rawBody,
+      );
+
+      if (!isValid) {
+        webhookLogger.warn({ gatewayId }, "Slack webhook signature verification failed");
+        res.status(401).json({ error: "Invalid signature" });
+        return;
+      }
+
+      // Parse the payload — Slack interactions come as form-encoded `payload` field
+      let payload = req.body as Record<string, unknown>;
+      if (typeof payload.payload === "string") {
+        try {
+          payload = JSON.parse(payload.payload as string) as Record<string, unknown>;
+        } catch {
+          res.status(400).json({ error: "Invalid interaction payload" });
+          return;
+        }
+      }
+
+      // Handle url_verification challenge (Slack sends this when setting up Events API URL)
+      if (payload.type === "url_verification") {
+        webhookLogger.info({ gatewayId }, "Slack URL verification challenge");
+        res.status(200).json({ challenge: payload.challenge });
+        return;
+      }
+
+      // Determine payload kind
+      const isEventCallback = payload.type === "event_callback";
+      const isInteraction = !!(payload.type && typeof payload.type === "string" &&
+        ["block_actions", "shortcut", "message_action", "view_submission", "view_closed"].includes(payload.type as string));
+
+      if (!isEventCallback && !isInteraction) {
+        webhookLogger.debug({ gatewayId, type: payload.type }, "Ignoring unhandled Slack payload type");
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      webhookLogger.info(
+        {
+          gatewayId,
+          payloadType: payload.type,
+          eventType: isEventCallback ? (payload.event as Record<string, unknown>)?.type : undefined,
+        },
+        "Processing Slack webhook",
+      );
+
+      // Route to plugin system (non-blocking)
+      if (gateway.userId) {
+        const executeGateway = async (gId: string, action: string, params: unknown) => {
+          const provider = gatewayRegistry.get("SLACK_BOT");
+          const gw = await prisma.gateway.findUnique({ where: { id: gId } });
+          if (!gw) throw new Error(`Gateway not found: ${gId}`);
+          const creds = gatewayService.getDecryptedCredentials(gw);
+          try {
+            return await provider.execute(gId, action, params);
+          } catch (execErr) {
+            const msg = execErr instanceof Error ? execErr.message : "";
+            if (msg.includes("not connected") || msg.includes("Not connected")) {
+              await provider.connect(gId, creds, (gw.config as Record<string, unknown>) ?? {});
+              return provider.execute(gId, action, params);
+            }
+            throw execErr;
+          }
+        };
+
+        void (async () => {
+          try {
+            // Mode-based dispatch
+            if (gateway.mode === "workflow") {
+              await checkSlackMessageTrigger(
+                gatewayId,
+                gateway.userId,
+                gateway.organizationId ?? null,
+                payload,
+                payload
+              );
+            } else {
+              const result = await handleSlackWebhook(
+                gatewayId,
+                gateway.userId,
+                gateway.organizationId ?? null,
+                payload,
+                executeGateway,
+              );
+              if (result.pluginsExecuted > 0) {
+                webhookLogger.info(
+                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                  "Slack event routed to plugin",
+                );
+              }
+            }
+          } catch (err) {
+            webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, "Slack dispatch failed");
+          }
+        })();
+      }
+
+      // Respond 200 immediately — Slack requires fast responses
+      res.status(200).json({ ok: true });
+
+      // Update last activity timestamp (fire and forget)
+      void prisma.gateway
+        .update({
+          where: { id: gatewayId },
+          data: {
+            lastConnectedAt: new Date(),
+            status: "CONNECTED" as GatewayStatus,
+          },
+        })
+        .catch((err: Error) => {
+          webhookLogger.error({ gatewayId, err }, "Failed to update gateway timestamp");
+        });
+    } catch (error) {
+      webhookLogger.error(
+        { gatewayId, error },
+        "Error processing Slack webhook",
+      );
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+/**
+ * Slack webhook health check
+ *
+ * GET /webhooks/slack/:gatewayId
+ */
+webhookRouter.get(
+  "/slack/:gatewayId",
+  async (req: Request<GatewayParams>, res: Response<ApiResponse<{ status: string }>>) => {
+    const { gatewayId } = req.params;
+
+    try {
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: { id: true, type: true, status: true },
+      });
+
+      if (!gateway || gateway.type !== "SLACK_BOT") {
+        return res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Gateway not found" },
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: { status: gateway.status },
+      });
+    } catch (error) {
+      webhookLogger.error({ gatewayId, error }, "Error checking Slack webhook status");
+      return res.status(500).json({
+        success: false,
+        error: { code: "SERVER_ERROR", message: "Failed to check webhook status" },
+      });
+    }
+  },
+);
+
+// ===========================================
+// WhatsApp Cloud API Webhook
+// ===========================================
+
+/**
+ * WhatsApp webhook rate limiter.
+ * 120 requests per minute per gatewayId.
+ */
+const whatsAppWebhookRateLimiter = createRateLimiter({
+  keyPrefix: "webhook-whatsapp",
+  points: 120,
+  duration: 60,
+  blockDuration: 60,
+});
+
+/**
+ * Verify WhatsApp webhook signature using HMAC-SHA256.
+ * Meta sends X-Hub-Signature-256 header with format: sha256=<hex>
+ */
+async function verifyWhatsAppSignature(
+  appSecret: string,
+  signature: string,
+  body: string,
+): Promise<boolean> {
+  try {
+    const { createHmac, timingSafeEqual } = await import("node:crypto");
+    const expectedSignature = `sha256=${createHmac("sha256", appSecret)
+      .update(body)
+      .digest("hex")}`;
+
+    const a = Buffer.from(expectedSignature);
+    const b = Buffer.from(signature);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * WhatsApp webhook verification (GET)
+ *
+ * GET /webhooks/whatsapp/:gatewayId
+ *
+ * Meta sends GET request with hub.mode, hub.verify_token, hub.challenge
+ * to verify webhook URL ownership. We validate the verify_token matches
+ * the stored credential and respond with the challenge value.
+ */
+webhookRouter.get(
+  "/whatsapp/:gatewayId",
+  async (req: Request<GatewayParams>, res: Response) => {
+    const { gatewayId } = req.params;
+    const mode = req.query["hub.mode"] as string | undefined;
+    const verifyToken = req.query["hub.verify_token"] as string | undefined;
+    const challenge = req.query["hub.challenge"] as string | undefined;
+
+    if (mode !== "subscribe" || !verifyToken || !challenge) {
+      webhookLogger.warn({ gatewayId, mode }, "Invalid WhatsApp verification request");
+      res.status(400).send("Invalid verification request");
       return;
     }
 
-    res.json({
-      success: true,
-      data: {
-        id: gateway.id,
-        name: gateway.name,
-        active: gateway.status === "CONNECTED",
-      },
-    });
+    try {
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: { id: true, type: true, credentialsEnc: true },
+      });
+
+      if (!gateway || gateway.type !== "WHATSAPP_BOT") {
+        res.status(404).send("Gateway not found");
+        return;
+      }
+
+      const credentials = decryptJson<WhatsAppBotCredentials>(gateway.credentialsEnc);
+
+      if (verifyToken !== credentials.verifyToken) {
+        webhookLogger.warn({ gatewayId }, "WhatsApp webhook verify token mismatch");
+        res.status(403).send("Verify token mismatch");
+        return;
+      }
+
+      webhookLogger.info({ gatewayId }, "WhatsApp webhook verified successfully");
+      res.status(200).send(challenge);
+    } catch (error) {
+      webhookLogger.error({ gatewayId, error }, "Error verifying WhatsApp webhook");
+      res.status(500).send("Internal server error");
+    }
+  },
+);
+
+/**
+ * Handle WhatsApp Cloud API webhook events
+ *
+ * POST /webhooks/whatsapp/:gatewayId
+ *
+ * Meta sends:
+ * 1. Message events (text, image, document, audio, video, location, contacts, reaction, interactive)
+ * 2. Status updates (sent, delivered, read, failed)
+ *
+ * Payload structure: { object: "whatsapp_business_account", entry: [{ changes: [{ value: { messages, statuses } }] }] }
+ *
+ * We verify HMAC-SHA256 signature via X-Hub-Signature-256 header,
+ * then route events to the plugin system.
+ */
+webhookRouter.post(
+  "/whatsapp/:gatewayId",
+  async (req: Request<GatewayParams>, res: Response) => {
+    const { gatewayId } = req.params;
+
+    // Rate limit
+    try {
+      await whatsAppWebhookRateLimiter.consume(gatewayId);
+    } catch (err) {
+      if (err instanceof RateLimiterRes) {
+        webhookLogger.warn({ gatewayId }, "WhatsApp webhook rate limit exceeded");
+        res.status(429).json({ error: "Too many requests" });
+        return;
+      }
+      // Redis error — fail open
+    }
+
+    try {
+      // Find the gateway
+      const gateway = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          credentialsEnc: true,
+          config: true,
+          userId: true,
+          organizationId: true,
+          mode: true,
+        },
+      });
+
+      if (!gateway) {
+        webhookLogger.warn({ gatewayId }, "WhatsApp webhook for unknown gateway");
+        res.status(404).json({ error: "Unknown gateway" });
+        return;
+      }
+
+      if (gateway.type !== "WHATSAPP_BOT") {
+        webhookLogger.warn({ gatewayId, type: gateway.type }, "Webhook to non-WhatsApp gateway");
+        res.status(400).json({ error: "Not a WhatsApp gateway" });
+        return;
+      }
+
+      // Decrypt credentials for signature verification
+      const credentials = decryptJson<WhatsAppBotCredentials>(gateway.credentialsEnc);
+
+      // Get raw body for signature verification
+      const rawBody = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+
+      // Verify HMAC-SHA256 signature
+      const signature = req.headers["x-hub-signature-256"] as string;
+
+      if (!signature) {
+        webhookLogger.warn({ gatewayId }, "WhatsApp webhook missing signature header");
+        res.status(401).json({ error: "Missing signature" });
+        return;
+      }
+
+      const isValid = await verifyWhatsAppSignature(
+        credentials.appSecret,
+        signature,
+        rawBody,
+      );
+
+      if (!isValid) {
+        webhookLogger.warn({ gatewayId }, "WhatsApp webhook signature verification failed");
+        res.status(401).json({ error: "Invalid signature" });
+        return;
+      }
+
+      const payload = req.body as Record<string, unknown>;
+
+      // Validate this is a WhatsApp business account notification
+      if (payload.object !== "whatsapp_business_account") {
+        webhookLogger.debug({ gatewayId, object: payload.object }, "Ignoring non-WhatsApp payload");
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      webhookLogger.info(
+        { gatewayId },
+        "Processing WhatsApp webhook",
+      );
+
+      // Route to plugin system (non-blocking)
+      if (gateway.userId) {
+        const executeGateway = async (gId: string, action: string, params: unknown) => {
+          const provider = gatewayRegistry.get("WHATSAPP_BOT");
+          const gw = await prisma.gateway.findUnique({ where: { id: gId } });
+          if (!gw) throw new Error(`Gateway not found: ${gId}`);
+          const creds = gatewayService.getDecryptedCredentials(gw);
+          try {
+            return await provider.execute(gId, action, params);
+          } catch (execErr) {
+            const msg = execErr instanceof Error ? execErr.message : "";
+            if (msg.includes("not connected") || msg.includes("Not connected")) {
+              await provider.connect(gId, creds, (gw.config as Record<string, unknown>) ?? {});
+              return provider.execute(gId, action, params);
+            }
+            throw execErr;
+          }
+        };
+
+        void (async () => {
+          try {
+            // Mode-based dispatch
+            if (gateway.mode === "workflow") {
+              // Workflow mode: only check workflow triggers
+              interface WhatsAppPayload {
+                entry?: Array<{
+                  changes?: Array<{
+                    value?: { messages?: Array<Record<string, unknown>> };
+                  }>;
+                }>;
+              }
+              const waPayload = payload as WhatsAppPayload;
+              if (waPayload.entry) {
+                for (const entry of waPayload.entry) {
+                  for (const change of entry.changes ?? []) {
+                    for (const msg of change.value?.messages ?? []) {
+                      await checkWhatsAppMessageTrigger(
+                        gatewayId,
+                        gateway.userId,
+                        gateway.organizationId ?? null,
+                        msg as {
+                          type?: string;
+                          text?: { body?: string };
+                          from?: string;
+                          id?: string;
+                          timestamp?: string;
+                        },
+                        msg
+                      );
+                    }
+                  }
+                }
+              }
+            } else {
+              // Plugin mode: route directly to plugins
+              const result = await handleWhatsAppWebhook(
+                gatewayId,
+                gateway.userId,
+                gateway.organizationId ?? null,
+                payload,
+                executeGateway,
+              );
+              if (result.pluginsExecuted > 0) {
+                webhookLogger.info(
+                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                  "WhatsApp event routed to plugin",
+                );
+              }
+            }
+          } catch (err) {
+            webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, "WhatsApp dispatch failed");
+          }
+        })();
+      }
+
+      // Respond 200 immediately — Meta requires fast responses
+      res.status(200).json({ ok: true });
+
+      // Update last activity timestamp (fire and forget)
+      void prisma.gateway
+        .update({
+          where: { id: gatewayId },
+          data: {
+            lastConnectedAt: new Date(),
+            status: "CONNECTED" as GatewayStatus,
+          },
+        })
+        .catch((err: Error) => {
+          webhookLogger.error({ gatewayId, err }, "Failed to update gateway timestamp");
+        });
+    } catch (error) {
+      webhookLogger.error(
+        { gatewayId, error },
+        "Error processing WhatsApp webhook",
+      );
+      res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
+
+// ===========================================
+// Workflow Webhook Trigger (Phase C)
+// ===========================================
+
+/**
+ * POST /webhooks/workflow/:workflowId
+ *
+ * External services (Stripe, GitHub, etc.) can trigger a workflow directly
+ * via this endpoint. The workflow must be WEBHOOK-triggered and active.
+ */
+webhookRouter.post(
+  "/workflow/:workflowId",
+  async (req: Request<{ workflowId: string }>, res: Response) => {
+    const { workflowId } = req.params;
+
+    try {
+      const runId = await handleWebhookTrigger(workflowId, {
+        method: req.method,
+        headers: req.headers as Record<string, string>,
+        body: req.body,
+        query: req.query as Record<string, string>,
+      });
+
+      res.status(202).json({
+        success: true,
+        data: { runId },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to trigger workflow";
+      webhookLogger.error({ workflowId, error: message }, "Workflow webhook trigger failed");
+      res.status(400).json({
+        success: false,
+        error: { code: "TRIGGER_FAILED", message },
+      });
+    }
   }
 );
 

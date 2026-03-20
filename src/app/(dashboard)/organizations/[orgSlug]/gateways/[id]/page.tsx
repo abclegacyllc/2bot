@@ -19,11 +19,11 @@ import { PageHeader } from "@/components/navigation";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,18 +64,6 @@ const BotIcon = () => (
   </svg>
 );
 
-const AIIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-  </svg>
-);
-
-const CustomGatewayIcon = () => (
-  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-  </svg>
-);
-
 /**
  * Get icon for gateway type
  */
@@ -83,10 +71,12 @@ function getGatewayIcon(type: string) {
   switch (type) {
     case "TELEGRAM_BOT":
       return <BotIcon />;
-    case "AI":
-      return <AIIcon />;
-    case "CUSTOM_GATEWAY":
-      return <CustomGatewayIcon />;
+    case "DISCORD_BOT":
+      return <BotIcon />;
+    case "SLACK_BOT":
+      return <BotIcon />;
+    case "WHATSAPP_BOT":
+      return <BotIcon />;
     default:
       return <BotIcon />;
   }
@@ -99,10 +89,12 @@ function getGatewayTypeName(type: string): string {
   switch (type) {
     case "TELEGRAM_BOT":
       return "Telegram Bot";
-    case "AI":
-      return "AI Provider";
-    case "CUSTOM_GATEWAY":
-      return "Custom Gateway";
+    case "DISCORD_BOT":
+      return "Discord Bot";
+    case "SLACK_BOT":
+      return "Slack Bot";
+    case "WHATSAPP_BOT":
+      return "WhatsApp Bot";
     default:
       return type;
   }
@@ -474,24 +466,6 @@ function OrgGatewayDetailContent() {
                 <Label className="text-foreground">Credentials</Label>
                 <div className="bg-card border border-border rounded-md p-3 text-sm text-muted-foreground space-y-1">
                   {gateway.type === "TELEGRAM_BOT" && gateway.credentialInfo.hasBotToken ? <p>Bot Token: ••••••••••••••••</p> : null}
-                  {gateway.type === "AI" && gateway.credentialInfo.provider ? <p>Provider: {gateway.credentialInfo.provider}</p> : null}
-                  {gateway.type === "AI" && gateway.credentialInfo.hasApiKey ? <p>API Key: ••••••••••••••••</p> : null}
-                  {gateway.type === "CUSTOM_GATEWAY" && gateway.credentialInfo.webhookUrl ? (
-                    <div>
-                      <p className="text-foreground font-medium text-xs mb-1">Webhook URL</p>
-                      <code className="block bg-muted px-2 py-1 rounded text-xs text-emerald-400 break-all select-all">{gateway.credentialInfo.webhookUrl}</code>
-                    </div>
-                  ) : null}
-                  {gateway.type === "CUSTOM_GATEWAY" && gateway.credentialInfo.credentialKeys && gateway.credentialInfo.credentialKeys.length > 0 ? (
-                    <div className="mt-2">
-                      <p className="text-foreground font-medium text-xs mb-1">Stored Credential Keys</p>
-                      <div className="flex flex-wrap gap-1">
-                        {gateway.credentialInfo.credentialKeys.map((key) => (
-                          <span key={key} className="bg-muted px-2 py-0.5 rounded text-xs font-mono">{key}</span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
                   <p className="text-xs text-muted-foreground mt-1">
                     Credentials are encrypted and cannot be displayed
                   </p>

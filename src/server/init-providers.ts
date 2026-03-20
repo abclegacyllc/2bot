@@ -9,8 +9,10 @@
 import { loggers } from "@/lib/logger";
 import { gatewayRegistry } from "@/modules/gateway/gateway.registry";
 import {
-    aiProvider,
+    discordBotProvider,
+    slackBotProvider,
     telegramBotProvider,
+    whatsAppBotProvider,
 } from "@/modules/gateway/providers";
 
 const logger = loggers.server;
@@ -28,8 +30,14 @@ export function initializeGatewayProviders(): void {
     // Register Telegram Bot provider
     gatewayRegistry.register(telegramBotProvider);
 
-    // Register AI provider (OpenAI, Anthropic, etc.)
-    gatewayRegistry.register(aiProvider);
+    // Register Discord Bot provider
+    gatewayRegistry.register(discordBotProvider);
+
+    // Register Slack Bot provider
+    gatewayRegistry.register(slackBotProvider);
+
+    // Register WhatsApp Bot provider
+    gatewayRegistry.register(whatsAppBotProvider);
 
     // Log registered providers
     const types = gatewayRegistry.getTypes();

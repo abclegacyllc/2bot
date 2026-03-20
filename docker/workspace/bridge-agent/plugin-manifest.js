@@ -18,7 +18,10 @@
  *   "version": "1.0.0",
  *   "entry": "index.js",
  *   "description": "A cool bot",
- *   "category": "utility"
+ *   "category": "utility",
+ *   "eventTypes": ["telegram.message"],
+ *   "eventRole": "responder",
+ *   "conflictsWith": []
  * }
  * ```
  *
@@ -28,6 +31,9 @@
  * - `entry`   (optional) — Entry file relative to plugin dir, defaults to "index.js"
  * - `description` (optional) — Short description
  * - `category`    (optional) — Plugin category
+ * - `eventTypes`  (optional) — Events handled: ["telegram.message", "telegram.callback"]
+ * - `eventRole`   (optional) — "responder" (sends replies) or "observer" (read-only)
+ * - `conflictsWith` (optional) — Slugs of incompatible plugins
  *
  * @module plugin-manifest
  */

@@ -13,38 +13,6 @@ import type { Gateway, GatewayStatus, GatewayType } from "@prisma/client";
 export type { Gateway, GatewayStatus, GatewayType } from "@prisma/client";
 
 // ===========================================
-// AI Provider Types
-// ===========================================
-
-/**
- * Supported AI providers
- * Expandable list - add new providers here
- */
-export type AIProvider =
-  | "openai"
-  | "anthropic"
-  | "deepseek"
-  | "grok"
-  | "gemini"
-  | "mistral"
-  | "groq"
-  | "ollama";
-
-/**
- * AI Provider metadata for UI/validation
- */
-export const AI_PROVIDERS: Record<AIProvider, { name: string; requiresBaseUrl: boolean }> = {
-  openai: { name: "OpenAI", requiresBaseUrl: false },
-  anthropic: { name: "Anthropic", requiresBaseUrl: false },
-  deepseek: { name: "DeepSeek", requiresBaseUrl: false },
-  grok: { name: "Grok (xAI)", requiresBaseUrl: false },
-  gemini: { name: "Google Gemini", requiresBaseUrl: false },
-  mistral: { name: "Mistral AI", requiresBaseUrl: false },
-  groq: { name: "Groq", requiresBaseUrl: false },
-  ollama: { name: "Ollama (Local)", requiresBaseUrl: true },
-};
-
-// ===========================================
 // Credential Types (stored encrypted)
 // ===========================================
 
@@ -56,29 +24,39 @@ export interface TelegramBotCredentials {
 }
 
 /**
- * AI provider credentials
+ * Discord Bot credentials
  */
-export interface AICredentials {
-  provider: AIProvider;
-  apiKey: string;
-  baseUrl?: string; // For custom endpoints (Ollama, self-hosted)
-  model?: string; // Default model for this gateway
+export interface DiscordBotCredentials {
+  botToken: string;
+  applicationId: string;
+  publicKey: string; // Ed25519 public key for interaction verification
 }
 
 /**
- * Custom Gateway credentials — flexible key-value store for API keys, tokens, secrets.
- * Examples: { signingSecret: "whsec_...", apiKey: "sk_..." }
- * Stored encrypted (AES-256-GCM) in credentialsEnc, same as Telegram/AI gateways.
+ * Slack Bot credentials
  */
-export type CustomGatewayCredentials = Record<string, string>;
+export interface SlackBotCredentials {
+  botToken: string; // xoxb-... Bot User OAuth Token
+  signingSecret: string; // Slack app signing secret for request verification
+  appId?: string; // Slack app ID (e.g. A0123456789)
+  teamId?: string; // Workspace/team ID
+}
 
-/** @deprecated Use CustomGatewayCredentials */
-export type WebhookCredentials = CustomGatewayCredentials;
+/**
+ * WhatsApp Bot credentials (Meta Cloud API)
+ */
+export interface WhatsAppBotCredentials {
+  accessToken: string; // Meta Graph API access token
+  appSecret: string; // App secret for webhook HMAC-SHA256 verification
+  phoneNumberId: string; // WhatsApp Business phone number ID
+  businessAccountId?: string; // WhatsApp Business Account ID
+  verifyToken: string; // User-defined token for GET webhook verification handshake
+}
 
 /**
  * Union of all credential types
  */
-export type GatewayCredentials = TelegramBotCredentials | AICredentials | CustomGatewayCredentials;
+export type GatewayCredentials = TelegramBotCredentials | DiscordBotCredentials | SlackBotCredentials | WhatsAppBotCredentials;
 
 // ===========================================
 // Gateway Configuration Types (non-sensitive)
@@ -96,30 +74,31 @@ export interface TelegramBotConfig {
 }
 
 /**
- * AI gateway configuration
+ * Discord Bot configuration
  */
-export interface AIGatewayConfig {
-  maxTokens?: number;
-  temperature?: number;
-  systemPrompt?: string;
+export interface DiscordBotConfig {
+  interactionsEndpointUrl?: string;
+  intents?: number; // Gateway intents bitmask (not used for HTTP interactions)
 }
 
 /**
- * Custom Gateway configuration
+ * Slack Bot configuration
  */
-export interface CustomGatewayConfig {
-  retryCount?: number;
-  retryDelay?: number;
-  timeout?: number;
+export interface SlackBotConfig {
+  eventSubscriptions?: string[]; // Event types to listen for (e.g. message, app_mention)
 }
 
-/** @deprecated Use CustomGatewayConfig */
-export type WebhookConfig = CustomGatewayConfig;
+/**
+ * WhatsApp Bot configuration
+ */
+export interface WhatsAppBotConfig {
+  webhookUrl?: string;
+}
 
 /**
  * Union of all config types
  */
-export type GatewayConfig = TelegramBotConfig | AIGatewayConfig | CustomGatewayConfig | Record<string, unknown>;
+export type GatewayConfig = TelegramBotConfig | DiscordBotConfig | SlackBotConfig | WhatsAppBotConfig | Record<string, unknown>;
 
 // ===========================================
 // Gateway Metadata Types (persisted on connect)
@@ -139,37 +118,46 @@ export interface TelegramBotMetadata {
 }
 
 /**
- * AI Provider metadata — persisted on connect
+ * Discord Bot metadata — persisted from API on connect
  */
-export interface AIGatewayMetadata {
-  provider: AIProvider;
-  providerName: string;
-  defaultModel: string;
-  availableModels?: string[];
-  lastValidatedAt?: string;
+export interface DiscordBotMetadata {
+  botId: string;
+  botUsername: string;
+  botDiscriminator: string;
+  applicationId: string;
+  interactionsEndpointUrl?: string;
 }
 
 /**
- * Custom Gateway metadata
+ * Slack Bot metadata — persisted from auth.test on connect
  */
-export interface CustomGatewayMetadata {
-  /** Computed webhook URL: https://webhook.2bot.org/custom/{gatewayId} */
-  webhookUrl?: string;
-  /** Credential key names (for display, not values) */
-  credentialKeys?: string[];
-  lastDeliveredAt?: string;
+export interface SlackBotMetadata {
+  botId: string;
+  botName: string;
+  teamId: string;
+  teamName: string;
+  appId?: string;
 }
 
-/** @deprecated Use CustomGatewayMetadata */
-export type WebhookMetadata = CustomGatewayMetadata;
+/**
+ * WhatsApp Bot metadata — persisted from phone number info on connect
+ */
+export interface WhatsAppBotMetadata {
+  phoneNumberId: string;
+  displayPhoneNumber: string;
+  verifiedName: string;
+  qualityRating?: string;
+  businessAccountId?: string;
+}
 
 /**
  * Union of all gateway metadata types
  */
 export type GatewayMetadata =
   | TelegramBotMetadata
-  | AIGatewayMetadata
-  | CustomGatewayMetadata
+  | DiscordBotMetadata
+  | SlackBotMetadata
+  | WhatsAppBotMetadata
   | Record<string, unknown>;
 
 // ===========================================
@@ -193,6 +181,7 @@ export interface UpdateGatewayRequest {
   name?: string;
   credentials?: GatewayCredentials;
   config?: GatewayConfig;
+  mode?: "plugin" | "workflow";
 }
 
 // ===========================================
@@ -206,12 +195,10 @@ export type SafeGateway = Omit<Gateway, "credentialsEnc"> & {
   // Expose credential type info without actual secrets
   credentialInfo: {
     type: GatewayType;
-    provider?: AIProvider; // For AI type
-    hasApiKey?: boolean;
     hasBotToken?: boolean;
-    baseUrl?: string; // Non-sensitive, useful for display
-    credentialKeys?: string[]; // For CUSTOM_GATEWAY — key names (no secrets)
-    webhookUrl?: string; // For CUSTOM_GATEWAY — computed inbound URL
+    hasApplicationId?: boolean; // For DISCORD_BOT
+    hasAccessToken?: boolean; // For WHATSAPP_BOT
+    phoneNumberId?: string; // For WHATSAPP_BOT (non-sensitive identifier)
   };
   // Provider-specific metadata (bot info, AI provider details, etc.)
   providerMetadata: GatewayMetadata;
@@ -225,9 +212,21 @@ export interface GatewayListItem {
   name: string;
   type: GatewayType;
   status: GatewayStatus;
+  mode: string;
   lastConnectedAt: Date | null;
   lastError: string | null;
   createdAt: Date;
+  /** Summary of the first workflow bound to this gateway (if any) */
+  workflowSummary?: {
+    id: string;
+    name: string;
+    status: string;
+    isEnabled: boolean;
+    stepCount: number;
+    executionCount: number;
+    lastExecutedAt: Date | null;
+    lastError: string | null;
+  };
 }
 
 // ===========================================
@@ -244,21 +243,30 @@ export function isTelegramBotCredentials(
 }
 
 /**
- * Check if credentials are for AI provider
+ * Check if credentials are for Discord Bot
  */
-export function isAICredentials(credentials: GatewayCredentials): credentials is AICredentials {
-  return "provider" in credentials && "apiKey" in credentials;
+export function isDiscordBotCredentials(
+  credentials: GatewayCredentials
+): credentials is DiscordBotCredentials {
+  return "botToken" in credentials && "applicationId" in credentials && "publicKey" in credentials;
 }
 
 /**
- * Check if credentials are for Custom Gateway.
- * Custom gateways use a plain Record<string, string> — they don't have botToken or provider.
+ * Check if credentials are for Slack Bot
  */
-export function isCustomGatewayCredentials(
+export function isSlackBotCredentials(
   credentials: GatewayCredentials
-): credentials is CustomGatewayCredentials {
-  return !("provider" in credentials) && !("botToken" in credentials) && !("apiKey" in credentials);
+): credentials is SlackBotCredentials {
+  return "botToken" in credentials && "signingSecret" in credentials;
 }
 
-/** @deprecated Use isCustomGatewayCredentials */
-export const isWebhookCredentials = isCustomGatewayCredentials;
+/**
+ * Check if credentials are for WhatsApp Bot
+ */
+export function isWhatsAppBotCredentials(
+  credentials: GatewayCredentials
+): credentials is WhatsAppBotCredentials {
+  return "accessToken" in credentials && "phoneNumberId" in credentials && "appSecret" in credentials;
+}
+
+

@@ -310,6 +310,27 @@ export const auditActions = {
     metadata: details,
     status: 'failure',
   }),
+
+  // ==========================================
+  // Cursor Agent Events
+  // ==========================================
+
+  /**
+   * Log a cursor agent tool execution (destructive or sensitive actions)
+   */
+  cursorToolExecuted: (
+    ctx: AuditContext,
+    sessionId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    result: { success: boolean; summary: string },
+  ) => audit(ctx, {
+    action: `cursor.tool.${toolName}`,
+    resource: 'cursor',
+    resourceId: sessionId,
+    metadata: { toolName, args, ...result },
+    status: result.success ? 'success' : 'failure',
+  }),
 };
 
 /**

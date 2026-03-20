@@ -40,17 +40,23 @@ const GATEWAY_CIRCUIT_CONFIGS: Record<GatewayType, {
     monitorWindowMs: 60000,   // 1 minute window
     halfOpenMaxAttempts: 2,   // Fewer attempts needed
   },
-  AI: {
-    failureThreshold: 5,      // AI can be more tolerant
-    resetTimeoutMs: 20000,    // 20 seconds (AI might recover faster)
+  DISCORD_BOT: {
+    failureThreshold: 3,      // Discord is critical, same as Telegram
+    resetTimeoutMs: 30000,    // 30 seconds before retry
     monitorWindowMs: 60000,   // 1 minute window
-    halfOpenMaxAttempts: 3,   // Standard attempts
+    halfOpenMaxAttempts: 2,   // Fewer attempts needed
   },
-  CUSTOM_GATEWAY: {
-    failureThreshold: 5,      // Standard threshold
-    resetTimeoutMs: 30000,    // 30 seconds
+  SLACK_BOT: {
+    failureThreshold: 3,      // Slack is critical, same as Telegram/Discord
+    resetTimeoutMs: 30000,    // 30 seconds before retry
     monitorWindowMs: 60000,   // 1 minute window
-    halfOpenMaxAttempts: 3,   // Standard attempts
+    halfOpenMaxAttempts: 2,   // Fewer attempts needed
+  },
+  WHATSAPP_BOT: {
+    failureThreshold: 3,      // WhatsApp is critical, same as other messaging platforms
+    resetTimeoutMs: 30000,    // 30 seconds before retry
+    monitorWindowMs: 60000,   // 1 minute window
+    halfOpenMaxAttempts: 2,   // Fewer attempts needed
   },
 };
 

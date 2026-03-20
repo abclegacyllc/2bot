@@ -17,10 +17,20 @@ export {
     TelegramApiError, TelegramBotProvider, telegramBotProvider
 } from "./telegram-bot.provider";
 
-// AI provider (OpenAI, Anthropic, etc.)
+// Discord Bot provider
 export {
-    AIApiError, AIProvider, aiProvider
-} from "./ai.provider";
+    DiscordApiError, DiscordBotProvider, discordBotProvider
+} from "./discord-bot.provider";
+
+// Slack Bot provider
+export {
+    SlackApiError, SlackBotProvider, slackBotProvider
+} from "./slack-bot.provider";
+
+// WhatsApp Bot provider
+export {
+    WhatsAppApiError, WhatsAppBotProvider, whatsAppBotProvider
+} from "./whatsapp-bot.provider";
 
 // Concrete providers will be exported here as they are implemented:
 // export { WebhookProvider } from "./webhook.provider";

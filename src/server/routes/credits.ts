@@ -18,10 +18,10 @@
 import { logger } from "@/lib/logger";
 import { getCurrentBillingPeriod } from "@/modules/2bot-ai-provider";
 import {
-  creditService,
-  twoBotAICreditService,
-  type CreditUsageCategory,
-  type WalletType
+    creditService,
+    twoBotAICreditService,
+    type CreditUsageCategory,
+    type WalletType
 } from "@/modules/credits";
 import { BadRequestError, InternalError } from "@/shared/errors";
 import { formatCredits } from "@/shared/lib/format";
@@ -369,8 +369,8 @@ creditsRouter.post(
           price_data: {
             currency: "usd",
             product_data: {
-              name: `2Bot AI Credits - ${pkg.name}`,
-              description: `${pkg.credits.toLocaleString()} credits for 2Bot AI`,
+              name: `2Bot Credits - ${pkg.name}`,
+              description: `${pkg.credits.toLocaleString()} credits for 2Bot platform`,
             },
             unit_amount: pkg.price * 100, // cents
           },

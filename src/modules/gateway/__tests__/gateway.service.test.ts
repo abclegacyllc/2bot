@@ -261,7 +261,7 @@ describe('gatewayService.findByUser', () => {
   it('returns user gateways in personal context', async () => {
     mockedPrisma.gateway.findMany.mockResolvedValue([
       { id: 'gw-1', name: 'Bot 1', type: 'TELEGRAM_BOT', status: 'CONNECTED' },
-      { id: 'gw-2', name: 'Bot 2', type: 'AI', status: 'DISCONNECTED' },
+      { id: 'gw-2', name: 'Bot 2', type: 'DISCORD_BOT', status: 'DISCONNECTED' },
     ]);
 
     const ctx = createTestContext();
@@ -570,40 +570,6 @@ describe('Gateway duplicate credential prevention', () => {
 
     expect(result).toBeDefined();
     expect(mockedPrisma.gateway.update).toHaveBeenCalled();
-  });
-
-  it('allows duplicate AI credentials (same API key can be used multiple times)', async () => {
-    const ctx = createTestContext();
-    const apiKey = 'sk-same-api-key';
-    
-    // Mock existing AI gateway with same API key
-    mockedPrisma.gateway.findMany.mockResolvedValue([
-      {
-        id: 'existing-ai',
-        name: 'Existing AI',
-        type: 'AI',
-        credentialsEnc: `encrypted:{"provider":"openai","apiKey":"${apiKey}"}`,
-        userId: 'other-user',
-        organizationId: null,
-        user: { email: 'other@example.com' },
-        organization: null,
-      },
-    ]);
-    
-    mockedPrisma.gateway.create.mockResolvedValue({
-      ...mockGateway,
-      type: 'AI',
-      credentialsEnc: `encrypted:{"provider":"openai","apiKey":"${apiKey}"}`,
-    });
-
-    // Should NOT throw - AI credentials can be duplicated
-    const result = await gatewayService.create(ctx, {
-      name: 'My AI',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey },
-    });
-
-    expect(result).toBeDefined();
   });
 
   it('provides helpful error message with owner information', async () => {

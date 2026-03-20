@@ -118,6 +118,7 @@ export function OrgCreditsDashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyType, setHistoryType] = useState<string | undefined>();
+  const [historyCategory, setHistoryCategory] = useState<CreditUsageCategory | undefined>();
   const [usagePeriod, setUsagePeriod] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -170,13 +171,14 @@ export function OrgCreditsDashboardClient() {
   }, [orgId, getAuthHeaders]);
 
   const fetchHistory = useCallback(
-    async (page: number, type?: string) => {
+    async (page: number, type?: string, category?: CreditUsageCategory) => {
       if (!orgId) return null;
       const params = new URLSearchParams({
         page: page.toString(),
         pageSize: "10",
       });
       if (type) params.append("type", type);
+      if (category) params.append("category", category);
 
       const response = await fetch(apiUrl(`/orgs/${orgId}/credits/history?${params}`), {
         credentials: "include",
@@ -270,12 +272,12 @@ export function OrgCreditsDashboardClient() {
   useEffect(() => {
     if (!user || !orgId || loading) return;
 
-    fetchHistory(historyPage, historyType)
+    fetchHistory(historyPage, historyType, historyCategory)
       .then((data) => {
         if (data) setHistory(data);
       })
       .catch(() => {});
-  }, [user, orgId, loading, historyPage, historyType, fetchHistory]);
+  }, [user, orgId, loading, historyPage, historyType, historyCategory, fetchHistory]);
 
   // ===========================================
   // Handlers
@@ -416,18 +418,16 @@ export function OrgCreditsDashboardClient() {
 
         {/* Usage Tab - Admin only (API requires requireOrgAdmin) */}
         {isAdmin ? <TabsContent value="usage" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Usage Chart */}
-            <CreditsUsageChart
-              data={chartData}
-              period={usagePeriod}
-              onPeriodChange={setUsagePeriod}
-              loading={loading}
-            />
+          {/* Usage Chart — full width */}
+          <CreditsUsageChart
+            data={chartData}
+            period={usagePeriod}
+            onPeriodChange={setUsagePeriod}
+            loading={loading}
+          />
 
-            {/* Usage Breakdown */}
-            {breakdownData ? <CreditsUsageBreakdown data={breakdownData} loading={loading} /> : null}
-          </div>
+          {/* Usage Breakdown — own grid */}
+          {breakdownData ? <CreditsUsageBreakdown data={breakdownData} loading={loading} /> : null}
         </TabsContent> : null}
 
         {/* History Tab */}
@@ -439,6 +439,12 @@ export function OrgCreditsDashboardClient() {
               pageSize={10}
               onPageChange={handleHistoryPageChange}
               onTypeFilter={handleHistoryTypeFilter}
+              onCategoryFilter={(cat) => {
+                setHistoryCategory(cat);
+                setHistoryPage(1);
+              }}
+              typeFilter={historyType}
+              categoryFilter={historyCategory}
               loading={loading}
             /> : null}
         </TabsContent>

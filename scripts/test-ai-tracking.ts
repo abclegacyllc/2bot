@@ -37,7 +37,7 @@ async function main() {
   console.log(`📊 Initial AI Usage Records: ${initialUsageCount}`);
 
   // 3. Make AI Request (Claude 3 Haiku)
-  const modelToTest = "claude-3-haiku-20240307"; // As requested: Haiku
+  const modelToTest = "claude-haiku-4-5-20251001"; // Anthropic Haiku (fast + cheap)
   console.log(`\n🤖 Sending request to ${modelToTest}...`);
 
   try {

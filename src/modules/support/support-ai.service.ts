@@ -83,14 +83,14 @@ export async function processSupportChat(
     { role: "user", content: input.message },
   ];
 
-  // 4. Call AI provider — support uses lite model, costs covered by platform
+  // 4. Call AI provider — support uses auto (cheapest available), costs covered by platform
   let reply: string;
   try {
     const aiResponse = await twoBotAIProvider.textGeneration({
       messages,
-      model: "2bot-ai-text-lite",
+      model: "auto",
       userId: input.userId || "system-support", // Platform-funded, no user credit deduction
-      smartRouting: false, // Keep on lite for cost efficiency
+      smartRouting: false, // Auto resolves to cheapest
       stream: false,
       maxTokens: 1024,
       temperature: 0.7,

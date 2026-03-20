@@ -10,8 +10,9 @@
  * @module components/plugins/config-modal
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import type { RealModelOption } from "@/components/2bot-ai-assistant/model-selector";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -72,6 +73,180 @@ interface ConfigModalProps {
 }
 
 // ===========================================
+// AI Model Selector Field (uses real models + branded fallback)
+// ===========================================
+
+function fmtNum(n: number): string {
+  if (n === 0) return "0";
+  if (n >= 100) return String(Math.round(n));
+  if (n >= 1) return parseFloat(n.toFixed(1)).toString();
+  if (n >= 0.01) return parseFloat(n.toFixed(2)).toString();
+  return parseFloat(n.toPrecision(2)).toString();
+}
+
+function formatCredits(input: number, output: number | undefined, unit: string): string {
+  if (input === 0 && (!output || output === 0)) return "Free";
+  if (output !== null && output !== undefined && output > 0) return `${fmtNum(input)}/${fmtNum(output)}`;
+  if (input < 0.01) return `<0.01/${unit}`;
+  return `${fmtNum(input)}/${unit}`;
+}
+
+function getCreditColor(tier: string): string {
+  if (tier === "free") return "text-emerald-500";
+  if (tier === "lite") return "text-muted-foreground";
+  if (tier === "pro") return "text-blue-500";
+  return "text-amber-500";
+}
+
+/** Map capability filter from schema enum to real-models capability string */
+function capabilityForEnum(enumValues?: readonly string[] | string[]): string | undefined {
+  if (!enumValues || enumValues.length === 0) return undefined;
+  const first = enumValues[0] as string;
+  if (first.includes('-text-') || first.includes('-code-') || first.includes('-reasoning-')) return 'text-generation';
+  if (first.includes('-image-')) return 'image-generation';
+  if (first.includes('-voice-')) return 'speech-synthesis';
+  if (first.includes('-transcribe-')) return 'speech-recognition';
+  return undefined;
+}
+
+function AIModelField({
+  fieldKey,
+  prop,
+  value,
+  onChange,
+  realModels,
+  modelSearch,
+  setModelSearch,
+}: {
+  fieldKey: string;
+  prop: ConfigSchemaProperty;
+  value: unknown;
+  onChange: (key: string, value: unknown) => void;
+  realModels: RealModelOption[];
+  modelSearch: string;
+  setModelSearch: (s: string) => void;
+}) {
+  const currentValue = String(value ?? "");
+
+  // Filter real models by capability if schema specifies enum with branded IDs
+  const capability = useMemo(() => capabilityForEnum(prop.enum as string[] | undefined), [prop.enum]);
+  const filteredRealModels = useMemo(() => {
+    let models = realModels;
+    if (capability) {
+      models = models.filter((m) => m.capability === capability);
+    }
+    if (modelSearch.trim()) {
+      const q = modelSearch.toLowerCase();
+      models = models.filter(
+        (m) => m.displayName.toLowerCase().includes(q) || m.author.toLowerCase().includes(q)
+      );
+    }
+    return models;
+  }, [realModels, capability, modelSearch]);
+
+  // Branded tier options as fallback
+  const brandedOptions = useMemo(() => {
+    if (prop.enum) {
+      return AI_MODEL_OPTIONS.filter((m) => (prop.enum as string[]).includes(m.id));
+    }
+    return [...AI_MODEL_OPTIONS];
+  }, [prop.enum]);
+
+  const brandedGroups = useMemo(
+    () => Array.from(new Set(brandedOptions.map((m) => m.group))),
+    [brandedOptions]
+  );
+
+  // Find display name for currently selected value
+  const selectedLabel = useMemo(() => {
+    const real = realModels.find((m) => m.id === currentValue);
+    if (real) return `${real.displayName} (${real.author})`;
+    const branded = AI_MODEL_OPTIONS.find((m) => m.id === currentValue);
+    if (branded) return branded.label;
+    return currentValue || "Select an AI model";
+  }, [currentValue, realModels]);
+
+  const hasRealModels = filteredRealModels.length > 0;
+
+  return (
+    <div key={fieldKey} className="space-y-2">
+      <Label htmlFor={fieldKey} className="text-foreground">
+        {prop.title || fieldKey}
+      </Label>
+      <Select
+        value={currentValue}
+        onValueChange={(val) => onChange(fieldKey, val)}
+      >
+        <SelectTrigger className="w-full bg-muted border-border text-foreground">
+          <SelectValue placeholder="Select an AI model">{selectedLabel}</SelectValue>
+        </SelectTrigger>
+        <SelectContent className="max-h-[350px]">
+          {/* Search input for real models */}
+          {hasRealModels && (
+            <div className="px-2 py-1.5 border-b border-border/50">
+              <Input
+                type="text"
+                value={modelSearch}
+                onChange={(e) => setModelSearch(e.target.value)}
+                placeholder="Search models..."
+                className="h-7 text-xs bg-background"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+
+          {/* Real models section */}
+          {hasRealModels && (
+            <>
+              <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                Real Models
+              </div>
+              {filteredRealModels.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  <div className="flex items-center justify-between w-full gap-2">
+                    <span className="truncate">{m.displayName}</span>
+                    <span className={`text-xs tabular-nums shrink-0 ${getCreditColor(m.tier)}`}>
+                      {formatCredits(m.creditsInput, m.creditsOutput, m.creditUnit)}
+                    </span>
+                  </div>
+                </SelectItem>
+              ))}
+            </>
+          )}
+
+          {/* Branded tiers section (Auto modes) */}
+          {!modelSearch.trim() && (
+            <>
+              <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                {hasRealModels ? "Auto Tiers" : "AI Models"}
+              </div>
+              {brandedGroups.map((group) => (
+                <div key={group}>
+                  {brandedGroups.length > 1 && (
+                    <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">{group}</div>
+                  )}
+                  {brandedOptions
+                    .filter((m) => m.group === group)
+                    .map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                </div>
+              ))}
+            </>
+          )}
+        </SelectContent>
+      </Select>
+      {prop.description ? (
+        <p className="text-xs text-muted-foreground">{prop.description}</p>
+      ) : null}
+    </div>
+  );
+}
+
+// ===========================================
 // Component
 // ===========================================
 
@@ -83,6 +258,8 @@ export function ConfigModal({ plugin, onClose, onSave, isSaving, token, organiza
   const [selectedGatewayId, setSelectedGatewayId] = useState<string | null>(plugin.gatewayId);
   const [storageQuotaMb, setStorageQuotaMb] = useState<number>(plugin.storageQuotaMb ?? 50);
   const [storageUsage, setStorageUsage] = useState<{ keyCount: number; totalBytes: number } | null>(null);
+  const [realModels, setRealModels] = useState<RealModelOption[]>([]);
+  const [modelSearch, setModelSearch] = useState("");
   const needsGateway = plugin.requiredGateways && plugin.requiredGateways.length > 0;
 
   // Fetch the actual config schema from the plugin details endpoint
@@ -143,11 +320,29 @@ export function ConfigModal({ plugin, onClose, onSave, isSaving, token, organiza
     }
   }, [organizationId, token, plugin.pluginSlug]);
 
+  // Fetch real models from /real-models endpoint
+  const fetchRealModels = useCallback(async () => {
+    try {
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(apiUrl('/2bot-ai/real-models'), {
+        credentials: 'include',
+        headers,
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setRealModels(json.data?.models ?? []);
+      }
+    } catch {
+      // Non-critical — fall back to branded tiers
+    }
+  }, [token]);
+
   useEffect(() => {
     fetchSchema();
     fetchGateways();
     fetchStorageUsage();
-  }, [fetchSchema, fetchGateways, fetchStorageUsage]);
+    fetchRealModels();
+  }, [fetchSchema, fetchGateways, fetchStorageUsage, fetchRealModels]);
 
   const handleChange = (key: string, value: unknown) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -165,45 +360,17 @@ export function ConfigModal({ plugin, onClose, onSave, isSaving, token, organiza
 
     // AI Model Selector — custom uiComponent
     if (prop.uiComponent === "ai-model-selector") {
-      // If enum is set, only show models in that list; otherwise show all
-      const allowedModels = prop.enum
-        ? AI_MODEL_OPTIONS.filter((m) => (prop.enum as string[]).includes(m.id))
-        : AI_MODEL_OPTIONS;
-
-      // Group models by category
-      const groups = Array.from(new Set(allowedModels.map((m) => m.group)));
-
       return (
-        <div key={key} className="space-y-2">
-          <Label htmlFor={key} className="text-foreground">
-            {prop.title || key}
-          </Label>
-          <Select
-            value={String(value ?? "")}
-            onValueChange={(val) => handleChange(key, val)}
-          >
-            <SelectTrigger className="w-full bg-muted border-border text-foreground">
-              <SelectValue placeholder="Select an AI model" />
-            </SelectTrigger>
-            <SelectContent>
-              {groups.map((group) => (
-                <div key={group}>
-                  <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">{group}</div>
-                  {allowedModels
-                    .filter((m) => m.group === group)
-                    .map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                </div>
-              ))}
-            </SelectContent>
-          </Select>
-          {prop.description ? (
-            <p className="text-xs text-muted-foreground">{prop.description}</p>
-          ) : null}
-        </div>
+        <AIModelField
+          key={key}
+          fieldKey={key}
+          prop={prop}
+          value={value}
+          onChange={handleChange}
+          realModels={realModels}
+          modelSearch={modelSearch}
+          setModelSearch={setModelSearch}
+        />
       );
     }
 

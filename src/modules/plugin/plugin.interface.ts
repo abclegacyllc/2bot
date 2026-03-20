@@ -172,21 +172,6 @@ export interface ScheduleTriggerEventData {
 }
 
 /**
- * Custom gateway / webhook trigger event
- */
-export interface CustomGatewayEventData {
-  method: string;
-  headers: Record<string, string>;
-  query: Record<string, string>;
-  body: unknown;
-  /** Decrypted credentials stored on the gateway (key-value pairs) */
-  credentials: Record<string, string>;
-}
-
-/** @deprecated Use CustomGatewayEventData */
-export type WebhookTriggerEventData = CustomGatewayEventData;
-
-/**
  * Manual trigger event
  */
 export interface ManualTriggerEventData {
@@ -195,10 +180,226 @@ export interface ManualTriggerEventData {
   params?: Record<string, unknown>;
 }
 
+// ===========================================
+// Discord Event Data Types
+// ===========================================
+
+/**
+ * Discord user shape used in events
+ */
+export interface DiscordUserData {
+  id: string;
+  username: string;
+  discriminator: string;
+  avatar: string | null;
+  bot?: boolean;
+}
+
+/**
+ * Discord message event
+ */
+export interface DiscordMessageEventData {
+  id: string;
+  channelId: string;
+  guildId?: string;
+  content: string;
+  author: DiscordUserData;
+  timestamp: string;
+  tts: boolean;
+  mentionEveryone: boolean;
+  embeds: Array<Record<string, unknown>>;
+  attachments: Array<{ id: string; filename: string; url: string; size: number }>;
+  referencedMessage?: DiscordMessageEventData;
+}
+
+/**
+ * Discord interaction event (slash commands, buttons, selects, modals)
+ */
+export interface DiscordInteractionEventData {
+  id: string;
+  applicationId: string;
+  interactionType: number; // 1=PING, 2=APPLICATION_COMMAND, 3=MESSAGE_COMPONENT, 4=AUTOCOMPLETE, 5=MODAL_SUBMIT
+  token: string;
+  guildId?: string;
+  channelId?: string;
+  user?: DiscordUserData;
+  member?: {
+    user: DiscordUserData;
+    roles: string[];
+    nick?: string;
+    joinedAt: string;
+    permissions: string;
+  };
+  data?: {
+    id?: string;
+    name?: string;
+    type?: number;
+    options?: Array<{ name: string; type: number; value: unknown }>;
+    customId?: string;
+    componentType?: number;
+    values?: string[];
+  };
+  message?: DiscordMessageEventData;
+}
+
+/**
+ * Discord guild member add/remove event
+ */
+export interface DiscordGuildMemberEventData {
+  guildId: string;
+  user: DiscordUserData;
+  nick?: string;
+  roles: string[];
+  joinedAt?: string;
+}
+
+// ===========================================
+// Slack Event Data Types
+// ===========================================
+
+/**
+ * Slack user shape used in events
+ */
+export interface SlackUserData {
+  id: string;
+  name: string;
+  realName?: string;
+  teamId?: string;
+  isBot?: boolean;
+}
+
+/**
+ * Slack message event
+ */
+export interface SlackMessageEventData {
+  type: string; // "message"
+  subtype?: string; // e.g. "bot_message", "file_share"
+  channel: string;
+  channelType?: string; // "channel", "im", "group", "mpim"
+  user?: string; // User ID
+  text: string;
+  ts: string; // Slack timestamp (e.g. "1234567890.123456")
+  threadTs?: string; // Thread parent ts
+  team?: string;
+  blocks?: Array<Record<string, unknown>>;
+  files?: Array<{ id: string; name: string; mimetype: string; url_private: string; size: number }>;
+  botId?: string;
+  appId?: string;
+}
+
+/**
+ * Slack interaction event (block actions, shortcuts, view submissions, slash commands)
+ */
+export interface SlackInteractionEventData {
+  type: string; // "block_actions" | "shortcut" | "view_submission" | "view_closed"
+  triggerId: string;
+  user: SlackUserData;
+  team?: { id: string; domain: string };
+  channel?: { id: string; name: string };
+  message?: SlackMessageEventData;
+  actions?: Array<{
+    type: string;
+    actionId: string;
+    blockId: string;
+    value?: string;
+    selectedOption?: { value: string; text: { type: string; text: string } };
+  }>;
+  view?: {
+    id: string;
+    type: string; // "modal" | "home"
+    title: { type: string; text: string };
+    callbackId?: string;
+    state?: { values: Record<string, Record<string, { value?: string }>> };
+  };
+  responseUrl?: string;
+}
+
+/**
+ * Slack reaction event (reaction_added / reaction_removed)
+ */
+export interface SlackReactionEventData {
+  type: string; // "reaction_added" | "reaction_removed"
+  user: string;
+  reaction: string; // e.g. "+1", "heart"
+  itemUser?: string;
+  item: {
+    type: string; // "message" | "file"
+    channel: string;
+    ts: string;
+  };
+  eventTs: string;
+}
+
+/**
+ * Slack app_mention event (when bot is @mentioned)
+ */
+export interface SlackAppMentionEventData {
+  type: string; // "app_mention"
+  user: string;
+  text: string;
+  ts: string;
+  channel: string;
+  eventTs: string;
+  threadTs?: string;
+}
+
+/**
+ * WhatsApp user data
+ */
+export interface WhatsAppUserData {
+  phoneNumber: string; // Full phone number with country code
+  profileName?: string; // User's WhatsApp profile name
+  waId: string; // WhatsApp ID (usually same as phone number without +)
+}
+
+/**
+ * WhatsApp inbound message event — covers text, image, document, audio, video, location, contacts, reaction, interactive
+ */
+export interface WhatsAppMessageEventData {
+  from: string; // Sender phone number
+  messageId: string; // wamid.xxx
+  timestamp: string; // Unix timestamp string
+  type: "text" | "image" | "document" | "audio" | "video" | "location" | "contacts" | "reaction" | "interactive" | "sticker" | "unknown";
+  text?: { body: string };
+  image?: { id: string; mimeType: string; sha256: string; caption?: string };
+  document?: { id: string; mimeType: string; sha256: string; filename?: string; caption?: string };
+  audio?: { id: string; mimeType: string; sha256: string; voice?: boolean };
+  video?: { id: string; mimeType: string; sha256: string; caption?: string };
+  sticker?: { id: string; mimeType: string; sha256: string; animated?: boolean };
+  location?: { latitude: number; longitude: number; name?: string; address?: string };
+  contacts?: Array<{ name: { formatted_name: string; first_name?: string; last_name?: string }; phones?: Array<{ phone: string; type?: string }> }>;
+  reaction?: { messageId: string; emoji: string };
+  interactive?: { type: string; buttonReply?: { id: string; title: string }; listReply?: { id: string; title: string; description?: string } };
+  context?: { from: string; messageId: string }; // Reply context
+  profileName?: string;
+}
+
+/**
+ * WhatsApp message status update event (delivery receipts)
+ */
+export interface WhatsAppStatusEventData {
+  messageId: string; // wamid.xxx
+  status: "sent" | "delivered" | "read" | "failed";
+  timestamp: string;
+  recipientId: string; // Recipient phone number
+  errors?: Array<{ code: number; title: string; message?: string }>;
+}
+
+/**
+ * Metadata attached to events when executed inside a workflow step.
+ * Allows plugins to detect workflow mode and access structured input/output.
+ */
+export interface WorkflowMetadata {
+  input: unknown;
+  previousOutput?: unknown;
+  stepOrder: number;
+  runId: string;
+}
+
 /**
  * Union type for all plugin events
  */
-export type PluginEvent =
+export type PluginEvent = (
   | { type: "telegram.message"; data: TelegramMessageEventData; gatewayId: string }
   | { type: "telegram.callback"; data: TelegramCallbackEventData; gatewayId: string }
   | { type: "telegram.my_chat_member"; data: TelegramChatMemberUpdatedEventData; gatewayId: string }
@@ -207,11 +408,21 @@ export type PluginEvent =
   | { type: "telegram.chosen_inline_result"; data: TelegramChosenInlineResultEventData; gatewayId: string }
   | { type: "telegram.poll"; data: TelegramPollEventData; gatewayId: string }
   | { type: "telegram.poll_answer"; data: TelegramPollAnswerEventData; gatewayId: string }
+  | { type: "discord.message"; data: DiscordMessageEventData; gatewayId: string }
+  | { type: "discord.interaction"; data: DiscordInteractionEventData; gatewayId: string }
+  | { type: "discord.guild_member_add"; data: DiscordGuildMemberEventData; gatewayId: string }
+  | { type: "discord.guild_member_remove"; data: DiscordGuildMemberEventData; gatewayId: string }
+  | { type: "slack.message"; data: SlackMessageEventData; gatewayId: string }
+  | { type: "slack.app_mention"; data: SlackAppMentionEventData; gatewayId: string }
+  | { type: "slack.interaction"; data: SlackInteractionEventData; gatewayId: string }
+  | { type: "slack.reaction_added"; data: SlackReactionEventData; gatewayId: string }
+  | { type: "slack.reaction_removed"; data: SlackReactionEventData; gatewayId: string }
+  | { type: "whatsapp.message"; data: WhatsAppMessageEventData; gatewayId: string }
+  | { type: "whatsapp.status"; data: WhatsAppStatusEventData; gatewayId: string }
   | { type: "schedule.trigger"; data: ScheduleTriggerEventData }
-  | { type: "webhook.trigger"; data: CustomGatewayEventData; gatewayId: string }
-  | { type: "customGateway.incoming"; data: CustomGatewayEventData; gatewayId: string }
   | { type: "manual.trigger"; data: ManualTriggerEventData }
-  | { type: "workflow.step"; data: { input: unknown; previousOutput?: unknown } };
+  | { type: "workflow.step"; data: { input: unknown; previousOutput?: unknown; gatewayId?: string; trigger?: { type: string; data: unknown } } }
+) & { _workflow?: WorkflowMetadata };
 
 /**
  * Event types as constants
@@ -225,9 +436,18 @@ export const PLUGIN_EVENT_TYPES = {
   TELEGRAM_CHOSEN_INLINE_RESULT: "telegram.chosen_inline_result",
   TELEGRAM_POLL: "telegram.poll",
   TELEGRAM_POLL_ANSWER: "telegram.poll_answer",
+  DISCORD_MESSAGE: "discord.message",
+  DISCORD_INTERACTION: "discord.interaction",
+  DISCORD_GUILD_MEMBER_ADD: "discord.guild_member_add",
+  DISCORD_GUILD_MEMBER_REMOVE: "discord.guild_member_remove",
+  SLACK_MESSAGE: "slack.message",
+  SLACK_APP_MENTION: "slack.app_mention",
+  SLACK_INTERACTION: "slack.interaction",
+  SLACK_REACTION_ADDED: "slack.reaction_added",
+  SLACK_REACTION_REMOVED: "slack.reaction_removed",
+  WHATSAPP_MESSAGE: "whatsapp.message",
+  WHATSAPP_STATUS: "whatsapp.status",
   SCHEDULE_TRIGGER: "schedule.trigger",
-  WEBHOOK_TRIGGER: "webhook.trigger",
-  CUSTOM_GATEWAY_INCOMING: "customGateway.incoming",
   MANUAL_TRIGGER: "manual.trigger",
   WORKFLOW_STEP: "workflow.step",
 } as const;
@@ -602,7 +822,7 @@ export abstract class BasePlugin implements PluginHandler {
   /**
    * Type guard for workflow step events
    */
-  protected isWorkflowStep(event: PluginEvent): event is { type: "workflow.step"; data: { input: unknown; previousOutput?: unknown } } {
+  protected isWorkflowStep(event: PluginEvent): event is { type: "workflow.step"; data: { input: unknown; previousOutput?: unknown; gatewayId?: string; trigger?: { type: string; data: unknown } } } {
     return event.type === "workflow.step";
   }
 }

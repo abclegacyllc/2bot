@@ -121,7 +121,7 @@ function mockGateway(id: string, userId: string, organizationId: string | null, 
     userId,
     organizationId,
     name,
-    type: 'AI' as const,
+    type: 'TELEGRAM_BOT' as const,
     status: 'DISCONNECTED' as const,
     credentialsEnc: 'encrypted:test',
     config: {},
@@ -183,8 +183,8 @@ describe('API: POST /api/user/gateways - FREE Plan', () => {
         } as any,
         {
           name: 'Test Gateway 2',
-          type: 'AI',
-          credentials: { provider: 'openai', apiKey: 'test-key' },
+          type: 'TELEGRAM_BOT',
+          credentials: { botToken: 'test-key' },
         }
       )
     ).rejects.toThrow(PlanLimitError);
@@ -206,8 +206,8 @@ describe('API: POST /api/user/gateways - FREE Plan', () => {
         } as any,
         {
           name: 'Test Gateway 2',
-          type: 'CUSTOM_GATEWAY',
-          credentials: { url: 'https://example.com', secret: 'test' },
+          type: 'TELEGRAM_BOT',
+          credentials: { botToken: 'test' },
         }
       );
       throw new Error('Should have thrown PlanLimitError');
@@ -254,8 +254,8 @@ describe('API: Gateway Limits - All Plan Tiers', () => {
           } as any,
           {
             name: `Gateway ${limit}`,
-            type: 'AI',
-            credentials: { provider: 'openai', apiKey: 'test' },
+            type: 'TELEGRAM_BOT',
+            credentials: { botToken: 'test' },
           }
         );
 
@@ -308,8 +308,8 @@ describe('API: Gateway Limits - All Plan Tiers', () => {
       } as any,
       {
         name: 'Gateway 1001',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test' },
       }
     );
 
@@ -347,8 +347,8 @@ describe('API: POST /api/orgs/:orgId/gateways - Org Limits', () => {
       } as any,
       {
         name: 'Org Gateway 1',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test-1' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-1' },
       }
     );
     expect(gateway1).toBeDefined();
@@ -389,8 +389,8 @@ describe('API: POST /api/orgs/:orgId/gateways - Org Limits', () => {
         } as any,
         {
           name: 'Org Gateway 3',
-          type: 'CUSTOM_GATEWAY',
-          credentials: { url: 'https://example.com', secret: 'test-3' },
+          type: 'TELEGRAM_BOT',
+          credentials: { botToken: 'test-3' },
         }
       )
     ).rejects.toThrow(OrgPlanLimitError);
@@ -422,8 +422,8 @@ describe('API: POST /api/orgs/:orgId/gateways - Org Limits', () => {
       } as any,
       {
         name: 'Org Gateway 5',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test-5' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-5' },
       }
     );
 
@@ -461,8 +461,8 @@ describe('API: POST /api/orgs/:orgId/gateways - Org Limits', () => {
           } as any,
           {
             name: `Gateway ${limit + 1}`,
-            type: 'AI',
-            credentials: { provider: 'openai', apiKey: 'test' },
+            type: 'TELEGRAM_BOT',
+            credentials: { botToken: 'test' },
           }
         )
       ).rejects.toThrow(OrgPlanLimitError);
@@ -494,8 +494,8 @@ describe('API: POST /api/orgs/:orgId/gateways - Org Limits', () => {
       } as any,
       {
         name: 'Gateway 1001',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test' },
       }
     );
 
@@ -524,8 +524,8 @@ describe('API: Error Response Structure', () => {
         } as any,
         {
           name: 'Gateway 2',
-          type: 'AI',
-          credentials: { provider: 'openai', apiKey: 'test' },
+          type: 'TELEGRAM_BOT',
+          credentials: { botToken: 'test' },
         }
       );
       throw new Error('Should have thrown');
@@ -569,8 +569,8 @@ describe('API: Error Response Structure', () => {
         } as any,
         {
           name: 'Gateway 3',
-          type: 'AI',
-          credentials: { provider: 'openai', apiKey: 'test' },
+          type: 'TELEGRAM_BOT',
+          credentials: { botToken: 'test' },
         }
       );
       throw new Error('Should have thrown');

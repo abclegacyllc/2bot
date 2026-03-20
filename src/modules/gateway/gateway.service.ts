@@ -14,11 +14,14 @@ import { decryptJson, encrypt } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { enforceGatewayLimit } from "@/lib/plan-limits";
 import { prisma } from "@/lib/prisma";
-import { BadRequestError, ForbiddenError, NotFoundError } from "@/shared/errors";
+import { pluginDeployService } from "@/modules/plugin/plugin-deploy.service";
+import { pluginIpcService } from "@/modules/plugin/plugin-ipc.service";
+import { removeWorkflowCache } from "@/modules/workflow/workflow-cache.service";
+import { bridgeClientManager } from "@/modules/workspace";
+import { BadRequestError, ForbiddenError, NotFoundError, ValidationError } from "@/shared/errors";
 import type { ServiceContext } from "@/shared/types/context";
 
 import type {
-    AICredentials,
     CreateGatewayRequest,
     GatewayCredentials,
     GatewayListItem,
@@ -68,18 +71,30 @@ function extractCredentialIdentifier(
     const botId = botToken.split(":")[0];
     return `telegram_bot:${botId}`;
   }
-  
-  if (type === "AI") {
-    // For AI providers, we could check API key hash, but this is more complex
-    // because the same API key might legitimately be used in different contexts
-    // (personal workspace vs organization)
-    // For now, we'll allow duplicate AI credentials
-    return null;
+
+  if (type === "DISCORD_BOT") {
+    // For Discord bots, the application ID uniquely identifies the bot
+    const applicationId = (credentials as { applicationId?: string }).applicationId;
+    if (!applicationId) return null;
+    return `discord_bot:${applicationId}`;
   }
-  
-  if (type === "CUSTOM_GATEWAY") {
-    // Custom gateways can be duplicated (different endpoints can use same URL)
-    return null;
+
+  if (type === "SLACK_BOT") {
+    // For Slack bots, the bot token uniquely identifies the installation
+    // Use the app ID if available, otherwise derive from token prefix
+    const appId = (credentials as { appId?: string }).appId;
+    if (appId) return `slack_bot:${appId}`;
+    const botToken = (credentials as { botToken?: string }).botToken;
+    if (!botToken) return null;
+    // xoxb- tokens contain the team+app segments
+    return `slack_bot:${botToken.slice(0, 20)}`;
+  }
+
+  if (type === "WHATSAPP_BOT") {
+    // For WhatsApp bots, the phone number ID uniquely identifies the installation
+    const phoneNumberId = (credentials as { phoneNumberId?: string }).phoneNumberId;
+    if (!phoneNumberId) return null;
+    return `whatsapp_bot:${phoneNumberId}`;
   }
   
   return null;
@@ -173,46 +188,17 @@ class GatewayService {
     // Encrypt credentials
     const credentialsEnc = encrypt(data.credentials);
 
-    // Custom gateways are immediately CONNECTED — nothing to connect to.
-    // Other types start DISCONNECTED and need a health-test / connect step.
-    const isCustom = data.type === "CUSTOM_GATEWAY";
-    const initialStatus: GatewayStatus = isCustom ? "CONNECTED" : "DISCONNECTED";
-
-    // For custom gateways, store the computed webhook URL in metadata
-    const metadata = isCustom
-      ? {
-          webhookUrl: `https://webhook.2bot.org/custom/pending`, // placeholder — updated after ID is known
-          credentialKeys: Object.keys(data.credentials),
-        }
-      : undefined;
-
     const gateway = await prisma.gateway.create({
       data: {
         userId: ctx.userId,
         organizationId: ctx.organizationId ?? null,
         name: data.name,
         type: data.type,
-        status: initialStatus,
+        status: "DISCONNECTED",
         credentialsEnc,
         config: (data.config ?? {}) as object,
-        ...(metadata && { metadata: metadata as object }),
-        ...(isCustom && { lastConnectedAt: new Date() }),
       },
     });
-
-    // For custom gateways, update the webhook URL now that we have the real ID
-    if (isCustom) {
-      const realMeta = {
-        ...(metadata as object),
-        webhookUrl: `https://webhook.2bot.org/custom/${gateway.id}`,
-      };
-      await prisma.gateway.update({
-        where: { id: gateway.id },
-        data: { metadata: realMeta },
-      });
-      // Patch the local object so the response is correct
-      (gateway as Record<string, unknown>).metadata = realMeta;
-    }
 
     // Audit log (non-blocking)
     void auditActions.gatewayCreated(
@@ -224,10 +210,8 @@ class GatewayService {
 
     gatewayLogger.info({ gatewayId: gateway.id, type: gateway.type }, "Gateway created");
 
-    // Test new gateway automatically (non-blocking) — skip for custom gateways
-    if (!isCustom) {
-      void this.testNewGatewayHealth(gateway.id);
-    }
+    // Test new gateway automatically (non-blocking)
+    void this.testNewGatewayHealth(gateway.id);
 
     return this.toSafeGateway(gateway, data.credentials);
   }
@@ -292,13 +276,54 @@ class GatewayService {
         name: true,
         type: true,
         status: true,
+        mode: true,
         lastConnectedAt: true,
         lastError: true,
         createdAt: true,
+        workflows: {
+          take: 1,
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            isEnabled: true,
+            executionCount: true,
+            lastExecutedAt: true,
+            lastError: true,
+            _count: { select: { steps: true } },
+          },
+        },
       },
     });
 
-    return gateways;
+    return gateways.map((gw) => {
+      const wf = gw.workflows[0];
+      return {
+        id: gw.id,
+        name: gw.name,
+        type: gw.type,
+        status: gw.status,
+        mode: gw.mode,
+        lastConnectedAt: gw.lastConnectedAt,
+        lastError: gw.lastError,
+        createdAt: gw.createdAt,
+        ...(wf
+          ? {
+              workflowSummary: {
+                id: wf.id,
+                name: wf.name,
+                status: wf.status,
+                isEnabled: wf.isEnabled,
+                stepCount: wf._count.steps,
+                executionCount: wf.executionCount,
+                lastExecutedAt: wf.lastExecutedAt,
+                lastError: wf.lastError,
+              },
+            }
+          : {}),
+      };
+    });
   }
 
   /**
@@ -325,6 +350,7 @@ class GatewayService {
       name?: string;
       credentialsEnc?: string;
       config?: object;
+      mode?: string;
     } = {};
 
     if (data.name !== undefined) {
@@ -340,6 +366,32 @@ class GatewayService {
       updateData.config = { ...(existing.config as object), ...data.config };
     }
 
+    if (data.mode !== undefined && data.mode !== existing.mode) {
+      // Validate mode switch: prevent orphaning active resources
+      if (data.mode === "workflow") {
+        // Switching to workflow: check for enabled standalone plugins
+        const enabledPlugin = await prisma.userPlugin.findFirst({
+          where: { gatewayId: id, isEnabled: true },
+        });
+        if (enabledPlugin) {
+          throw new ValidationError("Disable or uninstall the standalone plugin before switching to workflow mode", {
+            mode: ["This bot has an active plugin installed"],
+          });
+        }
+      } else if (data.mode === "plugin") {
+        // Switching to plugin: check for active workflows
+        const activeWorkflow = await prisma.workflow.findFirst({
+          where: { gatewayId: id, status: "ACTIVE" },
+        });
+        if (activeWorkflow) {
+          throw new ValidationError("Deactivate workflows before switching to plugin mode", {
+            mode: ["This bot has active workflows"],
+          });
+        }
+      }
+      updateData.mode = data.mode;
+    }
+
     const gateway = await prisma.gateway.update({
       where: { id },
       data: updateData,
@@ -350,6 +402,7 @@ class GatewayService {
       nameChanged: data.name !== undefined,
       credentialsChanged: data.credentials !== undefined,
       configChanged: data.config !== undefined,
+      modeChanged: data.mode !== undefined,
     });
 
     gatewayLogger.info({ gatewayId: gateway.id }, "Gateway updated");
@@ -359,7 +412,8 @@ class GatewayService {
   }
 
   /**
-   * Delete gateway
+   * Delete gateway and cascade cleanup: uninstall bound plugins,
+   * delete bound workflows, and remove bot directory from container.
    */
   async delete(ctx: ServiceContext, id: string): Promise<void> {
     // Get existing gateway (with ownership check)
@@ -368,14 +422,92 @@ class GatewayService {
     // Check write permission (admins only for org gateways)
     await this.checkWritePermission(ctx, gateway);
 
-    await prisma.gateway.delete({
-      where: { id },
+    // ── Pre-delete cleanup: uninstall bound plugins ──
+    const boundPlugins = await prisma.userPlugin.findMany({
+      where: {
+        gatewayId: id,
+        userId: ctx.userId,
+        organizationId: ctx.organizationId ?? null,
+      },
+      include: { plugin: true },
     });
+
+    for (const up of boundPlugins) {
+      // Remove from container (stop + delete file + clear storage)
+      void pluginDeployService.undeployFromWorkspace(
+        ctx.userId,
+        ctx.organizationId ?? null,
+        up.plugin.slug,
+        up.entryFile ?? undefined,
+      ).catch(() => {});
+
+      // Clear server-side Redis storage
+      void pluginIpcService.clearPluginRedisKeys(up.id).catch(() => {});
+    }
+
+    // ── Pre-delete cleanup: delete bound workflows ──
+    const boundWorkflows = await prisma.workflow.findMany({
+      where: {
+        gatewayId: id,
+        userId: ctx.userId,
+        organizationId: ctx.organizationId ?? null,
+      },
+      select: { id: true },
+    });
+
+    for (const wf of boundWorkflows) {
+      void removeWorkflowCache(wf.id, ctx.userId, ctx.organizationId ?? null).catch(() => {});
+    }
+
+    // Delete all bound records, then the gateway itself in a transaction
+    await prisma.$transaction(async (tx) => {
+      // Delete workflow steps and workflows bound to this gateway
+      if (boundWorkflows.length > 0) {
+        const wfIds = boundWorkflows.map(w => w.id);
+        await tx.workflowStep.deleteMany({ where: { workflowId: { in: wfIds } } });
+        await tx.workflow.deleteMany({ where: { id: { in: wfIds } } });
+      }
+
+      // Delete bound plugin installations
+      if (boundPlugins.length > 0) {
+        await tx.userPlugin.deleteMany({
+          where: { id: { in: boundPlugins.map(p => p.id) } },
+        });
+      }
+
+      // Delete the gateway
+      await tx.gateway.delete({ where: { id } });
+    });
+
+    // ── Post-delete cleanup: remove bot directory from container ──
+    void (async () => {
+      const container = await prisma.workspaceContainer.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          status: 'RUNNING',
+        },
+        select: { id: true },
+      });
+      if (!container) return;
+
+      const client = bridgeClientManager.getExistingClient(container.id);
+      if (!client) return;
+
+      // Delete the entire bots/{gatewayId}/ directory
+      await client.fileDelete(`bots/${id}`).catch(() => {});
+    })().catch(() => {});
+
+    // Invalidate plugin caches
+    pluginIpcService.clearCache();
 
     // Audit log (non-blocking)
     void auditActions.gatewayDeleted(toAuditContext(ctx), gateway.id);
 
-    gatewayLogger.info({ gatewayId: id }, "Gateway deleted");
+    gatewayLogger.info(
+      { gatewayId: id, pluginsRemoved: boundPlugins.length, workflowsRemoved: boundWorkflows.length },
+      "Gateway deleted with cascade cleanup",
+    );
   }
 
   /**
@@ -422,6 +554,37 @@ class GatewayService {
           'Failed to refresh gateway routes after status change',
         );
       });
+    }
+
+    // When a gateway disconnects, stop bound plugins in the container
+    if (status === "DISCONNECTED" || status === "ERROR") {
+      void (async () => {
+        const boundPlugins = await prisma.userPlugin.findMany({
+          where: { gatewayId: id, isEnabled: true },
+          include: { plugin: { select: { slug: true } } },
+        });
+
+        for (const up of boundPlugins) {
+          await pluginDeployService.stopPluginInWorkspace(
+            gateway.userId,
+            gateway.organizationId,
+            up.plugin.slug,
+            up.entryFile ?? undefined,
+          ).catch(err => {
+            gatewayLogger.warn(
+              { gatewayId: id, pluginSlug: up.plugin.slug, error: (err as Error).message },
+              'Failed to stop plugin after gateway disconnect',
+            );
+          });
+        }
+
+        if (boundPlugins.length > 0) {
+          gatewayLogger.info(
+            { gatewayId: id, pluginCount: boundPlugins.length },
+            'Stopped bound plugins after gateway disconnect/error',
+          );
+        }
+      })().catch(() => { /* best effort */ });
     }
 
     return gateway;
@@ -593,19 +756,21 @@ class GatewayService {
     };
 
     if ("provider" in credentials && "apiKey" in credentials) {
-      // AI credentials
-      const aiCreds = credentials as AICredentials;
-      credentialInfo.provider = aiCreds.provider;
-      credentialInfo.hasApiKey = true;
-      credentialInfo.baseUrl = aiCreds.baseUrl;
+      // AI credentials (legacy — kept for backward compat with existing rows)
+    } else if ("applicationId" in credentials && "publicKey" in credentials && "botToken" in credentials) {
+      // Discord Bot credentials
+      credentialInfo.hasBotToken = true;
+      credentialInfo.hasApplicationId = true;
+    } else if ("signingSecret" in credentials && "botToken" in credentials) {
+      // Slack Bot credentials
+      credentialInfo.hasBotToken = true;
+    } else if ("accessToken" in credentials && "phoneNumberId" in credentials) {
+      // WhatsApp Bot credentials
+      credentialInfo.hasAccessToken = true;
+      credentialInfo.phoneNumberId = (credentials as { phoneNumberId: string }).phoneNumberId;
     } else if ("botToken" in credentials) {
       // Telegram Bot credentials
       credentialInfo.hasBotToken = true;
-    } else if (gateway.type === "CUSTOM_GATEWAY") {
-      // Custom gateway — expose key names (not values) so UI can show them
-      credentialInfo.credentialKeys = Object.keys(credentials);
-      const meta = (gateway.metadata ?? {}) as Record<string, unknown>;
-      credentialInfo.webhookUrl = meta.webhookUrl as string | undefined;
     }
 
     return {

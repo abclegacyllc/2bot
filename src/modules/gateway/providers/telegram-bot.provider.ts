@@ -31,6 +31,7 @@ interface TelegramResponse<T> {
   result?: T;
   description?: string;
   error_code?: number;
+  parameters?: { retry_after?: number; migrate_to_chat_id?: number };
 }
 
 /**
@@ -163,8 +164,9 @@ export class TelegramBotProvider extends BaseGatewayProvider<
 
       // Generate a webhook secret token for authentication
       // This is sent by Telegram in the X-Telegram-Bot-Api-Secret-Token header
+      const { randomBytes } = await import('crypto');
       const webhookSecretToken = config?.webhookSecretToken
-        || require('crypto').randomBytes(32).toString('hex');
+        || randomBytes(32).toString('hex');
 
       await this.callApi(credentials.botToken, "setWebhook", {
         url: desiredWebhookUrl,
@@ -961,26 +963,43 @@ export class TelegramBotProvider extends BaseGatewayProvider<
     params?: Record<string, unknown>
   ): Promise<T> {
     const url = `${TELEGRAM_API_BASE}/bot${botToken}/${method}`;
+    const maxRetries = 3;
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: params ? JSON.stringify(params) : undefined,
-    });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: params ? JSON.stringify(params) : undefined,
+      });
 
-    const data = (await response.json()) as TelegramResponse<T>;
+      const data = (await response.json()) as TelegramResponse<T>;
 
-    if (!data.ok) {
-      throw new TelegramApiError(
-        data.description || "Unknown Telegram API error",
-        data.error_code || 0,
-        method
-      );
+      if (!data.ok) {
+        // Handle 429 Too Many Requests with automatic retry
+        if (data.error_code === 429 && attempt < maxRetries) {
+          const retryAfter = data.parameters?.retry_after ?? 1;
+          this.log.warn(
+            { method, retryAfter, attempt: attempt + 1 },
+            "Telegram 429 rate limit — waiting before retry"
+          );
+          await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+          continue;
+        }
+
+        throw new TelegramApiError(
+          data.description || "Unknown Telegram API error",
+          data.error_code || 0,
+          method
+        );
+      }
+
+      return data.result as T;
     }
 
-    return data.result as T;
+    // Should not reach here, but TypeScript needs it
+    throw new TelegramApiError("Rate limit exceeded after max retries", 429, method);
   }
 
   // ===========================================
@@ -1080,7 +1099,7 @@ export class TelegramBotProvider extends BaseGatewayProvider<
 // Action Parameter Types
 // ===========================================
 
-interface SendMessageParams {
+interface _SendMessageParams {
   chat_id: string | number;
   text: string;
   parse_mode?: "HTML" | "Markdown" | "MarkdownV2";

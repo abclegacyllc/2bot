@@ -14,11 +14,13 @@ import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { twoBotAIProvider } from '@/modules/2bot-ai-provider';
 import type {
-    TextGenerationMessage,
-    TwoBotAIModel,
+  TextGenerationMessage,
+  TwoBotAIModel,
 } from '@/modules/2bot-ai-provider/types';
 import { gatewayService } from '@/modules/gateway';
 import { gatewayRegistry } from '@/modules/gateway/gateway.registry';
+import { extractGatewayIdFromPath } from '@/modules/plugin/plugin-deploy.service';
+import { pluginSlugFromPath } from '@/modules/plugin/plugin.types';
 
 import { createPluginStorage } from './plugin.executor';
 
@@ -238,13 +240,7 @@ class PluginIpcService {
     containerDbId: string,
     pluginFile: string,
   ): Promise<CachedPluginContext> {
-    // Extract slug from file path:
-    //   'plugins/echo.js' → 'echo'
-    //   'plugins/my-bot/index.js' → 'my-bot'
-    const slug = pluginFile
-      .replace(/^plugins\//, '')
-      .replace(/\.[jt]sx?$/, '')
-      .replace(/\/index$/, '');
+    const slug = pluginSlugFromPath(pluginFile);
 
     const cacheKey = `${containerDbId}:${slug}`;
     const cached = contextCache.get(cacheKey);
@@ -264,15 +260,20 @@ class PluginIpcService {
     }
 
     // Find the UserPlugin
-    // Try exact org match first, then fall back to any matching plugin for this user.
-    // This handles the case where a plugin is org-scoped but runs in a personal container.
+    // Extract gatewayId from bot-dir file path (bots/<gatewayId>/plugins/slug.js)
+    // for precise multi-instance resolution. Falls back to slug-only search for
+    // legacy flat-layout plugins.
+    const pathGatewayId = extractGatewayIdFromPath(pluginFile);
+
     let userPlugin = await prisma.userPlugin.findFirst({
       where: {
         userId: container.userId,
         organizationId: container.organizationId ?? null,
         plugin: { slug },
         isEnabled: true,
+        ...(pathGatewayId ? { gatewayId: pathGatewayId } : {}),
       },
+      orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
 
@@ -283,7 +284,9 @@ class PluginIpcService {
           userId: container.userId,
           plugin: { slug },
           isEnabled: true,
+          ...(pathGatewayId ? { gatewayId: pathGatewayId } : {}),
         },
+        orderBy: { createdAt: 'desc' },
         select: { id: true },
       });
     }
@@ -295,7 +298,9 @@ class PluginIpcService {
           userId: container.userId,
           plugin: { slug },
           isEnabled: true,
+          ...(pathGatewayId ? { gatewayId: pathGatewayId } : {}),
         },
+        orderBy: { createdAt: 'desc' },
         select: { id: true },
       });
     }
@@ -603,17 +608,12 @@ class PluginIpcService {
       return { type: gw.type, botToken: credentials.botToken };
     }
 
-    if (gw.type === 'CUSTOM_GATEWAY') {
-      // Return all key-value credentials for custom gateways
-      return { type: gw.type, credentials: credentials as Record<string, string> };
-    }
-
     return { type: gw.type };
   }
 
   /**
    * List all gateways available to the plugin's user.
-   * Unified query — Telegram, AI, and Custom gateways all live in the same table.
+   * Unified query — all bot gateways live in the same table.
    */
   private async gatewayList(
     userId: string,
@@ -630,18 +630,12 @@ class PluginIpcService {
       select: { id: true, name: true, type: true, metadata: true },
     });
 
-    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.TELEGRAM_WEBHOOK_BASE_URL || 'https://webhook.2bot.org';
-
     return gateways.map((g) => {
       const entry: { id: string; name: string; type: string; url?: string; active?: boolean } = {
         id: g.id,
         name: g.name,
         type: g.type,
       };
-      if (g.type === 'CUSTOM_GATEWAY') {
-        entry.url = `${baseUrl}/custom/${g.id}`;
-        entry.active = true; // All CONNECTED gateways are active
-      }
       return entry;
     });
   }
@@ -686,7 +680,7 @@ class PluginIpcService {
       }
     }
 
-    const model = (data.model as string) || '2bot-ai-text-lite';
+    const model = (data.model as string) || 'auto';
     const temperature = data.temperature as number | undefined;
     const maxTokens = data.maxTokens as number | undefined;
 
@@ -744,7 +738,7 @@ class PluginIpcService {
       throw new Error('Image prompt must be 4000 characters or less');
     }
 
-    const model = (data.model as string) || '2bot-ai-image-pro';
+    const model = (data.model as string) || 'auto';
     const size = data.size as string | undefined;
     const quality = data.quality as string | undefined;
     const n = data.n as number | undefined;
@@ -803,7 +797,7 @@ class PluginIpcService {
       throw new Error('Speech text must be 4096 characters or less');
     }
 
-    const model = (data.model as string) || '2bot-ai-voice-pro';
+    const model = (data.model as string) || 'auto';
     const voice = data.voice as string | undefined;
     const format = data.format as string | undefined;
     const speed = data.speed as number | undefined;

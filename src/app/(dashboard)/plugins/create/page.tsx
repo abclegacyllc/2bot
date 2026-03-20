@@ -647,8 +647,9 @@ package.json      # Optional — dependencies will be auto-installed`}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {([
                   { type: "TELEGRAM_BOT", label: "Telegram Bot", desc: "Receive messages from Telegram", icon: "🤖" },
-                  { type: "AI", label: "AI Provider", desc: "Use AI models in your plugin", icon: "🧠" },
-                  { type: "CUSTOM_GATEWAY", label: "Custom Gateway", desc: "Receive webhooks from external services", icon: "🔗" },
+                  { type: "DISCORD_BOT", label: "Discord Bot", desc: "Receive messages from Discord", icon: "🤖" },
+                  { type: "SLACK_BOT", label: "Slack Bot", desc: "Receive messages from Slack", icon: "🤖" },
+                  { type: "WHATSAPP_BOT", label: "WhatsApp Bot", desc: "Receive messages from WhatsApp", icon: "🤖" },
                 ] as const).map((gw) => {
                   const isSelected = requiredGateways.includes(gw.type);
                   return (

@@ -692,6 +692,94 @@ pluginRouter.get(
 );
 
 // ===========================================
+// Smart Plugin Suggestions
+// ===========================================
+
+/**
+ * GET /api/plugins/suggestions
+ *
+ * Get personalized plugin suggestions based on installed plugins,
+ * gateway types, event coverage, and usage patterns.
+ *
+ * @query {number} [limit] - Maximum suggestions to return (default 5, max 10)
+ * @returns {PluginSuggestion[]} Scored and sorted suggestions
+ */
+pluginRouter.get(
+  "/suggestions",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const ctx = getPersonalContext(req);
+    const limitParam = parseInt(req.query.limit as string, 10);
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 10) : 5;
+    const { getPluginSuggestions } = await import("@/modules/plugin/plugin-suggestions");
+    const suggestions = await getPluginSuggestions(ctx, limit);
+    res.json({ success: true, data: suggestions });
+  })
+);
+
+// ===========================================
+// Bot Templates (Pre-Tested Plugin Combos)
+// ===========================================
+
+/**
+ * GET /api/plugins/bot-templates
+ *
+ * List all available bot templates (one-click plugin combos).
+ * Public — no auth required.
+ */
+pluginRouter.get(
+  "/bot-templates",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { getBotTemplateList } = await import("@/modules/plugin/bot-templates");
+    const templates = getBotTemplateList();
+    res.json({ success: true, data: templates });
+  })
+);
+
+/**
+ * GET /api/plugins/bot-templates/:id
+ *
+ * Get a specific bot template by ID.
+ */
+pluginRouter.get(
+  "/bot-templates/:id",
+  asyncHandler(async (req: Request, res: Response) => {
+    const { getBotTemplateById } = await import("@/modules/plugin/bot-templates");
+    const id = getPathParam(req, "id");
+    const template = getBotTemplateById(id);
+    if (!template) {
+      res.status(404).json({ success: false, error: { message: "Bot template not found" } });
+      return;
+    }
+    res.json({ success: true, data: template });
+  })
+);
+
+/**
+ * POST /api/plugins/bot-templates/:id/install
+ *
+ * Install a bot template — creates all plugins from the template on a gateway.
+ *
+ * @body {string} gatewayId - Gateway to install the template on
+ */
+pluginRouter.post(
+  "/bot-templates/:id/install",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const ctx = getPersonalContext(req);
+    const templateId = getPathParam(req, "id");
+    const { gatewayId } = req.body as { gatewayId?: string };
+    if (!gatewayId || typeof gatewayId !== "string") {
+      throw new ValidationError("Gateway ID is required", {
+        gatewayId: ["Provide the gateway ID to install the template on"],
+      });
+    }
+    const result = await pluginService.installBotTemplate(ctx, templateId, gatewayId);
+    res.status(201).json({ success: true, data: result });
+  })
+);
+
+// ===========================================
 // Plugin By Slug (Public - MUST BE LAST)
 // ===========================================
 

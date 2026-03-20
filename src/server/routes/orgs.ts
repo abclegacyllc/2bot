@@ -241,7 +241,7 @@ orgsRouter.get(
  *
  * @param {string} orgId - Organization ID from URL
  * @body {string} name - Gateway name
- * @body {GatewayType} type - Gateway type (TELEGRAM_BOT, AI, CUSTOM_GATEWAY)
+ * @body {GatewayType} type - Gateway type (TELEGRAM_BOT, DISCORD_BOT, SLACK_BOT, WHATSAPP_BOT)
  * @body {object} credentials - Type-specific credentials
  * @body {object} [config] - Optional type-specific config
  * @returns {SafeGateway} Created gateway

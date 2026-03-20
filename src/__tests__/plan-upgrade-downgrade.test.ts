@@ -48,6 +48,8 @@ const mockedPrisma = prisma as any;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Mock findMany for duplicate credential check (returns empty = no duplicates)
+  mockedPrisma.gateway.findMany.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -71,8 +73,8 @@ describe('Plan Upgrades - Gateway Limits', () => {
     await expect(
       gatewayService.create(freeCtx, {
         name: 'Gateway 2',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-token' },
       })
     ).rejects.toThrow(PlanLimitError);
     
@@ -87,15 +89,15 @@ describe('Plan Upgrades - Gateway Limits', () => {
       id: 'gw-2',
       userId,
       name: 'Gateway 2',
-      type: 'AI',
+      type: 'TELEGRAM_BOT',
       organizationId: null,
     });
     
     // Should now succeed - STARTER allows 3 total
     const result = await gatewayService.create(starterCtx, {
       name: 'Gateway 2',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-token' },
     });
     
     expect(result).toBeDefined();
@@ -118,8 +120,8 @@ describe('Plan Upgrades - Gateway Limits', () => {
     await expect(
       gatewayService.create(starterCtx, {
         name: 'Gateway 4',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-token' },
       })
     ).rejects.toThrow('Gateway limit reached (3/3)');
     
@@ -134,15 +136,15 @@ describe('Plan Upgrades - Gateway Limits', () => {
       id: 'gw-4',
       userId,
       name: 'Gateway 4',
-      type: 'AI',
+      type: 'TELEGRAM_BOT',
       organizationId: null,
     });
     
     // Should now succeed - PRO allows 10 total
     const result = await gatewayService.create(proCtx, {
       name: 'Gateway 4',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-token' },
     });
     
     expect(result).toBeDefined();
@@ -164,8 +166,8 @@ describe('Plan Upgrades - Gateway Limits', () => {
     await expect(
       gatewayService.create(proCtx, {
         name: 'Gateway 11',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-token' },
       })
     ).rejects.toThrow('Gateway limit reached (10/10)');
     
@@ -180,15 +182,15 @@ describe('Plan Upgrades - Gateway Limits', () => {
       id: 'gw-11',
       userId,
       name: 'Gateway 11',
-      type: 'AI',
+      type: 'TELEGRAM_BOT',
       organizationId: null,
     });
     
     // Should succeed - ENTERPRISE is unlimited (-1)
     const result = await gatewayService.create(enterpriseCtx, {
       name: 'Gateway 11',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-token' },
     });
     
     expect(result).toBeDefined();
@@ -204,7 +206,7 @@ describe('Plan Downgrades - Existing Resources', () => {
       id: `gw-${i + 1}`,
       userId,
       name: `Gateway ${i + 1}`,
-      type: 'AI',
+      type: 'TELEGRAM_BOT',
       organizationId: null,
     }));
     
@@ -226,8 +228,8 @@ describe('Plan Downgrades - Existing Resources', () => {
     await expect(
       gatewayService.create(freeCtx, {
         name: 'Gateway 6',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-token' },
       })
     ).rejects.toThrow('Gateway limit reached (5/1)');
   });
@@ -249,8 +251,8 @@ describe('Plan Downgrades - Existing Resources', () => {
     await expect(
       gatewayService.create(starterCtx, {
         name: 'Gateway 16',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-token' },
       })
     ).rejects.toThrow('Gateway limit reached (15/3)');
   });
@@ -343,8 +345,8 @@ describe('Edge Cases - Plan Changes', () => {
     await expect(
       gatewayService.create(freeCtx, {
         name: 'Gateway 2',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-token' },
       })
     ).rejects.toThrow(PlanLimitError);
     
@@ -359,15 +361,15 @@ describe('Edge Cases - Plan Changes', () => {
       id: 'gw-2',
       userId,
       name: 'Gateway 2',
-      type: 'AI',
+      type: 'TELEGRAM_BOT',
       organizationId: null,
     });
     
     // Should work now
     await gatewayService.create(starterCtx, {
       name: 'Gateway 2',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-token' },
     });
     
     currentCount = 2;
@@ -383,15 +385,15 @@ describe('Edge Cases - Plan Changes', () => {
       id: 'gw-3',
       userId,
       name: 'Gateway 3',
-      type: 'AI',
+      type: 'TELEGRAM_BOT',
       organizationId: null,
     });
     
     // Should still work
     const result = await gatewayService.create(proCtx, {
       name: 'Gateway 3',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-token' },
     });
     
     expect(result).toBeDefined();
@@ -413,15 +415,15 @@ describe('Edge Cases - Plan Changes', () => {
       id: 'gw-3',
       userId,
       name: 'Gateway 3',
-      type: 'AI',
+      type: 'TELEGRAM_BOT',
       organizationId: null,
     });
     
     // Should succeed - 2/3
     await gatewayService.create(starterCtx, {
       name: 'Gateway 3',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-token' },
     });
     
     // Now count is 3
@@ -438,8 +440,8 @@ describe('Edge Cases - Plan Changes', () => {
     await expect(
       gatewayService.create(freeCtx, {
         name: 'Gateway 4',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-token' },
       })
     ).rejects.toThrow('Gateway limit reached (3/1)');
   });

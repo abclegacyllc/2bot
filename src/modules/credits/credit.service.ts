@@ -25,8 +25,8 @@
 
 import { logger } from "@/lib/logger";
 import {
-  creditWalletService,
-  type WalletType
+    creditWalletService,
+    type WalletType
 } from "./wallet.service";
 
 const creditLogger = logger.child({ module: "credit" });

@@ -32,6 +32,7 @@ import { ticketsRouter } from "./tickets";
 import { usageRouter } from "./usage";
 import { userRouter } from "./user";
 import { webhookRouter } from "./webhook";
+import { workflowRouter } from "./workflow";
 import { workspaceRouter } from "./workspace";
 
 /**
@@ -161,6 +162,11 @@ router.use("/tickets", ticketsRouter);
  * Support routes (AI chat + admin management)
  */
 router.use("/support", supportRouter);
+
+/**
+ * Workflow routes (Phase C)
+ */
+router.use("/workflows", workflowRouter);
 
 /**
  * Workspace routes (Phase 13)

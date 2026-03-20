@@ -19,14 +19,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { ClaimStatus } from "@/components/credits";
 import {
-  BuyCreditsModal,
-  CreditsBalanceCard,
-  CreditsClaimCard,
-  CreditsLimitWarning,
-  CreditsPurchasePackages,
-  CreditsTransactionHistory,
-  CreditsUsageBreakdown,
-  CreditsUsageChart,
+    BuyCreditsModal,
+    CreditsBalanceCard,
+    CreditsClaimCard,
+    CreditsLimitWarning,
+    CreditsPurchasePackages,
+    CreditsTransactionHistory,
+    CreditsUsageBreakdown,
+    CreditsUsageChart,
 } from "@/components/credits";
 import type { CreditPackage } from "@/components/credits/credits-purchase-packages";
 import type { Transaction } from "@/components/credits/credits-transaction-history";
@@ -114,6 +114,7 @@ export function CreditsDashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyType, setHistoryType] = useState<string | undefined>();
+  const [historyCategory, setHistoryCategory] = useState<CreditUsageCategory | undefined>();
   const [usagePeriod, setUsagePeriod] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -161,12 +162,13 @@ export function CreditsDashboardClient() {
   }, [getAuthHeaders]);
 
   const fetchHistory = useCallback(
-    async (page: number, type?: string) => {
+    async (page: number, type?: string, category?: CreditUsageCategory) => {
       const params = new URLSearchParams({
         page: page.toString(),
         pageSize: "10",
       });
       if (type) params.append("type", type);
+      if (category) params.append("category", category);
 
       const response = await fetch(apiUrl(`/credits/history?${params}`), {
         credentials: "include",
@@ -259,10 +261,10 @@ export function CreditsDashboardClient() {
   useEffect(() => {
     if (!user || loading) return;
 
-    fetchHistory(historyPage, historyType)
+    fetchHistory(historyPage, historyType, historyCategory)
       .then(setHistory)
       .catch(() => {});
-  }, [user, loading, historyPage, historyType, fetchHistory]);
+  }, [user, loading, historyPage, historyType, historyCategory, fetchHistory]);
 
   // ===========================================
   // Handlers
@@ -375,18 +377,16 @@ export function CreditsDashboardClient() {
 
         {/* Usage Tab */}
         <TabsContent value="usage" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Usage Chart */}
-            <CreditsUsageChart
-              data={chartData}
-              period={usagePeriod}
-              onPeriodChange={setUsagePeriod}
-              loading={loading}
-            />
+          {/* Usage Chart — full width */}
+          <CreditsUsageChart
+            data={chartData}
+            period={usagePeriod}
+            onPeriodChange={setUsagePeriod}
+            loading={loading}
+          />
 
-            {/* Usage Breakdown */}
-            {breakdownData ? <CreditsUsageBreakdown data={breakdownData} loading={loading} /> : null}
-          </div>
+          {/* Usage Breakdown — own grid */}
+          {breakdownData ? <CreditsUsageBreakdown data={breakdownData} loading={loading} /> : null}
         </TabsContent>
 
         {/* History Tab */}
@@ -398,6 +398,12 @@ export function CreditsDashboardClient() {
               pageSize={10}
               onPageChange={handleHistoryPageChange}
               onTypeFilter={handleHistoryTypeFilter}
+              onCategoryFilter={(cat) => {
+                setHistoryCategory(cat);
+                setHistoryPage(1);
+              }}
+              typeFilter={historyType}
+              categoryFilter={historyCategory}
               loading={loading}
             /> : null}
         </TabsContent>

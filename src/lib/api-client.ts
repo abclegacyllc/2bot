@@ -234,6 +234,17 @@ export interface GatewayOption {
   name: string;
   type: string;
   status: string;
+  mode?: string;
+  workflowSummary?: {
+    id: string;
+    name: string;
+    status: string;
+    isEnabled: boolean;
+    stepCount: number;
+    executionCount: number;
+    lastExecutedAt?: string | null;
+    lastError?: string | null;
+  };
 }
 
 /**
@@ -253,6 +264,48 @@ export function getOrgGateways(
   token?: string
 ): Promise<ApiResponse<GatewayOption[]>> {
   return apiGet<GatewayOption[]>(`/orgs/${orgId}/gateways`, token);
+}
+
+/** Payload for creating a bot gateway */
+export interface CreateBotGatewayPayload {
+  name: string;
+  type: string;
+  credentials: Record<string, string>;
+}
+
+/** @deprecated Use CreateBotGatewayPayload */
+export type CreateTelegramBotGatewayPayload = CreateBotGatewayPayload;
+
+/**
+ * Create a new gateway (personal scope)
+ */
+export function createUserGateway(
+  data: CreateBotGatewayPayload,
+  token?: string
+): Promise<ApiResponse<GatewayOption>> {
+  return apiPost<GatewayOption>("/gateways", data, token);
+}
+
+/**
+ * Create a new gateway (org scope)
+ */
+export function createOrgGateway(
+  orgId: string,
+  data: CreateBotGatewayPayload,
+  token?: string
+): Promise<ApiResponse<GatewayOption>> {
+  return apiPost<GatewayOption>(`/orgs/${orgId}/gateways`, data, token);
+}
+
+/**
+ * Update a gateway (e.g. toggle mode between plugin/workflow)
+ */
+export function updateGateway(
+  gatewayId: string,
+  data: { name?: string; mode?: "plugin" | "workflow" },
+  token?: string
+): Promise<ApiResponse<GatewayOption>> {
+  return apiPut<GatewayOption>(`/gateways/${gatewayId}`, data, token);
 }
 
 // ============================================================================
@@ -291,6 +344,15 @@ export function getPluginCatalog(
   if (params?.tags) qs.set("tags", params.tags);
   const query = qs.toString();
   return apiGet<PluginListItem[]>(`/plugins${query ? `?${query}` : ""}`, token);
+}
+
+/**
+ * List user's installed plugins
+ */
+export function getInstalledPlugins(
+  token?: string
+): Promise<ApiResponse<UserPlugin[]>> {
+  return apiGet<UserPlugin[]>("/plugins/installed", token);
 }
 
 /**
@@ -404,4 +466,278 @@ export function deleteCustomPlugin(
   token?: string
 ): Promise<ApiResponse<void>> {
   return apiDelete<void>(`/plugins/custom/${id}`, token);
+}
+
+/**
+ * Toggle a plugin on or off
+ */
+export function togglePlugin(
+  id: string,
+  enabled: boolean,
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPost<UserPlugin>(`/plugins/installed/${id}/toggle`, { enabled }, token);
+}
+
+/**
+ * Update plugin config, gateway binding, and/or storage quota
+ */
+export function updatePluginConfig(
+  id: string,
+  data: { config: Record<string, unknown>; gatewayId?: string | null; storageQuotaMb?: number },
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPut<UserPlugin>(`/plugins/installed/${id}/config`, data, token);
+}
+
+// ============================================================================
+// Workflow API
+// ============================================================================
+
+export interface WorkflowListItem {
+  id: string;
+  name: string;
+  description?: string;
+  slug: string;
+  triggerType: string;
+  triggerConfig: Record<string, unknown>;
+  gatewayId?: string;
+  status: string;
+  isEnabled: boolean;
+  steps: WorkflowStepItem[];
+  executionCount: number;
+  lastExecutedAt?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowStepItem {
+  id: string;
+  order: number;
+  name?: string;
+  pluginId: string;
+  pluginSlug?: string;
+  pluginName?: string;
+  inputMapping: Record<string, string>;
+  config: Record<string, unknown>;
+  gatewayId?: string;
+  condition?: { if: string };
+  onError: string;
+  maxRetries: number;
+}
+
+export function getWorkflows(
+  opts: { gatewayId?: string; organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowListItem[]>> {
+  const params = new URLSearchParams();
+  if (opts.gatewayId) params.set("gatewayId", opts.gatewayId);
+  const qs = params.toString();
+  return apiRequest<WorkflowListItem[]>(`/workflows${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function createWorkflow(
+  data: {
+    name: string;
+    slug: string;
+    triggerType: string;
+    triggerConfig?: Record<string, unknown>;
+    gatewayId?: string;
+    description?: string;
+  },
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowListItem>> {
+  return apiRequest<WorkflowListItem>("/workflows", {
+    method: "POST",
+    body: data,
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function updateWorkflow(
+  workflowId: string,
+  data: {
+    name?: string;
+    status?: string;
+    isEnabled?: boolean;
+    triggerType?: string;
+    triggerConfig?: Record<string, unknown>;
+  },
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowListItem>> {
+  return apiRequest<WorkflowListItem>(`/workflows/${workflowId}`, {
+    method: "PATCH",
+    body: data,
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function addWorkflowStep(
+  workflowId: string,
+  data: {
+    order: number;
+    name?: string;
+    pluginId: string;
+    inputMapping?: Record<string, string>;
+    config?: Record<string, unknown>;
+    onError?: string;
+    maxRetries?: number;
+  },
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowStepItem>> {
+  return apiRequest<WorkflowStepItem>(`/workflows/${workflowId}/steps`, {
+    method: "POST",
+    body: data,
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function updateWorkflowStep(
+  workflowId: string,
+  stepId: string,
+  data: {
+    name?: string;
+    order?: number;
+    pluginId?: string;
+    inputMapping?: Record<string, string>;
+    config?: Record<string, unknown>;
+    onError?: string;
+    maxRetries?: number;
+    condition?: { if: string } | null;
+  },
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowStepItem>> {
+  return apiRequest<WorkflowStepItem>(
+    `/workflows/${workflowId}/steps/${stepId}`,
+    {
+      method: "PATCH",
+      body: data,
+      token,
+      headers: opts.organizationId
+        ? { "x-organization-id": opts.organizationId }
+        : undefined,
+    }
+  );
+}
+
+export function deleteWorkflowStep(
+  workflowId: string,
+  stepId: string,
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<void>> {
+  return apiRequest<void>(`/workflows/${workflowId}/steps/${stepId}`, {
+    method: "DELETE",
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+// --- Workflow Run History ---
+
+export interface WorkflowRunSummary {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  triggeredBy: string;
+  status: string;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  stepsCompleted: number;
+  totalSteps: number;
+}
+
+export interface WorkflowStepRunDetail {
+  id: string;
+  stepOrder: number;
+  stepName?: string;
+  pluginSlug: string;
+  status: string;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+}
+
+export interface WorkflowRunDetail extends WorkflowRunSummary {
+  triggerData?: unknown;
+  output?: unknown;
+  failedStepOrder?: number;
+  stepRuns: WorkflowStepRunDetail[];
+}
+
+export function getWorkflowRuns(
+  workflowId: string,
+  params: { status?: string; page?: number; limit?: number; sortOrder?: "asc" | "desc" } = {},
+  opts: { organizationId?: string } = {},
+  token?: string
+): Promise<ApiResponse<{ data: WorkflowRunSummary[]; meta: { total: number; page: number; limit: number } }>> {
+  const searchParams = new URLSearchParams();
+  if (params.status) searchParams.set("status", params.status);
+  if (params.page) searchParams.set("page", String(params.page));
+  if (params.limit) searchParams.set("limit", String(params.limit));
+  if (params.sortOrder) searchParams.set("sortOrder", params.sortOrder);
+  const qs = searchParams.toString();
+  return apiRequest(`/workflows/${workflowId}/runs${qs ? `?${qs}` : ""}`, {
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function getWorkflowRunDetail(
+  workflowId: string,
+  runId: string,
+  opts: { organizationId?: string } = {},
+  token?: string
+): Promise<ApiResponse<WorkflowRunDetail>> {
+  return apiRequest(`/workflows/${workflowId}/runs/${runId}`, {
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function triggerWorkflow(
+  workflowId: string,
+  data: { params?: Record<string, unknown> } = {},
+  opts: { organizationId?: string } = {},
+  token?: string
+): Promise<ApiResponse<{ runId: string }>> {
+  return apiRequest(`/workflows/${workflowId}/trigger`, {
+    method: "POST",
+    body: data,
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
 }

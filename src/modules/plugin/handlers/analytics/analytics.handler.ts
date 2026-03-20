@@ -8,10 +8,12 @@
  * @module modules/plugin/handlers/analytics/analytics.handler
  */
 
+import type { Prisma } from "@prisma/client";
 import { GatewayType } from "@prisma/client";
 
 import { logger } from "@/lib/logger";
 
+import { PLUGIN_TEMPLATES } from "../../plugin-templates";
 import {
     BasePlugin,
     type PluginContext,
@@ -331,10 +333,9 @@ export class AnalyticsPlugin extends BasePlugin {
    * Override toSeedData to include the container-friendly codeBundle
    * so the analytics plugin can run inside user workspace containers.
    */
-  override toSeedData(): import("@prisma/client").Prisma.PluginCreateInput {
+  override toSeedData(): Prisma.PluginCreateInput {
     const base = super.toSeedData();
     // Import the container-friendly analytics code from templates
-    const { PLUGIN_TEMPLATES } = require("../../plugin-templates");
     const tpl = PLUGIN_TEMPLATES.find((t: { id: string }) => t.id === "channel-analytics");
     return {
       ...base,

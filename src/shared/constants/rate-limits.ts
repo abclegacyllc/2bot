@@ -22,11 +22,12 @@ export interface RateLimitConfig {
  * Keys are endpoint patterns: METHOD:path
  */
 export const IP_RATE_LIMITS: Record<string, RateLimitConfig> = {
-  // Default for all endpoints
+  // Default for all endpoints (shared bucket for unoverridden routes).
+  // SPAs with polling (workspace, bot-studio) easily generate 40+ req/min,
+  // so this must accommodate normal browsing without false positives.
   default: {
-    points: 100,       // 100 requests
+    points: 300,       // 300 requests
     duration: 60,      // per minute
-    blockDuration: 60, // block for 1 minute if exceeded
   },
 
   // Health endpoints (allow more - for monitoring)

@@ -1,7 +1,7 @@
 /**
  * Gateway Module
  *
- * Manages Telegram Bot, AI providers, and webhook gateways
+ * Manages Telegram Bot, Discord Bot, Slack Bot, and WhatsApp Bot gateways
  * with encrypted credential storage and status tracking.
  *
  * Also includes BYOK (Bring Your Own Key) AI usage tracking.
@@ -37,8 +37,8 @@ export {
 
 // Providers
 export {
-    AIApiError, AIProvider, BaseGatewayProvider,
-    GatewayNotConnectedError, InvalidCredentialsError, TelegramApiError, TelegramBotProvider, UnsupportedActionError, aiProvider, telegramBotProvider
+    BaseGatewayProvider,
+    GatewayNotConnectedError, InvalidCredentialsError, TelegramApiError, TelegramBotProvider, UnsupportedActionError, telegramBotProvider
 } from "./providers";
 
 // Circuit Breaker

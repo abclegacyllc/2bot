@@ -17,7 +17,7 @@
         build build-frontend build-backend clean \
         prod-build prod-up prod-down prod-logs prod-restart prod-status \
         workspace-image proxy-image \
-        deploy backup ssl-setup \
+        deploy backup backup-source ssl-setup \
         install update health status shell-db shell-redis help \
         check-ports check-docker check-deps
 
@@ -805,6 +805,9 @@ backup:                     ## Backup database
 		echo "$(RED)❌ Backup script not found$(RESET)"; \
 		exit 1; \
 	fi
+
+backup-source:              ## Backup source code (protects against git reset / accidental loss)
+	@./scripts/deploy/backup-source.sh
 
 ssl-setup:                  ## Setup SSL certificates
 	@echo "$(CYAN)Setting up SSL...$(RESET)"

@@ -34,7 +34,10 @@ function createPrismaClient(): PrismaClient {
     console.log(`🔗 Prisma connecting to: ${connectionString.replace(/:[^:@]+@/, ':***@')}`);
   }
   
-  const pool = globalForPrisma.pool ?? new Pool({ connectionString });
+  const pool = globalForPrisma.pool ?? new Pool({
+    connectionString,
+    max: 25, // Default pg pool is 10, which can be exhausted under concurrent workflow/plugin load
+  });
   const adapter = new PrismaPg(pool);
 
   if (process.env.NODE_ENV !== "production") {

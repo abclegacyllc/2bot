@@ -4,8 +4,8 @@
  * Tracks real API costs for the platform-funded support AI assistant.
  * All costs here are RAW API costs (no 3x margin) since the platform absorbs them.
  *
- * Cost formula: creditsCharged / 300 = real API cost in USD
- * (Because: creditsPerToken = API_cost_per_token × 300, and $1 = 100 credits)
+ * Cost formula: creditsCharged / 200 = real API cost in USD
+ * (Because: creditsPerToken = API_cost_per_token × 200, and $1 = 100 credits)
  *
  * @module modules/support/support-ai-cost.service
  */
@@ -16,8 +16,8 @@ import { prisma } from "@/lib/prisma";
 // Constants
 // ===========================================
 
-/** Margin multiplier used in credit pricing (3x markup × 100 credits/$) */
-const CREDIT_TO_USD_DIVISOR = 300;
+/** Margin multiplier used in credit pricing (2x markup × 100 credits/$) */
+const CREDIT_TO_USD_DIVISOR = 200;
 
 // ===========================================
 // Types

@@ -17,7 +17,7 @@ import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { bridgeClientManager } from "@/modules/workspace";
 
-import { pluginDeployService } from "./plugin-deploy.service";
+import { getPluginEntryPath, pluginDeployService } from "./plugin-deploy.service";
 
 import type { GatewayType } from "@prisma/client";
 
@@ -281,7 +281,15 @@ async function executeInWorkspace(
     try {
       // Lazy import to avoid circular dependency at module level
       const { workspaceService } = await import('@/modules/workspace');
-      await workspaceService.autoStartContainer(container.id);
+
+      // Timeout auto-start to prevent indefinite blocking
+      const AUTO_START_TIMEOUT_MS = 60_000;
+      await Promise.race([
+        workspaceService.autoStartContainer(container.id),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Container auto-start timed out after 60s')), AUTO_START_TIMEOUT_MS)
+        ),
+      ]);
 
       // Re-fetch container to get updated bridgePort etc.
       const updated = await prisma.workspaceContainer.findUnique({
@@ -348,7 +356,8 @@ async function executeInWorkspace(
       context.entryFile,
     );
 
-    const pluginFile = context.entryFile ?? `plugins/${pluginSlug}.js`;
+    const eventGatewayId = 'gatewayId' in event ? event.gatewayId : null;
+    const pluginFile = context.entryFile ?? getPluginEntryPath(eventGatewayId ?? null, pluginSlug);
 
     // Push event to the running plugin via IPC
     // Convert to raw format so container plugins see standard API field names
@@ -357,6 +366,7 @@ async function executeInWorkspace(
         type: event.type,
         data: toRawTelegramUpdate(event),
         gatewayId: 'gatewayId' in event ? event.gatewayId : undefined,
+        _workflow: event._workflow,
       }),
       new Promise<never>((_, reject) => {
         setTimeout(() => {
@@ -370,6 +380,7 @@ async function executeInWorkspace(
     if (bridgeResult.success) {
       return {
         success: true,
+        output: bridgeResult.output ?? null,
         metrics: {
           durationMs,
         },
@@ -430,7 +441,7 @@ export class PluginExecutor {
     );
 
     try {
-      // Execute with circuit breaker protection
+      // Execute with circuit breaker protection (scoped per user)
       const result = await executePluginWithCircuit(pluginSlug, async () => {
         let innerResult: PluginExecutionResult;
 
@@ -450,7 +461,7 @@ export class PluginExecutor {
         }
 
         return innerResult;
-      });
+      }, false, context.userId);
 
       // Ensure duration is set
       if (result.metrics.durationMs === 0) {

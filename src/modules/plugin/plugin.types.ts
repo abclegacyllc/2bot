@@ -13,6 +13,27 @@ import type { GatewayType, Plugin, PluginAuthorType, UserPlugin } from "@prisma/
 export type { Plugin, PluginAuthorType, UserPlugin } from "@prisma/client";
 
 // ===========================================
+// Plugin Path Utilities
+// ===========================================
+
+/**
+ * Extract plugin slug from a workspace file path.
+ *
+ *   "plugins/echo.js"            → "echo"
+ *   "plugins/my-bot/index.ts"    → "my-bot"
+ *   "plugins/my-bot/"            → "my-bot"
+ *   "plugins/cool.mjs"           → "cool"
+ */
+export function pluginSlugFromPath(filePath: string): string {
+  return filePath
+    .replace(/^bots\/[^/]+\/plugins\//, '')  // Strip bot-dir prefix: bots/{gwId}/plugins/
+    .replace(/^plugins\//, '')                // Strip flat prefix: plugins/
+    .replace(/\.(js|ts|mjs|cjs|jsx|tsx)$/, '')
+    .replace(/\/index$/, '')
+    .replace(/\/$/, '');
+}
+
+// ===========================================
 // JSON Schema Type (simplified)
 // ===========================================
 
@@ -66,6 +87,11 @@ export interface PluginDefinition {
   // For workflow integration (Phase 5+)
   inputSchema?: JSONSchema | null;
   outputSchema?: JSONSchema | null;
+
+  // Event routing & conflict detection
+  eventTypes: string[];
+  eventRole: string;
+  conflictsWith: string[];
 }
 
 /**
@@ -101,6 +127,9 @@ export function toPluginDefinition(plugin: Plugin): PluginDefinition {
     isPublic: plugin.isPublic,
     inputSchema: plugin.inputSchema as JSONSchema | null,
     outputSchema: plugin.outputSchema as JSONSchema | null,
+    eventTypes: plugin.eventTypes ?? [],
+    eventRole: plugin.eventRole ?? "responder",
+    conflictsWith: plugin.conflictsWith ?? [],
   };
 }
 
@@ -173,6 +202,25 @@ export function toSafeUserPlugin(userPlugin: UserPluginWithPlugin): SafeUserPlug
     authorType: userPlugin.plugin.authorType,
     entryFile: userPlugin.entryFile ?? null,
   };
+}
+
+// ===========================================
+// Conflict Resolution
+// ===========================================
+
+/**
+ * Auto-resolution applied during plugin conflict resolution at install time.
+ */
+export interface ConflictResolution {
+  type: "role_change" | "event_filter";
+  /** Slug of the plugin that was changed */
+  plugin: string;
+  /** Previous value */
+  from: string;
+  /** New value */
+  to: string;
+  /** Human-readable reason */
+  reason: string;
 }
 
 // ===========================================
@@ -383,6 +431,12 @@ export interface CreateCustomPluginRequest {
   gatewayId?: string;
   category?: PluginCategory;
   tags?: string[];
+  /** Events this plugin handles (e.g. ["telegram.message"]) */
+  eventTypes?: string[];
+  /** "responder" (sends replies, exclusive) or "observer" (read-only) */
+  eventRole?: string;
+  /** Slugs of plugins this one conflicts with */
+  conflictsWith?: string[];
 }
 
 /**

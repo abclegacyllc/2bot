@@ -18,9 +18,10 @@ import { ForbiddenError, NotFoundError, ValidationError } from "@/shared/errors"
 import type { ServiceContext } from "@/shared/types/context";
 
 import { bridgeClientManager, workspaceService } from "@/modules/workspace";
-import { pluginDeployService } from "./plugin-deploy.service";
+import { getPluginEntryPath, pluginDeployService } from "./plugin-deploy.service";
 import { pluginIpcService } from "./plugin-ipc.service";
 import type {
+    ConflictResolution,
     CreateCustomPluginRequest,
     InstallPluginRequest,
     PluginCategory,
@@ -236,7 +237,7 @@ class PluginService {
   async installPlugin(
     ctx: ServiceContext,
     data: InstallPluginRequest
-  ): Promise<SafeUserPlugin> {
+  ): Promise<SafeUserPlugin & { _warnings?: string[]; _resolutions?: ConflictResolution[] }> {
     // Resolve pluginId from slug if needed
     let pluginId = data.pluginId;
     if (!pluginId && data.slug) {
@@ -276,22 +277,26 @@ class PluginService {
       }
     }
 
-    // Check if already installed
+    // Check if already installed (scoped to gateway so the same plugin can be
+    // installed on multiple bots)
     const existing = await prisma.userPlugin.findFirst({
       where: {
         userId: ctx.userId,
         pluginId: pluginId,
         organizationId: ctx.organizationId ?? null,
+        gatewayId: data.gatewayId ?? null,
       },
     });
 
     if (existing) {
       throw new ValidationError("Plugin already installed", {
-        pluginId: ["You have already installed this plugin"],
+        pluginId: ["You have already installed this plugin on this bot"],
       });
     }
 
     // Verify gateway if provided
+    let conflictWarnings: string[] = [];
+    let conflictResolutions: ConflictResolution[] = [];
     if (data.gatewayId) {
       const gateway = await prisma.gateway.findUnique({
         where: { id: data.gatewayId },
@@ -321,6 +326,63 @@ class PluginService {
           ],
         });
       }
+
+      // Enforce: cannot install standalone plugin on a workflow-mode bot
+      if (gateway.mode === "workflow") {
+        throw new ValidationError("Cannot install standalone plugin on a workflow-mode bot", {
+          gatewayId: ["Switch bot to plugin mode first"],
+        });
+      }
+
+      // Enforce: one plugin per gateway in plugin mode (scoped to this user)
+      const existingOnGateway = await prisma.userPlugin.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          gatewayId: data.gatewayId,
+          pluginId: { not: pluginId },
+          isEnabled: true,
+        },
+      });
+      if (existingOnGateway) {
+        throw new ValidationError("This bot already has a plugin installed", {
+          gatewayId: ["Each bot can only have one plugin in plugin mode"],
+        });
+      }
+
+      // Check plugin conflicts (event type collisions and explicit conflicts)
+      const conflictResult = await this.checkPluginConflicts(
+        plugin,
+        data.gatewayId,
+        ctx.userId,
+        ctx.organizationId ?? null,
+        pluginId,
+      );
+      conflictWarnings = conflictResult.warnings;
+      conflictResolutions = conflictResult.resolutions;
+
+      if (conflictWarnings.length > 0) {
+        pluginLogger.warn(
+          { pluginSlug: plugin.slug, conflicts: conflictWarnings },
+          "Plugin installed with conflict warnings"
+        );
+      }
+      if (conflictResolutions.length > 0) {
+        pluginLogger.info(
+          { pluginSlug: plugin.slug, resolutions: conflictResolutions },
+          "Plugin conflicts auto-resolved"
+        );
+      }
+    }
+
+    // Apply auto-resolutions: if we need to change the new plugin's event role,
+    // update it in the database before creating the user plugin record.
+    const hasRoleChange = conflictResolutions.some((r) => r.type === "role_change" && r.to === "observer");
+    if (hasRoleChange) {
+      await prisma.plugin.update({
+        where: { id: pluginId },
+        data: { eventRole: "observer" },
+      });
     }
 
     // Create user plugin
@@ -334,7 +396,7 @@ class PluginService {
         config: encryptedConfig,
         gatewayId: data.gatewayId ?? null,
         isEnabled: true,
-        entryFile: `plugins/${plugin.slug}.js`,
+        entryFile: getPluginEntryPath(data.gatewayId, plugin.slug),
       },
       include: {
         plugin: true,
@@ -374,6 +436,7 @@ class PluginService {
           plugin.slug,
           templateCode,
           env,
+          data.gatewayId,
         );
       } catch (err) {
         pluginLogger.warn(
@@ -385,7 +448,87 @@ class PluginService {
 
     // Return with original (unencrypted) config
     const decrypted = { ...userPlugin, config: data.config ?? {} };
-    return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
+    const result = toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
+    const enriched: SafeUserPlugin & { _warnings?: string[]; _resolutions?: ConflictResolution[] } = result;
+    if (conflictWarnings.length > 0) enriched._warnings = conflictWarnings;
+    if (conflictResolutions.length > 0) enriched._resolutions = conflictResolutions;
+    return enriched;
+  }
+
+  /**
+   * Check for plugin conflicts on a gateway before installation.
+   * Returns warnings for explicit conflicts (cannot be auto-resolved) and
+   * auto-resolutions for event role collisions (applied automatically).
+   *
+   * Checks:
+   * 1. Explicit conflictsWith — warning only (user must decide)
+   * 2. Event role collisions — auto-resolved by switching the *new* plugin to observer
+   */
+  private async checkPluginConflicts(
+    newPlugin: Plugin,
+    gatewayId: string,
+    userId: string,
+    organizationId: string | null,
+    newPluginId: string,
+  ): Promise<{ warnings: string[]; resolutions: ConflictResolution[] }> {
+    const warnings: string[] = [];
+    const resolutions: ConflictResolution[] = [];
+
+    // Find all other enabled plugins on this gateway
+    const existingInstalls = await prisma.userPlugin.findMany({
+      where: {
+        userId,
+        organizationId,
+        gatewayId,
+        pluginId: { not: newPluginId },
+        isEnabled: true,
+      },
+      include: { plugin: true },
+    });
+
+    if (existingInstalls.length === 0) return { warnings, resolutions };
+
+    const newEventTypes = (newPlugin.eventTypes ?? []) as string[];
+    const newRole = (newPlugin.eventRole ?? "responder") as string;
+    const newConflicts = (newPlugin.conflictsWith ?? []) as string[];
+
+    for (const existing of existingInstalls) {
+      const existingPlugin = existing.plugin;
+      const existingSlug = existingPlugin.slug;
+      const existingEventTypes = (existingPlugin.eventTypes ?? []) as string[];
+      const existingRole = (existingPlugin.eventRole ?? "responder") as string;
+      const existingConflicts = (existingPlugin.conflictsWith ?? []) as string[];
+
+      // Check 1: Explicit conflict declarations (bidirectional) — warning only
+      if (newConflicts.includes(existingSlug)) {
+        warnings.push(
+          `"${newPlugin.name}" declares a conflict with "${existingPlugin.name}" — they may not work well together on the same bot`
+        );
+      }
+      if (existingConflicts.includes(newPlugin.slug)) {
+        warnings.push(
+          `"${existingPlugin.name}" declares a conflict with "${newPlugin.name}" — they may not work well together on the same bot`
+        );
+      }
+
+      // Check 2: Event role collision — auto-resolve by switching new plugin to observer
+      if (newRole === "responder" && existingRole === "responder") {
+        const overlapping = newEventTypes.filter(et => existingEventTypes.includes(et));
+        if (overlapping.length > 0) {
+          resolutions.push({
+            type: "role_change",
+            plugin: newPlugin.slug,
+            from: "responder",
+            to: "observer",
+            reason:
+              `"${existingPlugin.name}" already responds to ${overlapping.join(", ")} — ` +
+              `"${newPlugin.name}" was set to observer mode to prevent duplicate responses`,
+          });
+        }
+      }
+    }
+
+    return { warnings, resolutions };
   }
 
   /**
@@ -522,9 +665,27 @@ class PluginService {
           throw new ForbiddenError("You don't have access to this gateway");
         }
 
+        // Pre-flight check: ensure no other install of the same plugin on this gateway
+        const conflict = await prisma.userPlugin.findFirst({
+          where: {
+            userId: ctx.userId,
+            pluginId: userPlugin.pluginId,
+            organizationId: ctx.organizationId ?? null,
+            gatewayId: data.gatewayId,
+            id: { not: userPluginId },
+          },
+        });
+        if (conflict) {
+          throw new ValidationError("Plugin already installed on this bot", {
+            gatewayId: ["This plugin is already installed on the selected bot"],
+          });
+        }
+
         updateData.gateway = { connect: { id: data.gatewayId! } };
+        updateData.entryFile = getPluginEntryPath(data.gatewayId, userPlugin.plugin.slug);
       } else {
         updateData.gateway = { disconnect: true };
+        updateData.entryFile = getPluginEntryPath(null, userPlugin.plugin.slug);
       }
     }
 
@@ -544,12 +705,14 @@ class PluginService {
 
     // Push updated storage quota to running container (instant, no restart needed)
     if (data.storageQuotaMb !== undefined) {
-      const entryFile = updated.entryFile ?? `plugins/${updated.plugin.slug}.js`;
+      const entryFile = updated.entryFile ?? getPluginEntryPath(updated.gatewayId, updated.plugin.slug);
       void this.pushStorageQuota(ctx, entryFile, data.storageQuotaMb);
     }
 
     // Restart running plugin so it picks up new PLUGIN_CONFIG / PLUGIN_GATEWAY_ID (non-blocking)
-    const restartFile = updated.entryFile ?? `plugins/${updated.plugin.slug}.js`;
+    // When gateway changes, the old file path differs from the new one — stop the old, start the new
+    const oldFile = userPlugin.entryFile ?? getPluginEntryPath(userPlugin.gatewayId, userPlugin.plugin.slug);
+    const newFile = updated.entryFile ?? getPluginEntryPath(updated.gatewayId, updated.plugin.slug);
     void (async () => {
       const container = await prisma.workspaceContainer.findFirst({
         where: {
@@ -564,10 +727,10 @@ class PluginService {
       const client = bridgeClientManager.getExistingClient(container.id);
       if (!client) return;
 
-      // Check if plugin is actually running before restarting
+      // Check if plugin is actually running at the old path before restarting
       const list = await client.pluginList() as Array<{ file: string; status: string }>;
-      const running = list.find(p => p.file === restartFile && p.status === 'running');
-      if (!running) return;
+      const running = list.find(p => p.file === oldFile && p.status === 'running');
+      if (!running && oldFile === newFile) return;
 
       // Build env with updated config and gateway
       const env: Record<string, string> = {
@@ -581,10 +744,18 @@ class PluginService {
         env.PLUGIN_GATEWAY_ID = updated.gatewayId;
       }
 
-      // Stop then start with fresh env
-      await client.pluginStop(restartFile).catch(() => {});
+      // Stop old process, move file if gateway changed, then start at new path
+      await client.pluginStop(oldFile).catch(() => {});
+      if (oldFile !== newFile) {
+        // Ensure target directory exists, then move the plugin file
+        const newDir = newFile.substring(0, newFile.lastIndexOf('/'));
+        if (newDir) {
+          await client.fileMkdir(newDir).catch(() => {});
+        }
+        await client.send('file.rename', { oldPath: oldFile, newPath: newFile }).catch(() => {});
+      }
       await new Promise(r => setTimeout(r, 300));
-      await client.pluginStart(restartFile, env, updated.storageQuotaMb);
+      await client.pluginStart(newFile, env, updated.storageQuotaMb);
 
       pluginLogger.info(
         { userPluginId, pluginSlug: updated.plugin.slug },
@@ -704,6 +875,20 @@ class PluginService {
           'Plugin stop on disable failed (non-blocking)',
         );
       });
+
+      // Warn about workflows that reference this plugin (steps will be skipped at runtime)
+      void prisma.workflowStep.findMany({
+        where: { pluginId: plugin.id, workflow: { userId: ctx.userId, isEnabled: true } },
+        select: { workflow: { select: { id: true, name: true } } },
+      }).then((steps) => {
+        const workflows = [...new Map(steps.map(s => [s.workflow.id, s.workflow.name])).entries()];
+        if (workflows.length > 0) {
+          pluginLogger.warn(
+            { pluginSlug: plugin.slug, affectedWorkflows: workflows.map(([id, name]) => ({ id, name })) },
+            `Plugin disabled — ${workflows.length} active workflow(s) have steps that will be skipped`,
+          );
+        }
+      }).catch(() => { /* best effort logging */ });
     }
 
     const decrypted = { ...updated, config: this.decryptConfig(updated.config) };
@@ -738,6 +923,7 @@ class PluginService {
         where: {
           pluginId,
           userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
         },
       });
 
@@ -746,7 +932,7 @@ class PluginService {
       }
 
       // Try to read the actual code from the workspace container (source of truth)
-      const entryFile = userPlugin.entryFile ?? `plugins/${plugin.slug}.js`;
+      const entryFile = userPlugin.entryFile ?? getPluginEntryPath(userPlugin.gatewayId, plugin.slug);
       const containerCode = await pluginDeployService.readCodeFromContainer(
         ctx.userId,
         ctx.organizationId ?? null,
@@ -770,6 +956,7 @@ class PluginService {
       where: {
         pluginId,
         userId: ctx.userId,
+        organizationId: ctx.organizationId ?? null,
       },
     });
     if (userPlugin?.entryFile) {
@@ -860,11 +1047,13 @@ class PluginService {
       }
     }
 
-    // Determine entry file path
+    // Determine entry file path (bot-dir layout for gateway-bound plugins)
     const entry = data.entry ?? 'index.js';
     const entryFile = isDirectory
-      ? `plugins/${fullSlug}/${entry}`
-      : `plugins/${fullSlug}.js`;
+      ? (data.gatewayId
+        ? `bots/${data.gatewayId}/plugins/${fullSlug}/${entry}`
+        : `plugins/${fullSlug}/${entry}`)
+      : getPluginEntryPath(data.gatewayId, fullSlug);
 
     // For single-file plugins, store code in codeBundle for recovery.
     // For directory plugins, codeBundle is not used (files live on container only).
@@ -890,6 +1079,9 @@ class PluginService {
           authorId: ctx.userId,
           authorType: "USER",
           isPublic: false,
+          eventTypes: data.eventTypes ?? [],
+          eventRole: data.eventRole ?? "responder",
+          conflictsWith: data.conflictsWith ?? [],
         },
       });
 
@@ -963,6 +1155,7 @@ class PluginService {
           fullSlug,
           data.code,
           deployEnv,
+          data.gatewayId,
         );
       }
     } catch (err) {
@@ -1038,6 +1231,9 @@ class PluginService {
       requiredGateways?: string[];
       configSchema?: Record<string, unknown>;
       tags?: string[];
+      eventTypes?: string[];
+      eventRole?: string;
+      conflictsWith?: string[];
     } = {};
 
     try {
@@ -1118,6 +1314,9 @@ class PluginService {
           authorId: ctx.userId,
           authorType: "USER",
           isPublic: false,
+          eventTypes: manifest.eventTypes ?? [],
+          eventRole: manifest.eventRole ?? "responder",
+          conflictsWith: manifest.conflictsWith ?? [],
         },
       });
 
@@ -1209,6 +1408,9 @@ class PluginService {
       requiredGateways?: string[];
       configSchema?: Record<string, unknown>;
       tags?: string[];
+      eventTypes?: string[];
+      eventRole?: string;
+      conflictsWith?: string[];
     };
 
     try {
@@ -1290,6 +1492,9 @@ class PluginService {
           authorId: ctx.userId,
           authorType: "USER",
           isPublic: false,
+          eventTypes: manifest.eventTypes ?? [],
+          eventRole: manifest.eventRole ?? "responder",
+          conflictsWith: manifest.conflictsWith ?? [],
         },
       });
 
@@ -1500,6 +1705,102 @@ class PluginService {
         );
       });
     }
+  }
+
+  // ===========================================
+  // Bot Templates — One-Click Setup
+  // ===========================================
+
+  /**
+   * Install a bot template — creates all plugins from the template on a gateway.
+   *
+   * @param ctx - Service context
+   * @param templateId - Bot template ID (e.g., "ai-assistant")
+   * @param gatewayId - Gateway to install the plugins on
+   * @returns Array of installed plugins
+   */
+  async installBotTemplate(
+    ctx: ServiceContext,
+    templateId: string,
+    gatewayId: string,
+  ): Promise<{ installed: SafeUserPlugin[]; warnings: string[] }> {
+    const { getBotTemplateById } = await import("./bot-templates");
+    const { getAnyTemplateById } = await import("./plugin-templates");
+
+    const botTemplate = getBotTemplateById(templateId);
+    if (!botTemplate) {
+      throw new NotFoundError(`Bot template not found: ${templateId}`);
+    }
+
+    // Verify gateway exists and user owns it
+    const gateway = await prisma.gateway.findUnique({ where: { id: gatewayId } });
+    if (!gateway) throw new NotFoundError("Gateway not found");
+
+    const isOwner = ctx.organizationId
+      ? gateway.organizationId === ctx.organizationId
+      : gateway.userId === ctx.userId && !gateway.organizationId;
+    if (!isOwner && !ctx.isSuperAdmin()) {
+      throw new ForbiddenError("You don't have access to this gateway");
+    }
+
+    // Verify gateway type matches template
+    if (gateway.type !== botTemplate.gatewayType) {
+      throw new ValidationError("Gateway type mismatch", {
+        gatewayId: [`This template requires a ${botTemplate.gatewayType} gateway`],
+      });
+    }
+
+    const installed: SafeUserPlugin[] = [];
+    const warnings: string[] = [];
+
+    for (const pluginDef of botTemplate.plugins) {
+      const pluginTemplate = getAnyTemplateById(pluginDef.templateId);
+      if (!pluginTemplate) {
+        warnings.push(`Skipped plugin "${pluginDef.templateId}" — template not found`);
+        continue;
+      }
+
+      try {
+        const isDir = "isDirectory" in pluginTemplate && pluginTemplate.isDirectory;
+        const result = await this.createCustomPlugin(ctx, {
+          slug: `${templateId}-${pluginDef.templateId}`,
+          name: pluginTemplate.name,
+          description: pluginTemplate.description,
+          code: isDir ? undefined : (pluginTemplate as { code: string }).code,
+          files: isDir ? (pluginTemplate as { files: Record<string, string> }).files : undefined,
+          entry: isDir ? (pluginTemplate as { entry: string }).entry : undefined,
+          category: pluginTemplate.category as PluginCategory,
+          tags: [...pluginTemplate.tags, `template:${templateId}`],
+          requiredGateways: pluginTemplate.requiredGateways,
+          configSchema: pluginTemplate.configSchema as Record<string, unknown>,
+          config: pluginDef.config ?? {},
+          gatewayId,
+          eventTypes: pluginDef.eventTypes,
+          eventRole: pluginDef.eventRole,
+        });
+        installed.push(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push(`Failed to install "${pluginTemplate.name}": ${msg}`);
+        pluginLogger.warn(
+          { templateId, pluginId: pluginDef.templateId, error: msg },
+          "Bot template plugin install failed"
+        );
+      }
+    }
+
+    if (installed.length === 0) {
+      throw new ValidationError("No plugins could be installed from this template", {
+        templateId: warnings,
+      });
+    }
+
+    pluginLogger.info(
+      { templateId, gatewayId, installed: installed.length, warnings: warnings.length },
+      "Bot template installed"
+    );
+
+    return { installed, warnings };
   }
 
   // ===========================================

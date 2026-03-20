@@ -31,6 +31,30 @@ const deployLog = logger.child({ module: 'plugin-deploy' });
 /** Directory inside workspace container where plugins are stored */
 const PLUGIN_DIR = 'plugins';
 
+/** Bot-dir layout prefix */
+const BOTS_DIR = 'bots';
+
+/**
+ * Compute the entry file path for a plugin.
+ * Gateway-bound plugins use bot-dir layout: bots/<gatewayId>/plugins/<slug>.js
+ * Unbound plugins use flat layout: plugins/<slug>.js
+ */
+export function getPluginEntryPath(gatewayId: string | null | undefined, pluginSlug: string): string {
+  if (gatewayId) {
+    return `${BOTS_DIR}/${gatewayId}/${PLUGIN_DIR}/${pluginSlug}.js`;
+  }
+  return `${PLUGIN_DIR}/${pluginSlug}.js`;
+}
+
+/**
+ * Extract gatewayId from a bot-dir entry path.
+ * Returns null if the path is in the flat plugins/ layout.
+ */
+export function extractGatewayIdFromPath(pluginFile: string): string | null {
+  const match = pluginFile.match(/^bots\/([^/]+)\/plugins\//);
+  return match ? match[1] ?? null : null;
+}
+
 /**
  * Try to get an existing bridge client; if none, attempt auto-reconnect
  * using the bridge auth token stored in the DB.
@@ -92,6 +116,7 @@ class PluginDeployService {
     pluginSlug: string,
     templateCode: string,
     env?: Record<string, string>,
+    gatewayId?: string | null,
   ): Promise<boolean> {
     // Find running container
     const container = await prisma.workspaceContainer.findFirst({
@@ -114,11 +139,17 @@ class PluginDeployService {
       return false;
     }
 
-    const written = await this.writePluginFile(client, pluginSlug, templateCode);
+    // Ensure bot directory exists for gateway-bound plugins
+    if (gatewayId) {
+      await client.fileMkdir(`${BOTS_DIR}/${gatewayId}/${PLUGIN_DIR}`).catch(() => {});
+    }
+
+    const written = await this.writePluginFile(client, pluginSlug, templateCode, gatewayId);
     if (!written) return false;
 
-    // Auto-start the plugin process
-    return this.startPlugin(client, pluginSlug, env);
+    // Auto-start the plugin process using bot-dir path
+    const entryPath = getPluginEntryPath(gatewayId, pluginSlug);
+    return this.startPluginByFile(client, entryPath, env);
   }
 
   /**
@@ -231,7 +262,8 @@ class PluginDeployService {
       return false;
     }
 
-    const written = await this.writePluginFile(client, pluginSlug, code);
+    const gwId = entryFile ? extractGatewayIdFromPath(entryFile) : null;
+    const written = await this.writePluginFile(client, pluginSlug, code, gwId);
     if (!written) return false;
 
     if (restartAfterWrite) {
@@ -345,13 +377,43 @@ class PluginDeployService {
     // Ensure plugins directory exists
     await client.fileMkdir(PLUGIN_DIR).catch(() => {});
 
+    // Collect unique gateway IDs to pre-create bot directories
+    const gatewayIds = new Set(userPlugins.map(up => up.gatewayId).filter(Boolean) as string[]);
+    for (const gwId of gatewayIds) {
+      await client.fileMkdir(`${BOTS_DIR}/${gwId}/${PLUGIN_DIR}`).catch(() => {});
+    }
+
     let started = 0;
     let failed = 0;
     let recovered = 0;
     const broken: string[] = [];
 
     for (const up of userPlugins) {
-      const entryFile = up.entryFile ?? `${PLUGIN_DIR}/${up.plugin.slug}.js`;
+      // Compute expected bot-dir path
+      const expectedPath = getPluginEntryPath(up.gatewayId, up.plugin.slug);
+      let entryFile = up.entryFile ?? `${PLUGIN_DIR}/${up.plugin.slug}.js`;
+
+      // Auto-migrate: if plugin has a gateway but entryFile is in old flat layout, move it
+      if (up.gatewayId && entryFile !== expectedPath && !entryFile.startsWith(`${BOTS_DIR}/`)) {
+        try {
+          await client.send('file.stat', { path: entryFile });
+          // File exists at old path — move it to bot-dir
+          await client.fileMkdir(`${BOTS_DIR}/${up.gatewayId}/${PLUGIN_DIR}`).catch(() => {});
+          await client.send('file.rename', { oldPath: entryFile, newPath: expectedPath });
+          deployLog.info(
+            { pluginSlug: up.plugin.slug, from: entryFile, to: expectedPath },
+            'Auto-migrated plugin to bot-dir layout',
+          );
+        } catch {
+          // Old file doesn't exist or move failed — just use the new path
+        }
+        // Update DB to new path
+        await prisma.userPlugin.update({
+          where: { id: up.id },
+          data: { entryFile: expectedPath },
+        });
+        entryFile = expectedPath;
+      }
 
       // Pre-flight: verify gateway requirements
       const reqGateways = (up.plugin.requiredGateways ?? []) as string[];
@@ -381,7 +443,7 @@ class PluginDeployService {
         // File missing — try to recover from catalog template
         const templateCode = up.plugin.codeBundle;
         if (templateCode) {
-          const recovered_ = await this.writePluginFile(client, up.plugin.slug, templateCode);
+          const recovered_ = await this.writePluginFile(client, up.plugin.slug, templateCode, up.gatewayId);
           if (recovered_) {
             fileExists = true;
             recovered++;
@@ -470,6 +532,9 @@ class PluginDeployService {
         // Ignore — storage may already be empty
       });
 
+      // Delete per-plugin database file (non-blocking)
+      await client.send('storage.deletePluginDb', { pluginFile: filePath }).catch(() => {});
+
       await client.fileDelete(filePath);
       deployLog.info({ pluginSlug, filePath }, 'Plugin undeployed from workspace');
       return true;
@@ -543,7 +608,8 @@ class PluginDeployService {
     }
 
     deployLog.info({ pluginSlug }, 'Recovering plugin file from catalog template');
-    return this.writePluginFile(client, pluginSlug, templateCode);
+    const gwId = extractGatewayIdFromPath(filePath);
+    return this.writePluginFile(client, pluginSlug, templateCode, gwId);
   }
 
   /**
@@ -632,13 +698,17 @@ class PluginDeployService {
 
   /**
    * Write plugin code to the container filesystem.
+   * If gatewayId is provided, writes to the bot-dir layout.
    */
   private async writePluginFile(
     client: BridgeClient,
     pluginSlug: string,
     code: string,
+    gatewayId?: string | null,
   ): Promise<boolean> {
-    const filePath = `${PLUGIN_DIR}/${pluginSlug}.js`;
+    const filePath = gatewayId
+      ? getPluginEntryPath(gatewayId, pluginSlug)
+      : `${PLUGIN_DIR}/${pluginSlug}.js`;
 
     try {
       await client.fileWrite(filePath, code, true);

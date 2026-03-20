@@ -182,7 +182,7 @@ function SettingsContent() {
 
   // Personal workspace settings
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8" data-ai-target="settings-overview">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

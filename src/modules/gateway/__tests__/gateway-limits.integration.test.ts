@@ -128,7 +128,7 @@ function mockGateway(id: string, userId: string, organizationId: string | null, 
     userId,
     organizationId,
     name,
-    type: 'AI' as const,
+    type: 'TELEGRAM_BOT' as const,
     status: 'DISCONNECTED' as const,
     credentialsEnc: 'encrypted:test',
     config: {},
@@ -176,8 +176,8 @@ describe('Gateway Limits - FREE Plan (Personal)', () => {
     await expect(
       gatewayService.create(ctx, {
         name: 'Test Gateway 2',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test-key-2' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-key-2' },
       })
     ).rejects.toThrow(PlanLimitError);
   });
@@ -193,8 +193,8 @@ describe('Gateway Limits - FREE Plan (Personal)', () => {
       // Try second gateway
       await gatewayService.create(ctx, {
         name: 'Test Gateway 2',
-        type: 'CUSTOM_GATEWAY',
-        credentials: { url: 'https://test.com/webhook', secret: 'test-secret' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-secret' },
       });
       throw new Error('Should have thrown PlanLimitError');
     } catch (error: any) {
@@ -235,8 +235,8 @@ describe('Gateway Limits - FREE Plan (Personal)', () => {
 
     const gateway2 = await gatewayService.create(ctx, {
       name: 'Test Gateway 2',
-      type: 'CUSTOM_GATEWAY',
-      credentials: { url: 'https://test.com/webhook', secret: 'test-secret' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-secret' },
     });
 
     expect(gateway2).toBeDefined();
@@ -270,8 +270,8 @@ describe('Gateway Limits - All Plans (Boundary)', () => {
 
         const gateway = await gatewayService.create(ctx, {
           name: `Gateway ${limit}`,
-          type: 'AI',
-          credentials: { provider: 'openai', apiKey: `test-key-${limit}` },
+          type: 'TELEGRAM_BOT',
+          credentials: { botToken: `test-key-${limit}` },
         });
 
         expect(gateway).toBeDefined();
@@ -308,8 +308,8 @@ describe('Gateway Limits - All Plans (Boundary)', () => {
 
     const gateway = await gatewayService.create(ctx, {
       name: 'Gateway 1001',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test-key-1001' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-key-1001' },
     });
 
     expect(gateway).toBeDefined();
@@ -339,8 +339,8 @@ describe('Gateway Limits - Organization Context', () => {
     );
     await gatewayService.create(ctx, {
       name: 'Org Gateway 1',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test-1' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-1' },
     });
 
     mockedPrisma.gateway.count.mockResolvedValueOnce(1);
@@ -358,8 +358,8 @@ describe('Gateway Limits - Organization Context', () => {
     await expect(
       gatewayService.create(ctx, {
         name: 'Org Gateway 3',
-        type: 'CUSTOM_GATEWAY',
-        credentials: { url: 'https://test.com/webhook', secret: 'test-3' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-3' },
       })
     ).rejects.toThrow(OrgPlanLimitError);
   });
@@ -384,8 +384,8 @@ describe('Gateway Limits - Organization Context', () => {
 
     const gateway = await gatewayService.create(ctx, {
       name: 'Org Gateway 5',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test-key-5' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-key-5' },
     });
     expect(gateway).toBeDefined();
 
@@ -394,8 +394,8 @@ describe('Gateway Limits - Organization Context', () => {
     await expect(
       gatewayService.create(ctx, {
         name: 'Org Gateway 6',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'test-6' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'test-6' },
       })
     ).rejects.toThrow(OrgPlanLimitError);
   });
@@ -414,8 +414,8 @@ describe('Gateway Limits - Organization Context', () => {
     await expect(
       gatewayService.create(personalCtx, {
         name: 'Personal Gateway 4',
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: 'personal-4' },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: 'personal-4' },
       })
     ).rejects.toThrow(PlanLimitError);
 
@@ -435,8 +435,8 @@ describe('Gateway Limits - Organization Context', () => {
 
     const orgGateway = await gatewayService.create(orgCtx, {
       name: 'Org Gateway 1',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'org-1' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'org-1' },
     });
 
     expect(orgGateway).toBeDefined();
@@ -468,8 +468,8 @@ describe('Gateway Limits - Organization Context', () => {
 
       const gateway = await gatewayService.create(ctx, {
         name: `Org Gateway ${limit}`,
-        type: 'AI',
-        credentials: { provider: 'openai', apiKey: `test-${limit}` },
+        type: 'TELEGRAM_BOT',
+        credentials: { botToken: `test-${limit}` },
       });
       expect(gateway).toBeDefined();
 
@@ -478,8 +478,8 @@ describe('Gateway Limits - Organization Context', () => {
       await expect(
         gatewayService.create(ctx, {
           name: `Org Gateway ${limit + 1}`,
-          type: 'AI',
-          credentials: { provider: 'openai', apiKey: 'test-extra' },
+          type: 'TELEGRAM_BOT',
+          credentials: { botToken: 'test-extra' },
         })
       ).rejects.toThrow(OrgPlanLimitError);
     });
@@ -503,8 +503,8 @@ describe('Gateway Limits - Organization Context', () => {
 
     const gateway = await gatewayService.create(ctx, {
       name: 'Gateway 1001',
-      type: 'AI',
-      credentials: { provider: 'openai', apiKey: 'test-1001' },
+      type: 'TELEGRAM_BOT',
+      credentials: { botToken: 'test-1001' },
     });
 
     expect(gateway).toBeDefined();

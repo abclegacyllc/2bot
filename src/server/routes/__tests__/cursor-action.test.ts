@@ -62,14 +62,6 @@ async function executeCursorAction(
         const botToken = secrets.botToken;
         if (!botToken) throw new Error("botToken secret is required");
         credentials = { botToken };
-      } else if (gwType === "AI") {
-        const apiKey = secrets.apiKey;
-        if (!apiKey) throw new Error("apiKey secret is required");
-        credentials = { provider: (body.type as string) || "openai", apiKey };
-      } else if (gwType === "CUSTOM_GATEWAY") {
-        const url = secrets.url || (body.slug as string);
-        if (!url) throw new Error("url is required for custom gateways");
-        credentials = { url };
       } else {
         throw new Error(`Unknown gateway type: ${gwType}`);
       }
@@ -348,18 +340,6 @@ describe("cursor-action endpoint logic", () => {
       await expect(
         executeCursorAction({ action: "create_gateway", type: "TELEGRAM_BOT" }, {}),
       ).rejects.toThrow("botToken secret is required");
-    });
-
-    it("creates an AI gateway with apiKey secret", async () => {
-      mockGatewayService.create.mockResolvedValue({
-        id: "gw-2", name: "AI GW", type: "AI", status: "CONNECTED",
-      });
-
-      const result = await executeCursorAction(
-        { action: "create_gateway", name: "AI GW", type: "AI" },
-        { apiKey: "sk-xxx" },
-      );
-      expect(result.success).toBe(true);
     });
 
     it("uses default name of 'My Bot' when no name provided", async () => {

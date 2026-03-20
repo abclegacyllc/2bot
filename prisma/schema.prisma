@@ -56,8 +56,9 @@ enum DatabaseType {
 
 enum GatewayType {
   TELEGRAM_BOT    // Telegram Bot API (uses botToken)
-  AI              // All AI providers (OpenAI, Anthropic, DeepSeek, Grok, Gemini, Mistral, Groq, Ollama)
-  CUSTOM_GATEWAY  // Custom inbound gateways (receive HTTP POST from external services like Stripe, GitHub)
+  DISCORD_BOT     // Discord Bot API (uses botToken + applicationId)
+  SLACK_BOT       // Slack Bot API (uses botToken + signingSecret)
+  WHATSAPP_BOT    // WhatsApp Cloud API (uses accessToken + phoneNumberId)
   // TELEGRAM_ACCOUNT - MTProto user accounts (V2 - requires phone auth flow)
 }
 
@@ -717,6 +718,9 @@ model Gateway {
   // Persisted on connect so it survives server restarts
   metadata Json @default("{}")
 
+  // Bot mode: "plugin" (single standalone plugin) or "workflow" (plugin pipeline)
+  mode   String @default("plugin") @map("mode")
+
   // Connection tracking
   lastConnectedAt DateTime? @map("last_connected_at")
   lastErrorAt     DateTime? @map("last_error_at")
@@ -959,6 +963,14 @@ model Plugin {
   // Input/Output schemas for workflow integration (Phase 5+)
   inputSchema   Json?         @map("input_schema")   // What plugin accepts
   outputSchema  Json?         @map("output_schema")  // What plugin outputs
+
+  // Event routing & conflict detection
+  // eventTypes: which events this plugin handles (e.g. ["telegram.message", "telegram.callback"])
+  eventTypes    String[]      @default([])           @map("event_types")
+  // eventRole: "responder" (sends replies, exclusive), "observer" (read-only, unlimited)
+  eventRole     String        @default("responder")  @map("event_role")
+  // conflictsWith: slugs of plugins that cannot coexist on the same gateway
+  conflictsWith String[]      @default([])           @map("conflicts_with")
   
   // Status
   isActive      Boolean       @default(true)  @map("is_active")
@@ -1017,11 +1029,12 @@ model UserPlugin {
   gateway       Gateway?      @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
   aiUsages      AIUsage[]
   
-  // Unique per user+plugin OR per organization+plugin
-  @@unique([userId, pluginId, organizationId])
+  // Unique per user+plugin+gateway (allows same plugin on multiple gateways/bots)
+  @@unique([userId, pluginId, organizationId, gatewayId])
   @@index([userId])
   @@index([pluginId])
   @@index([organizationId])
+  @@index([gatewayId])
   @@index([isEnabled])
   @@map("user_plugins")
 }
@@ -1032,8 +1045,14 @@ model UserPlugin {
 
 // Trigger types for workflows
 enum WorkflowTriggerType {
-  TELEGRAM_MESSAGE    // On new Telegram message
+  BOT_MESSAGE         // On incoming message to bound gateway (any platform)
+  TELEGRAM_MESSAGE    // @deprecated — use BOT_MESSAGE (kept for migration compat)
   TELEGRAM_CALLBACK   // On callback button press
+  DISCORD_MESSAGE     // @deprecated — use BOT_MESSAGE (kept for migration compat)
+  DISCORD_COMMAND     // On Discord slash command / interaction
+  SLACK_MESSAGE       // @deprecated — use BOT_MESSAGE (kept for migration compat)
+  SLACK_COMMAND       // On Slack slash command / interaction
+  WHATSAPP_MESSAGE    // @deprecated — use BOT_MESSAGE (kept for migration compat)
   SCHEDULE            // Cron-based trigger
   WEBHOOK             // External HTTP trigger
   MANUAL              // User-triggered
@@ -1095,7 +1114,7 @@ model Workflow {
   
   // Relations
   user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gateway         Gateway?            @relation(fields: [gatewayId], references: [id])
+  gateway         Gateway?            @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
   organization    Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   department      Department?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   steps           WorkflowStep[]
@@ -1108,6 +1127,7 @@ model Workflow {
   @@index([scope])
   @@index([status])
   @@index([isEnabled])
+  @@index([userId, gatewayId, triggerType, status, isEnabled])
   @@map("workflows")
 }
 
@@ -1146,8 +1166,8 @@ model WorkflowStep {
   
   // Relations
   workflow        Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  plugin          Plugin    @relation(fields: [pluginId], references: [id])
-  gateway         Gateway?  @relation(fields: [gatewayId], references: [id])
+  plugin          Plugin    @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  gateway         Gateway?  @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
   
   @@unique([workflowId, order])
   @@index([workflowId])
@@ -1233,6 +1253,9 @@ model AIUsage {
   // Source - determines if credits apply
   source          String    // "byok" = user's key (no credits), "2bot" = platform key (credits)
   
+  // Provider - which AI provider handled the request
+  provider        String?   @map("provider") // "openai", "anthropic", "google", "together", "fireworks", "openrouter"
+  
   // Feature - which platform feature triggered this usage
   feature         String?   @map("feature") // "chat", "cursor", "plugin-ipc", "api" — null for legacy rows
   
@@ -1270,6 +1293,7 @@ model AIUsage {
   @@index([source, billingPeriod])
   @@index([capability, createdAt])
   @@index([feature, billingPeriod])
+  @@index([provider, billingPeriod])
   @@map("ai_usage")
 }
 

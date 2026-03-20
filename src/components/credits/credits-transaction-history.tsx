@@ -80,6 +80,8 @@ function getTypeBadge(type: string) {
     bonus: { variant: "default", label: "Bonus" },
     grant: { variant: "default", label: "Grant" },
     allocation: { variant: "outline", label: "Allocation" },
+    transfer_in: { variant: "default", label: "Transfer In" },
+    transfer_out: { variant: "secondary", label: "Transfer Out" },
   };
   return variants[type] || { variant: "secondary" as const, label: type };
 }
@@ -158,6 +160,7 @@ export function CreditsTransactionHistory({
                 <SelectItem value="refund">Refund</SelectItem>
                 <SelectItem value="bonus">Bonus</SelectItem>
                 <SelectItem value="grant">Grant</SelectItem>
+                <SelectItem value="allocation">Allocation</SelectItem>
               </SelectContent>
             </Select> : null}
           {/* Category Filter */}
@@ -175,6 +178,9 @@ export function CreditsTransactionHistory({
                 <SelectItem value="ai_usage">2Bot AI</SelectItem>
                 <SelectItem value="marketplace">Marketplace</SelectItem>
                 <SelectItem value="premium_feature">Premium</SelectItem>
+                <SelectItem value="subscription">Subscription</SelectItem>
+                <SelectItem value="transfer">Transfer</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
               </SelectContent>
             </Select> : null}
         </div>

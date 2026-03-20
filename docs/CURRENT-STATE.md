@@ -8,11 +8,11 @@
 
 | Item | Value |
 |------|-------|
-| **Last Updated** | 2026-01-27 |
-| **Last Session** | S44: Phase 6.9 Final Verification |
-| **Current Phase** | Phase 6.9: Enterprise Subdomain Migration ✅ Complete |
-| **Next Task** | Phase 7 or next feature development |
-| **Overall Progress** | Phase 6.9: 23/23 tasks (All Complete) |
+| **Last Updated** | 2026-01-28 |
+| **Last Session** | S45: Bot-Centric Architecture Post-Phase Fixes + Draggable Canvas |
+| **Current Phase** | Post Phase 1-6 Fixes + Draggable Workflow Canvas |
+| **Next Task** | Continue nice-to-haves and canvas feature |
+| **Overall Progress** | Must-haves 3/3 ✅, Nice-to-haves 1/4, Canvas 0/5 |
 
 ---
 
@@ -31,9 +31,59 @@
 | Phase 6.7: Architecture | ✅ Complete | 16/16 tasks | URL-based APIs + Enterprise Subdomain Ready |
 | Phase 6.8: Plan Arch | ✅ Complete | 24/24 tasks | All parts complete (A-F) |
 | Phase 6.9: Enterprise | ✅ Complete | 23/23 tasks | All Sessions Complete |
+| Bot Architecture | ✅ Complete | 6/6 phases | Gateway.mode, BOT_MESSAGE, 1-plugin-per-bot |
+| Post-Phase Fixes | 🔄 In Progress | 4/12 items | Must-haves done, nice-to-haves + canvas in progress |
 ---
 
-## ⭐ Phase 6.9: Enterprise Subdomain Migration (Current)
+## ⭐ Post Bot-Architecture Fixes + Draggable Canvas (Current)
+
+> **Goal:** Fix must-have bugs from bot-centric architecture audit, add nice-to-have UI improvements, and implement draggable workflow canvas
+> **Context:** Follows 6-phase "Bot-Centric Plugin Pipeline Architecture Fix" that unified platform triggers to BOT_MESSAGE, added Gateway.mode, enforced 1-plugin-per-bot
+
+### Must-Have Fixes (All Complete)
+
+| Task | Status | Files Modified |
+|------|--------|---------------|
+| A1: Telegram callback_query in workflow mode | ✅ | `webhook.ts`, `workflow.triggers.ts` |
+| A2: Mode toggle server-side validation + audit | ✅ | `gateway.service.ts` |
+| A3: Unit tests (24 new tests) | ✅ | `workflow.triggers.test.ts`, `gateway-mode.test.ts` |
+
+### Nice-to-Have Improvements
+
+| Task | Status | Notes |
+|------|--------|-------|
+| B1: Update CURRENT-STATE.md docs | ✅ | This update |
+| B2: Mode toggle confirmation dialog | 🔲 | AlertDialog in bot-detail-view.tsx |
+| B3: Adaptive UI based on gateway mode | 🔲 | Show/hide sections by mode |
+| B4: Widen isWorkflowStep type guard | ✅ | `plugin.interface.ts` |
+
+### Draggable Workflow Canvas (Phase C)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| C1: Plugin sidebar drag source | 🔲 | New component with drag-to-add |
+| C2: Canvas drop zone handlers | 🔲 | onDrop/onDragOver in workflow-canvas |
+| C3: Drop visual feedback | 🔲 | Ghost preview, insertion indicator |
+| C4: Enable node drag reordering | 🔲 | nodesDraggable for StepNode |
+| C5: Layout integration | 🔲 | 3-column layout with sidebar |
+
+### Key Architecture Decisions
+- **Gateway.mode**: `"plugin" | "workflow"` — controls routing in webhook handlers
+- **BOT_MESSAGE**: Unified trigger type — all platforms use single trigger, platform-specific matching via config
+- **Mode validation**: Server rejects mode switch if conflicting resources exist (enabled plugins or active workflows)
+- **Telegram callback_query**: Now properly routed through workflow triggers with `dataValues`/`dataPattern` matching
+
+### Files Modified in This Session
+- `src/server/routes/webhook.ts` — Telegram workflow branch handles callback_query + edited_message
+- `src/modules/workflow/workflow.triggers.ts` — New checkTelegramCallbackTrigger() function
+- `src/modules/gateway/gateway.service.ts` — Mode toggle validation + modeChanged audit
+- `src/modules/plugin/plugin.interface.ts` — Widened isWorkflowStep type guard
+- `src/modules/workflow/__tests__/workflow.triggers.test.ts` — 18 new trigger tests
+- `src/modules/gateway/__tests__/gateway-mode.test.ts` — 6 new mode validation tests
+
+---
+
+## ⭐ Phase 6.9: Enterprise Subdomain Migration (Complete)
 
 > **Goal:** Migrate from single-domain (2bot.org/api/*) to multi-subdomain architecture (api.2bot.org/*, dash.2bot.org/*, admin.2bot.org/*)
 > **Why:** Enables enterprise features, better security isolation, and scalable deployment

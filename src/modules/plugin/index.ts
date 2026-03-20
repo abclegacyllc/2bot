@@ -16,6 +16,7 @@ export * from "./plugin.types";
 export * from "./plugin.validation";
 
 // Service
+export { pluginWorkspaceSyncService } from "./plugin-workspace-sync.service";
 export { pluginService } from "./plugin.service";
 
 // Templates

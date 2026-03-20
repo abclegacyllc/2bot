@@ -6,6 +6,7 @@
  * Emits events for plugin lifecycle (started, stopped, crashed, log).
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports */
 'use strict';
 
 const { fork, spawn, execSync } = require('child_process');
@@ -46,8 +47,26 @@ class PluginRunner extends EventEmitter {
     /** Directory for per-plugin databases */
     this._pluginDbDir = path.join(workspaceDir, '.2bot', 'plugin-dbs');
 
-    /** Maximum concurrent running plugins per container */
-    this.maxPlugins = 10;
+    /** Maximum concurrent running plugins per container (env-configurable) */
+    this.maxPlugins = parseInt(process.env.MAX_PLUGINS_PER_CONTAINER || '50', 10);
+
+    // ── Per-Plugin Resource Monitor ──
+    // Checks memory usage every 10s and auto-restarts plugins that exceed hard limits
+    /** Soft memory limit (MB) — warn user */
+    this.memorySoftLimitMb = parseInt(process.env.PLUGIN_MEMORY_SOFT_LIMIT_MB || '256', 10);
+    /** Hard memory limit (MB) — auto-restart */
+    this.memoryHardLimitMb = parseInt(process.env.PLUGIN_MEMORY_HARD_LIMIT_MB || '512', 10);
+    /** Track restart counts to prevent restart-loops */
+    this._resourceRestarts = new Map(); // file → { count, firstAt, lastAt }
+    /** Max auto-restarts within the cooldown window before giving up */
+    this._maxResourceRestarts = 3;
+    /** Cooldown window (ms) — reset restart count after this period */
+    this._resourceRestartWindow = 5 * 60 * 1000; // 5 minutes
+
+    this._resourceMonitorInterval = setInterval(() => {
+      this._checkPluginResources();
+    }, 10_000);
+    this._resourceMonitorInterval.unref();
   }
 
   /**
@@ -154,6 +173,7 @@ class PluginRunner extends EventEmitter {
       cwd: pluginCwd,
       child,
       logs: [],
+      gatewayId: env.PLUGIN_GATEWAY_ID || null,
     };
 
     this.processes.set(normalizedFile, pluginProcess);
@@ -314,6 +334,7 @@ class PluginRunner extends EventEmitter {
         lastError: proc.lastError,
         isDirectory: proc.isDirectory || false,
         manifest: proc.manifest || null,
+        gatewayId: proc.gatewayId || null,
         uptimeSeconds: proc.status === 'running' && proc.startedAt
           ? Math.floor((Date.now() - new Date(proc.startedAt).getTime()) / 1000)
           : undefined,
@@ -354,7 +375,6 @@ class PluginRunner extends EventEmitter {
 
     // ── Resolve via manifest (works for both files and directories) ──
     const resolved = resolvePlugin(this.workspaceDir, normalizedFile);
-    let entryFullPath;
     const problems = [];
 
     if (!resolved) {
@@ -367,7 +387,7 @@ class PluginRunner extends EventEmitter {
       return { valid: false, problems: [{ severity: 'error', message: `Plugin not found: ${normalizedFile}` }] };
     }
 
-    entryFullPath = resolved.entryFile;
+    const entryFullPath = resolved.entryFile;
 
     // For directory plugins, also validate the manifest
     if (resolved.isDirectory) {
@@ -458,37 +478,74 @@ class PluginRunner extends EventEmitter {
    * Push an event to a running plugin via IPC.
    * Used for event-driven plugins that register an onEvent handler.
    * Does NOT fork a new process — sends to the existing child.
+   * Waits for the plugin to process the event and return a result.
    *
    * @param {string} file - Plugin file path relative to workspace
    * @param {object} event - The event object to deliver
-   * @returns {{ success: boolean, error?: string }}
+   * @param {number} [timeoutMs=30000] - Timeout in milliseconds
+   * @returns {Promise<{ success: boolean, output?: unknown, error?: string }>}
    */
-  pushEvent(file, event) {
+  pushEvent(file, event, timeoutMs = 30000) {
     const normalizedFile = file.startsWith('/') ? file.slice(1) : file;
     const proc = this.processes.get(normalizedFile);
 
     if (!proc) {
-      return { success: false, error: `Plugin not found: ${file}` };
+      return Promise.resolve({ success: false, error: `Plugin not found: ${file}` });
     }
 
     if (proc.status !== 'running' || !proc.child || !proc.child.connected) {
-      return { success: false, error: `Plugin not running or IPC disconnected: ${file}` };
+      return Promise.resolve({ success: false, error: `Plugin not running or IPC disconnected: ${file}` });
     }
 
-    try {
-      const sent = proc.child.send({ type: 'plugin.event', event });
-      this.log.debug(`Event pushed to plugin: ${normalizedFile} (type: ${event?.type || 'unknown'}) send=${sent} connected=${proc.child.connected}`);
-      return { success: true };
-    } catch (err) {
-      this.log.error(`Failed to push event to plugin ${normalizedFile}: ${err.message}`);
-      return { success: false, error: err.message };
-    }
+    return new Promise((resolve) => {
+      const child = proc.child;
+
+      const onMessage = (msg) => {
+        if (msg && msg.type === 'plugin.event.result') {
+          clearTimeout(timer);
+          child.removeListener('message', onMessage);
+          if (msg.success) {
+            resolve({ success: true, output: msg.output ?? null });
+          } else {
+            resolve({ success: false, error: msg.error || 'Plugin event handler failed' });
+          }
+        }
+      };
+
+      const timer = setTimeout(() => {
+        child.removeListener('message', onMessage);
+        this.log.warn(`Plugin event timeout (${timeoutMs}ms): ${normalizedFile}`);
+        resolve({ success: true, output: null });
+      }, timeoutMs);
+
+      child.on('message', onMessage);
+
+      try {
+        const sent = child.send({ type: 'plugin.event', event });
+        this.log.debug(`Event pushed to plugin: ${normalizedFile} (type: ${event?.type || 'unknown'}) send=${sent} connected=${child.connected}`);
+        if (!sent) {
+          clearTimeout(timer);
+          child.removeListener('message', onMessage);
+          resolve({ success: false, error: 'Failed to send event to plugin process' });
+        }
+      } catch (err) {
+        clearTimeout(timer);
+        child.removeListener('message', onMessage);
+        this.log.error(`Failed to push event to plugin ${normalizedFile}: ${err.message}`);
+        resolve({ success: false, error: err.message });
+      }
+    });
   }
 
   /**
    * Stop all running plugins (for graceful shutdown)
    */
   async stopAll() {
+    // Stop resource monitor
+    if (this._resourceMonitorInterval) {
+      clearInterval(this._resourceMonitorInterval);
+      this._resourceMonitorInterval = null;
+    }
     const promises = [];
     for (const [, proc] of this.processes) {
       if (proc.status === 'running' && proc.child) {
@@ -556,6 +613,94 @@ class PluginRunner extends EventEmitter {
       // Process may have exited
     }
     return undefined;
+  }
+
+  /**
+   * Periodic resource check for all running plugins.
+   * - Soft limit exceeded → emit warning (logged, surfaced in dashboard)
+   * - Hard limit exceeded → auto-restart with cooldown protection
+   */
+  _checkPluginResources() {
+    for (const [file, proc] of this.processes) {
+      if (proc.status !== 'running' || !proc.pid) continue;
+
+      const memMb = this._getProcessMemory(proc.pid);
+      if (memMb === null || memMb === undefined) continue;
+
+      // Hard limit — auto-restart
+      if (memMb > this.memoryHardLimitMb) {
+        this.log.error(
+          `Plugin ${file} exceeded hard memory limit: ${memMb}MB > ${this.memoryHardLimitMb}MB`
+        );
+        this._addLog(file, 'error',
+          `RESOURCE_EXCEEDED: Memory ${memMb}MB exceeds hard limit ${this.memoryHardLimitMb}MB — restarting`
+        );
+
+        // Check restart cooldown to prevent restart-loops
+        const restartInfo = this._resourceRestarts.get(file) || { count: 0, firstAt: 0, lastAt: 0 };
+        const now = Date.now();
+
+        // Reset counter if outside window
+        if (now - restartInfo.firstAt > this._resourceRestartWindow) {
+          restartInfo.count = 0;
+          restartInfo.firstAt = now;
+        }
+
+        if (restartInfo.count >= this._maxResourceRestarts) {
+          this.log.error(
+            `Plugin ${file} hit ${this._maxResourceRestarts} resource restarts within ` +
+            `${this._resourceRestartWindow / 1000}s — stopping permanently`
+          );
+          this._addLog(file, 'error',
+            `Plugin stopped permanently: exceeded memory limit ${this._maxResourceRestarts} times in 5 minutes`
+          );
+          this.emit('resource_exceeded', {
+            file,
+            pid: proc.pid,
+            memoryMb: memMb,
+            action: 'stopped',
+            reason: 'restart_loop',
+          });
+          this.stop(file, true).catch(() => {}); // Force kill
+          continue;
+        }
+
+        restartInfo.count++;
+        restartInfo.lastAt = now;
+        if (restartInfo.count === 1) restartInfo.firstAt = now;
+        this._resourceRestarts.set(file, restartInfo);
+
+        this.emit('resource_exceeded', {
+          file,
+          pid: proc.pid,
+          memoryMb: memMb,
+          action: 'restarting',
+          restartCount: restartInfo.count,
+        });
+
+        this.restart(file).catch((err) => {
+          this.log.error(`Failed to auto-restart plugin ${file}: ${err.message}`);
+        });
+        continue;
+      }
+
+      // Soft limit — warn
+      if (memMb > this.memorySoftLimitMb) {
+        this.log.warn(
+          `Plugin ${file} approaching memory limit: ${memMb}MB > ${this.memorySoftLimitMb}MB soft limit`
+        );
+        this._addLog(file, 'warn',
+          `RESOURCE_WARNING: Memory usage ${memMb}MB exceeds soft limit ${this.memorySoftLimitMb}MB`
+        );
+        this.emit('resource_warning', {
+          file,
+          pid: proc.pid,
+          memoryMb: memMb,
+          softLimitMb: this.memorySoftLimitMb,
+          hardLimitMb: this.memoryHardLimitMb,
+        });
+      }
+    }
   }
 
   /**
@@ -733,11 +878,11 @@ class PluginRunner extends EventEmitter {
 
         // Fetch missing from server
         if (missingKeys.length > 0) {
-          let fetched = false;
+          let _fetched = false;
           try {
             if (this.sendIpcToPlatform) {
               const serverResult = await this.sendIpcToPlatform(pluginFile, method, { keys: missingKeys });
-              fetched = true;
+              _fetched = true;
               if (serverResult && typeof serverResult === 'object') {
                 for (const [k, v] of Object.entries(serverResult)) {
                   result[k] = v;
@@ -849,6 +994,32 @@ class PluginRunner extends EventEmitter {
       try { db.close(); } catch { /* ignore */ }
       this._pluginDbs.delete(pluginFile);
       this.log.info({ pluginFile }, 'Closed per-plugin database');
+    }
+  }
+
+  /**
+   * Delete a per-plugin database file from disk.
+   * Closes the connection first if open, then removes the .db file.
+   * @param {string} pluginFile
+   * @returns {{ deleted: boolean, path: string }}
+   */
+  deletePluginDb(pluginFile) {
+    this._closePluginDb(pluginFile);
+    const safeName = sanitizeDbName(pluginFile);
+    const dbPath = path.join(this._pluginDbDir, `${safeName}.db`);
+    try {
+      if (fs.existsSync(dbPath)) {
+        fs.unlinkSync(dbPath);
+        // Also remove WAL/SHM files if they exist
+        try { fs.unlinkSync(`${dbPath}-wal`); } catch { /* ignore */ }
+        try { fs.unlinkSync(`${dbPath}-shm`); } catch { /* ignore */ }
+        this.log.info({ pluginFile, dbPath }, 'Deleted per-plugin database');
+        return { deleted: true, path: dbPath };
+      }
+      return { deleted: false, path: dbPath };
+    } catch (err) {
+      this.log.warn({ pluginFile, dbPath, error: err.message }, 'Failed to delete per-plugin database');
+      return { deleted: false, path: dbPath };
     }
   }
 

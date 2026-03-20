@@ -14,9 +14,9 @@ import { twoBotAIUsageService } from "@/modules/2bot-ai-provider/2bot-ai-usage.s
 import type { PricingAuditReport } from "@/modules/2bot-ai-provider/pricing-monitor";
 import { getLastAuditReport, getRegisteredProviders, runPricingAudit } from "@/modules/2bot-ai-provider/pricing-monitor";
 import { workspaceService } from '@/modules/workspace';
-import { workspaceAuditService } from '@/modules/workspace/audit.service';
-import { egressProxyService } from '@/modules/workspace/egress-proxy.service';
-import { workspaceMetricsService } from '@/modules/workspace/metrics.service';
+import { workspaceAuditService } from '@/modules/workspace/workspace-audit.service';
+import { workspaceMetricsService } from '@/modules/workspace/workspace-metrics.service';
+import { egressProxyService } from '@/modules/workspace/workspace-squid.service';
 import { BadRequestError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext } from "@/shared/types/context";
@@ -1417,6 +1417,7 @@ adminRouter.get(
     totalCredits: number;
     byCapability: Array<{ capability: string; requests: number; credits: number }>;
     byModel: Array<{ model: string; requests: number; credits: number }>;
+    byProvider: Array<{ provider: string; requests: number; credits: number }>;
   }>>) => {
     const { period } = req.query;
     

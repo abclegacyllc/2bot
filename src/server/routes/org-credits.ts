@@ -12,7 +12,7 @@ import { Router } from "express";
 
 import { logger } from "@/lib/logger";
 import { getCurrentBillingPeriod } from "@/modules/2bot-ai-provider";
-import { creditService, twoBotAICreditService, type WalletType } from "@/modules/credits";
+import { creditService, twoBotAICreditService, type CreditUsageCategory, type WalletType } from "@/modules/credits";
 import { BadRequestError, NotFoundError } from "@/shared/errors";
 import { formatCredits } from "@/shared/lib/format";
 import type { ApiResponse } from "@/shared/types";
@@ -143,6 +143,7 @@ interface OrgCreditsHistoryResponse {
     amount: number;
     balanceAfter: number;
     description: string | null;
+    category?: CreditUsageCategory;
     createdAt: Date;
   }>;
   total: number;
@@ -160,6 +161,7 @@ interface OrgCreditsHistoryResponse {
  * @query {number} [page] - Page number (default: 1)
  * @query {number} [pageSize] - Items per page (default: 20)
  * @query {string} [type] - Filter by type (purchase, usage, refund, bonus, grant)
+ * @query {string} [category] - Filter by usage category (ai_usage, marketplace, premium_feature, etc.)
  */
 orgCreditsRouter.get(
   "/history",
@@ -170,6 +172,7 @@ orgCreditsRouter.get(
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = Math.min(parseInt(req.query.pageSize as string) || 20, 100);
     const type = req.query.type as string | undefined;
+    const category = req.query.category as CreditUsageCategory | undefined;
 
     const offset = (page - 1) * pageSize;
     const result = await twoBotAICreditService.getOrgTransactions(orgId, {
@@ -182,11 +185,36 @@ orgCreditsRouter.get(
       throw new NotFoundError("Organization credit wallet not found");
     }
 
+    // Filter by category if specified (from metadata)
+    const filteredTransactions = category
+      ? result.transactions.filter((t) => {
+          const meta = t.metadata as Record<string, unknown> | null;
+          return meta?.category === category;
+        })
+      : result.transactions;
+
+    // Adjust total when category filter reduces results
+    const filteredTotal = category ? filteredTransactions.length : result.total;
+
+    // Map metadata.category to top-level category field
+    const mappedTransactions = filteredTransactions.map((t) => {
+      const meta = t.metadata as Record<string, unknown> | null;
+      return {
+        id: t.id,
+        type: t.type,
+        amount: t.amount,
+        balanceAfter: t.balanceAfter,
+        description: t.description,
+        category: (meta?.category as CreditUsageCategory) || undefined,
+        createdAt: t.createdAt,
+      };
+    });
+
     res.json({
       success: true,
       data: {
-        transactions: result.transactions,
-        total: result.total,
+        transactions: mappedTransactions,
+        total: filteredTotal,
         page,
         pageSize,
         walletType: result.walletType,
@@ -357,7 +385,7 @@ orgCreditsRouter.post(
           price_data: {
             currency: "usd",
             product_data: {
-              name: `2Bot AI Org Credits - ${pkg.name}`,
+              name: `2Bot Org Credits - ${pkg.name}`,
               description: `${pkg.credits.toLocaleString()} credits for organization`,
             },
             unit_amount: pkg.price * 100, // cents

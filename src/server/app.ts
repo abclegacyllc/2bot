@@ -1,5 +1,8 @@
 import { loggers } from "@/lib/logger";
 import { initializeProviderHealth } from "@/modules/2bot-ai-provider/provider-health.service";
+import { BUILTIN_PLUGINS } from "@/modules/plugin/handlers";
+import { registerPlugin } from "@/modules/plugin/plugin.executor";
+import { workflowService } from "@/modules/workflow/workflow.service";
 import cors from "cors";
 import express, { type Express } from "express";
 import helmet from "helmet";
@@ -105,6 +108,11 @@ export function startServer(app: Express): ReturnType<Express['listen']> {
       serverLogger.info(`   Enterprise mode: Routes at root (no /api prefix)`);
     }
 
+    // Register built-in plugins for in-process execution
+    for (const [slug, reg] of BUILTIN_PLUGINS) {
+      registerPlugin(slug, reg.handler);
+    }
+
     // Initialize AI provider health checks (async, non-blocking)
     initializeProviderHealth().catch((err) => {
       serverLogger.error({ err }, "Failed to initialize AI provider health checks");
@@ -112,6 +120,18 @@ export function startServer(app: Express): ReturnType<Express['listen']> {
 
     // Initialize credit cron (monthly grants + daily claim resets)
     initializeCreditCron();
+
+    // Clean up workflow runs orphaned by previous server instance
+    workflowService.cleanupOrphanedRuns().catch((err) => {
+      serverLogger.error({ err }, "Failed to clean up orphaned workflow runs");
+    });
+
+    // Run orphaned-run cleanup every 2 minutes (not just on startup)
+    setInterval(() => {
+      workflowService.cleanupOrphanedRuns().catch((err) => {
+        serverLogger.error({ err }, "Scheduled orphaned run cleanup failed");
+      });
+    }, 2 * 60 * 1000);
   });
 
   return server;

@@ -140,12 +140,22 @@ const ECHO_BOT_CODE = `'use strict';
  * Echoes back every Telegram message with a configurable prefix.
  * Events are pushed by the platform — no polling needed.
  *
+ * In workflow mode: returns the echoed text as structured output.
+ *
  * Config: { prefix: string, ignoreCommands: boolean }
  */
 
 const sdk = require('/bridge-agent/plugin-sdk');
 
 sdk.onEvent(async (event) => {
+  // Workflow mode: process input and return output (no gateway messages)
+  if (sdk.isWorkflowStep(event)) {
+    const input = sdk.getWorkflowInput(event);
+    const text = (input && input.text) || (event.data?.message?.text) || '';
+    const prefix = sdk.config.prefix ?? 'Echo:';
+    return { text: prefix + ' ' + text };
+  }
+
   if (event.type !== 'telegram.message') return;
 
   const msg = event.data?.message;
@@ -535,19 +545,38 @@ const AI_CHAT_BOT_CODE = `'use strict';
  * A Telegram bot powered by 2Bot AI. Responds to messages using
  * configurable AI models with conversation memory.
  *
+ * In workflow mode: processes structured input and returns AI response as output.
+ *
  * Config: { model: string, systemPrompt: string, maxHistory: number }
  */
 
 const sdk = require('/bridge-agent/plugin-sdk');
 
 sdk.onEvent(async (event) => {
+  // Workflow mode: process input, return structured output (no gateway messages)
+  if (sdk.isWorkflowStep(event)) {
+    const input = sdk.getWorkflowInput(event);
+    const prev = sdk.getWorkflowPreviousOutput(event);
+    const text = (input && input.text) || (input && input.message) || (prev && prev.text) || '';
+    const model = sdk.config.model || 'auto';
+    const systemPrompt = sdk.config.systemPrompt || 'You are a helpful assistant.';
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: String(text) },
+    ];
+
+    const result = await sdk.ai.chat({ messages, model });
+    return { content: result.content, model: result.model };
+  }
+
   if (event.type !== 'telegram.message') return;
 
   const msg = event.data?.message;
   if (!msg?.text || msg.text.startsWith('/')) return;
 
   const chatId = msg.chat.id;
-  const model = sdk.config.model || '2bot-ai-text-pro';
+  const model = sdk.config.model || 'auto';
   const systemPrompt = sdk.config.systemPrompt || 'You are a helpful assistant.';
   const maxHistory = sdk.config.maxHistory ?? 10;
 
@@ -621,7 +650,7 @@ sdk.onEvent(async (event) => {
     return;
   }
 
-  const model = sdk.config.model || '2bot-ai-image-pro';
+  const model = sdk.config.model || 'auto';
 
   try {
     // Send a "generating..." status
@@ -699,6 +728,36 @@ const weatherDescriptions = {
 };
 
 sdk.onEvent(async (event) => {
+  // Workflow mode: accept city as input, return weather data
+  if (sdk.isWorkflowStep(event)) {
+    const input = sdk.getWorkflowInput(event);
+    const city = (input && (input.city || input.text)) || '';
+    if (!city) return { error: 'No city provided in workflow input' };
+    try {
+      const geo = await fetchJson(
+        'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1'
+      );
+      if (!geo.results || geo.results.length === 0) return { error: 'City not found: ' + city };
+      const loc = geo.results[0];
+      const weather = await fetchJson(
+        'https://api.open-meteo.com/v1/forecast?latitude=' + loc.latitude
+        + '&longitude=' + loc.longitude
+        + '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code'
+        + '&timezone=auto'
+      );
+      const c = weather.current;
+      const desc = weatherDescriptions[c.weather_code] || 'Unknown';
+      return {
+        city: loc.name, country: loc.country,
+        description: desc, temperature: c.temperature_2m,
+        humidity: c.relative_humidity_2m, windSpeed: c.wind_speed_10m,
+        time: weather.current.time,
+      };
+    } catch (err) {
+      return { error: 'Weather fetch failed: ' + err.message };
+    }
+  }
+
   if (event.type !== 'telegram.message') return;
 
   const msg = event.data?.message;
@@ -1182,11 +1241,13 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
       properties: {
         prefix: {
           type: "string",
-          description: "Text to prepend to echoed messages (default: 'Echo:')",
+          title: "Echo Prefix",
+          description: "Text to prepend to echoed messages",
           default: "Echo:",
         },
         ignoreCommands: {
           type: "boolean",
+          title: "Ignore Commands",
           description: "Skip messages that start with / (slash commands)",
           default: false,
         },
@@ -1208,6 +1269,7 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
       properties: {
         welcomeMessage: {
           type: "string",
+          title: "Welcome Message",
           description: "Message sent when user runs /start",
           default: "Welcome! \ud83e\udd16 Use /help to see available commands.",
         },
@@ -1229,12 +1291,13 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
       properties: {
         rules: {
           type: "array",
-          description: "Keyword-response pairs",
+          title: "Auto-Reply Rules",
+          description: "Define keyword-response pairs. When a message contains the keyword, the bot will reply automatically.",
           items: {
             type: "object",
             properties: {
-              keyword: { type: "string", description: "Keyword to match (case-insensitive)" },
-              response: { type: "string", description: "Reply text" },
+              keyword: { type: "string", title: "Keyword", description: "Keyword to match (case-insensitive)" },
+              response: { type: "string", title: "Response", description: "Reply text to send when keyword matches" },
             },
           },
         },
@@ -1268,11 +1331,13 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
       properties: {
         reportChatId: {
           type: "string",
-          description: "Telegram chat ID to send reports to",
+          title: "Report Chat ID",
+          description: "Telegram chat ID where reports will be sent",
         },
         intervalMinutes: {
           type: "number",
-          description: "Report interval in minutes",
+          title: "Report Interval",
+          description: "How often to send reports (in minutes)",
           minimum: 5,
           maximum: 1440,
           default: 60,
@@ -1296,16 +1361,19 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
       properties: {
         trackUsers: {
           type: "boolean",
+          title: "Track Users",
           description: "Track individual user statistics",
           default: true,
         },
         trackChats: {
           type: "boolean",
+          title: "Track Chats",
           description: "Track individual chat/channel statistics",
           default: true,
         },
         retentionDays: {
           type: "number",
+          title: "Retention Period",
           description: "How long to keep detailed statistics (days)",
           minimum: 7,
           maximum: 365,
@@ -1313,6 +1381,7 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
         },
         enableHourlyStats: {
           type: "boolean",
+          title: "Hourly Statistics",
           description: "Enable hourly granularity (uses more storage)",
           default: true,
         },
@@ -1336,14 +1405,8 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
           type: "string",
           title: "AI Model",
           description: "The AI model to use for generating responses",
-          default: "2bot-ai-text-pro",
+          default: "auto",
           uiComponent: "ai-model-selector",
-          enum: [
-            "2bot-ai-text-free",
-            "2bot-ai-text-lite",
-            "2bot-ai-text-pro",
-            "2bot-ai-text-ultra",
-          ],
         },
         systemPrompt: {
           type: "string",
@@ -1379,9 +1442,8 @@ export const PLUGIN_TEMPLATES: PluginTemplate[] = [
           type: "string",
           title: "Image Model",
           description: "The AI model to use for image generation",
-          default: "2bot-ai-image-pro",
+          default: "auto",
           uiComponent: "ai-model-selector",
-          enum: ["2bot-ai-image-pro", "2bot-ai-image-ultra"],
         },
         triggerPrefix: {
           type: "string",

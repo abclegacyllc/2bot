@@ -15,8 +15,8 @@ import { gatewayChatService } from "@/modules/gateway/gateway-chats.service";
 import { gatewayMetricService } from "@/modules/gateway/gateway-metrics.service";
 import type { GatewayListItem, SafeGateway } from "@/modules/gateway/gateway.types";
 import {
-  createGatewaySchema,
-  updateGatewaySchema,
+    createGatewaySchema,
+    updateGatewaySchema,
 } from "@/modules/gateway/gateway.validation";
 import { BadRequestError, NotFoundError, ValidationError } from "@/shared/errors";
 import type { ApiResponse, PaginatedResponse } from "@/shared/types";
@@ -119,7 +119,7 @@ function getPathParam(req: Request, name: string): string {
  *
  * @deprecated Use /api/user/gateways for personal or /api/orgs/:orgId/gateways for organization
  *
- * @query {string} [type] - Filter by gateway type (TELEGRAM_BOT, AI, CUSTOM_GATEWAY)
+ * @query {string} [type] - Filter by gateway type (TELEGRAM_BOT, DISCORD_BOT, SLACK_BOT, WHATSAPP_BOT)
  * @query {string} [status] - Filter by status (CONNECTED, DISCONNECTED, ERROR)
  * @query {number} [page] - Page number (default 1)
  * @query {number} [limit] - Max results (default 50)
@@ -180,7 +180,7 @@ gatewayRouter.get(
  * Create a new gateway
  *
  * @body {string} name - Gateway name
- * @body {GatewayType} type - Gateway type (TELEGRAM_BOT, AI, CUSTOM_GATEWAY)
+ * @body {GatewayType} type - Gateway type (TELEGRAM_BOT, DISCORD_BOT, SLACK_BOT, WHATSAPP_BOT)
  * @body {object} credentials - Type-specific credentials
  * @body {object} [config] - Optional type-specific config
  *
@@ -467,10 +467,6 @@ gatewayRouter.post(
       // For Telegram bots, we could include bot info
       // The bot info is already cached in the provider after connect
       result.details = { botUsername: "Connected" };
-    } else if (gateway.type === "AI" && healthResult.healthy) {
-      result.details = {
-        provider: (credentials as { provider?: string }).provider,
-      };
     }
 
     // Update gateway status based on test result

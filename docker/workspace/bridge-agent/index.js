@@ -26,6 +26,7 @@ const { TerminalService } = require('./terminal-service');
 const { LogCollector } = require('./log-collector');
 const { HealthMonitor } = require('./health');
 const { LocalStore } = require('./local-store');
+const { createWebhookHandler } = require('./webhook-handler');
 
 // ===========================================
 // Configuration
@@ -35,11 +36,6 @@ const PORT = parseInt(process.env.BRIDGE_PORT || '9000', 10);
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace';
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 const AUTH_TOKEN = process.env.BRIDGE_AUTH_TOKEN || null; // Set by platform when creating container
-
-// Webhook secret tokens are fetched per-gateway from the REST credentials endpoint.
-// Cache: gatewayId → { token: string | null, fetchedAt: number }
-const webhookSecretTokenCache = new Map();
-const SECRET_TOKEN_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // ===========================================
 // Logger (lightweight, no dependencies)
@@ -329,9 +325,9 @@ const actionHandlers = {
   'plugin.list': () => pluginRunner.list(),
   'plugin.logs': (payload) => pluginRunner.getLogs(payload.file, payload.lines),
   'plugin.validate': (payload) => pluginRunner.validate(payload.file),
-  'plugin.event': (payload) => {
+  'plugin.event': async (payload) => {
     log.debug(`plugin.event received: file=${payload.file} type=${payload.event?.type}`);
-    return pluginRunner.pushEvent(payload.file, payload.event);
+    return await pluginRunner.pushEvent(payload.file, payload.event);
   },
 
   // Git operations
@@ -364,6 +360,10 @@ const actionHandlers = {
     if (!payload.pluginFile) throw new Error('storage.clearPlugin requires "pluginFile"');
     return localStore.clearPlugin(payload.pluginFile);
   },
+  'storage.deletePluginDb': (payload) => {
+    if (!payload.pluginFile) throw new Error('storage.deletePluginDb requires "pluginFile"');
+    return pluginRunner.deletePluginDb(payload.pluginFile);
+  },
   'storage.setQuota': (payload) => {
     if (!payload.pluginFile) throw new Error('storage.setQuota requires "pluginFile"');
     const quotaMb = typeof payload.quotaMb === 'number' ? payload.quotaMb : 50;
@@ -376,101 +376,7 @@ const actionHandlers = {
 // HTTP Server (health + webhook endpoints)
 // ===========================================
 
-/**
- * Collect request body as a Buffer.
- * @param {import('http').IncomingMessage} req
- * @param {number} maxBytes
- * @returns {Promise<Buffer>}
- */
-function collectBody(req, maxBytes = 1024 * 1024) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > maxBytes) {
-        req.destroy();
-        reject(new Error('Body too large'));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
-
-/**
- * Parse URL and extract route params.
- * Returns { matched, gatewayId } or null.
- */
-function matchWebhookRoute(url) {
-  // Match: /webhook/telegram/<uuid-like-id>
-  const m = url.match(/^\/webhook\/telegram\/([a-z0-9_-]+)$/i);
-  return m ? { gatewayId: m[1] } : null;
-}
-
-/**
- * Fetch the webhook secret token for a gateway from the REST credentials endpoint.
- * Caches the result for SECRET_TOKEN_CACHE_TTL.
- *
- * @param {string} gatewayId
- * @returns {Promise<string|null>} The secret token or null if not configured
- */
-async function getWebhookSecretToken(gatewayId) {
-  const cached = webhookSecretTokenCache.get(gatewayId);
-  if (cached && Date.now() - cached.fetchedAt < SECRET_TOKEN_CACHE_TTL) {
-    return cached.token;
-  }
-
-  try {
-    const bridgeToken = process.env.BRIDGE_AUTH_TOKEN;
-    if (!bridgeToken) {
-      log.warn({ gatewayId }, 'No BRIDGE_AUTH_TOKEN — cannot fetch webhook secret token');
-      return null;
-    }
-
-    const apiHost = process.env.CREDENTIAL_API_HOST || '172.17.0.1';
-    const apiPort = parseInt(process.env.CREDENTIAL_API_PORT || '3002', 10);
-
-    const data = await new Promise((resolve, reject) => {
-      const req = http.request(
-        {
-          hostname: apiHost,
-          port: apiPort,
-          path: `/internal/credentials/${gatewayId}`,
-          method: 'GET',
-          headers: { 'X-Bridge-Token': bridgeToken, Accept: 'application/json' },
-          timeout: 5000,
-        },
-        (res) => {
-          const chunks = [];
-          res.on('data', (c) => chunks.push(c));
-          res.on('end', () => {
-            try {
-              resolve(JSON.parse(Buffer.concat(chunks).toString()));
-            } catch {
-              reject(new Error('Invalid JSON from credentials endpoint'));
-            }
-          });
-          res.on('error', reject);
-        },
-      );
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-      req.end();
-    });
-
-    const token = (data && data.success && data.data?.webhookSecretToken) || null;
-    webhookSecretTokenCache.set(gatewayId, { token, fetchedAt: Date.now() });
-    return token;
-  } catch (err) {
-    log.warn({ gatewayId, error: err.message }, 'Failed to fetch webhook secret token');
-    // If we had a previous cached value, keep using it
-    if (cached) return cached.token;
-    return null;
-  }
-}
+const handleWebhook = createWebhookHandler({ pluginRunner, log, emitEvent });
 
 const httpServer = http.createServer(async (req, res) => {
   // ── Health check ──
@@ -483,96 +389,8 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // ── Telegram webhook (direct from nginx) ──
-  const route = req.method === 'POST' ? matchWebhookRoute(req.url) : null;
-  if (route) {
-    try {
-      // 1. Validate Telegram secret token (fetched per-gateway)
-      const expectedToken = await getWebhookSecretToken(route.gatewayId);
-      if (expectedToken) {
-        const headerToken = req.headers['x-telegram-bot-api-secret-token'];
-        if (headerToken !== expectedToken) {
-          log.warn({ gatewayId: route.gatewayId }, 'Webhook secret token mismatch');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Invalid secret token' }));
-          return;
-        }
-      }
-
-      // 2. Parse body
-      const body = await collectBody(req);
-      let update;
-      try {
-        update = JSON.parse(body.toString());
-      } catch {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'Invalid JSON' }));
-        return;
-      }
-
-      // 3. Validate update
-      if (!update || typeof update.update_id !== 'number') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'Invalid update payload' }));
-        return;
-      }
-
-      log.info({ gatewayId: route.gatewayId, updateId: update.update_id }, 'Webhook received directly');
-
-      // 4. Determine event type from raw Telegram update
-      let eventType = 'telegram.unknown';
-      if (update.message) eventType = 'telegram.message';
-      else if (update.callback_query) eventType = 'telegram.callback';
-      else if (update.edited_message) eventType = 'telegram.edited_message';
-      else if (update.channel_post) eventType = 'telegram.channel_post';
-      else if (update.edited_channel_post) eventType = 'telegram.edited_channel_post';
-      else if (update.inline_query) eventType = 'telegram.inline_query';
-      else if (update.chosen_inline_result) eventType = 'telegram.chosen_inline_result';
-      else if (update.my_chat_member) eventType = 'telegram.my_chat_member';
-      else if (update.chat_member) eventType = 'telegram.chat_member';
-      else if (update.chat_join_request) eventType = 'telegram.chat_join_request';
-
-      // 5. Build event envelope (same format as platform → bridge → plugin)
-      //    data = raw Telegram update (plugins receive snake_case fields directly)
-      const event = {
-        type: eventType,
-        data: update,
-        gatewayId: route.gatewayId,
-      };
-
-      // 6. Push to all running plugins
-      const running = pluginRunner.list().filter(p => p.status === 'running');
-      let pushed = 0;
-      for (const proc of running) {
-        const result = pluginRunner.pushEvent(proc.file, event);
-        if (result.success) pushed++;
-      }
-
-      log.info({ gatewayId: route.gatewayId, eventType, pushed, total: running.length }, 'Webhook routed to plugins');
-
-      // Emit inbound traffic log to platform for recording
-      emitEvent('traffic.inbound', {
-        timestamp: new Date().toISOString(),
-        domain: 'api.telegram.org',
-        url: req.url,
-        method: 'POST',
-        httpStatus: 200,
-        bytesTransferred: body.length,
-        sourceType: 'telegram',
-        gatewayId: route.gatewayId,
-        eventType,
-        pluginsDelivered: pushed,
-      });
-
-      // Always 200 to Telegram
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, data: { received: true, pushed } }));
-    } catch (err) {
-      log.error({ error: err.message }, 'Webhook handler error');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Internal error' }));
-    }
-    return;
-  }
+  const handled = await handleWebhook(req, res);
+  if (handled) return;
 
   // Custom gateway events no longer arrive via HTTP proxy.
   // They flow through the WebSocket IPC path:

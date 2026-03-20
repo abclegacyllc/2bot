@@ -10,7 +10,8 @@
 
 import type {
     CircuitBreaker,
-    CircuitOpenError} from "@/lib/circuit-breaker";
+    CircuitOpenError
+} from "@/lib/circuit-breaker";
 import {
     circuitRegistry,
     type CircuitBreakerStats
@@ -52,20 +53,26 @@ const STRICT_PLUGIN_CIRCUIT_CONFIG = {
 // ===========================================
 
 /**
- * Get the circuit breaker name for a plugin
+ * Get the circuit breaker name for a plugin.
+ * Scoped per-user so one user's failures don't trip the breaker for everyone.
+ * Falls back to global (pluginSlug only) when no userId is provided.
  */
-function getCircuitName(pluginSlug: string): string {
+function getCircuitName(pluginSlug: string, userId?: string): string {
+  if (userId) {
+    return `plugin:${pluginSlug}:user:${userId}`;
+  }
   return `plugin:${pluginSlug}`;
 }
 
 /**
- * Get or create a circuit breaker for a plugin
+ * Get or create a circuit breaker for a plugin (scoped per user).
  */
 export function getPluginCircuit(
   pluginSlug: string,
-  isStrict = false
+  isStrict = false,
+  userId?: string
 ): CircuitBreaker {
-  const name = getCircuitName(pluginSlug);
+  const name = getCircuitName(pluginSlug, userId);
   const config = isStrict ? STRICT_PLUGIN_CIRCUIT_CONFIG : DEFAULT_PLUGIN_CIRCUIT_CONFIG;
   return circuitRegistry.getOrCreate(name, config);
 }
@@ -86,9 +93,10 @@ export function getPluginCircuit(
 export async function executePluginWithCircuit<T>(
   pluginSlug: string,
   operation: () => Promise<T>,
-  isStrict = false
+  isStrict = false,
+  userId?: string
 ): Promise<T> {
-  const circuit = getPluginCircuit(pluginSlug, isStrict);
+  const circuit = getPluginCircuit(pluginSlug, isStrict, userId);
   return circuit.execute(operation);
 }
 

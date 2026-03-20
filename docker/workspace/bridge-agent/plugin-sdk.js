@@ -29,6 +29,7 @@
  * @module plugin-sdk
  */
 
+/* eslint-disable @typescript-eslint/no-require-imports */
 'use strict';
 
 const http = require('http');
@@ -99,12 +100,17 @@ let handlersReady = false;
 
 /**
  * Process a buffered/incoming event through all registered handlers.
+ * Captures the return value of the last handler as the event output.
  */
 async function dispatchEvent(event) {
   const errors = [];
+  let lastOutput = undefined;
   for (const handler of eventHandlers) {
     try {
-      await handler(event);
+      const result = await handler(event);
+      if (result !== undefined) {
+        lastOutput = result;
+      }
     } catch (err) {
       console.error('[plugin-sdk] onEvent handler error:', err.message || err);
       errors.push(err.message || String(err));
@@ -112,7 +118,7 @@ async function dispatchEvent(event) {
   }
   if (typeof process.send === 'function') {
     if (errors.length === 0) {
-      process.send({ type: 'plugin.event.result', success: true, result: null });
+      process.send({ type: 'plugin.event.result', success: true, output: lastOutput ?? null });
     } else {
       process.send({ type: 'plugin.event.result', success: false, error: errors.join('; ') });
     }
@@ -712,8 +718,9 @@ async function sdkFetch(url, options = {}) {
     throw new Error('sdk.fetch() requires a URL string as the first argument');
   }
 
-  let { method, headers, body, timeout } = options;
-  headers = headers || {};
+  const { method, headers: rawHeaders, body: rawBody, timeout } = options;
+  const headers = rawHeaders || {};
+  let body = rawBody;
 
   // Auto-serialize object bodies to JSON
   if (body && typeof body === 'object' && !Buffer.isBuffer(body)) {
@@ -742,6 +749,129 @@ async function sdkFetch(url, options = {}) {
 }
 
 // ===========================================
+// Outbound Rate Limiter (per-gateway token bucket)
+// ===========================================
+
+/**
+ * Platform-aware rate limiting for outbound API calls.
+ *
+ * Telegram limits:
+ *   - 30 messages/second globally per bot
+ *   - ~1 message/second to the same chat (group: ~20/min)
+ *   - 429 responses include retry_after in seconds
+ *
+ * We use a conservative token bucket that refills at the platform rate.
+ * Each gateway (bot) gets its own bucket. Per-chat throttling prevents
+ * flooding a single conversation.
+ */
+const RATE_LIMITS = {
+  TELEGRAM_BOT: { tokensPerSecond: 25, maxBurst: 30, perChatMs: 1000 },
+  DISCORD_BOT:  { tokensPerSecond: 4,  maxBurst: 5,  perChatMs: 250 },
+  SLACK_BOT:    { tokensPerSecond: 1,  maxBurst: 1,  perChatMs: 1000 },
+  WHATSAPP:     { tokensPerSecond: 60, maxBurst: 80, perChatMs: 100 },
+};
+const DEFAULT_RATE = { tokensPerSecond: 10, maxBurst: 15, perChatMs: 500 };
+
+/** Max retries on 429 before giving up */
+const MAX_429_RETRIES = 3;
+
+/**
+ * Per-gateway rate limiter state.
+ * Key: gatewayId, Value: { tokens, lastRefill, chatTimestamps }
+ */
+const gatewayBuckets = new Map();
+
+function getOrCreateBucket(gatewayId, gatewayType) {
+  let bucket = gatewayBuckets.get(gatewayId);
+  if (!bucket) {
+    const limits = RATE_LIMITS[gatewayType] || DEFAULT_RATE;
+    bucket = {
+      tokens: limits.maxBurst,
+      maxBurst: limits.maxBurst,
+      tokensPerSecond: limits.tokensPerSecond,
+      perChatMs: limits.perChatMs,
+      lastRefill: Date.now(),
+      chatTimestamps: new Map(), // chatId → last send timestamp
+      backoffUntil: 0,           // 429 backoff deadline (epoch ms)
+    };
+    gatewayBuckets.set(gatewayId, bucket);
+  }
+  return bucket;
+}
+
+/**
+ * Wait until the rate limiter allows sending.
+ * Returns immediately if a token is available; otherwise waits.
+ *
+ * @param {string} gatewayId
+ * @param {string} gatewayType - e.g. 'TELEGRAM_BOT'
+ * @param {string|number|null} chatId - Target chat (for per-chat throttle)
+ * @returns {Promise<void>}
+ */
+async function acquireSendToken(gatewayId, gatewayType, chatId) {
+  const bucket = getOrCreateBucket(gatewayId, gatewayType);
+
+  // Respect 429 backoff
+  const now = Date.now();
+  if (bucket.backoffUntil > now) {
+    const waitMs = bucket.backoffUntil - now;
+    await new Promise(r => setTimeout(r, waitMs));
+  }
+
+  // Refill tokens based on elapsed time
+  const elapsed = (Date.now() - bucket.lastRefill) / 1000;
+  bucket.tokens = Math.min(bucket.maxBurst, bucket.tokens + elapsed * bucket.tokensPerSecond);
+  bucket.lastRefill = Date.now();
+
+  // Wait for a token if bucket is empty
+  if (bucket.tokens < 1) {
+    const waitMs = ((1 - bucket.tokens) / bucket.tokensPerSecond) * 1000;
+    await new Promise(r => setTimeout(r, Math.ceil(waitMs)));
+    bucket.tokens = 0;
+    bucket.lastRefill = Date.now();
+  }
+
+  // Per-chat throttle: ensure minimum gap between messages to the same chat
+  if (chatId !== null && chatId !== undefined) {
+    const chatKey = String(chatId);
+    const lastSent = bucket.chatTimestamps.get(chatKey) || 0;
+    const chatWait = bucket.perChatMs - (Date.now() - lastSent);
+    if (chatWait > 0) {
+      await new Promise(r => setTimeout(r, chatWait));
+    }
+    bucket.chatTimestamps.set(chatKey, Date.now());
+
+    // Prune old chat timestamps (keep only last 5 minutes)
+    if (bucket.chatTimestamps.size > 500) {
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      for (const [k, v] of bucket.chatTimestamps) {
+        if (v < cutoff) bucket.chatTimestamps.delete(k);
+      }
+    }
+  }
+
+  // Consume a token
+  bucket.tokens = Math.max(0, bucket.tokens - 1);
+}
+
+/**
+ * Notify the rate limiter that a 429 was received.
+ * Sets a backoff period based on the retry_after header.
+ *
+ * @param {string} gatewayId
+ * @param {number} retryAfterSeconds
+ */
+function handle429(gatewayId, retryAfterSeconds) {
+  const bucket = gatewayBuckets.get(gatewayId);
+  if (bucket) {
+    const backoffMs = (retryAfterSeconds || 1) * 1000;
+    bucket.backoffUntil = Date.now() + backoffMs;
+    bucket.tokens = 0; // Drain tokens so subsequent calls also wait
+    console.warn(`[plugin-sdk] Rate limited on gateway ${gatewayId}, backing off ${retryAfterSeconds}s`);
+  }
+}
+
+// ===========================================
 // Direct Telegram API Call
 // ===========================================
 
@@ -749,20 +879,150 @@ async function sdkFetch(url, options = {}) {
  * Call the Telegram Bot API directly from the container.
  * Routes through the Squid egress proxy via _proxyRequest().
  *
+ * Includes automatic 429 retry: if Telegram returns Too Many Requests,
+ * waits for retry_after seconds and retries up to MAX_429_RETRIES times.
+ *
  * @param {string} botToken - The bot token
  * @param {string} method - Telegram API method (e.g., 'sendMessage')
  * @param {object} params - Method parameters
  * @returns {Promise<object>} Telegram API response
  */
-function telegramApiCall(botToken, method, params) {
+async function telegramApiCall(botToken, method, params) {
   const url = `https://api.telegram.org/bot${botToken}/${method}`;
   const body = JSON.stringify(params);
   const headers = {
     'Content-Type': 'application/json',
   };
 
-  return _proxyRequest(url, { method: 'POST', headers, body, timeout: 15000 })
-    .then((res) => _collectJson(res));
+  for (let attempt = 0; attempt <= MAX_429_RETRIES; attempt++) {
+    const res = await _proxyRequest(url, { method: 'POST', headers, body, timeout: 15000 });
+    const json = await _collectJson(res);
+
+    // Handle 429 Too Many Requests
+    if (json.error_code === 429 && attempt < MAX_429_RETRIES) {
+      const retryAfter = json.parameters?.retry_after || 1;
+      // Extract gatewayId from the URL for bucket tracking
+      // Token format: bot<token>/method — we use the token hash as key
+      const tokenHash = botToken.slice(-8);
+      handle429(tokenHash, retryAfter);
+      console.warn(
+        `[plugin-sdk] Telegram 429 on ${method} — retry_after=${retryAfter}s (attempt ${attempt + 1}/${MAX_429_RETRIES})`
+      );
+      await new Promise(r => setTimeout(r, retryAfter * 1000));
+      continue;
+    }
+
+    return json;
+  }
+
+  // Should not reach here, but safety return
+  return { ok: false, error_code: 429, description: 'Rate limit exceeded after max retries' };
+}
+
+// ===========================================
+// Circuit Breaker — Per-Gateway Failure Protection
+// ===========================================
+//
+// States:
+//   CLOSED  — normal operation, all calls go through
+//   OPEN    — too many consecutive failures, calls rejected immediately
+//   HALF_OPEN — cooldown expired, allow one test call to probe recovery
+//
+// Transitions:
+//   CLOSED  → OPEN      — after FAILURE_THRESHOLD consecutive failures
+//   OPEN    → HALF_OPEN — after OPEN_DURATION_MS elapsed
+//   HALF_OPEN → CLOSED  — on test call success
+//   HALF_OPEN → OPEN    — on test call failure (resets timer)
+//
+
+const CIRCUIT_FAILURE_THRESHOLD = 5;   // Consecutive failures to trip
+const CIRCUIT_OPEN_DURATION_MS = 30_000; // 30s before testing again
+
+/** Per-gateway circuit state */
+const gatewayCircuits = new Map();
+
+/**
+ * Get or create circuit breaker state for a gateway.
+ * @param {string} gatewayId
+ * @returns {{ state: string, failures: number, openedAt: number, lastFailure: number }}
+ */
+function getCircuit(gatewayId) {
+  let circuit = gatewayCircuits.get(gatewayId);
+  if (!circuit) {
+    circuit = { state: 'CLOSED', failures: 0, openedAt: 0, lastFailure: 0 };
+    gatewayCircuits.set(gatewayId, circuit);
+  }
+  return circuit;
+}
+
+/**
+ * Check if a gateway call is allowed by the circuit breaker.
+ * @param {string} gatewayId
+ * @returns {{ allowed: boolean, state: string }}
+ */
+function circuitAllows(gatewayId) {
+  const circuit = getCircuit(gatewayId);
+
+  if (circuit.state === 'CLOSED') {
+    return { allowed: true, state: 'CLOSED' };
+  }
+
+  if (circuit.state === 'OPEN') {
+    // Check if cooldown has elapsed → transition to HALF_OPEN
+    if (Date.now() - circuit.openedAt >= CIRCUIT_OPEN_DURATION_MS) {
+      circuit.state = 'HALF_OPEN';
+      console.warn(`[plugin-sdk] Circuit HALF_OPEN for gateway ${gatewayId} — allowing test call`);
+      return { allowed: true, state: 'HALF_OPEN' };
+    }
+    return { allowed: false, state: 'OPEN' };
+  }
+
+  // HALF_OPEN — allow single test call
+  return { allowed: true, state: 'HALF_OPEN' };
+}
+
+/**
+ * Record a successful gateway call — resets failure count, closes circuit.
+ * @param {string} gatewayId
+ */
+function circuitSuccess(gatewayId) {
+  const circuit = getCircuit(gatewayId);
+  if (circuit.state === 'HALF_OPEN') {
+    console.warn(`[plugin-sdk] Circuit CLOSED for gateway ${gatewayId} — recovery confirmed`);
+  }
+  circuit.state = 'CLOSED';
+  circuit.failures = 0;
+}
+
+/**
+ * Record a failed gateway call — may trip the circuit to OPEN.
+ * @param {string} gatewayId
+ * @param {string} reason - Failure reason for logging
+ */
+function circuitFailure(gatewayId, reason) {
+  const circuit = getCircuit(gatewayId);
+  circuit.failures++;
+  circuit.lastFailure = Date.now();
+
+  if (circuit.state === 'HALF_OPEN') {
+    // Test call failed — reopen
+    circuit.state = 'OPEN';
+    circuit.openedAt = Date.now();
+    console.warn(
+      `[plugin-sdk] Circuit re-OPENED for gateway ${gatewayId} — ` +
+      `test call failed: ${reason}`
+    );
+    return;
+  }
+
+  if (circuit.failures >= CIRCUIT_FAILURE_THRESHOLD) {
+    circuit.state = 'OPEN';
+    circuit.openedAt = Date.now();
+    console.warn(
+      `[plugin-sdk] Circuit OPENED for gateway ${gatewayId} — ` +
+      `${circuit.failures} consecutive failures (last: ${reason})`
+    );
+  }
 }
 
 // ===========================================
@@ -783,7 +1043,7 @@ const ai = {
    * @param {object} options - Chat options
    * @param {Array<{ role: 'system'|'user'|'assistant', content: string }>} options.messages
    *   Conversation messages. At minimum, provide one user message.
-   * @param {string} [options.model='2bot-ai-text-lite'] - 2Bot AI model ID
+   * @param {string} [options.model='auto'] - Model ID: "auto" (cheapest), real model ID, or legacy 2Bot tier
    * @param {number} [options.temperature] - Sampling temperature (0-2)
    * @param {number} [options.maxTokens] - Max output tokens (capped at 4096 server-side)
    * @returns {Promise<{ content: string, model: string, usage: { inputTokens: number, outputTokens: number, totalTokens: number }, creditsUsed: number }>}
@@ -801,7 +1061,7 @@ const ai = {
    * // With model and temperature
    * const result = await sdk.ai.chat({
    *   messages: [{ role: 'user', content: 'Write a poem about coding.' }],
-   *   model: '2bot-ai-text-pro',
+   *   model: '2bot-ai-text-pro', // or 'auto' for cheapest
    *   temperature: 0.8,
    * });
    */
@@ -824,7 +1084,7 @@ const ai = {
    *
    * @param {object} options - Image generation options
    * @param {string} options.prompt - Image description
-   * @param {string} [options.model='2bot-ai-image-pro'] - 2Bot AI model ID
+   * @param {string} [options.model='auto'] - Model ID: "auto" (cheapest), real model ID, or legacy 2Bot tier
    * @param {string} [options.size='1024x1024'] - Image size: '1024x1024' | '1792x1024' | '1024x1792'
    * @param {string} [options.quality='standard'] - Image quality: 'standard' | 'hd'
    * @param {number} [options.n=1] - Number of images (max 4)
@@ -940,6 +1200,15 @@ const gateway = {
    * });
    */
   async execute(gatewayId, action, params) {
+    // Circuit breaker — reject immediately if gateway is in OPEN state
+    const circuit = circuitAllows(gatewayId);
+    if (!circuit.allowed) {
+      throw new Error(
+        `Gateway ${gatewayId} circuit is OPEN — too many consecutive failures. ` +
+        `Calls will resume automatically after cooldown.`
+      );
+    }
+
     // Phase 1: Direct Telegram API call from the container
     let creds;
     try {
@@ -951,20 +1220,51 @@ const gateway = {
     }
 
     if (creds?.type === 'TELEGRAM_BOT' && creds.botToken) {
+      // Rate limit outbound calls to prevent Telegram 429s
+      const chatId = params?.chat_id ?? params?.chatId ?? null;
+      await acquireSendToken(gatewayId, 'TELEGRAM_BOT', chatId);
+
       const result = await telegramApiCall(creds.botToken, action, params);
       if (!result.ok) {
+        // If rate limited (429), the telegramApiCall already handles retries.
         // If unauthorized, clear cached credentials (token may have been rotated)
         if (result.error_code === 401) {
           credentialCache.delete(gatewayId);
         }
+        // Update rate limiter on 429 that exhausted retries
+        if (result.error_code === 429) {
+          handle429(gatewayId, result.parameters?.retry_after || 5);
+        }
+
+        // Track failure for circuit breaker (skip 401 — that's a config issue, not an outage)
+        if (result.error_code !== 401) {
+          circuitFailure(gatewayId, `Telegram ${result.error_code}: ${result.description || 'unknown'}`);
+        }
+
         const errMsg = result.description || JSON.stringify(result);
         throw new Error(`Telegram API error [${result.error_code || 'unknown'}]: ${errMsg}`);
       }
+
+      // Success — reset circuit breaker
+      circuitSuccess(gatewayId);
       return result.result;
     }
 
     // Non-Telegram gateway or missing token — relay through platform
-    return ipcRequest('gateway.execute', { gatewayId, action, params });
+    // Apply generic rate limiting for non-Telegram platforms
+    if (creds?.type) {
+      const chatId = params?.channel_id ?? params?.channel ?? params?.chat_id ?? null;
+      await acquireSendToken(gatewayId, creds.type, chatId);
+    }
+
+    try {
+      const ipcResult = await ipcRequest('gateway.execute', { gatewayId, action, params });
+      circuitSuccess(gatewayId);
+      return ipcResult;
+    } catch (ipcErr) {
+      circuitFailure(gatewayId, ipcErr.message);
+      throw ipcErr;
+    }
   },
 
   /**
@@ -999,6 +1299,39 @@ const sdk = {
   ai,
   database,
   config,
+
+  /**
+   * Check if the current event is from a workflow step execution.
+   * When true, the plugin is running as a service (input → output) inside a workflow.
+   *
+   * @param {object} event - The event object passed to onEvent handler
+   * @returns {boolean} True if the event is a workflow step execution
+   */
+  isWorkflowStep(event) {
+    return !!(event && event._workflow);
+  },
+
+  /**
+   * Get the resolved input mapping data for this workflow step.
+   * Returns undefined if the event is not a workflow step.
+   *
+   * @param {object} event - The event object passed to onEvent handler
+   * @returns {*} The resolved input data from workflow step configuration
+   */
+  getWorkflowInput(event) {
+    return event && event._workflow ? event._workflow.input : undefined;
+  },
+
+  /**
+   * Get the output from the previous workflow step.
+   * Returns undefined if this is the first step or not a workflow event.
+   *
+   * @param {object} event - The event object passed to onEvent handler
+   * @returns {*} The output from the previous step in the workflow
+   */
+  getWorkflowPreviousOutput(event) {
+    return event && event._workflow ? event._workflow.previousOutput : undefined;
+  },
 
   /**
    * Fetch a URL from inside the container.
