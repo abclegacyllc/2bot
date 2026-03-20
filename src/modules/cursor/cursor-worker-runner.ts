@@ -24,27 +24,29 @@ import crypto from "crypto";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
-  checkSessionLimits,
-  truncateToolOutput,
-  validateToolCallArgs,
+    checkSessionLimits,
+    truncateToolOutput,
+    validateToolCallArgs,
 } from "@/modules/2bot-ai-agent/agent-safety";
 import * as agentSessionService from "@/modules/2bot-ai-agent/agent-session.service";
 import { twoBotAIProvider } from "@/modules/2bot-ai-provider";
+import { withRetry } from "@/modules/2bot-ai-provider/retry.util";
 import type { TextGenerationMessage, ToolDefinition } from "@/modules/2bot-ai-provider/types";
-import { bridgeClientManager } from "@/modules/workspace";
 import type { BridgeClient } from "@/modules/workspace/bridge-client.service";
 
+import type { UIAction } from "@/components/cursor/cursor.types";
 import type {
-  CursorAgentEvent,
-  ToolStartMeta,
+    CursorAgentEvent,
+    ToolStartMeta,
 } from "./cursor-agent.types";
+import { getBridgeClient, withBridgeRetry } from "./cursor-bridge";
 import { getWorkerTools } from "./cursor-worker-tools";
 import type { CursorWorkerType, WorkerPromptContext } from "./cursor-workers";
 import {
-  WORKER_META,
-  buildAssistantSystemPrompt,
-  buildCoderSystemPrompt,
-  routeToWorker,
+    WORKER_META,
+    buildAssistantSystemPrompt,
+    buildCoderSystemPrompt,
+    routeToWorker,
 } from "./cursor-workers";
 
 const workerLog = logger.child({ module: "cursor", capability: "worker" });
@@ -67,6 +69,8 @@ export interface WorkerStreamRequest {
   pluginSlug?: string;
   pluginName?: string;
   mode?: "create" | "edit";
+  /** Optional: AI model ID (defaults to "auto") */
+  modelId?: string;
 }
 
 // ===========================================
@@ -77,19 +81,21 @@ interface PendingAnswer {
   resolve: (answer: string) => void;
   reject: (err: Error) => void;
   timeout: NodeJS.Timeout;
+  /** The userId that owns this session (defense-in-depth) */
+  userId: string;
 }
 
 /** In-memory map of sessionId → pending answer resolver */
 const pendingAnswers = new Map<string, PendingAnswer>();
 
 /** Wait for the user to answer a question. Rejects after timeout. */
-function waitForUserAnswer(sessionId: string, timeoutMs = 120_000): Promise<string> {
+function waitForUserAnswer(sessionId: string, userId: string, timeoutMs = 120_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingAnswers.delete(sessionId);
       reject(new Error("User did not respond within the time limit"));
     }, timeoutMs);
-    pendingAnswers.set(sessionId, { resolve, reject, timeout });
+    pendingAnswers.set(sessionId, { resolve, reject, timeout, userId });
   });
 }
 
@@ -97,15 +103,23 @@ function waitForUserAnswer(sessionId: string, timeoutMs = 120_000): Promise<stri
  * Resolve a pending ask_user question with the user's answer.
  * Called from the POST /api/cursor/worker-answer route.
  */
-export function resolveUserAnswer(sessionId: string, answer: string): boolean {
+export function resolveUserAnswer(sessionId: string, answer: string, userId?: string): boolean {
   const pending = pendingAnswers.get(sessionId);
-  if (pending) {
-    clearTimeout(pending.timeout);
-    pending.resolve(answer);
-    pendingAnswers.delete(sessionId);
-    return true;
+  if (!pending) return false;
+
+  // Defense-in-depth: verify the answering user owns this session
+  if (userId && pending.userId !== userId) {
+    workerLog.warn(
+      { sessionId, expected: pending.userId, actual: userId },
+      "Session ownership mismatch on worker-answer",
+    );
+    return false;
   }
-  return false;
+
+  clearTimeout(pending.timeout);
+  pending.resolve(answer);
+  pendingAnswers.delete(sessionId);
+  return true;
 }
 
 /** Cancel any pending answer (e.g., when the SSE connection closes) */
@@ -166,70 +180,6 @@ function extractPluginContext(message: string): {
   }
 
   return { slug, name, mode };
-}
-
-// ===========================================
-// Bridge Client Helper
-// ===========================================
-
-async function getBridgeClient(
-  userId: string,
-  organizationId: string | null,
-): Promise<{ client: BridgeClient; workspaceId: string } | null> {
-  const container = await prisma.workspaceContainer.findFirst({
-    where: {
-      userId,
-      organizationId: organizationId ?? null,
-      status: "RUNNING",
-    },
-    select: { id: true, bridgePort: true, bridgeAuthToken: true },
-  });
-  if (!container) return null;
-
-  const existing = bridgeClientManager.getExistingClient(container.id);
-  if (existing) return { client: existing, workspaceId: container.id };
-
-  if (!container.bridgePort || !container.bridgeAuthToken) return null;
-
-  try {
-    const { decrypt } = await import("@/lib/encryption");
-    const authToken = container.bridgeAuthToken.startsWith("v1:")
-      ? decrypt(container.bridgeAuthToken)
-      : container.bridgeAuthToken;
-    const client = await bridgeClientManager.getClient(
-      container.id,
-      container.bridgePort,
-      authToken,
-    );
-    return { client, workspaceId: container.id };
-  } catch {
-    return null;
-  }
-}
-
-// ===========================================
-// Retry Helper
-// ===========================================
-
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 500;
-
-async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err as Error;
-      const msg = lastError.message?.toLowerCase() || "";
-      const isTransient = msg.includes("timeout") || msg.includes("econnreset") ||
-        msg.includes("socket") || msg.includes("disconnected") || msg.includes("econnrefused");
-      if (!isTransient || attempt >= MAX_RETRIES) break;
-      workerLog.warn({ attempt: attempt + 1, label, error: msg }, "Retrying transient error");
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
-    }
-  }
-  throw lastError;
 }
 
 // ===========================================
@@ -299,6 +249,173 @@ function buildToolStartMeta(toolName: string, args: Record<string, unknown>): To
 }
 
 // ===========================================
+// Backend-Driven UI Actions Builder
+// ===========================================
+
+/** Shorten a file path for display */
+function shortenPath(filePath: string): string {
+  return filePath.replace(/^plugins\/[^/]+\//, "");
+}
+
+/**
+ * Build UIActions for a tool call. These are sent directly in the SSE event
+ * so the frontend doesn't need a mapper. Falls back to empty array for tools
+ * that only need a default toast (the mapper handles those).
+ */
+function buildToolUIActions(toolName: string, args: Record<string, unknown>): UIAction[] {
+  switch (toolName) {
+    // ── Workspace / Coder tools ─────────────────────
+    case "read_file":
+      return [
+        { action: "navigate", path: "/workspace", label: `Reading ${shortenPath((args.path as string) || "")}` },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Reading ${shortenPath((args.path as string) || "")}`, gated: true, durationMs: 30_000 },
+      ];
+    case "write_file":
+      return [
+        { action: "navigate", path: "/workspace", label: `Writing ${shortenPath((args.path as string) || "")}` },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Writing ${shortenPath((args.path as string) || "")} (${((args.content as string) || "").length} bytes)`, gated: true, durationMs: 30_000 },
+      ];
+    case "list_files":
+      return [
+        { action: "navigate", path: "/workspace", label: "Scanning plugin files" },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Listing ${(args.path as string) || "/"}`, gated: true, durationMs: 30_000 },
+      ];
+    case "create_directory":
+      return [
+        { action: "toast", message: `Creating directory ${shortenPath((args.path as string) || "")}`, variant: "info", durationMs: 1000 },
+      ];
+    case "delete_file":
+      return [
+        { action: "toast", message: `Deleting ${shortenPath((args.path as string) || "")}`, variant: "warning", durationMs: 1000 },
+      ];
+    case "run_command":
+      return [
+        { action: "navigate", path: "/workspace", label: "Running command" },
+        { action: "pulse", target: "workspace-plugins-panel", label: `$ ${((args.command as string) || "").slice(0, 60)}`, gated: true, durationMs: 30_000 },
+      ];
+    case "search_files":
+      return [
+        { action: "navigate", path: "/workspace", label: "Searching code" },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Searching for "${(args.pattern as string) || ""}"`, gated: true, durationMs: 30_000 },
+      ];
+
+    // ── Gateway tools ───────────────────────────────
+    case "list_gateways":
+      return [
+        { action: "navigate", path: "/gateways", label: "Checking your gateways" },
+        { action: "pulse", label: "Looking for a gateway to bind to", gated: true, durationMs: 30_000 },
+      ];
+    case "create_gateway":
+      return [
+        { action: "navigate", path: "/gateways", label: `Creating gateway: ${(args.name as string) || ""}` },
+        { action: "pulse", label: `Creating "${(args.name as string) || ""}"`, gated: true, durationMs: 30_000 },
+      ];
+    case "delete_gateway":
+      return [
+        { action: "navigate", path: "/gateways", label: `Deleting gateway` },
+        { action: "toast", message: `Deleting gateway "${(args.name as string) || (args.gatewayId as string) || ""}"`, variant: "warning", durationMs: 1500 },
+      ];
+
+    // ── Plugin tools ────────────────────────────────
+    case "list_user_plugins":
+      return [
+        { action: "navigate", path: "/plugins", label: "Reviewing existing plugins" },
+        { action: "pulse", label: "Checking installed plugins", gated: true, durationMs: 30_000 },
+      ];
+    case "create_plugin_record":
+      return [
+        { action: "toast", message: `Registering plugin: ${(args.name as string) || ""}`, variant: "info", durationMs: 2000 },
+      ];
+    case "update_plugin_record":
+      return [
+        { action: "toast", message: `Updating plugin metadata: ${(args.name as string) || "plugin"}`, variant: "info", durationMs: 2000 },
+      ];
+    case "restart_plugin":
+      return [
+        { action: "navigate", path: "/workspace", label: `Restarting ${(args.slug as string) || ""}` },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Restarting plugin: ${(args.slug as string) || ""}`, gated: true, durationMs: 30_000 },
+      ];
+    case "install_plugin":
+      return [
+        { action: "navigate", path: "/plugins", label: `Installing ${(args.slug as string) || ""}` },
+        { action: "pulse", label: `Installing ${(args.slug as string) || ""}`, gated: true, durationMs: 30_000 },
+      ];
+    case "uninstall_plugin":
+      return [
+        { action: "navigate", path: "/plugins", label: `Uninstalling ${(args.name as string) || ""}` },
+        { action: "toast", message: `Uninstalling "${(args.name as string) || ""}"`, variant: "warning", durationMs: 1500 },
+      ];
+    case "toggle_plugin": {
+      const enable = !!args.enable;
+      const name = (args.name as string) || "";
+      return [
+        { action: "navigate", path: "/plugins", label: `${enable ? "Starting" : "Stopping"} ${name}` },
+        { action: "pulse", label: `${enable ? "Starting" : "Stopping"} ${name}`, gated: true, durationMs: 30_000 },
+      ];
+    }
+
+    // ── Account / billing tools ─────────────────────
+    case "check_credits":
+      return [
+        { action: "navigate", path: "/credits", label: "Checking your credits" },
+        { action: "pulse", target: "credits-balance-card", label: "Your credit balance", gated: true, durationMs: 30_000 },
+      ];
+    case "check_billing":
+      return [
+        { action: "navigate", path: "/billing", label: "Checking billing info" },
+        { action: "pulse", label: "Your billing overview", gated: true, durationMs: 30_000 },
+      ];
+    case "check_usage":
+      return [
+        { action: "navigate", path: "/usage", label: "Checking usage stats" },
+        { action: "pulse", label: "Your usage statistics", gated: true, durationMs: 30_000 },
+      ];
+
+    // ── Workspace ───────────────────────────────────
+    case "start_workspace":
+      return [
+        { action: "navigate", path: "/workspace", label: "Starting workspace" },
+        { action: "pulse", target: "workspace-start-btn", label: "Starting your workspace", gated: true, durationMs: 30_000 },
+      ];
+    case "navigate_page":
+      return [
+        { action: "navigate", path: (args.path as string) || "/", label: `Opening ${(args.path as string) || "/"}` },
+      ];
+
+    // ── Interaction tools ───────────────────────────
+    case "ask_user":
+    case "hand_off_to_coder":
+    case "hand_off_to_assistant":
+    case "finish":
+      return []; // Handled by dedicated event types or mapper fallback
+
+    // ── New platform tools ──────────────────────────
+    case "check_gateway_status":
+      return [
+        { action: "navigate", path: "/gateways", label: "Checking gateway status" },
+        { action: "pulse", label: "Checking gateway health", gated: true, durationMs: 30_000 },
+      ];
+    case "view_plugin_logs":
+      return [
+        { action: "navigate", path: "/workspace", label: "Viewing plugin logs" },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Viewing logs for ${(args.pluginSlug as string) || "plugin"}`, gated: true, durationMs: 30_000 },
+      ];
+    case "list_templates":
+      return [
+        { action: "toast", message: "Browsing plugin templates…", variant: "info", durationMs: 1500 },
+      ];
+    case "explain_error":
+      return [
+        { action: "toast", message: "Analyzing error…", variant: "info", durationMs: 1500 },
+      ];
+
+    default:
+      // No backend-driven actions — frontend mapper can handle as fallback
+      return [];
+  }
+}
+
+// ===========================================
 // Tool Execution — Shared Platform Tools
 // ===========================================
 
@@ -344,6 +461,46 @@ async function executeSharedTool(
         return { result: `Error listing plugins: ${(err as Error).message}` };
       }
     }
+
+    case "view_plugin_logs": {
+      const pluginSlug = args.pluginSlug as string;
+      if (!pluginSlug) return { result: "Error: pluginSlug is required." };
+      try {
+        const bridge = await getBridgeClient(ctx.userId, ctx.organizationId);
+        if (!bridge) return { result: "Error: No running workspace. Start your workspace first." };
+        const logs = await bridge.client.pluginLogs(`plugins/${pluginSlug}/index.js`);
+        const logText = typeof logs === "string" ? logs : JSON.stringify(logs, null, 2);
+        return { result: truncateToolOutput(logText || "(no logs available)") };
+      } catch (err) {
+        return { result: `Error fetching plugin logs: ${(err as Error).message}` };
+      }
+    }
+
+    case "explain_error": {
+      const errorText = args.error as string;
+      if (!errorText) return { result: "Error: provide the error text to explain." };
+
+      // Common error pattern map — deterministic, no AI call needed
+      const explanations: Array<{ pattern: RegExp; explanation: string }> = [
+        { pattern: /insufficient credits|credit balance/i, explanation: "You don't have enough credits for this operation. Go to Settings → Billing to add credits or upgrade your plan." },
+        { pattern: /gateway.*not found|no gateway/i, explanation: "The gateway (bot connection) doesn't exist or hasn't been configured yet. Use the Gateways page to create one." },
+        { pattern: /bot token.*invalid|401.*telegram/i, explanation: "Your Telegram bot token is invalid or expired. Create a new bot via @BotFather on Telegram and update the gateway." },
+        { pattern: /workspace.*not running|no.*workspace/i, explanation: "Your development workspace isn't running. Go to the Dashboard and click 'Start Workspace'." },
+        { pattern: /ECONNREFUSED|ECONNRESET|timeout/i, explanation: "A network connection failed. This is usually temporary — try again in a moment. If it persists, your workspace may need restarting." },
+        { pattern: /plugin.*not found|no plugin/i, explanation: "The plugin doesn't exist or isn't installed. Check the Bots page for available plugins." },
+        { pattern: /rate limit|429|too many requests/i, explanation: "You've hit an API rate limit. Wait a moment and try again. This is temporary." },
+        { pattern: /permission denied|forbidden|403/i, explanation: "You don't have permission for this action. Check that you own this resource or have the right role in the organization." },
+      ];
+
+      for (const { pattern, explanation } of explanations) {
+        if (pattern.test(errorText)) {
+          return { result: `Explanation: ${explanation}\n\nOriginal error: ${errorText}` };
+        }
+      }
+
+      return { result: `This error doesn't match a known pattern. The full error: "${errorText}". Try checking the workspace logs or asking for more details about what you were doing when it occurred.` };
+    }
+
     default:
       return null; // Not a shared tool
   }
@@ -407,7 +564,7 @@ async function executeAssistantTool(
         const svcCtx = createServiceContext({ userId: ctx.userId, role: "MEMBER", plan: "FREE" });
 
         const gwName = (args.name as string) || "My Bot";
-        const gwType = ((args.type as string) || "TELEGRAM_BOT") as "TELEGRAM_BOT" | "AI" | "CUSTOM_GATEWAY";
+        const gwType = ((args.type as string) || "TELEGRAM_BOT") as "TELEGRAM_BOT" | "DISCORD_BOT" | "SLACK_BOT" | "WHATSAPP_BOT";
 
         type CredentialTypes = import("@/modules/gateway/gateway.types").GatewayCredentials; // eslint-disable-line @typescript-eslint/consistent-type-imports
         let credentials: CredentialTypes;
@@ -416,11 +573,6 @@ async function executeAssistantTool(
           const botToken = args.botToken as string;
           if (!botToken) return { result: "Error: botToken is required. Use ask_user to collect it first." };
           credentials = { botToken };
-        } else if (gwType === "AI") {
-          const apiKey = args.apiKey as string;
-          if (!apiKey) return { result: "Error: apiKey is required. Use ask_user to collect it first." };
-          const provider = (args.provider || "openai") as import("@/modules/gateway/gateway.types").AIProvider; // eslint-disable-line @typescript-eslint/consistent-type-imports
-          credentials = { provider, apiKey };
         } else {
           credentials = {} as CredentialTypes;
         }
@@ -587,6 +739,41 @@ async function executeAssistantTool(
       }
     }
 
+    case "check_gateway_status": {
+      const gatewayId = args.gatewayId as string;
+      if (!gatewayId) return { result: "Error: gatewayId is required. Use list_gateways first." };
+      try {
+        const { gatewayMonitor } = await import("@/modules/gateway");
+        const result = await gatewayMonitor.testNewGateway(gatewayId);
+        if (result.healthy) {
+          return { result: `Gateway ${gatewayId} is healthy! Latency: ${result.latency ?? "N/A"}ms.` };
+        } else {
+          return { result: `Gateway ${gatewayId} is NOT healthy. Error: ${result.error ?? "Unknown error"}` };
+        }
+      } catch (err) {
+        return { result: `Error checking gateway status: ${(err as Error).message}` };
+      }
+    }
+
+    case "list_templates": {
+      try {
+        const { getTemplateList } = await import("@/modules/plugin/plugin-templates");
+        let templates = getTemplateList();
+        const category = args.category as string | undefined;
+        if (category) {
+          templates = templates.filter((t) =>
+            t.category.toLowerCase().includes(category.toLowerCase())
+          );
+        }
+        const summary = templates.map((t) =>
+          `- ${t.name} [${t.id}] (${t.category}, ${t.difficulty ?? "beginner"}) — ${t.description}${t.requiredGateways?.length ? ` (requires: ${t.requiredGateways.join(", ")})` : ""}`,
+        ).join("\n");
+        return { result: summary || "(no templates found)" };
+      } catch (err) {
+        return { result: `Error listing templates: ${(err as Error).message}` };
+      }
+    }
+
     case "navigate_page": {
       // Navigation is handled on the frontend via the event.
       // We just return success so the LLM knows it worked.
@@ -630,7 +817,7 @@ async function executeCoderTool(
     case "read_file": {
       const path = args.path as string;
       try {
-        const result = await withRetry(
+        const result = await withBridgeRetry(
           () => client.fileRead(path) as Promise<{ content?: string }>,
           `read_file:${path}`,
         );
@@ -644,7 +831,7 @@ async function executeCoderTool(
       const path = args.path as string;
       const content = args.content as string;
       try {
-        await withRetry(() => client.fileWrite(path, content, true), `write_file:${path}`);
+        await withBridgeRetry(() => client.fileWrite(path, content, true), `write_file:${path}`);
         const relativePath = path.startsWith(pluginDir + "/")
           ? path.slice(pluginDir.length + 1)
           : path;
@@ -659,7 +846,7 @@ async function executeCoderTool(
       const path = (args.path as string) || "/";
       const recursive = (args.recursive as boolean) || false;
       try {
-        const result = await withRetry(() => client.fileList(path, recursive), `list_files:${path}`);
+        const result = await withBridgeRetry(() => client.fileList(path, recursive), `list_files:${path}`);
         return { result: truncateToolOutput(JSON.stringify(result, null, 2)) };
       } catch {
         return { result: `Error listing ${path}: directory not found` };
@@ -669,7 +856,7 @@ async function executeCoderTool(
     case "create_directory": {
       const path = args.path as string;
       try {
-        await withRetry(() => client.fileMkdir(path), `create_directory:${path}`);
+        await withBridgeRetry(() => client.fileMkdir(path), `create_directory:${path}`);
         return { result: `Created directory: ${path}` };
       } catch {
         return { result: `Error creating directory: ${path}` };
@@ -679,7 +866,7 @@ async function executeCoderTool(
     case "delete_file": {
       const path = args.path as string;
       try {
-        await withRetry(() => client.fileDelete(path), `delete_file:${path}`);
+        await withBridgeRetry(() => client.fileDelete(path), `delete_file:${path}`);
         const relativePath = path.startsWith(pluginDir + "/")
           ? path.slice(pluginDir.length + 1)
           : path;
@@ -694,7 +881,7 @@ async function executeCoderTool(
       const command = args.command as string;
       const cwd = (args.cwd as string) || undefined;
       try {
-        const result = await withRetry(
+        const result = await withBridgeRetry(
           () => client.send("terminal.create", {
             command,
             cwd,
@@ -733,7 +920,7 @@ async function executeCoderTool(
       grepCmd += ` | head -n ${maxResults}`;
 
       try {
-        const result = await withRetry(
+        const result = await withBridgeRetry(
           () => client.send("terminal.create", { command: grepCmd, timeout: 15_000 }),
           `search_files:${pattern.slice(0, 30)}`,
         ) as { output?: string; exitCode?: number };
@@ -899,8 +1086,8 @@ async function executeTool(
 // Model Selection per Worker
 // ===========================================
 
-function getModelForWorker(workerType: CursorWorkerType): string {
-  return workerType === "coder" ? "2bot-ai-code-pro" : "2bot-ai-text-pro";
+function getModelForWorker(_workerType: CursorWorkerType, requestModelId?: string): string {
+  return requestModelId || "auto";
 }
 
 // ===========================================
@@ -955,7 +1142,7 @@ export async function* runWorkerStream(
     userId,
     organizationId: organizationId ?? undefined,
     workspaceId: workspaceId ?? "none",
-    model: getModelForWorker(initialWorker),
+    model: getModelForWorker(initialWorker, request.modelId),
     prompt: `[worker:${initialWorker}] ${message.slice(0, 500)}`,
   });
 
@@ -1001,6 +1188,31 @@ export async function* runWorkerStream(
         `🔧 Worker started: ${workerMeta.displayName}`,
       );
 
+      // ── Fetch lightweight user state for prompt context ──
+      let userState: WorkerPromptContext["userState"];
+      try {
+        const [user, gatewayCount, pluginCount] = await Promise.all([
+          prisma.user.findUnique({
+            where: { id: userId },
+            select: { plan: true },
+          }),
+          prisma.gateway.count({
+            where: { userId, ...(organizationId ? { organizationId } : {}) },
+          }),
+          prisma.userPlugin.count({
+            where: { userId },
+          }),
+        ]);
+        userState = {
+          plan: user?.plan ?? "FREE",
+          gatewayCount,
+          pluginCount,
+          workspaceRunning: !!client,
+        };
+      } catch {
+        // Non-critical — proceed without user state
+      }
+
       // ── Build system prompt ────────────────────────────
       const promptCtx: WorkerPromptContext = {
         task: message,
@@ -1008,6 +1220,7 @@ export async function* runWorkerStream(
         pluginName,
         mode: pluginMode,
         handOffContext,
+        userState,
       };
 
       const systemPrompt = currentWorker === "assistant"
@@ -1087,18 +1300,24 @@ export async function* runWorkerStream(
         };
 
         try {
-          const response = await twoBotAIProvider.textGeneration({
-            messages,
-            model: getModelForWorker(currentWorker),
-            temperature: currentWorker === "coder" ? 0.2 : 0.4,
-            maxTokens: 4096,
-            stream: false,
-            userId,
-            tools: toolDefs,
-            toolChoice: "auto",
-            feature: "cursor",
-            capability: currentWorker === "coder" ? "code-generation" : undefined,
-          });
+          const response = await withRetry(
+            () => twoBotAIProvider.textGeneration({
+              messages,
+              model: getModelForWorker(currentWorker, request.modelId),
+              temperature: currentWorker === "coder" ? 0.2 : 0.4,
+              maxTokens: 4096,
+              stream: false,
+              userId,
+              tools: toolDefs,
+              toolChoice: "auto",
+              feature: "cursor",
+              capability: currentWorker === "coder" ? "code-generation" : undefined,
+            }),
+            {
+              maxRetries: 2,
+              operationName: `cursor-${currentWorker}-ai-call`,
+            },
+          );
 
           totalCreditsUsed += response.creditsUsed ?? 0;
           totalInputTokens += response.usage.inputTokens;
@@ -1126,7 +1345,91 @@ export async function* runWorkerStream(
             messages.push({ role: "assistant", content: assistantContent });
           }
 
-          // Execute tool calls
+          // Execute tool calls — parallel for read-only batches, sequential otherwise
+          const READ_ONLY_TOOLS = new Set([
+            "read_file", "list_files", "search_files",
+            "list_gateways", "list_user_plugins",
+            "check_credits", "check_billing", "check_usage",
+            "check_gateway_status", "list_templates",
+            "view_plugin_logs", "explain_error",
+          ]);
+          const CONTROL_FLOW_TOOLS = new Set([
+            "ask_user", "finish", "hand_off_to_coder", "hand_off_to_assistant",
+          ]);
+
+          const allReadOnly = toolCalls.every((tc) =>
+            READ_ONLY_TOOLS.has(tc.name) && !CONTROL_FLOW_TOOLS.has(tc.name)
+          );
+
+          if (allReadOnly && toolCalls.length > 1) {
+            // ── Parallel execution for read-only batch ───
+            workerLog.debug(
+              { sessionId, toolCount: toolCalls.length },
+              "Executing read-only tools in parallel",
+            );
+
+            // Emit all tool_start events
+            for (const tc of toolCalls) {
+              const toolArgs = tc.arguments as Record<string, unknown>;
+              const uiActions = buildToolUIActions(tc.name, toolArgs);
+              yield {
+                type: "tool_start" as const,
+                tool: tc.name,
+                meta: buildToolStartMeta(tc.name, toolArgs),
+                ...(uiActions.length > 0 ? { uiActions } : {}),
+              };
+            }
+
+            // Execute all in parallel
+            const results = await Promise.all(
+              toolCalls.map((tc) =>
+                executeTool(
+                  currentWorker,
+                  tc.name,
+                  tc.arguments as Record<string, unknown>,
+                  { userId, organizationId, client, pluginDir, writtenFiles },
+                )
+              ),
+            );
+
+            // Process results and emit events
+            for (let i = 0; i < toolCalls.length; i++) {
+              const tc = toolCalls[i]!;
+              const toolResult = results[i]!;
+              const toolArgs = tc.arguments as Record<string, unknown>;
+
+              totalToolCalls++;
+              const isError = toolResult.result.startsWith("Blocked:") || toolResult.result.startsWith("Error");
+
+              yield {
+                type: "tool_result" as const,
+                tool: tc.name,
+                success: !isError,
+                summary: toolResult.result.slice(0, 200),
+              };
+
+              agentSessionService.recordToolCall(
+                sessionId,
+                {
+                  toolCallId: tc.id ?? `tc-${toolCallSequence}`,
+                  toolName: tc.name,
+                  output: toolResult.result,
+                  isError,
+                  durationMs: 0,
+                },
+                toolArgs,
+                toolCallSequence,
+              );
+              toolCallSequence++;
+
+              const statusPrefix = isError ? "❌ TOOL ERROR" : "✅ TOOL RESULT";
+              messages.push({
+                role: "user",
+                content: `[${statusPrefix}: ${tc.name}]\n${toolResult.result}`,
+              });
+            }
+          } else {
+          // ── Sequential execution (writes, control flow, or single tool) ───
           for (const tc of toolCalls) {
             const toolArgs = tc.arguments as Record<string, unknown>;
 
@@ -1145,7 +1448,7 @@ export async function* runWorkerStream(
               // Pause and wait for user answer
               let answer: string;
               try {
-                answer = await waitForUserAnswer(sessionId);
+                answer = await waitForUserAnswer(sessionId, userId);
               } catch {
                 // Timeout or cancelled
                 messages.push({
@@ -1171,12 +1474,50 @@ export async function* runWorkerStream(
               continue;
             }
 
+            // ── Destructive action approval ──────────────
+            const DESTRUCTIVE_TOOLS = new Set(["delete_file", "delete_gateway", "uninstall_plugin"]);
+            if (DESTRUCTIVE_TOOLS.has(tc.name)) {
+              const target = (toolArgs.path as string) || (toolArgs.gatewayId as string) || (toolArgs.name as string) || (toolArgs.pluginId as string) || "this resource";
+              yield {
+                type: "ask_user" as const,
+                question: `⚠️ Confirm destructive action: **${tc.name}** on "${target}". This cannot be undone. Proceed? (yes/no)`,
+                sensitive: false,
+                sessionId,
+              };
+
+              let approval: string;
+              try {
+                approval = await waitForUserAnswer(sessionId, userId);
+              } catch {
+                messages.push({
+                  role: "user",
+                  content: `[TOOL RESULT: ${tc.name}]\nUser did not confirm. Action cancelled.`,
+                });
+                continue;
+              }
+
+              const approved = /^(y|yes|ok|confirm|proceed|sure|do it)/i.test(approval.trim());
+              if (!approved) {
+                messages.push({
+                  role: "user",
+                  content: `[TOOL RESULT: ${tc.name}]\nUser rejected the action. Do NOT retry — try a different approach or ask what they want instead.`,
+                });
+                workerLog.info({ sessionId, tool: tc.name, target }, "Destructive action rejected by user");
+                continue;
+              }
+              workerLog.info({ sessionId, tool: tc.name, target }, "Destructive action approved by user");
+            }
+
             // ── Regular tool execution ───────────────────
-            yield {
-              type: "tool_start" as const,
-              tool: tc.name,
-              meta: buildToolStartMeta(tc.name, toolArgs),
-            };
+            {
+              const uiActions = buildToolUIActions(tc.name, toolArgs);
+              yield {
+                type: "tool_start" as const,
+                tool: tc.name,
+                meta: buildToolStartMeta(tc.name, toolArgs),
+                ...(uiActions.length > 0 ? { uiActions } : {}),
+              };
+            }
 
             const toolResult = await executeTool(
               currentWorker,
@@ -1230,6 +1571,24 @@ export async function* runWorkerStream(
             );
             toolCallSequence++;
 
+            // Audit log for sensitive/destructive tool calls (fire-and-forget)
+            const AUDITED_TOOLS = new Set([
+              "delete_file", "delete_gateway", "uninstall_plugin",
+              "create_gateway", "install_plugin", "create_plugin_record",
+              "write_file", "run_command",
+            ]);
+            if (AUDITED_TOOLS.has(tc.name)) {
+              import("@/lib/audit").then(({ auditActions }) => {
+                auditActions.cursorToolExecuted(
+                  { userId, organizationId: organizationId ?? undefined },
+                  sessionId,
+                  tc.name,
+                  toolArgs,
+                  { success: !isError, summary: toolResult.result.slice(0, 200) },
+                );
+              }).catch(() => {}); // Fire-and-forget
+            }
+
             // Feed result back to LLM
             const statusPrefix = isError ? "❌ TOOL ERROR" : "✅ TOOL RESULT";
             messages.push({
@@ -1250,20 +1609,45 @@ export async function* runWorkerStream(
               break;
             }
           }
+          } // end else (sequential execution)
 
           if (workerFinished || handOff) break;
           consecutiveErrors = 0;
 
         } catch (err) {
           consecutiveErrors++;
+          const errorMsg = (err as Error).message || String(err);
           workerLog.error(
-            { sessionId, worker: currentWorker, turn, error: (err as Error).message },
+            { sessionId, worker: currentWorker, turn, error: errorMsg, consecutiveErrors },
             "Worker loop error",
           );
-          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) break;
+
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            yield {
+              type: "status" as const,
+              message: `Too many consecutive errors (${consecutiveErrors}). Stopping.`,
+            };
+            break;
+          }
+
+          // Provide actionable context to the LLM based on error type
+          const errLower = errorMsg.toLowerCase();
+          let recovery: string;
+          if (errLower.includes("rate limit") || errLower.includes("429")) {
+            recovery = "The AI provider is rate-limited. Waiting before retrying.";
+          } else if (errLower.includes("timeout") || errLower.includes("econnreset")) {
+            recovery = "Network timeout occurred. The request will be retried automatically.";
+          } else if (errLower.includes("credit") || errLower.includes("insufficient")) {
+            recovery = "Insufficient credits to continue. Please check your balance.";
+            yield { type: "status" as const, message: recovery };
+            break; // Credits won't magically appear — stop immediately
+          } else {
+            recovery = `An error occurred: ${errorMsg}. Try a different approach or simpler tool call.`;
+          }
+
           messages.push({
             role: "user",
-            content: `[⚠️ SYSTEM ERROR] ${(err as Error).message}. Try a different approach.`,
+            content: `[⚠️ SYSTEM ERROR] ${recovery}`,
           });
         }
       }

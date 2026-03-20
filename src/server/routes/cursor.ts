@@ -13,6 +13,7 @@ import { BadRequestError, RateLimitError } from "@/shared/errors";
 import { createServiceContext } from "@/shared/types/context";
 import { Router, type Request, type Response } from "express";
 
+import { RateLimiterRes } from 'rate-limiter-flexible';
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
 import { createRateLimiter } from "../middleware/rate-limit";
@@ -58,8 +59,11 @@ cursorRouter.post(
     // Per-user rate limiting — 10 actions per 60 seconds
     try {
       await cursorActionLimiter.consume(req.user.id);
-    } catch {
-      throw new RateLimitError("Too many cursor actions. Please slow down.", 60);
+    } catch (err) {
+      if (err instanceof RateLimiterRes) {
+        throw new RateLimitError("Too many cursor actions. Please slow down.", 60);
+      }
+      // Redis error — fail open
     }
 
     const ctx = createServiceContext(
@@ -112,8 +116,11 @@ cursorRouter.post(
 
     try {
       await cursorWorkerStreamLimiter.consume(req.user.id);
-    } catch {
-      throw new RateLimitError("Too many requests. Please wait.", 60);
+    } catch (err) {
+      if (err instanceof RateLimiterRes) {
+        throw new RateLimitError("Too many requests. Please wait.", 60);
+      }
+      // Redis error — fail open
     }
 
     const body = req.body as Partial<WorkerStreamRequest>;
@@ -128,6 +135,7 @@ cursorRouter.post(
       pluginSlug: body.pluginSlug,
       pluginName: body.pluginName,
       mode: body.mode,
+      modelId: body.modelId,
     };
 
     // SSE headers
@@ -188,7 +196,7 @@ cursorRouter.post(
       throw new BadRequestError("sessionId and answer are required");
     }
 
-    const resolved = resolveUserAnswer(sessionId, answer);
+    const resolved = resolveUserAnswer(sessionId, answer, req.user.id);
     if (!resolved) {
       throw new BadRequestError("No pending question found for this session. It may have timed out.");
     }

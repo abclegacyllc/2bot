@@ -20,6 +20,8 @@ export interface WorkerStreamClientRequest {
   pluginSlug?: string;
   pluginName?: string;
   mode?: "create" | "edit";
+  /** AI model ID (defaults to "auto" on server) */
+  modelId?: string;
 }
 
 /**
@@ -39,6 +41,27 @@ export function streamWorker(
 ): () => void {
   const controller = new AbortController();
   const url = apiUrl("/cursor/worker-stream");
+
+  // Stale connection detection — server sends keepalive every 15s,
+  // so if we receive nothing for 45s the connection is dead.
+  const STALE_TIMEOUT_MS = 45_000;
+  let staleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const resetStaleTimer = () => {
+    if (staleTimer) clearTimeout(staleTimer);
+    staleTimer = setTimeout(() => {
+      controller.abort();
+      onError("Connection lost — no data received for 45 seconds. Please try again.");
+      onDone();
+    }, STALE_TIMEOUT_MS);
+  };
+
+  const clearStaleTimer = () => {
+    if (staleTimer) {
+      clearTimeout(staleTimer);
+      staleTimer = null;
+    }
+  };
 
   void (async () => {
     try {
@@ -70,9 +93,14 @@ export function streamWorker(
       const decoder = new TextDecoder();
       let buffer = "";
 
+      resetStaleTimer();
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+
+        // Any data received means connection is alive
+        resetStaleTimer();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -82,6 +110,7 @@ export function streamWorker(
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith(":")) continue;
           if (trimmed === "data: [DONE]") {
+            clearStaleTimer();
             onDone();
             return;
           }
@@ -96,15 +125,20 @@ export function streamWorker(
         }
       }
 
+      clearStaleTimer();
       onDone();
     } catch (err) {
+      clearStaleTimer();
       if (err instanceof DOMException && err.name === "AbortError") return;
       onError(err instanceof Error ? err.message : "Stream connection failed");
       onDone();
     }
   })();
 
-  return () => controller.abort();
+  return () => {
+    clearStaleTimer();
+    controller.abort();
+  };
 }
 
 /**

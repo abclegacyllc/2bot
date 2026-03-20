@@ -120,7 +120,7 @@ sdk.onDisable(async () => { /* runs when plugin is stopped */ });
 \`\`\`js
 const result = await sdk.ai.chat({
   messages: [{ role: 'system', content: '...' }, { role: 'user', content: '...' }],
-  model: sdk.config.model || '2bot-ai-text-pro',
+  model: sdk.config.model || 'auto',
   temperature: 0.7,
   maxTokens: 1000,
 });
@@ -128,23 +128,20 @@ const result = await sdk.ai.chat({
 
 const imgResult = await sdk.ai.generateImage({
   prompt: 'description',
-  model: sdk.config.imageModel || '2bot-ai-image-pro',
+  model: sdk.config.imageModel || 'auto',
   n: 1, size: '1024x1024',
 });
 // imgResult = { images: [{ url, revisedPrompt? }], model, creditsUsed }
 
 const audioResult = await sdk.ai.speak({
-  text: 'Hello', model: '2bot-ai-voice-pro', voice: 'alloy',
+  text: 'Hello', model: 'auto', voice: 'alloy',
 });
 // audioResult = { audioUrl?, audioBase64?, format, characterCount, creditsUsed }
 \`\`\`
 
 Available AI models:
-- Text: 2bot-ai-text-free, 2bot-ai-text-lite, 2bot-ai-text-pro, 2bot-ai-text-ultra
-- Code: 2bot-ai-code-free, 2bot-ai-code-lite, 2bot-ai-code-pro, 2bot-ai-code-ultra
-- Reasoning: 2bot-ai-reasoning-pro, 2bot-ai-reasoning-ultra
-- Image: 2bot-ai-image-pro, 2bot-ai-image-ultra
-- Voice: 2bot-ai-voice-pro, 2bot-ai-voice-ultra
+Use "auto" (default — cheapest available) or a specific real model ID from the model selector.
+Legacy tier IDs (2bot-ai-text-pro, etc.) are still supported but "auto" is preferred.
 
 ## CRITICAL: Configuration Schema System
 
@@ -161,9 +158,8 @@ You MUST generate a configSchema alongside the code. The configSchema defines wh
       "type": "string",
       "title": "AI Model",
       "description": "The AI model to use for generating responses",
-      "default": "2bot-ai-text-pro",
-      "uiComponent": "ai-model-selector",
-      "enum": ["2bot-ai-text-free", "2bot-ai-text-lite", "2bot-ai-text-pro", "2bot-ai-text-ultra"]
+      "default": "auto",
+      "uiComponent": "ai-model-selector"
     },
     "systemPrompt": {
       "type": "string",
@@ -194,7 +190,7 @@ Key rules for configSchema:
 ### AI Chat Bot (correct pattern)
 \`\`\`js
 // Read ALL settings from sdk.config — NEVER hardcode
-const model = sdk.config.model || '2bot-ai-text-pro';
+const model = sdk.config.model || 'auto';
 const systemPrompt = sdk.config.systemPrompt || 'You are a helpful assistant.';
 const maxHistory = sdk.config.maxHistory ?? 10;
 
@@ -249,7 +245,7 @@ Example output:
   "configSchema": {
     "type": "object",
     "properties": {
-      "model": { "type": "string", "title": "AI Model", "default": "2bot-ai-text-pro", "uiComponent": "ai-model-selector", "enum": ["2bot-ai-text-free", "2bot-ai-text-lite", "2bot-ai-text-pro", "2bot-ai-text-ultra"] }
+      "model": { "type": "string", "title": "AI Model", "default": "auto", "uiComponent": "ai-model-selector" }
     }
   }
 }
@@ -262,7 +258,7 @@ Respond with ONLY the JSON object. No markdown fences, no explanation.`;
       { role: "system", content: codeGenPrompt },
       { role: "user", content: `Generate the plugin code and configSchema for "${pluginName}" that does: ${description}` },
     ],
-    model: "2bot-ai-code-pro",
+    model: "auto",
     temperature: 0.3,
     maxTokens: 4096,
     stream: false,
@@ -358,11 +354,8 @@ const sdk = require('/bridge-agent/plugin-sdk');
 - \`sdk.onInstall/onEnable/onDisable\` — lifecycle hooks
 
 ### Available AI Models
-- Text: 2bot-ai-text-free, 2bot-ai-text-lite, 2bot-ai-text-pro, 2bot-ai-text-ultra
-- Code: 2bot-ai-code-free, 2bot-ai-code-lite, 2bot-ai-code-pro, 2bot-ai-code-ultra
-- Reasoning: 2bot-ai-reasoning-pro, 2bot-ai-reasoning-ultra
-- Image: 2bot-ai-image-pro, 2bot-ai-image-ultra
-- Voice: 2bot-ai-voice-pro, 2bot-ai-voice-ultra
+Use "auto" (default — cheapest available) or a specific real model ID from the model selector.
+Legacy tier IDs (2bot-ai-text-pro, etc.) are still supported but "auto" is preferred.
 
 ## Multi-File Structure Rules
 - The entry file (\`index.js\`) MUST have \`'use strict';\` and \`const sdk = require('/bridge-agent/plugin-sdk');\`
@@ -423,7 +416,7 @@ Respond with ONLY the JSON object. No markdown fences, no explanation.`;
           content: `Generate a multi-file plugin for "${pluginName}": ${description}`,
         },
       ],
-      model: "2bot-ai-code-pro",
+      model: "auto",
       temperature: 0.3,
       maxTokens: 8192,
       stream: false,
@@ -526,22 +519,20 @@ export function autoDetectConfigSchema(code: string): { schema: Record<string, u
       type: "string",
       title: "AI Model",
       description: "The AI model to use for text generation",
-      default: "2bot-ai-text-pro",
+      default: "auto",
       uiComponent: "ai-model-selector",
-      enum: ["2bot-ai-text-free", "2bot-ai-text-lite", "2bot-ai-text-pro", "2bot-ai-text-ultra"],
     };
-    defaults.model = "2bot-ai-text-pro";
+    defaults.model = "auto";
   }
   if (code.includes("sdk.ai.generateImage")) {
     properties.imageModel = {
       type: "string",
       title: "Image Model",
       description: "The AI model to use for image generation",
-      default: "2bot-ai-image-pro",
+      default: "auto",
       uiComponent: "ai-model-selector",
-      enum: ["2bot-ai-image-pro", "2bot-ai-image-ultra"],
     };
-    defaults.imageModel = "2bot-ai-image-pro";
+    defaults.imageModel = "auto";
   }
 
   // Detect sdk.config.XYZ references

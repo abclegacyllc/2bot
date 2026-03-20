@@ -15,6 +15,7 @@
  * @module modules/cursor/cursor-agent.types
  */
 
+import type { UIAction } from "@/components/cursor/cursor.types";
 import type { CursorWorkerType } from "./cursor-workers";
 
 // ===========================================
@@ -49,6 +50,7 @@ export interface CursorAgentSessionStart {
   mode: "create" | "edit";
   pluginSlug: string;
   pluginName: string;
+  uiActions?: UIAction[];
 }
 
 /** New AI iteration starting */
@@ -70,6 +72,13 @@ export interface CursorAgentToolStart {
   tool: string;
   /** Tool-specific metadata for UI display */
   meta: ToolStartMeta;
+  /**
+   * Backend-driven UI actions. When present, the frontend uses these
+   * directly instead of the client-side event mapper. This decouples
+   * animations from frontend layout — no mapper or data-ai-target changes
+   * needed when pages/tools change.
+   */
+  uiActions?: UIAction[];
 }
 
 /** Tool execution completed */
@@ -103,6 +112,7 @@ export interface CursorAgentDone {
   type: "done";
   success: boolean;
   sessionId: string;
+  uiActions?: UIAction[];
   /** Plugin name created/edited */
   pluginName: string;
   pluginSlug: string;
@@ -146,6 +156,7 @@ export interface CursorWorkerStartEvent {
   displayName: string;
   /** Session ID */
   sessionId: string;
+  uiActions?: UIAction[];
 }
 
 /** Hand-off from one worker to another */

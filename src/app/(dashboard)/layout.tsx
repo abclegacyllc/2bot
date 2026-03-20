@@ -15,6 +15,7 @@ import { ProtectedRoute } from "@/components/auth/protected-route";
 import { CreditsBalanceDisplay } from "@/components/credits";
 import { Cursor, CursorProvider } from "@/components/cursor";
 import { CursorPanel } from "@/components/cursor/cursor-panel";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { ContextSwitcher } from "@/components/layouts";
 import { useAuth } from "@/components/providers/auth-provider";
 import { SupportWidget } from "@/components/support";
@@ -37,7 +38,6 @@ import {
     LogOut,
     Menu,
     Network,
-    Plug,
     Settings,
     Shield,
     User,
@@ -51,8 +51,7 @@ import { useState, type ReactNode } from "react";
 const sharedNavItemsBase = [
   { path: "", label: "Dashboard", icon: Home },
   { path: "/2bot-ai", label: "2Bot AI", icon: Brain },
-  { path: "/gateways", label: "Gateways", icon: Bot },
-  { path: "/plugins", label: "Plugins", icon: Plug },
+  { path: "/bots", label: "Bots", icon: Bot },
   { path: "/workspace", label: "Workspace", icon: Box },
 ];
 
@@ -387,7 +386,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     <ProtectedRoute>
       <CursorProvider>
         <DashboardLayoutContent>{children}</DashboardLayoutContent>
-        <CursorPanel />
+        <ErrorBoundary fallback={null}>
+          <CursorPanel />
+        </ErrorBoundary>
         <Cursor />
       </CursorProvider>
     </ProtectedRoute>

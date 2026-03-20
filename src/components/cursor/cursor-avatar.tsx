@@ -107,6 +107,12 @@ function injectStyles() {
       0%, 100% { opacity: 0.6; }
       50% { opacity: 1; }
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      .cursor-avatar-animated {
+        animation: none !important;
+      }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -397,7 +403,7 @@ export function CursorAvatar({
 
   return (
     <div
-      className={cn(SIZES[size], "relative flex-shrink-0", className)}
+      className={cn(SIZES[size], "relative flex-shrink-0 cursor-avatar-animated", className)}
       style={animationStyle}
       aria-hidden="true"
     >

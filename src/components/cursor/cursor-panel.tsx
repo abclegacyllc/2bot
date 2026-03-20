@@ -22,19 +22,24 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { apiUrl } from "@/shared/config/urls";
 import {
-  ChevronDown,
-  GripVertical,
-  History,
-  Loader2,
-  Palette,
-  Send,
-  Square,
-  X,
+    ChevronDown,
+    GripVertical,
+    History,
+    Loader2,
+    Palette,
+    Send,
+    Square,
+    Trash2,
+    Volume2,
+    VolumeX,
+    X,
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ModelSelector, type RealModelOption } from "@/components/2bot-ai-assistant/model-selector";
 import type { CursorAgentEvent } from "@/modules/cursor/cursor-agent.types";
 import type { CursorWorkerType } from "@/modules/cursor/cursor-workers";
 import { describeAgentEvent, mapAgentEventToActions } from "./agent-event-mapper";
@@ -42,15 +47,16 @@ import { CursorAvatar, TypingIndicator, type CursorExpression } from "./cursor-a
 import { CursorHistoryPanel } from "./cursor-history-panel";
 import { useCursorOptional } from "./cursor-provider";
 import { addEvent, completeSession, createSession } from "./cursor-session-store";
-import { playError, playStart, playSuccess, setSoundProfile } from "./cursor-sounds";
+import { isSoundEnabled, playError, playStart, playSuccess, setSoundEnabled, setSoundProfile } from "./cursor-sounds";
 import {
-  CURSOR_THEMES,
-  getCursorThemeVars,
-  loadThemePreference,
-  resolveTheme,
-  saveThemePreference,
-  type CursorThemeConfig,
+    CURSOR_THEMES,
+    getCursorThemeVars,
+    loadThemePreference,
+    resolveTheme,
+    saveThemePreference,
+    type CursorThemeConfig,
 } from "./cursor-theme";
+import type { UIAction } from "./cursor.types";
 
 // Lazy-loaded worker stream functions — only fetched when first command is executed
 async function loadWorkerBrain() {
@@ -188,6 +194,7 @@ function ExpandableText({ text }: { text: string }) {
         <button
           type="button"
           onClick={() => setExpanded((p) => !p)}
+          aria-expanded={expanded}
           className="mt-1 flex items-center gap-1 text-[11px] opacity-70 hover:opacity-100 transition-opacity"
         >
           <ChevronDown
@@ -245,6 +252,15 @@ export function CursorPanel() {
     setSoundProfile(t.id);
     return t;
   });
+
+  // Sound mute toggle
+  const [soundMuted, setSoundMuted] = useState(() => !isSoundEnabled());
+  const toggleSound = useCallback(() => {
+    setSoundMuted((prev) => {
+      setSoundEnabled(prev); // prev=true means currently muted, so enable
+      return !prev;
+    });
+  }, []);
   const themeVars = getCursorThemeVars(theme);
 
   /** Cycle to the next theme */
@@ -271,6 +287,34 @@ export function CursorPanel() {
 
   // View mode — chat or session history
   const [panelView, setPanelView] = useState<"chat" | "history">("chat");
+
+  // Model selection — persisted in localStorage
+  const CURSOR_MODEL_KEY = "cursor-model-preference";
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    try { return localStorage.getItem(CURSOR_MODEL_KEY) || "auto"; } catch { return "auto"; }
+  });
+  const [realModels, setRealModels] = useState<RealModelOption[]>([]);
+
+  // Persist model preference
+  const handleModelChange = useCallback((modelId: string) => {
+    setSelectedModel(modelId);
+    try { localStorage.setItem(CURSOR_MODEL_KEY, modelId); } catch { /* ignore */ }
+  }, []);
+
+  // Fetch real models for selector (text-generation only, cursor uses text)
+  useEffect(() => {
+    const token = localStorage.getItem("token") || "";
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch(apiUrl("/2bot-ai/real-models?capability=text-generation"), {
+      credentials: "include",
+      headers,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.data?.models) setRealModels(data.data.models);
+      })
+      .catch(() => { /* ignore */ });
+  }, []);
 
   // Drag state
   const [position, setPosition] = useState<{ x: number; y: number } | null>(() => loadPosition());
@@ -382,8 +426,10 @@ export function CursorPanel() {
       didDragRef.current = true;
     }
 
-    const newX = Math.max(0, Math.min(dragStartRef.current.startLeft + dx, window.innerWidth - 60));
-    const newY = Math.max(0, Math.min(dragStartRef.current.startTop + dy, window.innerHeight - 60));
+    const panelW = panelRef.current?.offsetWidth || 400;
+    const panelH = panelRef.current?.offsetHeight || 520;
+    const newX = Math.max(0, Math.min(dragStartRef.current.startLeft + dx, window.innerWidth - Math.min(panelW, 120)));
+    const newY = Math.max(0, Math.min(dragStartRef.current.startTop + dy, window.innerHeight - Math.min(panelH, 60)));
 
     setPosition({ x: newX, y: newY });
   }, []);
@@ -457,8 +503,8 @@ export function CursorPanel() {
       switch (event.type) {
         case "worker_start": {
           setActiveWorker({ type: event.worker, displayName: event.displayName });
-          // Enqueue UI actions (toast)
-          const actions = mapAgentEventToActions(event);
+          // Prefer backend-driven uiActions, fall back to mapper
+          const actions = event.uiActions?.length ? event.uiActions : mapAgentEventToActions(event);
           for (const a of actions) cursor?.enqueue(a);
           if (msgId) {
             updateMessage(msgId, { content: `${event.displayName} is on it...`, status: "working" });
@@ -528,7 +574,11 @@ export function CursorPanel() {
         case "status":
         case "iteration_start":
         case "session_start": {
-          const actions = mapAgentEventToActions(event);
+          // Prefer backend-driven uiActions when present
+          const uiDirect = "uiActions" in event && Array.isArray((event as { uiActions?: unknown }).uiActions)
+            ? (event as { uiActions: UIAction[] }).uiActions
+            : null;
+          const actions = uiDirect?.length ? uiDirect : mapAgentEventToActions(event);
           for (const a of actions) {
             if (a.action === "done") continue;
             cursor?.enqueue(a);
@@ -614,7 +664,7 @@ export function CursorPanel() {
         const brain = await loadWorkerBrain();
 
         const cleanup = brain.streamWorker(
-          { message: command },
+          { message: command, modelId: selectedModel !== "auto" ? selectedModel : undefined },
           token,
           handleWorkerEvent,
           () => {
@@ -646,7 +696,7 @@ export function CursorPanel() {
         setIsRunning(false);
       }
     },
-    [cursor, isRunning, askUserPending, handleWorkerEvent, addMessage, updateMessage],
+    [cursor, isRunning, askUserPending, handleWorkerEvent, addMessage, updateMessage, selectedModel],
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -752,7 +802,7 @@ export function CursorPanel() {
       aria-modal="false"
       className={cn(
         "fixed z-50",
-        "w-[400px] max-h-[520px] border",
+        "w-[400px] max-w-[calc(100vw-2rem)] max-h-[520px] border",
         "backdrop-blur-lg",
         "shadow-2xl",
         "flex flex-col overflow-hidden",
@@ -787,6 +837,15 @@ export function CursorPanel() {
             <span className="text-xs text-muted-foreground block">Ask me anything</span>
           )}
         </div>
+        <ModelSelector
+          models={[]}
+          value={selectedModel}
+          onChange={handleModelChange}
+          disabled={isRunning}
+          compact
+          showAutoMode
+          realModels={realModels}
+        />
         <button
           onClick={() => setPanelView((v) => v === "chat" ? "history" : "chat")}
           aria-label={panelView === "chat" ? "Show session history" : "Back to chat"}
@@ -806,6 +865,24 @@ export function CursorPanel() {
         >
           <Palette className="h-4 w-4" />
         </button>
+        <button
+          onClick={toggleSound}
+          aria-label={soundMuted ? "Unmute sounds" : "Mute sounds"}
+          title={soundMuted ? "Unmute" : "Mute"}
+          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/50"
+        >
+          {soundMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+        </button>
+        {messages.length > 0 && !isRunning ? (
+          <button
+            onClick={() => { setMessages([]); saveMessages([]); }}
+            aria-label="Clear chat history"
+            title="Clear Chat"
+            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/50"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ) : null}
         <button
           onClick={() => setIsOpen(false)}
           aria-label="Close chat panel"

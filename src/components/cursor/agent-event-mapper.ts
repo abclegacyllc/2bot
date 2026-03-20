@@ -298,7 +298,7 @@ function mapToolStartToActions(
         { action: "navigate", path: "/plugins", label: "Reviewing existing plugins" },
         {
           action: "highlight",
-          target: "plugins-list",
+          target: "plugin-store-list",
           label: "Checking installed plugins",
           durationMs: 30_000,
           gated: true,
@@ -421,7 +421,7 @@ function mapToolStartToActions(
         { action: "navigate", path: "/plugins", label: `Installing ${meta.slug}` },
         {
           action: "highlight",
-          target: "plugins-list",
+          target: "plugin-store-list",
           label: `Installing ${meta.slug}`,
           durationMs: 30_000,
           gated: true,
@@ -444,7 +444,7 @@ function mapToolStartToActions(
         { action: "navigate", path: "/plugins", label: `${meta.enable ? "Starting" : "Stopping"} ${meta.name}` },
         {
           action: "highlight",
-          target: "plugins-list",
+          target: "plugin-store-list",
           label: `${meta.enable ? "Starting" : "Stopping"} ${meta.name}`,
           durationMs: 30_000,
           gated: true,

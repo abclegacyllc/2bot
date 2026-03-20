@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
     createContext,
     useCallback,
@@ -37,28 +37,41 @@ import type {
 // ===========================================
 
 /** Delay between actions (ms) — controls the visual pacing */
-const ACTION_GAP_MS = 300;
+const ACTION_GAP_MS = 150;
 
 /** Time for cursor to animate between positions */
-const MOVE_DURATION_MS = 400;
+const MOVE_DURATION_MS = 250;
+
+/**
+ * Compute movement duration based on pixel distance.
+ * Short jumps are snappy; long jumps take more time to look natural.
+ */
+function moveDuration(from: CursorPosition, to: CursorPosition): number {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 200) return 150;   // short jump — snappy
+  if (dist > 600) return 400;   // long jump — give more time
+  return MOVE_DURATION_MS;      // medium — default
+}
 
 /** How long the click animation plays */
-const CLICK_DURATION_MS = 250;
+const CLICK_DURATION_MS = 150;
 
 /** Per-character typing speed (ms) */
-const TYPING_SPEED_MS = 25;
+const TYPING_SPEED_MS = 20;
 
 /** Time to show success state before resetting */
-const DONE_DISPLAY_MS = 2000;
+const DONE_DISPLAY_MS = 1500;
 
 /** Minimum time a gated highlight stays visible (ms) — prevents flash */
-const GATE_MIN_VISIBLE_MS = 400;
+const GATE_MIN_VISIBLE_MS = 300;
 
 /** Maximum time a gated highlight waits before auto-releasing (ms) */
 const GATE_MAX_WAIT_MS = 30_000;
 
 /** Max queued actions before collapsing (skip stale intermediate actions) */
-const QUEUE_COLLAPSE_THRESHOLD = 6;
+const QUEUE_COLLAPSE_THRESHOLD = 4;
 
 // ===========================================
 // Default State
@@ -70,6 +83,8 @@ const DEFAULT_STATE: CursorState = {
   position: { x: -100, y: -100 },
   label: "",
   highlightTarget: null,
+  pulseTarget: null,
+  spotlightTarget: null,
   queue: [],
   currentAction: null,
   secretDialog: null,
@@ -114,9 +129,16 @@ export function useCursorOptional(): CursorContextValue | null {
 
 export function CursorProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [state, setState] = useState<CursorState>(DEFAULT_STATE);
   const processingRef = useRef(false);
   const cancelledRef = useRef(false);
+  /** Tracks current cursor position for distance-based movement speed */
+  const positionRef = useRef<CursorPosition>({ x: -100, y: -100 });
+  /** Tracks current route to skip redundant navigations */
+  const currentPathRef = useRef(pathname);
+  // Keep ref in sync with pathname
+  useEffect(() => { currentPathRef.current = pathname; }, [pathname]);
   /** Set synchronously in enqueue/runChoreography to prevent waitForIdle resolving too early */
   const queuedRef = useRef(false);
   const secretResolverRef = useRef<Map<string, (value: string | null) => void>>(new Map());
@@ -276,15 +298,15 @@ export function CursorProvider({ children }: { children: ReactNode }) {
 
   /**
    * Wait for a target element to appear in the DOM (after navigation).
-   * Polls every 100ms for up to 3 seconds.
+   * Polls every 50ms for up to 1.5 seconds.
    */
   const waitForTarget = useCallback(
-    async (target: string, maxWaitMs = 3000): Promise<ReturnType<typeof resolveTarget>> => {
+    async (target: string, maxWaitMs = 1500): Promise<ReturnType<typeof resolveTarget>> => {
       const start = Date.now();
       while (Date.now() - start < maxWaitMs) {
         const result = resolveTarget(target);
         if (result) return result;
-        await sleep(100);
+        await sleep(50);
       }
       return null;
     },
@@ -299,6 +321,13 @@ export function CursorProvider({ children }: { children: ReactNode }) {
     async (action: UIAction): Promise<void> => {
       if (cancelledRef.current) return;
 
+      /** Move wait: compute distance-based sleep, update positionRef */
+      const moveWait = (target: CursorPosition) => {
+        const dur = moveDuration(positionRef.current, target);
+        positionRef.current = target;
+        return sleep(dur);
+      };
+
       setState((prev) => ({
         ...prev,
         currentAction: action,
@@ -307,10 +336,27 @@ export function CursorProvider({ children }: { children: ReactNode }) {
       switch (action.action) {
         // --- Navigate to a page ---
         case "navigate": {
+          // Skip navigation if already on the target page
+          const targetSegment = action.path.split("/").filter(Boolean)[0] || "";
+          const currentSegment = (currentPathRef.current || "").split("/").filter(Boolean).pop() || "";
+          const alreadyOnPage = currentSegment === targetSegment
+            || (currentPathRef.current || "").endsWith(action.path);
+
+          if (alreadyOnPage) {
+            // Already on this page — just show label, no cursor movement or navigation
+            setState((prev) => ({
+              ...prev,
+              mode: "thinking",
+              label: action.label,
+            }));
+            await sleep(100);
+            break;
+          }
+
           setState((prev) => ({
             ...prev,
             mode: "moving",
-            label: "", // Label shown after cursor reaches the nav target
+            label: "",
             highlightTarget: null,
           }));
 
@@ -341,12 +387,13 @@ export function CursorProvider({ children }: { children: ReactNode }) {
 
           if (navTarget) {
             // Move cursor to the sidebar nav item first
+            const navCenter = navTarget.center;
             setState((prev) => ({
               ...prev,
-              position: navTarget!.center,
+              position: navCenter,
               highlightTarget: navTargetId,
             }));
-            await sleep(MOVE_DURATION_MS);
+            await moveWait(navCenter);
 
             // Show label once cursor has arrived at the nav item
             setState((prev) => ({
@@ -373,13 +420,23 @@ export function CursorProvider({ children }: { children: ReactNode }) {
               ? new URL(navTarget.element.href).pathname
               : action.path;
           router.push(resolvedPath);
-          await sleep(600); // Wait for page transition
-          setState((prev) => ({
-            ...prev,
-            mode: "thinking",
-            label: "Loading page...",
-          }));
-          await sleep(400);
+          // Wait for route to actually render — poll for page content
+          // instead of hardcoded sleep to handle slow/fast transitions.
+          {
+            const navStart = Date.now();
+            const maxWait = 2000;
+            const minWait = 150;
+            while (Date.now() - navStart < maxWait) {
+              await sleep(80);
+              const elapsed = Date.now() - navStart;
+              if (elapsed >= minWait) {
+                const pageTarget = document.querySelector(
+                  '[data-ai-target$="-overview"], [data-ai-target$="-panel"]'
+                );
+                if (pageTarget) break;
+              }
+            }
+          }
           break;
         }
 
@@ -394,7 +451,7 @@ export function CursorProvider({ children }: { children: ReactNode }) {
               label: action.label,
               highlightTarget: action.target,
             }));
-            await sleep(MOVE_DURATION_MS);
+            await moveWait(found.center);
 
             if (action.gated) {
               // Event-gated: hold highlight until releaseGate() or timeout.
@@ -442,7 +499,7 @@ export function CursorProvider({ children }: { children: ReactNode }) {
               label: action.label,
               highlightTarget: action.target,
             }));
-            await sleep(MOVE_DURATION_MS);
+            await moveWait(found.center);
 
             // Click animation
             setState((prev) => ({ ...prev, mode: "clicking" }));
@@ -483,7 +540,7 @@ export function CursorProvider({ children }: { children: ReactNode }) {
               label: action.label,
               highlightTarget: action.target,
             }));
-            await sleep(MOVE_DURATION_MS);
+            await moveWait(found.center);
 
             // Typing animation
             setState((prev) => ({ ...prev, mode: "typing" }));
@@ -594,14 +651,15 @@ export function CursorProvider({ children }: { children: ReactNode }) {
 
         // --- Toast ---
         case "toast": {
-          // The Cursor component will render the toast.
-          // We just need to set the label and wait briefly.
+          // Show toast label — short display, don't block queue for long
           setState((prev) => ({
             ...prev,
             mode: action.variant === "success" ? "success" : action.variant === "error" ? "error" : "pointing",
             label: action.message,
           }));
-          await sleep(action.durationMs || 1500);
+          // Fire-and-forget: just yield one frame so React paints the label,
+          // then move on. The label will be overwritten by the next action anyway.
+          await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
           break;
         }
 
@@ -628,8 +686,82 @@ export function CursorProvider({ children }: { children: ReactNode }) {
             mode: action.success ? "success" : "error",
             label: action.label,
             highlightTarget: null,
+            pulseTarget: null,
+            spotlightTarget: null,
           }));
           await sleep(DONE_DISPLAY_MS);
+          break;
+        }
+
+        // --- Pulse (page-level glow, works without data-ai-target) ---
+        case "pulse": {
+          const pulseId = action.target || "__page__";
+          // Pulse is a glow effect — no cursor movement needed.
+          // Just resolve to check existence, don't animate cursor to it.
+          if (action.target) {
+            const found = resolveTarget(action.target);
+            setState((prev) => ({
+              ...prev,
+              mode: "thinking",
+              label: action.label,
+              pulseTarget: found ? pulseId : "__page__",
+            }));
+          } else {
+            setState((prev) => ({
+              ...prev,
+              mode: "thinking",
+              label: action.label,
+              pulseTarget: "__page__",
+            }));
+          }
+
+          if (action.gated) {
+            const gateStart = Date.now();
+            await waitForGate(action.durationMs || GATE_MAX_WAIT_MS);
+            const elapsed = Date.now() - gateStart;
+            if (elapsed < GATE_MIN_VISIBLE_MS) {
+              await sleep(GATE_MIN_VISIBLE_MS - elapsed);
+            }
+          } else {
+            await sleep(action.durationMs || 1500);
+          }
+
+          setState((prev) => ({ ...prev, pulseTarget: null }));
+          break;
+        }
+
+        // --- Spotlight (dim everything except target area) ---
+        case "spotlight": {
+          const spotId = action.target || "__page__";
+          if (action.target) {
+            const found = await waitForTarget(action.target);
+            if (found) {
+              setState((prev) => ({
+                ...prev,
+                mode: "pointing",
+                position: found.center,
+                label: action.label,
+                spotlightTarget: spotId,
+              }));
+              await moveWait(found.center);
+            } else {
+              setState((prev) => ({
+                ...prev,
+                mode: "thinking",
+                label: action.label,
+                spotlightTarget: "__page__",
+              }));
+            }
+          } else {
+            setState((prev) => ({
+              ...prev,
+              mode: "thinking",
+              label: action.label,
+              spotlightTarget: "__page__",
+            }));
+          }
+          await sleep(action.durationMs || 2000);
+          setState((prev) => ({ ...prev, spotlightTarget: null }));
           break;
         }
       }
@@ -652,10 +784,10 @@ export function CursorProvider({ children }: { children: ReactNode }) {
     const processQueue = async () => {
       queuedRef.current = false; // Processing has started — clear the queued flag
 
-      // Brief startup delay — let the cursor render at its initial position (bottom-right)
-      // before the first action moves it. Without this, the cursor teleports instantly
-      // to the first target and the user never sees the smooth entrance animation.
-      await sleep(150);
+      // Minimal frame yield — let the cursor render at its initial position (bottom-right)
+      // before the first action moves it.  One rAF + microtask is enough;
+      // the CSS transition on the element handles the smooth entrance.
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
 
       let stepCounter = 0;
       try {

@@ -20,13 +20,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
-    Bot,
-    Check,
-    Eye,
-    Loader2,
-    MousePointer2,
-    Pencil,
-    X,
+  Bot,
+  Check,
+  Eye,
+  Loader2,
+  MousePointer2,
+  Pencil,
+  X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
@@ -102,6 +102,136 @@ function HighlightRing({ target }: { target: string }) {
 }
 
 // ===========================================
+// Pulse Overlay — page-level or element-targeted glow
+// ===========================================
+
+function PulseOverlay({ target }: { target: string }) {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const isPage = target === "__page__";
+
+  useEffect(() => {
+    if (isPage) return;
+    const el = document.querySelector(`[data-ai-target="${target}"]`);
+    if (!el) return;
+    const update = () => setRect(el.getBoundingClientRect());
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [target, isPage]);
+
+  if (isPage) {
+    // Full page content area pulse
+    return (
+      <div
+        className="fixed inset-0 pointer-events-none z-[9996]"
+        style={{
+          background: "radial-gradient(ellipse at center, hsl(var(--primary) / 0.06) 0%, transparent 70%)",
+          animation: "cursor-page-pulse 2s ease-in-out infinite",
+        }}
+      />
+    );
+  }
+
+  if (!rect) return null;
+
+  return (
+    <div
+      className="fixed pointer-events-none z-[9996] rounded-xl"
+      style={{
+        left: rect.left - 8,
+        top: rect.top - 8,
+        width: rect.width + 16,
+        height: rect.height + 16,
+        boxShadow: "0 0 0 3px hsl(var(--primary) / 0.4), 0 0 30px 8px hsl(var(--primary) / 0.12)",
+        animation: "cursor-element-pulse 1.5s ease-in-out infinite",
+      }}
+    />
+  );
+}
+
+// ===========================================
+// Spotlight Overlay — dim everything except target
+// ===========================================
+
+function SpotlightOverlay({ target }: { target: string }) {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const isPage = target === "__page__";
+
+  useEffect(() => {
+    if (isPage) return;
+    const el = document.querySelector(`[data-ai-target="${target}"]`);
+    if (!el) return;
+    const update = () => setRect(el.getBoundingClientRect());
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [target, isPage]);
+
+  // Page spotlight: light vignette dims edges
+  if (isPage) {
+    return (
+      <div
+        className="fixed inset-0 pointer-events-none z-[9997] transition-opacity duration-500"
+        style={{
+          background: "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.3) 100%)",
+        }}
+      />
+    );
+  }
+
+  if (!rect) return null;
+
+  // Element spotlight: dark overlay with a cutout hole
+  const pad = 12;
+  return (
+    <div className="fixed inset-0 pointer-events-none z-[9997] transition-opacity duration-500">
+      <svg width="100%" height="100%" className="absolute inset-0">
+        <defs>
+          <mask id="spotlight-mask">
+            <rect width="100%" height="100%" fill="white" />
+            <rect
+              x={rect.left - pad}
+              y={rect.top - pad}
+              width={rect.width + pad * 2}
+              height={rect.height + pad * 2}
+              rx={12}
+              fill="black"
+            />
+          </mask>
+        </defs>
+        <rect
+          width="100%"
+          height="100%"
+          fill="rgba(0,0,0,0.25)"
+          mask="url(#spotlight-mask)"
+        />
+      </svg>
+      {/* Glow ring around the cutout */}
+      <div
+        className="absolute rounded-xl"
+        style={{
+          left: rect.left - pad,
+          top: rect.top - pad,
+          width: rect.width + pad * 2,
+          height: rect.height + pad * 2,
+          boxShadow: "0 0 0 2px hsl(var(--primary) / 0.5), 0 0 24px 4px hsl(var(--primary) / 0.1)",
+        }}
+      />
+    </div>
+  );
+}
+
+// ===========================================
 // Secret Input Dialog
 // ===========================================
 
@@ -120,6 +250,7 @@ function SecretDialog({
 }) {
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -131,6 +262,22 @@ function SecretDialog({
       if (e.key === "Escape") {
         e.preventDefault();
         onDismiss(secretId);
+      }
+      // Focus trap — keep Tab within the dialog
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'input, button, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0] as HTMLElement;
+        const last = focusable[focusable.length - 1] as HTMLElement;
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -146,7 +293,7 @@ function SecretDialog({
 
   return (
     <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="AI Agent needs your input" className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4">
         {/* Header */}
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-full bg-amber-500/10 flex items-center justify-center">
@@ -175,7 +322,8 @@ function SecretDialog({
             placeholder={hint || `Enter ${label}...`}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            autoComplete="off"
+            autoComplete="new-password"
+            aria-label={label}
             data-1p-ignore
           />
           {hint ? (
@@ -243,11 +391,21 @@ export function Cursor() {
         <HighlightRing target={state.highlightTarget} />
       ) : null}
 
-      {/* Screen reader live region — announces cursor actions */}
+      {/* Pulse overlay */}
+      {state.pulseTarget ? (
+        <PulseOverlay target={state.pulseTarget} />
+      ) : null}
+
+      {/* Spotlight overlay */}
+      {state.spotlightTarget ? (
+        <SpotlightOverlay target={state.spotlightTarget} />
+      ) : null}
+
+      {/* Screen reader live region — announces cursor actions and mode changes */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {state.label
-          ? `Cursor: ${state.label}${progressText ? ` (${progressText})` : ""}`
-          : state.mode === "idle" ? "" : `Cursor ${state.mode}`}
+          ? `Cursor ${state.mode}: ${state.label}${progressText ? ` (${progressText})` : ""}`
+          : state.mode === "idle" ? "" : `Cursor is ${state.mode}`}
       </div>
 
       {/* The cursor itself — fixed overlay */}
@@ -257,7 +415,7 @@ export function Cursor() {
         className={cn(
           "fixed z-[9999] pointer-events-none",
           "transition-all ease-out",
-          state.mode === "moving" ? "duration-500" : "duration-200",
+          state.mode === "moving" ? "duration-300" : "duration-150",
         )}
         style={{
           left: state.position.x,

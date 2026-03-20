@@ -35,6 +35,8 @@ export type UIAction =
   | UIWaitAction
   | UIToastAction
   | UISecretRequestAction
+  | UIPulseAction
+  | UISpotlightAction
   | UIDoneAction;
 
 /** Navigate to a dashboard page */
@@ -130,6 +132,36 @@ export interface UISecretRequestAction {
   field: string;
 }
 
+/**
+ * Pulse — generic page-level glow that works without data-ai-target.
+ * Optionally targets a specific element for precision.
+ */
+export interface UIPulseAction {
+  action: "pulse";
+  /** Tooltip text */
+  label: string;
+  /** Optional data-ai-target — falls back to page content area */
+  target?: string;
+  /** Pulse duration (ms). Default 1500 */
+  durationMs?: number;
+  /** Gated — hold until releaseGate() like highlight */
+  gated?: boolean;
+}
+
+/**
+ * Spotlight — dims everything except the targeted area.
+ * Works without data-ai-target by targeting the page content zone.
+ */
+export interface UISpotlightAction {
+  action: "spotlight";
+  /** Tooltip text */
+  label: string;
+  /** Optional data-ai-target — falls back to main content area */
+  target?: string;
+  /** How long to hold (ms) */
+  durationMs?: number;
+}
+
 /** Visual sequence completed */
 export interface UIDoneAction {
   action: "done";
@@ -169,6 +201,10 @@ export interface CursorState {
   label: string;
   /** Currently highlighted element's ID */
   highlightTarget: string | null;
+  /** Currently pulsing element (or "page" for page-level pulse) */
+  pulseTarget: string | null;
+  /** Currently spotlighted element (or "page" for page-level spotlight) */
+  spotlightTarget: string | null;
   /** Action queue (pending actions from SSE) */
   queue: UIAction[];
   /** Currently executing action */

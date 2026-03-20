@@ -47,7 +47,7 @@ async function executeAction(ctx: ServiceContext, body: CursorActionBody): Promi
   switch (action) {
     case "create_gateway": {
       const gwName = body.name ?? "My Bot";
-      const gwType = (body.type ?? "TELEGRAM_BOT") as "TELEGRAM_BOT" | "AI" | "CUSTOM_GATEWAY";
+      const gwType = (body.type ?? "TELEGRAM_BOT") as "TELEGRAM_BOT" | "DISCORD_BOT" | "SLACK_BOT" | "WHATSAPP_BOT";
 
       // Build credentials from secrets — cast to the correct type
       type CredentialTypes = import("@/modules/gateway/gateway.types").GatewayCredentials; // eslint-disable-line @typescript-eslint/consistent-type-imports
@@ -56,18 +56,6 @@ async function executeAction(ctx: ServiceContext, body: CursorActionBody): Promi
         const botToken = secrets.botToken;
         if (!botToken) throw new BadRequestError("botToken secret is required for Telegram gateways");
         credentials = { botToken };
-      } else if (gwType === "AI") {
-        const apiKey = secrets.apiKey;
-        if (!apiKey) throw new BadRequestError("apiKey secret is required for AI gateways");
-        const provider = (body.type || "openai") as import("@/modules/gateway/gateway.types").AIProvider; // eslint-disable-line @typescript-eslint/consistent-type-imports
-        credentials = { provider, apiKey };
-      } else if (gwType === "CUSTOM_GATEWAY") {
-        // Custom gateways accept flexible key-value credentials
-        const credPairs: Record<string, string> = {};
-        for (const [k, v] of Object.entries(secrets)) {
-          if (typeof v === "string") credPairs[k] = v;
-        }
-        credentials = credPairs as CredentialTypes;
       } else {
         throw new BadRequestError(`Unknown gateway type: ${gwType}`);
       }
@@ -717,7 +705,7 @@ If you genuinely need clarification, respond naturally as a conversation with 1-
       try {
         const response = await twoBotAIProvider.textGeneration({
           messages: editDesignConversation,
-          model: "2bot-ai-text-pro",
+          model: "auto",
           temperature: 0.7,
           maxTokens: 1500,
           stream: false,
@@ -982,7 +970,7 @@ Current plugin name: "${pluginName}"`;
       try {
         const response = await twoBotAIProvider.textGeneration({
           messages: designConversation,
-          model: "2bot-ai-text-pro",
+          model: "auto",
           temperature: 0.7,
           maxTokens: 1500,
           stream: false,
@@ -1062,7 +1050,7 @@ Respond naturally as a helpful assistant.`;
             { role: "system", content: chatSystemPrompt },
             { role: "user", content: chatText },
           ],
-          model: "2bot-ai-text-pro",
+          model: "auto",
           temperature: 0.7,
           maxTokens: 300,
           stream: false,
@@ -1101,7 +1089,7 @@ Respond naturally as a helpful assistant.`;
 
 | intent | description | parameters |
 |--------|-------------|------------|
-| create_gateway | Create a new bot/gateway for messaging | name (string, optional), gatewayType ("TELEGRAM_BOT" or "AI" or "CUSTOM_GATEWAY") |
+| create_gateway | Create a new bot/gateway for messaging | name (string, optional), gatewayType ("TELEGRAM_BOT", "DISCORD_BOT", "SLACK_BOT", or "WHATSAPP_BOT") |
 | delete_gateway | Delete/remove/disconnect a bot/gateway | name (string - which gateway) |
 | list_gateways | Show/browse the user's gateways | (none) |
 | create_plugin | Create a brand-new custom plugin from scratch | name (string, optional), description (string - FULL description of what user wants, preserve ALL details) |
@@ -1153,7 +1141,7 @@ The "confidence" field is a float from 0.0 to 1.0 indicating how confident you a
             { role: "system", content: systemPrompt },
             { role: "user", content: rawText },
           ],
-          model: "2bot-ai-text-pro",
+          model: "auto",
           temperature: 0,
           maxTokens: 300,
           stream: false,

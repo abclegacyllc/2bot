@@ -31,7 +31,6 @@
 import crypto from "crypto";
 
 import { logger } from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
 import {
     checkSessionLimits,
     truncateToolOutput,
@@ -40,13 +39,13 @@ import {
 import * as agentSessionService from "@/modules/2bot-ai-agent/agent-session.service";
 import { twoBotAIProvider } from "@/modules/2bot-ai-provider";
 import type { TextGenerationMessage, ToolDefinition } from "@/modules/2bot-ai-provider/types";
-import { bridgeClientManager } from "@/modules/workspace";
 import type { BridgeClient } from "@/modules/workspace/bridge-client.service";
 
 import type {
     CursorAgentEvent,
     ToolStartMeta,
 } from "./cursor-agent.types";
+import { getBridgeClient, withBridgeRetry } from "./cursor-bridge";
 
 const agentLog = logger.child({ module: "cursor", capability: "agent" });
 
@@ -105,6 +104,8 @@ export interface CursorAgentRequest {
   organizationId: string | null;
   /** Mode: create a new plugin, edit an existing one */
   mode: "create" | "edit";
+  /** AI model ID (defaults to "auto") */
+  modelId?: string;
 }
 
 // ===========================================
@@ -420,81 +421,6 @@ const AGENT_TOOLS: AgentTool[] = [
 ];
 
 // ===========================================
-// Bridge Client Helper
-// ===========================================
-
-/**
- * Get or reconnect a bridge client for a user's running workspace.
- * Returns both the client AND workspaceId (for session tracking).
- */
-async function getBridgeClient(
-  userId: string,
-  organizationId: string | null,
-): Promise<{ client: BridgeClient; workspaceId: string } | null> {
-  const container = await prisma.workspaceContainer.findFirst({
-    where: {
-      userId,
-      organizationId: organizationId ?? null,
-      status: "RUNNING",
-    },
-    select: { id: true, bridgePort: true, bridgeAuthToken: true },
-  });
-
-  if (!container) return null;
-
-  // Try existing connection first
-  const existing = bridgeClientManager.getExistingClient(container.id);
-  if (existing) return { client: existing, workspaceId: container.id };
-
-  // Auto-reconnect
-  if (!container.bridgePort || !container.bridgeAuthToken) return null;
-
-  try {
-    const { decrypt } = await import("@/lib/encryption");
-    const authToken = container.bridgeAuthToken.startsWith("v1:")
-      ? decrypt(container.bridgeAuthToken)
-      : container.bridgeAuthToken;
-    const client = await bridgeClientManager.getClient(
-      container.id,
-      container.bridgePort,
-      authToken,
-    );
-    return { client, workspaceId: container.id };
-  } catch {
-    return null;
-  }
-}
-
-// ===========================================
-// Retry Helper
-// ===========================================
-
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 500;
-
-/** Retry a bridge operation for transient connection errors */
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  label: string,
-): Promise<T> {
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err as Error;
-      const msg = lastError.message?.toLowerCase() || "";
-      const isTransient = msg.includes("timeout") || msg.includes("econnreset") ||
-        msg.includes("socket") || msg.includes("disconnected") || msg.includes("econnrefused");
-      if (!isTransient || attempt >= MAX_RETRIES) break;
-      agentLog.warn({ attempt: attempt + 1, label, error: msg }, "Retrying transient bridge error");
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
-    }
-  }
-  throw lastError;
-}
-
-// ===========================================
 // Tool Execution (with safety validation)
 // ===========================================
 
@@ -530,7 +456,7 @@ async function executeTool(
     case "read_file": {
       const path = args.path as string;
       try {
-        const result = await withRetry(
+        const result = await withBridgeRetry(
           () => client.fileRead(path) as Promise<{ content?: string }>,
           `read_file:${path}`,
         );
@@ -545,7 +471,7 @@ async function executeTool(
       const path = args.path as string;
       const content = args.content as string;
       try {
-        await withRetry(
+        await withBridgeRetry(
           () => client.fileWrite(path, content, true),
           `write_file:${path}`,
         );
@@ -564,7 +490,7 @@ async function executeTool(
       const path = (args.path as string) || "/";
       const recursive = (args.recursive as boolean) || false;
       try {
-        const result = await withRetry(
+        const result = await withBridgeRetry(
           () => client.fileList(path, recursive),
           `list_files:${path}`,
         );
@@ -577,7 +503,7 @@ async function executeTool(
     case "create_directory": {
       const path = args.path as string;
       try {
-        await withRetry(
+        await withBridgeRetry(
           () => client.fileMkdir(path),
           `create_directory:${path}`,
         );
@@ -590,7 +516,7 @@ async function executeTool(
     case "delete_file": {
       const path = args.path as string;
       try {
-        await withRetry(
+        await withBridgeRetry(
           () => client.fileDelete(path),
           `delete_file:${path}`,
         );
@@ -611,7 +537,7 @@ async function executeTool(
       const cwd = (args.cwd as string) || undefined;
       try {
         // Execute via bridge agent terminal
-        const result = await withRetry(
+        const result = await withBridgeRetry(
           () => client.send("terminal.create", {
             command,
             cwd,
@@ -644,7 +570,7 @@ async function executeTool(
       }
 
       try {
-        const result = await withRetry(
+        const result = await withBridgeRetry(
           () => client.send("terminal.create", {
             command: grepCmd,
             timeout: 15_000,
@@ -828,11 +754,8 @@ const sdk = require('/bridge-agent/plugin-sdk');
 - \`sdk.onInstall/onEnable/onDisable\` — lifecycle hooks
 
 ### Available AI Models
-- Text: 2bot-ai-text-free, 2bot-ai-text-lite, 2bot-ai-text-pro, 2bot-ai-text-ultra
-- Code: 2bot-ai-code-free, 2bot-ai-code-lite, 2bot-ai-code-pro, 2bot-ai-code-ultra
-- Reasoning: 2bot-ai-reasoning-pro, 2bot-ai-reasoning-ultra
-- Image: 2bot-ai-image-pro, 2bot-ai-image-ultra
-- Voice: 2bot-ai-voice-pro, 2bot-ai-voice-ultra
+Use "auto" (default — cheapest available) or a specific real model ID from the model selector.
+Legacy tier IDs (2bot-ai-text-pro, etc.) are still supported but real models are preferred.
 
 ### Config Schema
 Settings are configured via the dashboard UI, NOT via chat commands. Use \`"uiComponent": "ai-model-selector"\` for model selection fields.
@@ -993,13 +916,15 @@ export async function* runCursorAgentStream(
 
   const { client, workspaceId } = bridge;
 
+  const agentModel = request.modelId || "auto";
+
   // Persist session to database (fire-and-forget)
   agentSessionService.createSession({
     id: sessionId,
     userId,
     organizationId: organizationId ?? undefined,
     workspaceId,
-    model: "2bot-ai-code-pro",
+    model: agentModel,
     prompt: `[cursor-agent] ${isEdit ? "edit" : "create"}: ${task.slice(0, 500)}`,
   });
 
@@ -1107,7 +1032,7 @@ export async function* runCursorAgentStream(
       try {
         const response = await twoBotAIProvider.textGeneration({
           messages,
-          model: "2bot-ai-code-pro",
+          model: agentModel,
           temperature: 0.2,
           maxTokens: 4096,
           stream: false,

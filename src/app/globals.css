@@ -124,3 +124,21 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* AI Cursor — Pulse & Spotlight animations */
+@keyframes cursor-page-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes cursor-element-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.02); }
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse, .animate-ping, .animate-spin {
+    animation: none !important;
+  }
+}

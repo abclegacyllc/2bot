@@ -13,6 +13,8 @@
 import { logger } from "@/lib/logger";
 import { twoBotAIProvider } from "@/modules/2bot-ai-provider";
 
+import { extractConfigDefaults } from "./cursor-codegen.service";
+
 const editLog = logger.child({ module: "cursor", capability: "code-edit" });
 
 /**
@@ -68,11 +70,8 @@ const sdk = require('/bridge-agent/plugin-sdk');
 - \`sdk.onInstall/onEnable/onDisable\` — lifecycle hooks
 
 ### Available AI Models
-- Text: 2bot-ai-text-free, 2bot-ai-text-lite, 2bot-ai-text-pro, 2bot-ai-text-ultra
-- Code: 2bot-ai-code-free, 2bot-ai-code-lite, 2bot-ai-code-pro, 2bot-ai-code-ultra
-- Reasoning: 2bot-ai-reasoning-pro, 2bot-ai-reasoning-ultra
-- Image: 2bot-ai-image-pro, 2bot-ai-image-ultra
-- Voice: 2bot-ai-voice-pro, 2bot-ai-voice-ultra
+Use "auto" (default — cheapest available) or a specific real model ID from the model selector.
+Legacy tier IDs (2bot-ai-text-pro, etc.) are still supported but "auto" is preferred.
 
 ### Config Schema
 Settings are configured via the dashboard UI, NOT via chat commands or inline keyboards.
@@ -112,7 +111,7 @@ Respond with ONLY the JSON object. No markdown fences, no explanation.`;
         content: `Here is the current code of "${pluginName}":\n\n\`\`\`javascript\n${currentCode}\n\`\`\`\n\nApply this edit: ${instruction}`,
       },
     ],
-    model: "2bot-ai-code-pro",
+    model: "auto",
     temperature: 0.2,
     maxTokens: 4096,
     stream: false,
@@ -147,7 +146,7 @@ Respond with ONLY the JSON object. No markdown fences, no explanation.`;
         // Extract config defaults if configSchema was updated
         let configDefaults: Record<string, unknown> | undefined;
         if (parsed.configSchema && typeof parsed.configSchema === "object") {
-          configDefaults = extractConfigDefaultsFromSchema(parsed.configSchema);
+          configDefaults = extractConfigDefaults(parsed.configSchema);
         }
 
         return {
@@ -177,19 +176,4 @@ Respond with ONLY the JSON object. No markdown fences, no explanation.`;
     code: currentCode,
     summary: "Edit failed — code returned unchanged. Please try a more specific instruction.",
   };
-}
-
-/**
- * Extract default values from a configSchema's properties.
- */
-function extractConfigDefaultsFromSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  const defaults: Record<string, unknown> = {};
-  const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
-  if (!props) return defaults;
-  for (const [key, prop] of Object.entries(props)) {
-    if (prop.default !== undefined) {
-      defaults[key] = prop.default;
-    }
-  }
-  return defaults;
 }

@@ -84,7 +84,7 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
   create_gateway: {
     name: "create_gateway",
     description:
-      "Create a new gateway (Telegram bot, AI provider, or custom gateway). " +
+      "Create a new gateway (Telegram bot, Discord bot, Slack bot, or WhatsApp bot). " +
       "IMPORTANT: For Telegram bots, you MUST first use ask_user to collect the bot token " +
       "before calling this tool. The token is a secret the user gets from @BotFather.",
     parameters: {
@@ -96,16 +96,12 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
         },
         type: {
           type: "string",
-          enum: ["TELEGRAM_BOT", "AI", "CUSTOM_GATEWAY"],
+          enum: ["TELEGRAM_BOT", "DISCORD_BOT", "SLACK_BOT", "WHATSAPP_BOT"],
           description: "Gateway type (default: TELEGRAM_BOT)",
         },
         botToken: {
           type: "string",
           description: "Telegram bot token (required for TELEGRAM_BOT type, collected via ask_user)",
-        },
-        apiKey: {
-          type: "string",
-          description: "API key (required for AI type, collected via ask_user)",
         },
       },
       required: ["name"],
@@ -217,8 +213,12 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
         path: {
           type: "string",
           description:
-            "Dashboard route path. Available: /gateways, /plugins, " +
-            "/workspace, /credits, /billing, /usage, /settings",
+            "Dashboard route path. Main pages: /, /bots, " +
+            "/workspace, /credits, /billing, /usage, /settings, /2bot-ai, " +
+            "/organizations, /invites. " +
+            "Sub-pages: /gateways/create, /gateways/<id>, /plugins/create, " +
+            "/billing/upgrade, /billing/workspace. " +
+            "Org routes: /organizations/<orgSlug>/bots, .../gateways, .../plugins, .../members, .../workspace, etc.",
         },
         reason: {
           type: "string",
@@ -612,6 +612,76 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
       type: "object",
       properties: {},
       required: [],
+    },
+  },
+
+  // ── New platform tools ──────────────────────────────
+
+  check_gateway_status: {
+    name: "check_gateway_status",
+    description:
+      "Check the live health/connection status of a specific gateway. " +
+      "Runs a real connectivity test (e.g. Telegram getMe). Useful when a user reports their bot is not working.",
+    parameters: {
+      type: "object",
+      properties: {
+        gatewayId: {
+          type: "string",
+          description: "The ID of the gateway to check. Use list_gateways first if not known.",
+        },
+      },
+      required: ["gatewayId"],
+    },
+  },
+
+  view_plugin_logs: {
+    name: "view_plugin_logs",
+    description:
+      "View recent runtime logs for a plugin running in the user's workspace. " +
+      "Useful for debugging plugin errors or checking if a plugin started successfully.",
+    parameters: {
+      type: "object",
+      properties: {
+        pluginSlug: {
+          type: "string",
+          description: "The slug of the plugin to get logs for (e.g. 'echo-bot').",
+        },
+      },
+      required: ["pluginSlug"],
+    },
+  },
+
+  list_templates: {
+    name: "list_templates",
+    description:
+      "List all available bot plugin templates the user can use as a starting point. " +
+      "Returns template names, descriptions, categories, difficulty levels, and required gateways.",
+    parameters: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          description: "Optional category filter (e.g. 'messaging', 'ai', 'utility').",
+        },
+      },
+      required: [],
+    },
+  },
+
+  explain_error: {
+    name: "explain_error",
+    description:
+      "Explain a platform error message in plain language and suggest fixes. " +
+      "Pass in any error text the user encountered.",
+    parameters: {
+      type: "object",
+      properties: {
+        error: {
+          type: "string",
+          description: "The error message or error text to explain.",
+        },
+      },
+      required: ["error"],
     },
   },
 };
