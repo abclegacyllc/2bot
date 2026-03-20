@@ -83,12 +83,85 @@ export interface ManualTriggerConfig {
   paramsSchema?: Record<string, unknown>;
 }
 
+// ===========================================
+// Discord Trigger Configs
+// ===========================================
+
+/**
+ * Discord message trigger config
+ */
+export interface DiscordMessageTriggerConfig {
+  /** Filter by channel IDs */
+  channelIds?: string[];
+  /** Text pattern regex */
+  textPattern?: string;
+  /** Only match bot mentions */
+  mentionOnly?: boolean;
+}
+
+/**
+ * Discord command/interaction trigger config
+ */
+export interface DiscordCommandTriggerConfig {
+  /** Slash command name (e.g., "help") */
+  commandName?: string;
+  /** Interaction type filter (2 = application command, 3 = message component) */
+  interactionTypes?: number[];
+}
+
+// ===========================================
+// Slack Trigger Configs
+// ===========================================
+
+/**
+ * Slack message trigger config
+ */
+export interface SlackMessageTriggerConfig {
+  /** Filter by channel IDs */
+  channelIds?: string[];
+  /** Text pattern regex */
+  textPattern?: string;
+  /** Only match app mentions (vs all messages) */
+  mentionOnly?: boolean;
+  /** Event subtypes to match (e.g., "message", "app_mention") */
+  eventTypes?: string[];
+}
+
+/**
+ * Slack command/interaction trigger config
+ */
+export interface SlackCommandTriggerConfig {
+  /** Slash command name (e.g., "/mybot") */
+  commandName?: string;
+  /** Action IDs to match for block actions */
+  actionIds?: string[];
+}
+
+// ===========================================
+// WhatsApp Trigger Config
+// ===========================================
+
+/**
+ * WhatsApp message trigger config
+ */
+export interface WhatsAppMessageTriggerConfig {
+  /** Filter by message type */
+  messageTypes?: Array<"text" | "image" | "document" | "audio" | "video" | "location" | "contacts">;
+  /** Text pattern regex */
+  textPattern?: string;
+}
+
 /**
  * Union type for all trigger configs
  */
 export type TriggerConfig =
   | TelegramMessageTriggerConfig
   | TelegramCallbackTriggerConfig
+  | DiscordMessageTriggerConfig
+  | DiscordCommandTriggerConfig
+  | SlackMessageTriggerConfig
+  | SlackCommandTriggerConfig
+  | WhatsAppMessageTriggerConfig
   | ScheduleTriggerConfig
   | WebhookTriggerConfig
   | ManualTriggerConfig
@@ -248,6 +321,7 @@ export interface WorkflowExecutionContext {
     {
       input: unknown;
       output: unknown;
+      error?: string;
       status: string;
       durationMs: number;
     }
@@ -299,10 +373,10 @@ export interface CreateWorkflowRequest {
  */
 export interface UpdateWorkflowRequest {
   name?: string;
-  description?: string;
+  description?: string | null;
   slug?: string;
   triggerType?: WorkflowTriggerType;
-  triggerConfig?: TriggerConfig;
+  triggerConfig?: TriggerConfig | null;
   gatewayId?: string | null;
   status?: WorkflowStatus;
   isEnabled?: boolean;
@@ -327,7 +401,7 @@ export interface CreateWorkflowStepRequest {
  * Update workflow step request
  */
 export interface UpdateWorkflowStepRequest {
-  name?: string;
+  name?: string | null;
   order?: number;
   pluginId?: string;
   inputMapping?: InputMapping;

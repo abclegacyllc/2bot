@@ -44,6 +44,11 @@ export const workflowSlugSchema = z
 export const triggerTypeSchema = z.enum([
   "TELEGRAM_MESSAGE",
   "TELEGRAM_CALLBACK",
+  "DISCORD_MESSAGE",
+  "DISCORD_COMMAND",
+  "SLACK_MESSAGE",
+  "SLACK_COMMAND",
+  "WHATSAPP_MESSAGE",
   "SCHEDULE",
   "WEBHOOK",
   "MANUAL",
@@ -52,12 +57,12 @@ export const triggerTypeSchema = z.enum([
 /**
  * Workflow status enum
  */
-export const workflowStatusSchema = z.enum(["DRAFT", "PUBLISHED", "ARCHIVED"]);
+export const workflowStatusSchema = z.enum(["DRAFT", "ACTIVE", "PAUSED", "ARCHIVED"]);
 
 /**
  * Workflow scope enum
  */
-export const workflowScopeSchema = z.enum(["USER", "ORGANIZATION", "GLOBAL"]);
+export const workflowScopeSchema = z.enum(["USER", "DEPARTMENT", "ORGANIZATION"]);
 
 /**
  * Error handler enum
@@ -167,10 +172,10 @@ export const createWorkflowStepSchema = z.object({
     .min(0, "Order must be non-negative")
     .max(99, "Maximum 100 steps allowed"),
   name: z.string().min(1).max(100).optional(),
-  pluginId: z.string().uuid("Invalid plugin ID"),
+  pluginId: z.string().cuid("Invalid plugin ID"),
   inputMapping: inputMappingSchema,
   config: z.record(z.string(), z.unknown()).optional(),
-  gatewayId: z.string().uuid("Invalid gateway ID").optional(),
+  gatewayId: z.string().cuid("Invalid gateway ID").optional(),
   condition: stepConditionSchema,
   onError: errorHandlerSchema.default("stop"),
   maxRetries: z.number().int().min(0).max(10).default(0),
@@ -182,10 +187,10 @@ export const createWorkflowStepSchema = z.object({
 export const updateWorkflowStepSchema = z.object({
   order: z.number().int().min(0).max(99).optional(),
   name: z.string().min(1).max(100).nullish(),
-  pluginId: z.string().uuid("Invalid plugin ID").optional(),
+  pluginId: z.string().cuid("Invalid plugin ID").optional(),
   inputMapping: inputMappingSchema,
   config: z.record(z.string(), z.unknown()).optional(),
-  gatewayId: z.string().uuid("Invalid gateway ID").nullish(),
+  gatewayId: z.string().cuid("Invalid gateway ID").nullish(),
   condition: stepConditionSchema.nullish(),
   onError: errorHandlerSchema.optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
@@ -206,7 +211,7 @@ export const createWorkflowSchema = z
     scope: workflowScopeSchema.default("USER"),
     triggerType: triggerTypeSchema,
     triggerConfig: triggerConfigSchema,
-    gatewayId: z.string().uuid("Invalid gateway ID").optional(),
+    gatewayId: z.string().cuid("Invalid gateway ID").optional(),
   })
   .refine(
     (data) => {
@@ -232,7 +237,7 @@ export const updateWorkflowSchema = z.object({
   slug: workflowSlugSchema.optional(),
   triggerType: triggerTypeSchema.optional(),
   triggerConfig: triggerConfigSchema.nullish(),
-  gatewayId: z.string().uuid("Invalid gateway ID").nullish(),
+  gatewayId: z.string().cuid("Invalid gateway ID").nullish(),
   status: workflowStatusSchema.optional(),
   isEnabled: z.boolean().optional(),
 });
@@ -255,7 +260,7 @@ export const workflowListQuerySchema = z.object({
   scope: workflowScopeSchema.optional(),
   status: workflowStatusSchema.optional(),
   triggerType: triggerTypeSchema.optional(),
-  gatewayId: z.string().uuid().optional(),
+  gatewayId: z.string().cuid().optional(),
   search: z.string().max(100).optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -267,7 +272,7 @@ export const workflowListQuerySchema = z.object({
  * Workflow run list query schema
  */
 export const workflowRunListQuerySchema = z.object({
-  workflowId: z.string().uuid().optional(),
+  workflowId: z.string().cuid().optional(),
   status: z.enum(["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"]).optional(),
   triggeredBy: z.string().max(100).optional(),
   startDate: z.string().datetime().optional(),

@@ -9,6 +9,18 @@
 // Types
 export * from "./workflow.types";
 
+// Services
+export { workflowService } from "./workflow.service";
+
+// Executor
+export { executeWorkflow } from "./workflow.executor";
+
+// Template engine
+export { buildTemplateContext, evaluateCondition, resolveInputMapping, resolveTemplate } from "./template.engine";
+
+// Trigger handlers
+export { checkTelegramMessageTrigger, handleWebhookTrigger } from "./workflow.triggers";
+
 // Validation schemas
 export {
     // Workflow schemas
