@@ -1,0 +1,28 @@
+{
+  "slug": "command-bot",
+  "name": "Slash Commands",
+  "version": "1.0.0",
+  "description": "Responds to /start, /help, /stats and custom commands. Add interactive commands your users can discover and use.",
+  "category": "messaging",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["telegram", "commands", "bot", "slash"],
+  "difficulty": "intermediate",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "welcomeMessage": {
+        "type": "string",
+        "title": "Welcome Message",
+        "description": "Message sent when user runs /start",
+        "default": "Welcome! 🤖 Use /help to see available commands."
+      }
+    }
+  },
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "terminal",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "responder"
+}

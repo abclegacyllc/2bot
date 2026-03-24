@@ -1,7 +1,9 @@
 import { PrismaPg } from "@prisma/adapter-pg";
+import type { Prisma } from "@prisma/client";
 import { PrismaClient, UserRole } from "@prisma/client";
 import { hash } from "bcrypt";
 import dotenv from "dotenv";
+import fs from "fs";
 import path from "path";
 import { Pool } from "pg";
 
@@ -121,6 +123,7 @@ async function main() {
   
   console.log("\n📦 Seeding plugins...");
 
+  // Phase 1: Seed from builtin handler definitions (analytics — has server-side handler)
   const pluginSeeds = getAllBuiltinPluginSeedData();
 
   for (const seedData of pluginSeeds) {
@@ -129,10 +132,103 @@ async function main() {
       update: seedData,
       create: seedData,
     });
-    console.log(`✅ Seeded plugin: ${plugin.name}`);
+    console.log(`✅ Seeded plugin (handler): ${plugin.name}`);
   }
 
-  console.log(`\n📦 Total plugins seeded: ${pluginSeeds.length}`);
+  // Phase 2: Seed from marketplace filesystem manifests
+  const marketplaceDir = path.resolve(process.cwd(), "marketplace", "plugins");
+  let manifestCount = 0;
+
+  if (fs.existsSync(marketplaceDir)) {
+    const slugDirs = fs.readdirSync(marketplaceDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory());
+
+    for (const slugDir of slugDirs) {
+      const slug = slugDir.name;
+      const slugPath = path.join(marketplaceDir, slug);
+
+      // Find latest version
+      const versions = fs.readdirSync(slugPath, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+        .reverse();
+
+      if (versions.length === 0) continue;
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const latestVersion = versions[0]!;
+      const manifestPath = path.join(slugPath, latestVersion, "plugin.json");
+
+      if (!fs.existsSync(manifestPath)) continue;
+
+      try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+        const bundlePath = `plugins/${slug}/${latestVersion}`;
+
+        // Skip if already seeded by handler (e.g. analytics)
+        const existing = await prisma.plugin.findUnique({ where: { slug: manifest.slug } });
+        if (existing) {
+          // Update bundlePath if missing
+          if (!existing.bundlePath) {
+            await prisma.plugin.update({
+              where: { slug: manifest.slug },
+              data: { bundlePath },
+            });
+            console.log(`🔗 Updated bundlePath for: ${manifest.name}`);
+          }
+          continue;
+        }
+
+        const seedData: Prisma.PluginCreateInput = {
+          slug: manifest.slug,
+          name: manifest.name,
+          description: manifest.description,
+          version: manifest.version,
+          category: manifest.category,
+          requiredGateways: manifest.requiredGateways ?? [],
+          configSchema: manifest.configSchema ?? {},
+          tags: manifest.tags ?? [],
+          icon: manifest.icon ?? null,
+          isBuiltin: manifest.isBuiltin ?? true,
+          bundlePath,
+          eventTypes: manifest.eventTypes ?? [],
+          eventRole: manifest.eventRole ?? "responder",
+          authorType: "SYSTEM",
+          isPublic: true,
+          isActive: true,
+        };
+
+        const plugin = await prisma.plugin.create({ data: seedData });
+        manifestCount++;
+        console.log(`✅ Seeded plugin (manifest): ${plugin.name}`);
+      } catch (err) {
+        console.error(`❌ Failed to seed ${slug}:`, err);
+      }
+    }
+  }
+
+  console.log(`\n📦 Total plugins seeded: ${pluginSeeds.length} (handlers) + ${manifestCount} (manifests)`);
+
+  // Update bundlePath for handler-seeded plugins that have marketplace bundles
+  for (const seedData of pluginSeeds) {
+    const slug = seedData.slug;
+    // Map analytics handler slug to marketplace slug
+    const marketplaceSlug = slug === "analytics" ? "channel-analytics" : slug;
+    const bundleDir = path.join(marketplaceDir, marketplaceSlug);
+    if (fs.existsSync(bundleDir)) {
+      const versions = fs.readdirSync(bundleDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+        .reverse();
+      if (versions.length > 0) {
+        await prisma.plugin.update({
+          where: { slug },
+          data: { bundlePath: `plugins/${marketplaceSlug}/${versions[0]}` },
+        });
+      }
+    }
+  }
 
   console.log("\n🎉 Database seeded successfully!");
   console.log("📝 Test credentials: test@example.com / 12345678test");

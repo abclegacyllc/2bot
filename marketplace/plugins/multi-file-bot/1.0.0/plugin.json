@@ -1,0 +1,19 @@
+{
+  "slug": "multi-file-bot",
+  "name": "Multi-file Bot",
+  "version": "1.0.0",
+  "description": "A structured Telegram bot split into handlers, utils, and a main entry point. Shows best practices for larger plugins.",
+  "category": "messaging",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["telegram", "multi-file", "directory", "structured", "bot"],
+  "difficulty": "intermediate",
+  "configSchema": {},
+  "entryFile": "index.js",
+  "layout": "directory",
+  "icon": "folder-tree",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message", "telegram.callback"],
+  "eventRole": "responder",
+  "files": ["index.js", "handlers/message.js", "handlers/callback.js", "utils/formatter.js"]
+}

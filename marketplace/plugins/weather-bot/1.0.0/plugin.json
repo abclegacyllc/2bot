@@ -1,0 +1,28 @@
+{
+  "slug": "weather-bot",
+  "name": "Weather Lookup",
+  "version": "1.0.0",
+  "description": "Check weather for any city with /weather. Get current temperature, humidity, wind speed, and conditions in real time.",
+  "category": "utilities",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["telegram", "weather", "api", "http", "bot", "open-meteo"],
+  "difficulty": "intermediate",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "defaultCity": {
+        "type": "string",
+        "title": "Default City",
+        "description": "City to use when /weather is sent without a city name",
+        "default": ""
+      }
+    }
+  },
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "cloud-sun",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "responder"
+}

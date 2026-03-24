@@ -1,0 +1,49 @@
+{
+  "slug": "channel-analytics",
+  "name": "Message Analytics",
+  "version": "1.0.0",
+  "description": "Track message stats, active users, and chat activity. View daily trends, top users, and engagement metrics.",
+  "category": "analytics",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["analytics", "statistics", "telegram", "tracking"],
+  "difficulty": "intermediate",
+  "configSchema": {
+    "type": "object",
+    "title": "Analytics Configuration",
+    "properties": {
+      "trackUsers": {
+        "type": "boolean",
+        "title": "Track Users",
+        "description": "Track individual user statistics",
+        "default": true
+      },
+      "trackChats": {
+        "type": "boolean",
+        "title": "Track Chats",
+        "description": "Track individual chat/channel statistics",
+        "default": true
+      },
+      "retentionDays": {
+        "type": "number",
+        "title": "Retention Period",
+        "description": "How long to keep detailed statistics (days)",
+        "minimum": 7,
+        "maximum": 365,
+        "default": 30
+      },
+      "enableHourlyStats": {
+        "type": "boolean",
+        "title": "Hourly Statistics",
+        "description": "Enable hourly granularity (uses more storage)",
+        "default": true
+      }
+    }
+  },
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "chart-bar",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "observer"
+}

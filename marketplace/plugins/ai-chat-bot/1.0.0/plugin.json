@@ -1,0 +1,43 @@
+{
+  "slug": "ai-chat-bot",
+  "name": "AI Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered conversations with memory and custom personality. Your bot replies intelligently using configurable AI models.",
+  "category": "messaging",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["ai", "chat", "telegram", "bot", "gpt", "llm"],
+  "difficulty": "intermediate",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "model": {
+        "type": "string",
+        "title": "AI Model",
+        "description": "The AI model to use for generating responses",
+        "default": "auto",
+        "uiComponent": "ai-model-selector"
+      },
+      "systemPrompt": {
+        "type": "string",
+        "title": "System Prompt",
+        "description": "Instructions for the AI (personality, behavior, constraints)",
+        "default": "You are a helpful assistant."
+      },
+      "maxHistory": {
+        "type": "number",
+        "title": "Conversation Memory",
+        "description": "Number of past messages to include for context (0 = no memory)",
+        "minimum": 0,
+        "maximum": 50,
+        "default": 10
+      }
+    }
+  },
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "bot",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "responder"
+}

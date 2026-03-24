@@ -1,0 +1,35 @@
+{
+  "slug": "ai-image-bot",
+  "name": "AI Image Creator",
+  "version": "1.0.0",
+  "description": "Generate images from text descriptions with /imagine. Users describe what they want and get AI-generated images.",
+  "category": "messaging",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["ai", "image", "telegram", "bot", "dalle", "generation"],
+  "difficulty": "intermediate",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "model": {
+        "type": "string",
+        "title": "Image Model",
+        "description": "The AI model to use for image generation",
+        "default": "auto",
+        "uiComponent": "ai-model-selector"
+      },
+      "triggerPrefix": {
+        "type": "string",
+        "title": "Trigger Prefix",
+        "description": "Message prefix that triggers image generation",
+        "default": "/imagine "
+      }
+    }
+  },
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "image",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "responder"
+}

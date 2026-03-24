@@ -1,0 +1,29 @@
+{
+  "slug": "api-service",
+  "name": "API Service",
+  "version": "1.0.0",
+  "description": "A command-routing service plugin with separate route handlers, status tracking, and a simple key-value data store. Great starting point for complex bots.",
+  "category": "utilities",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["telegram", "multi-file", "directory", "api", "router", "crud"],
+  "difficulty": "advanced",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "serviceName": {
+        "type": "string",
+        "title": "Service Name",
+        "description": "Display name shown in status messages",
+        "default": "My API Service"
+      }
+    }
+  },
+  "entryFile": "index.js",
+  "layout": "directory",
+  "icon": "server",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "responder",
+  "files": ["index.js", "router.js", "handlers/status.js", "handlers/data.js"]
+}

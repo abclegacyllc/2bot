@@ -1,0 +1,18 @@
+{
+  "slug": "storage-demo",
+  "name": "Storage Demo",
+  "version": "1.0.0",
+  "description": "Demonstrates all storage SDK operations: set, get, has, delete, increment, TTL. Great reference for stateful plugins.",
+  "category": "utilities",
+  "requiredGateways": [],
+  "tags": ["storage", "demo", "tutorial", "reference"],
+  "difficulty": "beginner",
+  "configSchema": {},
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "database",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": [],
+  "eventRole": "observer"
+}

@@ -1,0 +1,34 @@
+{
+  "slug": "auto-responder",
+  "name": "Keyword Replies",
+  "version": "1.0.0",
+  "description": "Automatically responds when messages match your keyword rules. Set up FAQ answers, greetings, or info replies.",
+  "category": "automation",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["telegram", "auto-reply", "keyword", "automation"],
+  "difficulty": "intermediate",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "rules": {
+        "type": "array",
+        "title": "Auto-Reply Rules",
+        "description": "Define keyword-response pairs. When a message contains the keyword, the bot will reply automatically.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "keyword": { "type": "string", "title": "Keyword", "description": "Keyword to match (case-insensitive)" },
+            "response": { "type": "string", "title": "Response", "description": "Reply text to send when keyword matches" }
+          }
+        }
+      }
+    }
+  },
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "zap",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "responder"
+}

@@ -1,0 +1,35 @@
+{
+  "slug": "scheduled-reporter",
+  "name": "Scheduled Reports",
+  "version": "1.0.0",
+  "description": "Send automated summary reports on a schedule. Get periodic stats and updates delivered to your chat.",
+  "category": "analytics",
+  "requiredGateways": ["TELEGRAM_BOT"],
+  "tags": ["telegram", "report", "schedule", "analytics"],
+  "difficulty": "advanced",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "reportChatId": {
+        "type": "string",
+        "title": "Report Chat ID",
+        "description": "Telegram chat ID where reports will be sent"
+      },
+      "intervalMinutes": {
+        "type": "number",
+        "title": "Report Interval",
+        "description": "How often to send reports (in minutes)",
+        "minimum": 5,
+        "maximum": 1440,
+        "default": 60
+      }
+    }
+  },
+  "entryFile": "code.js",
+  "layout": "single",
+  "icon": "clock",
+  "author": "2bot",
+  "isBuiltin": true,
+  "eventTypes": ["telegram.message"],
+  "eventRole": "observer"
+}

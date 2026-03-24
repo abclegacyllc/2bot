@@ -188,6 +188,9 @@ model User {
   ticketMessages       TicketMessage[]  @relation("TicketMessageSender")
   kbArticles           KBArticle[]      @relation("KBArticleAuthor")
 
+  // Marketplace relations (Phase 12)
+  pluginReviews        PluginReview[]
+
   // Workspace relations (Phase 13)
   workspaceContainers  WorkspaceContainer[]
   allowedDomains       WorkspaceAllowedDomain[]
@@ -953,7 +956,11 @@ model Plugin {
   
   // Catalog template code for first-time installs to workspace containers
   // This is NOT user-specific code — the container filesystem is the source of truth for user code
+  // @deprecated — use bundlePath for marketplace plugins; kept for custom user plugins
   codeBundle    String?       @db.Text @map("code_bundle")
+  
+  // Marketplace bundle path (e.g. "plugins/ai-chat-bot/1.0.0") — replaces codeBundle for builtins
+  bundlePath    String?       @map("bundle_path") @db.VarChar(500)
   
   // Authorship and visibility
   authorId      String?       @map("author_id")    // userId of creator (null for SYSTEM)
@@ -974,6 +981,12 @@ model Plugin {
   
   // Status
   isActive      Boolean       @default(true)  @map("is_active")
+  isFeatured    Boolean       @default(false) @map("is_featured")
+  
+  // Popularity tracking
+  installCount  Int           @default(0)     @map("install_count")
+  avgRating     Float         @default(0)     @map("avg_rating")
+  reviewCount   Int           @default(0)     @map("review_count")
   
   // Timestamps
   createdAt     DateTime      @default(now()) @map("created_at")
@@ -982,11 +995,45 @@ model Plugin {
   // Relations
   userPlugins   UserPlugin[]
   workflowSteps WorkflowStep[]
+  reviews       PluginReview[]
   
   @@index([slug])
   @@index([isActive])
   @@index([category])
   @@map("plugins")
+}
+
+// ===========================================
+// Plugin Review Model (Phase 12.5: Reviews & Ratings)
+// ===========================================
+model PluginReview {
+  id              String    @id @default(cuid())
+  userId          String    @map("user_id")
+  pluginId        String    @map("plugin_id")
+
+  // Rating
+  rating          Int       // 1-5 stars
+  title           String?   @db.VarChar(200)
+  content         String?   @db.Text
+
+  // Moderation
+  isPublic        Boolean   @default(true)  @map("is_public")
+
+  // Verification
+  verifiedInstall Boolean   @default(false) @map("verified_install")
+
+  // Timestamps
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt      @map("updated_at")
+
+  // Relations
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plugin          Plugin        @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pluginId])  // One review per user per plugin
+  @@index([pluginId, rating])
+  @@index([createdAt])
+  @@map("plugin_reviews")
 }
 
 // User/Organization installed plugins
