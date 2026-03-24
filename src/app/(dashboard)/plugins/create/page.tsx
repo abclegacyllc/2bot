@@ -12,7 +12,7 @@
  * @module app/(dashboard)/plugins/create
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { PluginCodeEditor } from "@/components/plugins/plugin-code-editor";
@@ -113,7 +113,7 @@ function CreatePluginContent() {
   const [newFileName, setNewFileName] = useState("");
 
   // UI state
-  const [step, setStep] = useState<"template" | "form" | "git-clone">("template");
+  const [step, setStep] = useState<"template" | "form" | "git-clone" | "ai-generate">("template");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +123,15 @@ function CreatePluginContent() {
   const [gitUrl, setGitUrl] = useState("");
   const [gitBranch, setGitBranch] = useState("");
   const [isCloning, setIsCloning] = useState(false);
+
+  // AI generation state
+  const [aiRepoUrl, setAiRepoUrl] = useState("");
+  const [aiDescription, setAiDescription] = useState("");
+  const [aiGatewayType, setAiGatewayType] = useState("TELEGRAM_BOT");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiProgressLog, setAiProgressLog] = useState<string[]>([]);
+  const aiAbortRef = useRef<(() => void) | null>(null);
+  const aiLogEndRef = useRef<HTMLDivElement>(null);
 
   // Fetch gateways when required gateways are set
   useEffect(() => {
@@ -316,6 +325,94 @@ function CreatePluginContent() {
     }
   };
 
+  const handleAIGenerate = async () => {
+    if (!aiRepoUrl.trim()) {
+      setError("GitHub URL is required");
+      return;
+    }
+
+    // Validate HTTPS URL
+    try {
+      const url = new URL(aiRepoUrl.trim());
+      if (url.protocol !== "https:") {
+        setError("Only HTTPS URLs are supported");
+        return;
+      }
+    } catch {
+      setError("Please enter a valid URL");
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+    setAiProgressLog(["Starting AI repo analysis..."]);
+
+    try {
+      const authToken = localStorage.getItem("token") || "";
+      const { streamWorker } = await import("@/components/cursor/cursor-brain");
+
+      const cleanup = streamWorker(
+        {
+          message: aiDescription.trim()
+            ? `Analyze this GitHub repo and create a 2Bot plugin from it: ${aiRepoUrl.trim()}. Description: ${aiDescription.trim()}`
+            : `Analyze this GitHub repo and create a 2Bot plugin from it: ${aiRepoUrl.trim()}`,
+          mode: "analyze-repo",
+          repoUrl: aiRepoUrl.trim(),
+          description: aiDescription.trim() || undefined,
+        },
+        authToken,
+        (event) => {
+          // Map streaming events to progress log
+          const type = event.type as string;
+          if (type === "status") {
+            setAiProgressLog((prev) => [...prev, event.message as string]);
+          } else if (type === "worker_start") {
+            setAiProgressLog((prev) => [...prev, `${event.displayName as string} started`]);
+          } else if (type === "thinking" && (event.text as string)?.length > 10) {
+            setAiProgressLog((prev) => [...prev, `Thinking: ${(event.text as string).slice(0, 100)}...`]);
+          } else if (type === "tool_start") {
+            const toolName = (event.tool as string || "").replace(/_/g, " ");
+            setAiProgressLog((prev) => [...prev, `Using tool: ${toolName}`]);
+          } else if (type === "tool_result") {
+            if (!(event.success as boolean)) {
+              setAiProgressLog((prev) => [...prev, `⚠ Issue: ${(event.summary as string)?.slice(0, 80)}`]);
+            }
+          } else if (type === "code_preview") {
+            setAiProgressLog((prev) => [...prev, `Writing file: ${event.file as string}`]);
+          } else if (type === "hand_off") {
+            setAiProgressLog((prev) => [...prev, `Handing off to ${event.toDisplayName as string}...`]);
+          } else if (type === "done") {
+            if (event.success) {
+              setAiProgressLog((prev) => [...prev, `✓ ${event.summary as string || "Plugin created successfully!"}`]);
+              // Navigate to workspace after a brief delay
+              setTimeout(() => router.push("/workspace"), 1500);
+            } else {
+              setError(event.summary as string || "Plugin generation failed");
+            }
+          }
+          // Auto-scroll log
+          setTimeout(() => aiLogEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+        },
+        () => {
+          // onDone — stream ended
+          setIsGenerating(false);
+          aiAbortRef.current = null;
+        },
+        (errMsg) => {
+          // onError — stream-level error
+          setError(errMsg);
+          setIsGenerating(false);
+          aiAbortRef.current = null;
+        },
+      );
+
+      aiAbortRef.current = cleanup;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start AI generation");
+      setIsGenerating(false);
+    }
+  };
+
   // Template selection step
   if (step === "template") {
     return (
@@ -335,6 +432,13 @@ function CreatePluginContent() {
                 className="border-border text-foreground"
               >
                 Cancel
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setStep("ai-generate")}
+                className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10"
+              >
+                AI Generate from GitHub
               </Button>
               <Button
                 variant="outline"
@@ -374,6 +478,180 @@ function CreatePluginContent() {
             selectedId={selectedTemplateId || undefined}
             token={token || undefined}
           />
+        </div>
+      </div>
+    );
+  }
+
+  // AI generate from GitHub step
+  if (step === "ai-generate") {
+    return (
+      <div className="min-h-screen bg-background p-8">
+        <div className="max-w-2xl mx-auto space-y-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-foreground">AI Generate from GitHub</h1>
+              <p className="text-muted-foreground mt-1">
+                AI reads a GitHub repository, understands what it does, and generates
+                a clean 2Bot plugin inspired by it.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => setStep("template")}
+              className="border-border text-foreground"
+            >
+              Back
+            </Button>
+          </div>
+
+          {error ? (
+            <div className="p-4 rounded-lg bg-red-900/20 border border-red-900/50 text-red-400">
+              {error}
+              <button
+                onClick={() => setError(null)}
+                className="ml-2 underline hover:no-underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+
+          <Card className="border-purple-500/30 bg-card/50">
+            <CardHeader>
+              <CardTitle className="text-foreground flex items-center gap-2">
+                <span className="text-purple-400">&#x2728;</span>
+                Source Repository
+              </CardTitle>
+              <CardDescription className="text-muted-foreground">
+                Provide a public GitHub repo. AI will read its source code and create
+                a new native 2Bot plugin — no foreign code is executed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="aiRepoUrl" className="text-foreground">
+                  GitHub URL *
+                </Label>
+                <Input
+                  id="aiRepoUrl"
+                  value={aiRepoUrl}
+                  onChange={(e) => setAiRepoUrl(e.target.value)}
+                  placeholder="https://github.com/user/my-project"
+                  className="bg-muted border-border text-foreground"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="aiDescription" className="text-foreground">
+                  What do you want the plugin to do? (optional)
+                </Label>
+                <Textarea
+                  id="aiDescription"
+                  value={aiDescription}
+                  onChange={(e) => setAiDescription(e.target.value)}
+                  placeholder="e.g., I want a Telegram bot that does the same thing as this project — responds to commands with weather data and stores user preferences"
+                  className="bg-muted border-border text-foreground min-h-[100px]"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Help the AI understand which parts of the project you want replicated
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="aiGatewayType" className="text-foreground">
+                  Target Platform
+                </Label>
+                <Select value={aiGatewayType} onValueChange={setAiGatewayType}>
+                  <SelectTrigger className="bg-muted border-border text-foreground">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TELEGRAM_BOT">Telegram Bot</SelectItem>
+                    <SelectItem value="DISCORD_BOT">Discord Bot</SelectItem>
+                    <SelectItem value="SLACK_BOT">Slack Bot</SelectItem>
+                    <SelectItem value="WHATSAPP_BOT">WhatsApp Bot</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border bg-card/50">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-3 text-sm text-muted-foreground">
+                <div className="mt-0.5 text-purple-400">&#x2728;</div>
+                <div>
+                  <p className="font-medium text-foreground mb-1">How it works</p>
+                  <ul className="space-y-1 list-disc pl-4">
+                    <li>AI clones the repo into your workspace (read-only analysis)</li>
+                    <li>Analyzes the project&apos;s purpose, features, and architecture</li>
+                    <li>AI Agent generates a native 2Bot plugin using our SDK — iteratively, with self-correction</li>
+                    <li>Creates the plugin, installs dependencies, and starts it automatically</li>
+                  </ul>
+                  <p className="mt-2 text-xs text-purple-400/80">
+                    Uses AI credits from your account
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* AI Progress Log — visible during generation */}
+          {isGenerating && aiProgressLog.length > 0 ? (
+            <Card className="border-purple-500/30 bg-card/50">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-purple-400 flex items-center gap-2">
+                  <span className="animate-pulse">&#x2728;</span>
+                  AI Agent Working...
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="max-h-[300px] overflow-y-auto space-y-1 font-mono text-xs">
+                  {aiProgressLog.map((msg, i) => (
+                    <div key={i} className="text-muted-foreground py-0.5">
+                      <span className="text-purple-400/60 mr-2">{String(i + 1).padStart(2, "0")}</span>
+                      {msg}
+                    </div>
+                  ))}
+                  <div ref={aiLogEndRef} />
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <div className="flex gap-3 justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (isGenerating && aiAbortRef.current) {
+                  aiAbortRef.current();
+                  aiAbortRef.current = null;
+                  setIsGenerating(false);
+                  setAiProgressLog((prev) => [...prev, "Cancelled by user"]);
+                } else {
+                  setStep("template");
+                }
+              }}
+              className="border-border text-foreground"
+            >
+              {isGenerating ? "Cancel" : "Back"}
+            </Button>
+            <Button
+              onClick={handleAIGenerate}
+              disabled={isGenerating || !aiRepoUrl.trim()}
+              className="bg-purple-600 hover:bg-purple-700 px-8"
+            >
+              {isGenerating ? (
+                <span className="flex items-center gap-2">
+                  <span className="animate-spin">&#x2728;</span>
+                  AI Agent working...
+                </span>
+              ) : (
+                "Generate Plugin with AI"
+              )}
+            </Button>
+          </div>
         </div>
       </div>
     );

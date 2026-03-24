@@ -128,6 +128,19 @@ cursorRouter.post(
       throw new BadRequestError("Missing required field: message");
     }
 
+    // Validate repoUrl if provided — must be HTTPS GitHub/GitLab URL
+    if (body.repoUrl) {
+      try {
+        const url = new URL(body.repoUrl);
+        if (url.protocol !== "https:") {
+          throw new BadRequestError("repoUrl must use HTTPS");
+        }
+      } catch (e) {
+        if (e instanceof BadRequestError) throw e;
+        throw new BadRequestError("repoUrl must be a valid URL");
+      }
+    }
+
     const workerRequest: WorkerStreamRequest = {
       message: body.message,
       userId: req.user.id,
@@ -136,6 +149,9 @@ cursorRouter.post(
       pluginName: body.pluginName,
       mode: body.mode,
       modelId: body.modelId,
+      repoUrl: body.repoUrl,
+      repoBranch: body.repoBranch,
+      description: body.description,
     };
 
     // SSE headers

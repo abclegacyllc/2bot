@@ -490,6 +490,53 @@ export function updatePluginConfig(
   return apiPut<UserPlugin>(`/plugins/installed/${id}/config`, data, token);
 }
 
+/**
+ * Install a plugin to a specific bot (gateway) with optional config.
+ * Auto-fills schema defaults on the backend.
+ */
+export function installPluginToBot(
+  slug: string,
+  gatewayId: string,
+  config?: Record<string, unknown>,
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPost<UserPlugin>("/plugins/install", { slug, gatewayId, config: config ?? {} }, token);
+}
+
+/**
+ * Install a plugin to a bot within an organization context.
+ */
+export function installPluginToBotOrg(
+  orgId: string,
+  slug: string,
+  gatewayId: string,
+  config?: Record<string, unknown>,
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPost<UserPlugin>(`/orgs/${orgId}/plugins/install`, { slug, gatewayId, config: config ?? {} }, token);
+}
+
+/**
+ * Uninstall a plugin (personal workspace).
+ */
+export function uninstallPlugin(
+  userPluginId: string,
+  token?: string
+): Promise<ApiResponse<void>> {
+  return apiDelete<void>(`/plugins/installed/${userPluginId}`, token);
+}
+
+/**
+ * Uninstall a plugin (organization context).
+ */
+export function uninstallPluginOrg(
+  orgId: string,
+  userPluginId: string,
+  token?: string
+): Promise<ApiResponse<void>> {
+  return apiDelete<void>(`/orgs/${orgId}/plugins/${userPluginId}`, token);
+}
+
 // ============================================================================
 // Workflow API
 // ============================================================================

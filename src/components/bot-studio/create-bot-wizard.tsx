@@ -42,10 +42,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  DiscordIcon,
-  SlackIcon,
-  TelegramIcon,
-  WhatsAppIcon,
+    DiscordIcon,
+    SlackIcon,
+    TelegramIcon,
+    WhatsAppIcon,
 } from "./platform-icons";
 
 // ===========================================
@@ -220,6 +220,9 @@ export function CreateBotWizard({
                 isBuiltin: up.authorType === "SYSTEM",
                 authorType: up.authorType ?? "USER",
                 isPublic: false,
+                installCount: 0,
+                avgRating: 0,
+                reviewCount: 0,
               });
             }
           }

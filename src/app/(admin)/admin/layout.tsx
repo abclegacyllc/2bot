@@ -34,6 +34,7 @@ import {
     Menu,
     Network,
     Shield,
+    Store,
     Users
 } from "lucide-react";
 import Link from "next/link";
@@ -47,6 +48,7 @@ const navItems = [
   { href: "/admin/organizations", label: "Organizations", icon: Building2 },
   { href: "/admin/credits", label: "Credits", icon: Coins },
   { href: "/admin/gateways", label: "Gateways", icon: Bot },
+  { href: "/admin/marketplace", label: "Marketplace", icon: Store },
   { href: "/admin/workspaces", label: "Workspaces", icon: Box },
   { href: "/admin/workspaces/egress", label: "Network", icon: Network },
   { href: "/admin/ai-usage", label: "AI Usage", icon: Brain },

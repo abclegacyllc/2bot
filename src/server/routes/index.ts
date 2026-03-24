@@ -23,6 +23,7 @@ import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
 import { invitesRouter } from "./invites";
 import { kbRouter } from "./kb";
+import { marketplaceRouter } from "./marketplace";
 import { organizationRouter } from "./organization";
 import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
@@ -103,6 +104,11 @@ router.use("/webhooks", webhookRouter);
  * Plugin routes (Phase 3)
  */
 router.use("/plugins", pluginRouter);
+
+/**
+ * Marketplace routes (Phase 12)
+ */
+router.use("/marketplace", marketplaceRouter);
 
 /**
  * Resources routes (Phase B)

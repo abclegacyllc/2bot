@@ -69,6 +69,11 @@ export const PERMISSIONS = {
   'marketplace:feature': ['ADMIN', 'SUPER_ADMIN'],
   'marketplace:reject': ['ADMIN', 'SUPER_ADMIN'],
 
+  // Admin permissions - Marketplace
+  'admin:marketplace:read': ['SUPPORT', 'ADMIN', 'SUPER_ADMIN'],
+  'admin:marketplace:write': ['ADMIN', 'SUPER_ADMIN'],
+  'admin:marketplace:delete': ['SUPER_ADMIN'],
+
   // Organization permissions (checked against orgRole)
   'org:manage': ['ORG_OWNER', 'ORG_ADMIN'],
   'org:members:invite': ['ORG_OWNER', 'ORG_ADMIN'],

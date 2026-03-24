@@ -25,12 +25,16 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
 import { requirePermission } from "../middleware/role";
+import { adminMarketplaceRouter } from "./admin-marketplace";
 
 export const adminRouter = Router();
 
 // All admin routes require authentication
 // Specific permissions are checked per route
 adminRouter.use(requireAuth);
+
+// Mount admin sub-routers
+adminRouter.use("/marketplace", adminMarketplaceRouter);
 
 /**
  * Helper to create ServiceContext from Express request

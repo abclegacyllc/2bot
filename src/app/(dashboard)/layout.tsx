@@ -40,6 +40,7 @@ import {
     Network,
     Settings,
     Shield,
+    Store,
     User,
     Users
 } from "lucide-react";
@@ -52,6 +53,7 @@ const sharedNavItemsBase = [
   { path: "", label: "Dashboard", icon: Home },
   { path: "/2bot-ai", label: "2Bot AI", icon: Brain },
   { path: "/bots", label: "Bots", icon: Bot },
+  { path: "/marketplace", label: "Marketplace", icon: Store },
   { path: "/workspace", label: "Workspace", icon: Box },
 ];
 

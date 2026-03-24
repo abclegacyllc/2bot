@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { AddPluginPanel } from "@/components/bot-studio/add-plugin-panel";
 import { AddStepDialog } from "@/components/bot-studio/add-step-dialog";
 import { WorkflowCanvas } from "@/components/bot-studio/workflow-canvas";
 import { WorkflowPluginSidebar } from "@/components/bot-studio/workflow-plugin-sidebar";
@@ -10,58 +11,62 @@ import { WorkflowStepEditor, type StepEditorData } from "@/components/bot-studio
 import { WorkflowTriggerEditor } from "@/components/bot-studio/workflow-trigger-editor";
 import { ConfigModal } from "@/components/plugins/config-modal";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
+    Card,
+    CardContent,
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import type {
-  GatewayOption,
-  WorkflowListItem,
-  WorkflowStepItem,
+    GatewayOption,
+    WorkflowListItem,
+    WorkflowStepItem,
 } from "@/lib/api-client";
 import {
-  addWorkflowStep,
-  createWorkflow,
-  deleteWorkflowStep,
-  getPluginBySlug,
-  getWorkflows,
-  togglePlugin,
-  triggerWorkflow,
-  updateGateway,
-  updatePluginConfig,
-  updateWorkflow,
-  updateWorkflowStep,
+    addWorkflowStep,
+    createWorkflow,
+    deleteWorkflowStep,
+    getPluginBySlug,
+    getWorkflows,
+    togglePlugin,
+    triggerWorkflow,
+    uninstallPlugin,
+    uninstallPluginOrg,
+    updateGateway,
+    updatePluginConfig,
+    updateWorkflow,
+    updateWorkflowStep,
 } from "@/lib/api-client";
 import type { ConfigSchema, PluginListItem, UserPlugin } from "@/shared/types/plugin";
 import {
-  AlertCircle,
-  ArrowLeft,
-  ChevronRight,
-  HelpCircle,
-  LayoutGrid,
-  List,
-  Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Play,
-  Plug,
-  Plus,
-  Settings,
-  Wifi,
-  WifiOff,
-  Workflow,
+    AlertCircle,
+    ArrowLeft,
+    Check,
+    ChevronRight,
+    HelpCircle,
+    LayoutGrid,
+    List,
+    Loader2,
+    PanelLeftClose,
+    PanelLeftOpen,
+    Play,
+    Plug,
+    Plus,
+    Settings,
+    Trash2,
+    Wifi,
+    WifiOff,
+    Workflow,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -457,9 +462,42 @@ export function BotDetailView({
     [token, onRefresh]
   );
 
+  // ===========================================
+  // Plugin uninstall
+  // ===========================================
+
+  const [uninstallingPluginId, setUninstallingPluginId] = useState<string | null>(null);
+
+  const handleUninstallPlugin = useCallback(
+    async (pluginId: string, pluginName: string) => {
+      if (!confirm(`Uninstall "${pluginName}"? This will remove it from your bot.`)) return;
+      setUninstallingPluginId(pluginId);
+      try {
+        const result = organizationId
+          ? await uninstallPluginOrg(organizationId, pluginId, token ?? undefined)
+          : await uninstallPlugin(pluginId, token ?? undefined);
+        if (result.success) {
+          toast.success("Plugin uninstalled");
+          onRefresh();
+        } else {
+          toast.error(result.error?.message ?? "Failed to uninstall plugin");
+        }
+      } catch {
+        toast.error("Failed to uninstall plugin");
+      } finally {
+        setUninstallingPluginId(null);
+      }
+    },
+    [token, organizationId, onRefresh]
+  );
+
+  // Add plugin browse panel state
+  const [showAddPlugin, setShowAddPlugin] = useState(false);
+
   // Filter plugins belonging to this gateway
   const gatewayPlugins = plugins.filter((p) => p.gatewayId === gateway.id);
   const otherPlugins = plugins.filter((p) => !p.gatewayId || p.gatewayId !== gateway.id);
+  const installedSlugs = new Set(gatewayPlugins.map((p) => p.pluginSlug));
 
   // Plugin config modal
   const [configuringPlugin, setConfiguringPlugin] = useState<UserPlugin | null>(null);
@@ -753,8 +791,7 @@ export function BotDetailView({
               </Badge>
               <Badge
                 variant={mode === "workflow" ? "default" : "outline"}
-                className="text-xs cursor-pointer select-none"
-                onClick={handleToggleMode}
+                className="text-xs"
               >
                 {mode === "workflow" ? "Workflow Mode" : "Plugin Mode"}
               </Badge>
@@ -778,14 +815,22 @@ export function BotDetailView({
             </h3>
             {gatewayPlugins.length === 0 ? (
               <Card className="border-border bg-card/50 border-dashed">
-                <CardContent className="py-8 text-center">
-                  <Plug className="h-7 w-7 text-muted-foreground/40 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">
-                    No plugins installed on this bot yet.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Install plugins from the plugin catalog to get started.
-                  </p>
+                <CardContent className="py-6">
+                  <div className="text-center mb-4">
+                    <Plug className="h-7 w-7 text-muted-foreground/40 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">
+                      No plugins installed yet — add one to get started!
+                    </p>
+                  </div>
+                  <AddPluginPanel
+                    gatewayId={gateway.id}
+                    gatewayType={gateway.type}
+                    installedSlugs={installedSlugs}
+                    token={token}
+                    organizationId={organizationId}
+                    onClose={() => {}}
+                    onInstalled={onRefresh}
+                  />
                 </CardContent>
               </Card>
             ) : (
@@ -809,9 +854,23 @@ export function BotDetailView({
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
                           {p.lastError ? (
-                            <Badge variant="destructive" className="text-[10px] gap-1">
-                              <AlertCircle className="h-3 w-3" /> Error
-                            </Badge>
+                            p.processStatus === "running" ? (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] gap-1 text-amber-400 border-amber-500/30"
+                                title={`Auto-recovered from: ${p.lastError}`}
+                              >
+                                <Check className="h-3 w-3" /> Auto-recovered
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="destructive"
+                                className="text-[10px] gap-1"
+                                title={p.lastError}
+                              >
+                                <AlertCircle className="h-3 w-3" /> Error
+                              </Badge>
+                            )
                           ) : null}
                           {p.executionCount > 0 ? (
                             <span className="text-xs text-muted-foreground">
@@ -825,6 +884,18 @@ export function BotDetailView({
                             onClick={() => setConfiguringPlugin(p)}
                           >
                             <Settings className="h-3 w-3" /> Configure
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1 text-red-400 hover:text-red-300 hover:bg-red-900/20"
+                            onClick={() => handleUninstallPlugin(p.id, p.pluginName)}
+                            disabled={uninstallingPluginId === p.id}
+                          >
+                            {uninstallingPluginId === p.id
+                              ? <><Loader2 className="h-3 w-3 animate-spin" /> Removing...</>
+                              : <><Trash2 className="h-3 w-3" /> Remove</>
+                            }
                           </Button>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">
@@ -879,19 +950,49 @@ export function BotDetailView({
             </div>
           ) : null}
 
-          {/* Tip to switch mode */}
+          {/* Add Plugin button + browse panel */}
+          {gatewayPlugins.length > 0 && !showAddPlugin && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-dashed w-full"
+              onClick={() => setShowAddPlugin(true)}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Plugin
+            </Button>
+          )}
+
+          {showAddPlugin && gatewayPlugins.length > 0 ? (
+            <Card className="border-border bg-card/50">
+              <CardContent className="p-4">
+                <AddPluginPanel
+                  gatewayId={gateway.id}
+                  gatewayType={gateway.type}
+                  installedSlugs={installedSlugs}
+                  token={token}
+                  organizationId={organizationId}
+                  onClose={() => setShowAddPlugin(false)}
+                  onInstalled={() => { setShowAddPlugin(false); onRefresh(); }}
+                />
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* Advanced: Build Workflow (B8) */}
           <Card className="border-border bg-muted/30 border-dashed">
-            <CardContent className="p-3">
+            <CardContent className="p-3 flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">Tip:</span> Switch to{" "}
-                <span
-                  className="font-medium text-foreground cursor-pointer underline underline-offset-2"
-                  onClick={handleToggleMode}
-                >
-                  Workflow Mode
-                </span>{" "}
-                to chain multiple plugins into an automation pipeline.
+                <span className="font-medium text-foreground">Advanced:</span>{" "}
+                Chain multiple plugins into an automation pipeline with the workflow builder.
               </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs shrink-0 gap-1.5"
+                onClick={handleToggleMode}
+              >
+                <Workflow className="h-3.5 w-3.5" /> Build Workflow
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -903,6 +1004,16 @@ export function BotDetailView({
         </Card>
       ) : workflow ? (
         <>
+          {/* Back to simple plugins (B8) */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-xs text-muted-foreground"
+            onClick={handleToggleMode}
+          >
+            <Plug className="h-3.5 w-3.5" /> ← Back to simple plugins
+          </Button>
+
           {/* Workflow status bar */}
           <Card className="border-border bg-card/80">
             <CardContent className="p-4">
