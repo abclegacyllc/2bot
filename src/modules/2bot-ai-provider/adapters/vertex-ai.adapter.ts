@@ -58,11 +58,16 @@ function isClaudeModel(modelId: string): boolean {
 }
 
 // ===========================================
-// Configuration
+// Configuration (read lazily to ensure dotenv has loaded)
 // ===========================================
 
-const VERTEX_REGION = process.env.TWOBOT_VERTEX_AI_REGION || "us-central1";
-const VERTEX_PROJECT = process.env.TWOBOT_VERTEX_AI_PROJECT;
+function getVertexRegion(): string {
+  return process.env.TWOBOT_VERTEX_AI_REGION || "us-central1";
+}
+
+function getVertexProject(): string | undefined {
+  return process.env.TWOBOT_VERTEX_AI_PROJECT;
+}
 
 // ===========================================
 // Access Token Management
@@ -200,7 +205,7 @@ const MODEL_REGION_MAP: Record<string, string> = {
 
 /** Resolve the Vertex AI region for a given model ID */
 function getModelRegion(modelId: string): string {
-  return MODEL_REGION_MAP[modelId] || VERTEX_REGION;
+  return MODEL_REGION_MAP[modelId] || getVertexRegion();
 }
 
 // ===========================================
@@ -208,7 +213,8 @@ function getModelRegion(modelId: string): string {
 // ===========================================
 
 async function getVertexClient(region?: string): Promise<OpenAI> {
-  if (!VERTEX_PROJECT) {
+  const project = getVertexProject();
+  if (!project) {
     throw new TwoBotAIError(
       "TWOBOT_VERTEX_AI_PROJECT not configured",
       "PROVIDER_ERROR",
@@ -217,12 +223,12 @@ async function getVertexClient(region?: string): Promise<OpenAI> {
   }
 
   const token = await getAccessToken();
-  const r = region || VERTEX_REGION;
+  const r = region || getVertexRegion();
 
   // "global" region uses a different URL format (no region prefix on hostname)
   const baseURL = r === "global"
-    ? `https://aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT}/locations/global/endpoints/openapi`
-    : `https://${r}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT}/locations/${r}/endpoints/openapi`;
+    ? `https://aiplatform.googleapis.com/v1/projects/${project}/locations/global/endpoints/openapi`
+    : `https://${r}-aiplatform.googleapis.com/v1/projects/${project}/locations/${r}/endpoints/openapi`;
 
   return new OpenAI({
     apiKey: token,
@@ -345,12 +351,13 @@ async function claudeVertexTextGeneration(
 ): Promise<TextGenerationResponse> {
   const log = logger.child({ adapter: "vertex-ai-claude", model: request.model });
 
-  if (!VERTEX_PROJECT) {
+  const project = getVertexProject();
+  if (!project) {
     throw new TwoBotAIError("TWOBOT_VERTEX_AI_PROJECT not configured", "PROVIDER_ERROR", 500);
   }
 
   const token = await getAccessToken();
-  const url = `https://aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT}/locations/global/publishers/anthropic/models/${request.model}:rawPredict`;
+  const url = `https://aiplatform.googleapis.com/v1/projects/${project}/locations/global/publishers/anthropic/models/${request.model}:rawPredict`;
 
   // Convert messages: separate system from user/assistant
   const systemMessages = request.messages.filter((m) => m.role === "system");
@@ -456,12 +463,13 @@ async function* claudeVertexTextGenerationStream(
 ): AsyncGenerator<TextGenerationStreamChunk, { inputTokens: number; outputTokens: number }> {
   const log = logger.child({ adapter: "vertex-ai-claude", model: request.model });
 
-  if (!VERTEX_PROJECT) {
+  const project = getVertexProject();
+  if (!project) {
     throw new TwoBotAIError("TWOBOT_VERTEX_AI_PROJECT not configured", "PROVIDER_ERROR", 500);
   }
 
   const token = await getAccessToken();
-  const url = `https://aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT}/locations/global/publishers/anthropic/models/${request.model}:streamRawPredict`;
+  const url = `https://aiplatform.googleapis.com/v1/projects/${project}/locations/global/publishers/anthropic/models/${request.model}:streamRawPredict`;
 
   const systemMessages = request.messages.filter((m) => m.role === "system");
   const chatMessages = request.messages.filter((m) => m.role !== "system");
@@ -793,14 +801,16 @@ export async function vertexImageGeneration(
 ): Promise<ImageGenerationResponse> {
   const log = logger.child({ adapter: "vertex-ai", model: request.model });
 
-  if (!VERTEX_PROJECT) {
+  const project = getVertexProject();
+  const region = getVertexRegion();
+  if (!project) {
     throw new TwoBotAIError("TWOBOT_VERTEX_AI_PROJECT not configured", "PROVIDER_ERROR", 500);
   }
 
   const token = await getAccessToken();
 
   // Vertex AI Imagen uses a REST endpoint, not OpenAI-compatible
-  const url = `https://${VERTEX_REGION}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT}/locations/${VERTEX_REGION}/publishers/google/models/${request.model}:predict`;
+  const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${project}/locations/${region}/publishers/google/models/${request.model}:predict`;
 
   log.info("Vertex AI image generation request");
 

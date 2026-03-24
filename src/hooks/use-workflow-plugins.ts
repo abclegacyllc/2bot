@@ -68,6 +68,9 @@ export function useWorkflowPlugins({
                 isBuiltin: up.authorType === "SYSTEM",
                 authorType: up.authorType ?? "USER",
                 isPublic: false,
+                installCount: 0,
+                avgRating: 0,
+                reviewCount: 0,
               });
             }
           }

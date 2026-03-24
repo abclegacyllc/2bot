@@ -40,9 +40,11 @@ export function mapAgentEventToActions(event: CursorAgentEvent): UIAction[] {
       return [
         {
           action: "toast",
-          message: event.mode === "create"
-            ? `Creating plugin: ${event.pluginName}…`
-            : `Editing plugin: ${event.pluginName}…`,
+          message: event.mode === "analyze-repo"
+            ? `Analyzing repo & generating plugin…`
+            : event.mode === "create"
+              ? `Creating plugin: ${event.pluginName}…`
+              : `Editing plugin: ${event.pluginName}…`,
           variant: "info",
           durationMs: 2000,
         },
@@ -521,9 +523,11 @@ function formatToolName(tool: string): string {
 export function describeAgentEvent(event: CursorAgentEvent): string | null {
   switch (event.type) {
     case "session_start":
-      return event.mode === "create"
-        ? `Starting to build ${event.pluginName}...`
-        : `Analyzing ${event.pluginName}...`;
+      return event.mode === "analyze-repo"
+        ? "Analyzing repository & generating plugin..."
+        : event.mode === "create"
+          ? `Starting to build ${event.pluginName}...`
+          : `Analyzing ${event.pluginName}...`;
 
     // ── Multi-worker events ──────────────────────────
     case "worker_start":

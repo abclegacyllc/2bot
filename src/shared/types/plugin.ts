@@ -43,6 +43,12 @@ export interface PluginListItem {
   isBuiltin: boolean;
   authorType: PluginAuthorType;
   isPublic: boolean;
+  /** Number of installs (marketplace popularity) */
+  installCount: number;
+  /** Average rating 0-5 (marketplace) */
+  avgRating: number;
+  /** Number of reviews (marketplace) */
+  reviewCount: number;
 }
 
 /**
@@ -87,6 +93,8 @@ export interface UserPlugin {
   authorType?: PluginAuthorType;
   /** Entry file path relative to workspace (e.g. plugins/my-bot.js or plugins/my-bot/index.js) */
   entryFile?: string | null;
+  /** Runtime process status from bridge agent (e.g. "running", "stopped", "not_found") */
+  processStatus?: string;
 }
 
 // ===========================================
@@ -131,6 +139,12 @@ export interface PluginDefinition {
   authorId: string | null;
   authorType: PluginAuthorType;
   isPublic: boolean;
+  /** Number of installs (marketplace popularity) */
+  installCount: number;
+  /** Average rating 0-5 (marketplace) */
+  avgRating: number;
+  /** Number of reviews (marketplace) */
+  reviewCount: number;
 }
 
 // ===========================================

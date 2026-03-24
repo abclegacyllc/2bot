@@ -48,6 +48,7 @@ import {
     buildCoderSystemPrompt,
     routeToWorker,
 } from "./cursor-workers";
+import type { RepoAnalysis } from "./repo-analyzer.service";
 
 const workerLog = logger.child({ module: "cursor", capability: "worker" });
 
@@ -68,9 +69,15 @@ export interface WorkerStreamRequest {
   /** Optional: plugin context for coding tasks */
   pluginSlug?: string;
   pluginName?: string;
-  mode?: "create" | "edit";
+  mode?: "create" | "edit" | "analyze-repo";
   /** Optional: AI model ID (defaults to "auto") */
   modelId?: string;
+  /** Optional: GitHub repo URL to analyze and generate a plugin from */
+  repoUrl?: string;
+  /** Optional: branch to clone (defaults to default branch) */
+  repoBranch?: string;
+  /** Optional: user description of what they want from the repo */
+  description?: string;
 }
 
 // ===========================================
@@ -1149,6 +1156,10 @@ export async function* runWorkerStream(
   // Mutable state that persists across worker hand-offs
   const writtenFiles: Record<string, string> = {};
 
+  // Repo analysis state (populated when repoUrl is provided)
+  let repoAnalysis: RepoAnalysis | undefined;
+  let repoCloneDir: string | undefined;
+
   // If pluginSlug/mode weren't provided by the frontend, try to extract from message.
   // This enables direct-to-coder routing ("edit my echo-bot") to get edit-mode prompts.
   let pluginSlug = request.pluginSlug;
@@ -1164,6 +1175,80 @@ export async function* runWorkerStream(
   let pluginDir = pluginSlug ? `plugins/${pluginSlug}` : "plugins";
   let pluginId: string | undefined;
   let finishSummary: string | undefined;
+
+  // ── Repo Analysis: Clone & Analyze (if repoUrl provided) ──
+  if (request.repoUrl && client) {
+    // Force coder mode for repo analysis
+    if (!pluginMode) pluginMode = "create";
+
+    // Derive repo name from URL
+    const repoName = request.repoUrl
+      .replace(/\.git$/, "")
+      .split("/")
+      .pop()
+      ?.replace(/[^a-zA-Z0-9_-]/g, "-") || "cloned-repo";
+
+    repoCloneDir = `imports/${repoName}`;
+    if (!pluginSlug) pluginSlug = repoName;
+    if (!pluginName) pluginName = repoName.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    pluginDir = `plugins/${pluginSlug}`;
+
+    yield { type: "status" as const, message: `Cloning repository...` };
+
+    try {
+      const cloneResult = await client.gitClone(request.repoUrl, {
+        targetDir: repoCloneDir,
+        branch: request.repoBranch,
+        depth: 1,
+      }) as { success: boolean; error?: string };
+
+      if (!cloneResult?.success) {
+        yield {
+          type: "error" as const,
+          message: `Failed to clone repository: ${cloneResult?.error || "Unknown error"}`,
+          sessionId,
+          creditsUsed: totalCreditsUsed,
+        };
+        return;
+      }
+
+      yield { type: "status" as const, message: "Repository cloned. Analyzing source code..." };
+
+      // Lazy import to avoid circular deps
+      const { analyzeRepo } = await import("./repo-analyzer.service");
+      const result = await analyzeRepo(client, repoCloneDir, userId);
+      repoAnalysis = result.analysis;
+      totalCreditsUsed += result.creditsUsed;
+
+      const featureSummary = repoAnalysis.features.length > 0
+        ? repoAnalysis.features.slice(0, 5).join(", ")
+        : "no specific features detected";
+
+      yield {
+        type: "status" as const,
+        message: `Analyzed: ${repoAnalysis.purpose} (${repoAnalysis.language}, ${repoAnalysis.complexity}). Features: ${featureSummary}`,
+      };
+
+      workerLog.info(
+        {
+          sessionId,
+          language: repoAnalysis.language,
+          complexity: repoAnalysis.complexity,
+          featureCount: repoAnalysis.features.length,
+          creditsUsed: result.creditsUsed,
+        },
+        "Repo analysis complete",
+      );
+    } catch (err) {
+      yield {
+        type: "error" as const,
+        message: `Failed to analyze repository: ${(err as Error).message}`,
+        sessionId,
+        creditsUsed: totalCreditsUsed,
+      };
+      return;
+    }
+  }
 
   // Worker hand-off loop
   let currentWorker = initialWorker;
@@ -1215,12 +1300,16 @@ export async function* runWorkerStream(
 
       // ── Build system prompt ────────────────────────────
       const promptCtx: WorkerPromptContext = {
-        task: message,
+        task: request.description
+          ? `${message}\n\nUser description: ${request.description}`
+          : message,
         pluginSlug,
         pluginName,
         mode: pluginMode,
         handOffContext,
         userState,
+        repoAnalysis,
+        repoCloneDir,
       };
 
       const systemPrompt = currentWorker === "assistant"
@@ -1685,6 +1774,16 @@ export async function* runWorkerStream(
   } finally {
     // Cancel any pending ask_user
     cancelPendingAnswer(sessionId);
+
+    // Cleanup cloned repo directory if it was created
+    if (repoCloneDir && client) {
+      try {
+        await client.fileDelete(repoCloneDir);
+        workerLog.debug({ sessionId, repoCloneDir }, "Cleaned up cloned repo directory");
+      } catch {
+        workerLog.warn({ sessionId, repoCloneDir }, "Failed to cleanup cloned repo directory");
+      }
+    }
 
     // Persist session completion
     const durationMs = Date.now() - startedAt.getTime();

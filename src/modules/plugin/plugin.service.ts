@@ -24,6 +24,7 @@ import type {
     ConflictResolution,
     CreateCustomPluginRequest,
     InstallPluginRequest,
+    JSONSchema,
     PluginCategory,
     PluginDefinition,
     PluginListItem,
@@ -32,7 +33,7 @@ import type {
     UpdatePluginConfigRequest,
     UserPluginWithPlugin,
 } from "./plugin.types";
-import { toPluginDefinition, toSafeUserPlugin } from "./plugin.types";
+import { extractSchemaDefaults, toPluginDefinition, toSafeUserPlugin } from "./plugin.types";
 import { validateConfigAgainstSchema } from "./plugin.validation";
 
 const pluginLogger = logger.child({ module: "plugin" });
@@ -130,6 +131,9 @@ class PluginService {
         isBuiltin: true,
         authorType: true,
         isPublic: true,
+        installCount: true,
+        avgRating: true,
+        reviewCount: true,
       },
     });
 
@@ -327,29 +331,6 @@ class PluginService {
         });
       }
 
-      // Enforce: cannot install standalone plugin on a workflow-mode bot
-      if (gateway.mode === "workflow") {
-        throw new ValidationError("Cannot install standalone plugin on a workflow-mode bot", {
-          gatewayId: ["Switch bot to plugin mode first"],
-        });
-      }
-
-      // Enforce: one plugin per gateway in plugin mode (scoped to this user)
-      const existingOnGateway = await prisma.userPlugin.findFirst({
-        where: {
-          userId: ctx.userId,
-          organizationId: ctx.organizationId ?? null,
-          gatewayId: data.gatewayId,
-          pluginId: { not: pluginId },
-          isEnabled: true,
-        },
-      });
-      if (existingOnGateway) {
-        throw new ValidationError("This bot already has a plugin installed", {
-          gatewayId: ["Each bot can only have one plugin in plugin mode"],
-        });
-      }
-
       // Check plugin conflicts (event type collisions and explicit conflicts)
       const conflictResult = await this.checkPluginConflicts(
         plugin,
@@ -385,8 +366,10 @@ class PluginService {
       });
     }
 
-    // Create user plugin
-    const encryptedConfig = { _encrypted: encrypt(data.config ?? {}) };
+    // Merge schema defaults with user-provided config (user values take priority)
+    const schemaDefaults = extractSchemaDefaults(plugin.configSchema as JSONSchema);
+    const mergedConfig = { ...schemaDefaults, ...(data.config ?? {}) };
+    const encryptedConfig = { _encrypted: encrypt(mergedConfig) };
     
     const userPlugin = await prisma.userPlugin.create({
       data: {
@@ -406,6 +389,12 @@ class PluginService {
 
     // Audit log
     void auditActions.pluginInstalled(toAuditContext(ctx), userPlugin.id, plugin.slug);
+
+    // Increment install count on catalog entry
+    await prisma.plugin.update({
+      where: { id: pluginId },
+      data: { installCount: { increment: 1 } },
+    });
 
     pluginLogger.info(
       { userPluginId: userPlugin.id, pluginSlug: plugin.slug },
@@ -446,8 +435,32 @@ class PluginService {
       }
     }
 
-    // Return with original (unencrypted) config
-    const decrypted = { ...userPlugin, config: data.config ?? {} };
+    // Probe bridge for process status (best-effort, non-blocking for response)
+    let processStatus: string | undefined;
+    try {
+      const container = await prisma.workspaceContainer.findFirst({
+        where: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          status: 'RUNNING',
+        },
+        select: { id: true },
+      });
+      if (container) {
+        const client = bridgeClientManager.getExistingClient(container.id);
+        if (client) {
+          const entryFile = userPlugin.entryFile ?? getPluginEntryPath(data.gatewayId, plugin.slug);
+          const list = await client.pluginList() as Array<{ file: string; status: string }>;
+          const match = list.find(p => p.file === entryFile);
+          processStatus = match?.status ?? 'not_found';
+        }
+      }
+    } catch {
+      // Non-critical — don't fail install if probe fails
+    }
+
+    // Return with original (unencrypted) config including schema defaults
+    const decrypted = { ...userPlugin, config: mergedConfig, processStatus };
     const result = toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
     const enriched: SafeUserPlugin & { _warnings?: string[]; _resolutions?: ConflictResolution[] } = result;
     if (conflictWarnings.length > 0) enriched._warnings = conflictWarnings;
@@ -565,6 +578,12 @@ class PluginService {
       await tx.userPlugin.delete({ where: { id: userPluginId } });
       if (shouldDeleteCatalogEntry) {
         await tx.plugin.delete({ where: { id: plugin.id } });
+      } else {
+        // Decrement install count if keeping the catalog entry
+        await tx.plugin.update({
+          where: { id: plugin.id },
+          data: { installCount: { decrement: 1 } },
+        });
       }
     });
 
@@ -1060,7 +1079,9 @@ class PluginService {
     const codeBundle = isDirectory ? null : (data.code ?? null);
 
     // Create Plugin catalog entry + UserPlugin installation in a transaction
-    const encryptedConfig = { _encrypted: encrypt(data.config ?? {}) };
+    const customSchemaDefaults = extractSchemaDefaults(data.configSchema as JSONSchema | undefined);
+    const customMergedConfig = { ...customSchemaDefaults, ...(data.config ?? {}) };
+    const encryptedConfig = { _encrypted: encrypt(customMergedConfig) };
 
     const { userPlugin } = await prisma.$transaction(async (tx) => {
       const plugin = await tx.plugin.create({
@@ -1165,8 +1186,8 @@ class PluginService {
       );
     }
 
-    // Return with original (unencrypted) config
-    const decrypted = { ...userPlugin, config: data.config ?? {} };
+    // Return with original (unencrypted) config including schema defaults
+    const decrypted = { ...userPlugin, config: customMergedConfig };
     return toSafeUserPlugin(decrypted as unknown as UserPluginWithPlugin);
   }
 

@@ -194,6 +194,9 @@ function readManifest(manifestPath, pluginDir) {
       entry,
       description,
       category,
+      eventTypes: Array.isArray(json.eventTypes) ? json.eventTypes : null,
+      eventRole: (json.eventRole === 'responder' || json.eventRole === 'observer') ? json.eventRole : null,
+      conflictsWith: Array.isArray(json.conflictsWith) ? json.conflictsWith : null,
     },
     isDirectory: true,
   };

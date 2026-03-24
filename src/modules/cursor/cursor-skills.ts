@@ -352,6 +352,90 @@ You are a developer, not a platform admin. If the user asks to:
 };
 
 // ===========================================
+// ── Repo Analysis Skill (coder-only) ──────
+// ===========================================
+
+const repoAnalysisContext: CursorSkill = {
+  id: "repo-analysis-context",
+  label: "Injected context when creating a plugin from a GitHub repo",
+  workers: ["coder"],
+  build: (ctx) => {
+    if (!ctx.repoAnalysis) return ""; // Skip when not in analyze-repo mode
+
+    const a = ctx.repoAnalysis;
+    const cloneDir = ctx.repoCloneDir || "imports/cloned-repo";
+
+    // Build a concise summary (don't dump full keyFileContents into system prompt)
+    const apiSection = a.externalApis.length > 0
+      ? `\nExternal APIs:\n${a.externalApis.map((api) => `- ${api.name}: ${api.baseUrl} (auth: ${api.authMethod})`).join("\n")}`
+      : "";
+
+    const envSection = a.envVars.length > 0
+      ? `\nEnvironment Variables:\n${a.envVars.map((v) => `- ${v.name}: ${v.purpose}${v.required ? " (required)" : ""}`).join("\n")}`
+      : "";
+
+    const cmdSection = a.commands.length > 0
+      ? `\nBot Commands:\n${a.commands.map((c) => `- ${c.command}: ${c.description}`).join("\n")}`
+      : "";
+
+    const logicSection = a.coreLogic.length > 0
+      ? `\nCore Logic to Port:\n${a.coreLogic.map((l) => `- ${l.name} (${l.sourceFile}): ${l.description}${l.portable ? " [portable]" : " [needs adaptation]"}`).join("\n")}`
+      : "";
+
+    const warningSection = a.warnings.length > 0
+      ? `\nWarnings:\n${a.warnings.map((w) => `- ⚠️ ${w}`).join("\n")}`
+      : "";
+
+    const depsSection = a.npmDependencies.length > 0
+      ? `\nSafe npm Dependencies to Include: ${a.npmDependencies.join(", ")}`
+      : "";
+
+    const configSection = Object.keys(a.suggestedConfigSchema).length > 0
+      ? `\nSuggested Config Schema:\n\`\`\`json\n${JSON.stringify(a.suggestedConfigSchema, null, 2)}\n\`\`\``
+      : "";
+
+    return `## Analyze Repo Mode — Creating Plugin from External Repository
+
+You are creating a NEW 2Bot plugin inspired by an external repository.
+
+### Source Repository Analysis
+- **Language:** ${a.language}
+- **Framework:** ${a.framework || "none"}
+- **Purpose:** ${a.purpose}
+- **Complexity:** ${a.complexity}
+- **Features:** ${a.features.join(", ") || "none detected"}
+${apiSection}${envSection}${cmdSection}${logicSection}${depsSection}${configSection}${warningSection}
+
+### Source Code Location
+The cloned repo files are at \`${cloneDir}/\`. Use \`read_file\` to read any source file for deeper understanding.
+File tree: ${a.fileTree.slice(0, 50).join(", ")}${a.fileTree.length > 50 ? ` ... (${a.fileTree.length} total)` : ""}
+
+### Your Objectives
+1. **READ** key repo files at \`${cloneDir}/\` to understand the implementation deeply
+2. **GENERATE** a new plugin under \`plugins/{slug}/\` that provides equivalent functionality
+3. **PORT** core logic — don't blindly copy, adapt to use sdk.storage, sdk.ai, sdk.gateway
+4. **MAP** environment variables to \`sdk.config\` with proper configSchema
+5. **PRESERVE** external API calls (use axios/fetch — install via package.json)
+6. **WRITE** plugin.json manifest with slug, name, version, entry, requiredGateways, configSchema
+7. **CREATE** package.json if npm dependencies are needed
+8. **SYNTAX CHECK** with \`node --check\`
+9. **CREATE** plugin record via create_plugin_record
+10. **START** the plugin via restart_plugin
+11. **CLEANUP** — use delete_file to remove \`${cloneDir}/\` directory when done
+
+### Rules
+- Output code ALWAYS uses \`sdk.onEvent()\`, \`sdk.gateway.execute()\`, \`sdk.storage\`, \`sdk.config\`
+- NEVER copy-paste large code blocks from the source — rewrite in clean 2Bot SDK style
+- Map database operations (SQLite, MongoDB, Redis) → \`sdk.storage\` or \`sdk.database\`
+- Map file-system operations → \`sdk.storage\` (key-value)
+- If the repo uses a framework (Express, Fastify, Flask), strip it — plugins don't need HTTP servers
+- External API calls are fine — include axios in package.json if needed
+- If the source is Python/Go/Ruby, understand the logic and rewrite it as JavaScript
+- Always generate a proper configSchema so users can configure API keys and options from the dashboard`;
+  },
+};
+
+// ===========================================
 // Skill Registry
 // ===========================================
 
@@ -378,6 +462,7 @@ export const CURSOR_SKILLS: CursorSkill[] = [
   codeQuality,
   coderEfficiency,
   coderBoundary,
+  repoAnalysisContext,
 ];
 
 /** Skills assigned to each worker, in prompt order */
@@ -398,6 +483,7 @@ export const WORKER_SKILLS: Record<CursorWorkerType, string[]> = {
     "coder-identity",
     "current-task",
     "hand-off-context",
+    "repo-analysis-context",
     "plugin-directory",
     "plugin-sdk",
     "plugin-file-rules",

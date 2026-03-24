@@ -23,6 +23,7 @@
 import { decrypt } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
+import { marketplaceLoader } from '@/modules/marketplace/marketplace-loader.service';
 import { bridgeClientManager } from '@/modules/workspace';
 import type { BridgeClient } from '@/modules/workspace/bridge-client.service';
 
@@ -360,6 +361,7 @@ class PluginDeployService {
           select: {
             slug: true,
             codeBundle: true,
+            bundlePath: true,
             requiredGateways: true,
           },
         },
@@ -440,14 +442,24 @@ class PluginDeployService {
         await client.send('file.stat', { path: entryFile });
         fileExists = true;
       } catch {
-        // File missing — try to recover from catalog template
-        const templateCode = up.plugin.codeBundle;
+        // File missing — try to recover from marketplace bundle first, then codeBundle
+        let templateCode: string | null = null;
+
+        // Try marketplace filesystem bundle first
+        const bundle = marketplaceLoader.getBundleCode(up.plugin.slug);
+        if (bundle?.code) {
+          templateCode = bundle.code;
+        } else if (up.plugin.codeBundle) {
+          // Fallback to DB codeBundle (custom plugins)
+          templateCode = up.plugin.codeBundle;
+        }
+
         if (templateCode) {
           const recovered_ = await this.writePluginFile(client, up.plugin.slug, templateCode, up.gatewayId);
           if (recovered_) {
             fileExists = true;
             recovered++;
-            deployLog.info({ pluginSlug: up.plugin.slug }, 'Plugin file recovered from catalog template');
+            deployLog.info({ pluginSlug: up.plugin.slug }, 'Plugin file recovered from template');
           }
         }
 
@@ -591,7 +603,7 @@ class PluginDeployService {
       },
       include: {
         plugin: {
-          select: { slug: true, codeBundle: true },
+          select: { slug: true, codeBundle: true, bundlePath: true },
         },
       },
     });
@@ -601,9 +613,17 @@ class PluginDeployService {
       return false;
     }
 
-    const templateCode = userPlugin.plugin.codeBundle;
+    // Try marketplace filesystem bundle first, then DB codeBundle
+    let templateCode: string | null = null;
+    const bundle = marketplaceLoader.getBundleCode(userPlugin.plugin.slug);
+    if (bundle?.code) {
+      templateCode = bundle.code;
+    } else if (userPlugin.plugin.codeBundle) {
+      templateCode = userPlugin.plugin.codeBundle;
+    }
+
     if (!templateCode) {
-      deployLog.warn({ pluginSlug }, 'No codeBundle template available for file recovery');
+      deployLog.warn({ pluginSlug }, 'No template available for file recovery (neither bundle nor codeBundle)');
       return false;
     }
 

@@ -19,6 +19,8 @@
  * @module modules/cursor/cursor-workers
  */
 
+import type { RepoAnalysis } from "./repo-analyzer.service";
+
 // ===========================================
 // Worker Types
 // ===========================================
@@ -51,7 +53,7 @@ export interface WorkerPromptContext {
   /** For Coder: human-readable plugin name */
   pluginName?: string;
   /** For Coder: create vs. edit mode */
-  mode?: "create" | "edit";
+  mode?: "create" | "edit" | "analyze-repo";
   /** Context passed from the handing-off worker */
   handOffContext?: string;
   /** Dynamic user state — injected at runtime */
@@ -62,6 +64,10 @@ export interface WorkerPromptContext {
     pluginCount?: number;
     workspaceRunning?: boolean;
   };
+  /** Repo analysis context — injected when creating a plugin from a GitHub repo */
+  repoAnalysis?: RepoAnalysis;
+  /** Directory where the repo was cloned (for coder to read source files) */
+  repoCloneDir?: string;
 }
 
 // ===========================================
@@ -119,6 +125,9 @@ export function routeToWorker(message: string): CursorWorkerType {
 
   // "add a /command to..." or "add feature to..."
   if (/\b(add|remove)\b.+\b(to|from|in)\b.+\bplugin\b/i.test(lower)) return "coder";
+
+  // "analyze repo" / "import from github" / "generate from repo"
+  if (/\b(analy[zs]e|import|generate\s+from)\b.*\b(repo|github|repository)\b/i.test(lower)) return "coder";
 
   // ── Everything else → Assistant ─────────────────────
   // The Assistant LLM is smart enough to hand off to Coder if needed.

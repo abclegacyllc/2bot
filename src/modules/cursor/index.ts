@@ -55,3 +55,7 @@ export type { CursorWorkerMeta, CursorWorkerType, WorkerPromptContext } from "./
 export { resolveUserAnswer, runWorkerStream } from "./cursor-worker-runner";
 export type { WorkerStreamRequest } from "./cursor-worker-runner";
 
+// Repo analyzer
+export { analyzeRepo } from "./repo-analyzer.service";
+export type { RepoAnalysis } from "./repo-analyzer.service";
+

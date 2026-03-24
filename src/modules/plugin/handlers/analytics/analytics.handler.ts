@@ -13,7 +13,7 @@ import { GatewayType } from "@prisma/client";
 
 import { logger } from "@/lib/logger";
 
-import { PLUGIN_TEMPLATES } from "../../plugin-templates";
+import { marketplaceLoader } from "@/modules/marketplace/marketplace-loader.service";
 import {
     BasePlugin,
     type PluginContext,
@@ -40,10 +40,10 @@ export class AnalyticsPlugin extends BasePlugin {
   // ===========================================
 
   readonly slug = "analytics";
-  readonly name = "Channel Analytics";
+  readonly name = "Message Analytics";
   readonly description =
-    "Track message and user statistics for your Telegram bots. " +
-    "View total messages, unique users, daily trends, and top active users/chats.";
+    "Track message stats, active users, and chat activity. " +
+    "View daily trends, top users, and engagement metrics.";
   readonly version = "1.0.0";
   readonly category: PluginCategory = "analytics";
   readonly requiredGateways: GatewayType[] = [GatewayType.TELEGRAM_BOT];
@@ -335,11 +335,11 @@ export class AnalyticsPlugin extends BasePlugin {
    */
   override toSeedData(): Prisma.PluginCreateInput {
     const base = super.toSeedData();
-    // Import the container-friendly analytics code from templates
-    const tpl = PLUGIN_TEMPLATES.find((t: { id: string }) => t.id === "channel-analytics");
+    // Use marketplace bundle path instead of embedding code in DB
+    const bundlePath = marketplaceLoader.getBundlePath("channel-analytics");
     return {
       ...base,
-      codeBundle: tpl?.code ?? null,
+      bundlePath: bundlePath ?? null,
     };
   }
 }

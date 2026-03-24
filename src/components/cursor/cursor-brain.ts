@@ -19,9 +19,15 @@ export interface WorkerStreamClientRequest {
   message: string;
   pluginSlug?: string;
   pluginName?: string;
-  mode?: "create" | "edit";
+  mode?: "create" | "edit" | "analyze-repo";
   /** AI model ID (defaults to "auto" on server) */
   modelId?: string;
+  /** GitHub/GitLab HTTPS URL to clone and analyze */
+  repoUrl?: string;
+  /** Git branch to clone (defaults to default branch) */
+  repoBranch?: string;
+  /** User description of what the plugin should do */
+  description?: string;
 }
 
 /**

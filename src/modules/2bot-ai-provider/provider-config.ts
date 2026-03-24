@@ -16,7 +16,7 @@ import { logger } from "@/lib/logger";
 import { type AICapability } from "./ai-capabilities";
 import { getDiscoveredModels, hasDiscoveredModels } from "./model-discovery.service";
 import { isModelHealthy } from "./model-health-tracker";
-import { getProviderModelIds, getRegistryEntriesByProvider, registryToModelInfo } from "./model-registry";
+import { getProviderModelIds, getRegistryEntriesByProvider, getRegistryEntry, registryToModelInfo } from "./model-registry";
 import {
     getAllProviders,
     getConfiguredProvidersForCapability,
@@ -221,14 +221,32 @@ export function getDefaultModel(): ModelInfo | undefined {
  * Check if a specific model is available
  */
 export function isModelAvailable(modelId: string): boolean {
-  return getAvailableModels().some((m) => m.id === modelId);
+  return !!getModelIfAvailable(modelId);
 }
 
 /**
- * Get model info if available, undefined if not configured
+ * Get model info if available, undefined if not configured.
+ * Supports both provider-specific model IDs (e.g. "gemini-2.5-flash-lite")
+ * and canonical registry IDs (e.g. "google/gemini-2.5-flash-lite").
  */
 export function getModelIfAvailable(modelId: string): ModelInfo | undefined {
-  return getAvailableModels().find((m) => m.id === modelId);
+  const models = getAvailableModels();
+  const direct = models.find((m) => m.id === modelId);
+  if (direct) return direct;
+
+  // Fallback: resolve canonical registry ID → provider-specific modelId
+  const entry = getRegistryEntry(modelId);
+  if (entry) {
+    for (const provider of Object.keys(entry.providers) as TwoBotAIProvider[]) {
+      const providerModelId = entry.providers[provider]?.modelId;
+      if (providerModelId) {
+        const match = models.find((m) => m.id === providerModelId && m.provider === provider);
+        if (match) return match;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 // ===========================================

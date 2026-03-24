@@ -47,7 +47,7 @@ export type CursorAgentEvent =
 export interface CursorAgentSessionStart {
   type: "session_start";
   sessionId: string;
-  mode: "create" | "edit";
+  mode: "create" | "edit" | "analyze-repo";
   pluginSlug: string;
   pluginName: string;
   uiActions?: UIAction[];

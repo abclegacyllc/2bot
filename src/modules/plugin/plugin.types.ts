@@ -61,6 +61,26 @@ export interface JSONSchema {
 }
 
 // ===========================================
+// Schema Utilities
+// ===========================================
+
+/**
+ * Extract default values from a JSON Schema's properties.
+ * Returns a flat object of { propertyName: defaultValue } for any property
+ * that has a `default` defined.
+ */
+export function extractSchemaDefaults(schema: JSONSchema | null | undefined): Record<string, unknown> {
+  if (!schema?.properties) return {};
+  const defaults: Record<string, unknown> = {};
+  for (const [key, prop] of Object.entries(schema.properties)) {
+    if (prop.default !== undefined) {
+      defaults[key] = prop.default;
+    }
+  }
+  return defaults;
+}
+
+// ===========================================
 // Plugin Definition Types
 // ===========================================
 
@@ -92,6 +112,11 @@ export interface PluginDefinition {
   eventTypes: string[];
   eventRole: string;
   conflictsWith: string[];
+
+  // Marketplace / popularity
+  installCount: number;
+  avgRating: number;
+  reviewCount: number;
 }
 
 /**
@@ -130,6 +155,9 @@ export function toPluginDefinition(plugin: Plugin): PluginDefinition {
     eventTypes: plugin.eventTypes ?? [],
     eventRole: plugin.eventRole ?? "responder",
     conflictsWith: plugin.conflictsWith ?? [],
+    installCount: plugin.installCount ?? 0,
+    avgRating: plugin.avgRating ?? 0,
+    reviewCount: plugin.reviewCount ?? 0,
   };
 }
 
@@ -172,6 +200,8 @@ export interface SafeUserPlugin {
   authorType: PluginAuthorType;
   /** Entry file path relative to workspace (e.g. plugins/my-bot.js or plugins/my-bot/index.js) */
   entryFile: string | null;
+  /** Runtime process status from bridge agent (e.g. "running", "stopped", "not_found") */
+  processStatus?: string;
 }
 
 /**
@@ -201,6 +231,7 @@ export function toSafeUserPlugin(userPlugin: UserPluginWithPlugin): SafeUserPlug
     updatedAt: userPlugin.updatedAt,
     authorType: userPlugin.plugin.authorType,
     entryFile: userPlugin.entryFile ?? null,
+    processStatus: (userPlugin as unknown as Record<string, unknown>).processStatus as string | undefined,
   };
 }
 

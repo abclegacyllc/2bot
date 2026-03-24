@@ -9,7 +9,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 'use strict';
 
-const { fork, spawn, execSync } = require('child_process');
+const { fork, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
@@ -96,14 +96,20 @@ class PluginRunner extends EventEmitter {
       throw new Error(`Plugin file must be within workspace directory: ${file}`);
     }
 
-    // Pre-flight syntax check — reject files with syntax errors before forking
-    try {
-      execSync(`node --check "${entryFile}"`, { encoding: 'utf-8', timeout: 10000, stdio: 'pipe' });
-    } catch (err) {
-      const stderr = (err.stderr || err.message || '').toString();
-      const syntaxMatch = stderr.match(/SyntaxError:\s*(.+)/);
-      const msg = syntaxMatch ? syntaxMatch[1] : 'Syntax error in plugin file';
-      throw new Error(`Plugin has syntax errors and cannot start: ${msg}`);
+    // TypeScript detection — needed before pre-flight check
+    const isTypeScript = /\.tsx?$/.test(entryFile);
+
+    // Pre-flight syntax check — only for JavaScript files
+    // TypeScript files are validated by tsx at runtime
+    if (!isTypeScript) {
+      try {
+        execSync(`node --check "${entryFile}"`, { encoding: 'utf-8', timeout: 10000, stdio: 'pipe' });
+      } catch (err) {
+        const stderr = (err.stderr || err.message || '').toString();
+        const syntaxMatch = stderr.match(/SyntaxError:\s*(.+)/);
+        const msg = syntaxMatch ? syntaxMatch[1] : 'Syntax error in plugin file';
+        throw new Error(`Plugin has syntax errors and cannot start: ${msg}`);
+      }
     }
 
     // Check if already running
@@ -117,9 +123,8 @@ class PluginRunner extends EventEmitter {
       this.processes.delete(normalizedFile);
     }
 
-    // Fork/spawn the plugin as a child process
+    // Fork the plugin as a child process
     // TypeScript files (.ts, .tsx) use tsx loader; JS files use native fork
-    const isTypeScript = /\.tsx?$/.test(entryFile);
     let child;
 
     // CWD: for directory plugins, run inside the plugin directory
@@ -127,10 +132,12 @@ class PluginRunner extends EventEmitter {
     const childCwd = pluginCwd;
 
     if (isTypeScript) {
-      // Use tsx to execute TypeScript files
+      // Use tsx to execute TypeScript files via fork() for IPC support
+      // (spawn without 'ipc' in stdio breaks process.send() for SDK features)
       // Strip bridge auth token from child env (security: plugins must not access it)
       const { BRIDGE_AUTH_TOKEN: _tsToken, ...safeEnvTs } = process.env;
-      child = spawn('npx', ['tsx', entryFile], {
+      const tsxBin = path.join(__dirname, 'node_modules', '.bin', 'tsx');
+      child = fork(tsxBin, [entryFile], {
         cwd: childCwd,
         env: {
           ...safeEnvTs,
@@ -141,7 +148,7 @@ class PluginRunner extends EventEmitter {
           PLUGIN_DIR: isDirectory ? pluginCwd : '',
           WORKSPACE_DIR: this.workspaceDir,
         },
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       });
     } else {
       // Strip bridge auth token from child env (security: plugins must not access it)
@@ -403,20 +410,24 @@ class PluginRunner extends EventEmitter {
       return { valid: false, problems: [...problems, { severity: 'error', message: `Cannot read entry file: ${err.message}` }] };
     }
 
-    // 1. Node.js syntax check (--check)
-    try {
-      execSync(`node --check "${entryFullPath}"`, { encoding: 'utf-8', timeout: 10000, stdio: 'pipe' });
-    } catch (err) {
-      const stderr = (err.stderr || err.message || '').toString();
-      const lines = stderr.split('\n').filter(Boolean);
-      let errorLine = null;
-      const entryBasename = path.basename(entryFullPath);
-      const lineMatch = stderr.match(new RegExp(entryBasename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':(\\d+)'));
-      if (lineMatch) errorLine = parseInt(lineMatch[1], 10);
+    // 1. Node.js syntax check (--check) — only for JavaScript files
+    // TypeScript files have their own type checking; node --check rejects valid TS syntax
+    const isTypeScriptFile = /\.tsx?$/.test(entryFullPath);
+    if (!isTypeScriptFile) {
+      try {
+        execSync(`node --check "${entryFullPath}"`, { encoding: 'utf-8', timeout: 10000, stdio: 'pipe' });
+      } catch (err) {
+        const stderr = (err.stderr || err.message || '').toString();
+        const lines = stderr.split('\n').filter(Boolean);
+        let errorLine = null;
+        const entryBasename = path.basename(entryFullPath);
+        const lineMatch = stderr.match(new RegExp(entryBasename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':(\\d+)'));
+        if (lineMatch) errorLine = parseInt(lineMatch[1], 10);
 
-      const syntaxMatch = stderr.match(/SyntaxError:\s*(.+)/);
-      const msg = syntaxMatch ? syntaxMatch[1] : lines[lines.length - 1] || 'Syntax error';
-      problems.push({ severity: 'error', message: msg, line: errorLine });
+        const syntaxMatch = stderr.match(/SyntaxError:\s*(.+)/);
+        const msg = syntaxMatch ? syntaxMatch[1] : lines[lines.length - 1] || 'Syntax error';
+        problems.push({ severity: 'error', message: msg, line: errorLine });
+      }
     }
 
     // 2. Custom lint checks on the source code
@@ -495,6 +506,17 @@ class PluginRunner extends EventEmitter {
 
     if (proc.status !== 'running' || !proc.child || !proc.child.connected) {
       return Promise.resolve({ success: false, error: `Plugin not running or IPC disconnected: ${file}` });
+    }
+
+    // Filter by eventTypes — if the plugin declares which events it handles,
+    // skip events that don't match (avoids wasting CPU on irrelevant events)
+    const eventType = event?.type;
+    const declaredTypes = proc.manifest?.eventTypes;
+    if (eventType && Array.isArray(declaredTypes) && declaredTypes.length > 0) {
+      if (!declaredTypes.includes(eventType)) {
+        this.log.debug(`Skipping event ${eventType} for plugin ${normalizedFile} (not in eventTypes: ${declaredTypes.join(', ')})`);
+        return Promise.resolve({ success: true, output: null, skipped: true });
+      }
     }
 
     return new Promise((resolve) => {
