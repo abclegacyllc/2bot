@@ -38,6 +38,7 @@ import {
     LogOut,
     Menu,
     Network,
+    Puzzle,
     Settings,
     Shield,
     Store,
@@ -54,6 +55,7 @@ const sharedNavItemsBase = [
   { path: "/2bot-ai", label: "2Bot AI", icon: Brain },
   { path: "/bots", label: "Bots", icon: Bot },
   { path: "/marketplace", label: "Marketplace", icon: Store },
+  { path: "/plugins", label: "Plugins", icon: Puzzle },
   { path: "/workspace", label: "Workspace", icon: Box },
 ];
 

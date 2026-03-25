@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
 import {
     ChevronDown,
+    Github,
     GripVertical,
     History,
     Loader2,
@@ -231,6 +232,8 @@ function deriveExpression(messages: ChatMessage[], isRunning: boolean): CursorEx
 export function CursorPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [showRepoInput, setShowRepoInput] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages());
   const [secretPending, setSecretPending] = useState<{
@@ -649,6 +652,8 @@ export function CursorPanel() {
 
       setIsRunning(true);
       setInput("");
+      setRepoUrl("");
+      setShowRepoInput(false);
       playStart();
 
       // ── Start a new session in history store ──
@@ -664,7 +669,11 @@ export function CursorPanel() {
         const brain = await loadWorkerBrain();
 
         const cleanup = brain.streamWorker(
-          { message: command, modelId: selectedModel !== "auto" ? selectedModel : undefined },
+          {
+            message: command,
+            modelId: selectedModel !== "auto" ? selectedModel : undefined,
+            ...(repoUrl.trim() ? { repoUrl: repoUrl.trim(), mode: "analyze-repo" as const } : {}),
+          },
           token,
           handleWorkerEvent,
           () => {
@@ -1060,12 +1069,50 @@ export function CursorPanel() {
         </div>
       ) : null}
 
+      {/* \u2500\u2500 Repo URL Attachment \u2500\u2500 */}
+      {showRepoInput ? (
+        <div className="flex items-center gap-2 px-3 py-2 border-t bg-muted/30">
+          <Github className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <input
+            type="url"
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            placeholder="https://github.com/user/repo"
+            className="flex-1 rounded-lg border bg-background px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[var(--cursor-primary)]/30"
+          />
+          <button
+            type="button"
+            onClick={() => { setShowRepoInput(false); setRepoUrl(""); }}
+            aria-label="Remove repo URL"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
+
+
       {/* \u2500\u2500 Input Bar \u2500\u2500 */}
       <form
         onSubmit={handleSubmit}
         className="flex items-center gap-2 px-3 py-3 border-t"
         role="search"
       >
+        <button
+          type="button"
+          onClick={() => setShowRepoInput((v) => !v)}
+          aria-label="Attach GitHub repo URL"
+          title="Analyze a GitHub repo"
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-xl transition-colors flex-shrink-0",
+            showRepoInput || repoUrl
+              ? "text-white"
+              : "text-muted-foreground hover:text-foreground border",
+          )}
+          style={showRepoInput || repoUrl ? { background: "var(--cursor-primary)" } : undefined}
+        >
+          <Github className="h-4 w-4" />
+        </button>
         <input
           ref={inputRef}
           type="text"

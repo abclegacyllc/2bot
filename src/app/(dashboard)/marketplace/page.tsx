@@ -147,6 +147,12 @@ export default function MarketplaceBrowsePage() {
     }
   };
 
+  // Exclude featured items from the main grid when the featured section is visible
+  const showingFeatured = featured.length > 0 && !search && !selectedCategory;
+  const gridItems = showingFeatured
+    ? items.filter((item) => !featured.some((f) => f.slug === item.slug))
+    : items;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -259,7 +265,7 @@ export default function MarketplaceBrowsePage() {
             <Skeleton key={i} className="h-48" />
           ))}
         </div>
-      ) : items.length === 0 ? (
+      ) : gridItems.length === 0 ? (
         <Card>
           <CardContent className="pt-6 text-center">
             <Store className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
@@ -273,7 +279,7 @@ export default function MarketplaceBrowsePage() {
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {items.map((item) => (
+            {gridItems.map((item) => (
               <Link key={item.slug} href={`/marketplace/${item.slug}`}>
                 <Card className="h-full hover:bg-muted/50 transition-colors cursor-pointer">
                   <CardHeader className="pb-3">

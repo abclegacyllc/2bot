@@ -210,7 +210,7 @@ marketplaceRouter.get(
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const pluginSlug = req.params.pluginSlug as string;
-    const userId = (req as unknown as { user: { userId: string } }).user.userId;
+    const userId = (req as unknown as { user: { id: string } }).user.id;
 
     const plugin = await prisma.plugin.findUnique({
       where: { slug: pluginSlug },
@@ -236,7 +236,7 @@ marketplaceRouter.post(
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const pluginSlug = req.params.pluginSlug as string;
-    const userId = (req as unknown as { user: { userId: string } }).user.userId;
+    const userId = (req as unknown as { user: { id: string } }).user.id;
     const { rating, title, content } = req.body;
 
     if (!rating || typeof rating !== "number") {
@@ -274,7 +274,7 @@ marketplaceRouter.put(
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const reviewId = req.params.reviewId as string;
-    const userId = (req as unknown as { user: { userId: string } }).user.userId;
+    const userId = (req as unknown as { user: { id: string } }).user.id;
     const { rating, title, content } = req.body;
 
     const updated = await getReviews().updateReview(reviewId, userId, {
@@ -296,7 +296,7 @@ marketplaceRouter.delete(
   requireAuth,
   asyncHandler(async (req: Request, res: Response) => {
     const reviewId = req.params.reviewId as string;
-    const userId = (req as unknown as { user: { userId: string } }).user.userId;
+    const userId = (req as unknown as { user: { id: string } }).user.id;
 
     await getReviews().deleteReview(reviewId, userId);
 

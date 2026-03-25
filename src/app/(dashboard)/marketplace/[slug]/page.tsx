@@ -97,6 +97,7 @@ export default function MarketplaceItemDetailPage() {
   const [reviewContent, setReviewContent] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
   const [deletingReview, setDeletingReview] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   // Install modal state
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -185,6 +186,7 @@ export default function MarketplaceItemDetailPage() {
   const handleSubmitReview = async () => {
     if (!token || reviewRating === 0) return;
     setSubmittingReview(true);
+    setReviewError(null);
     try {
       const res = await fetch(apiUrl(`/marketplace/reviews/${slug}`), {
         method: "POST",
@@ -199,7 +201,8 @@ export default function MarketplaceItemDetailPage() {
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Failed to submit review");
+        const message = typeof err.error === "string" ? err.error : err.error?.message || "Failed to submit review";
+        throw new Error(message);
       }
       const data = await res.json();
       setMyReview(data.data);
@@ -209,7 +212,7 @@ export default function MarketplaceItemDetailPage() {
       fetchReviews();
       fetchItem(); // Refresh rating
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit review");
+      setReviewError(err instanceof Error ? err.message : "Failed to submit review");
     } finally {
       setSubmittingReview(false);
     }
@@ -652,6 +655,9 @@ export default function MarketplaceItemDetailPage() {
                   rows={3}
                 />
               </div>
+              {reviewError && (
+                <p className="text-sm text-red-500">{reviewError}</p>
+              )}
               <div className="flex gap-2">
                 <Button
                   size="sm"
@@ -676,6 +682,7 @@ export default function MarketplaceItemDetailPage() {
                     setShowReviewForm(false);
                     setReviewRating(0);
                     setReviewContent("");
+                    setReviewError(null);
                   }}
                 >
                   Cancel
