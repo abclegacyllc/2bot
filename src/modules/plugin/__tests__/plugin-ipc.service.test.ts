@@ -29,13 +29,19 @@ vi.mock('@/lib/logger', () => ({
   },
 }));
 
+const mockRedis = vi.hoisted(() => ({
+  scan: vi.fn(async () => ['0', [] as string[]]),
+  get: vi.fn(),
+  set: vi.fn(),
+  del: vi.fn(),
+  incr: vi.fn(async () => 1),
+  expire: vi.fn(),
+  ttl: vi.fn(async () => 60),
+  keys: vi.fn(async () => [] as string[]),
+}));
+
 vi.mock('@/lib/redis', () => ({
-  redis: {
-    scan: vi.fn(async () => ['0', []]),
-    get: vi.fn(),
-    set: vi.fn(),
-    del: vi.fn(),
-  },
+  redis: mockRedis,
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -95,7 +101,7 @@ vi.mock('./plugin.executor', () => ({
 // Import after mocking
 import { prisma } from '@/lib/prisma';
 import type { PluginIpcRequest } from '../plugin-ipc.service';
-import { pluginIpcService } from '../plugin-ipc.service';
+import { clearActivePlugins, pluginIpcService, registerActivePlugin } from '../plugin-ipc.service';
 
 // ===========================================
 // Test Data
@@ -134,14 +140,22 @@ function makeRequest(
 // ===========================================
 
 describe('PluginIpcService', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     pluginIpcService.clearCache();
-    pluginIpcService.clearRateLimits();
+    await pluginIpcService.clearRateLimits();
+    // Register default test plugin for isolation check
+    registerActivePlugin(TEST_CONTAINER_ID, 'plugins/test-bot.js');
+    // Reset Redis mocks to safe defaults after clearAllMocks
+    mockRedis.incr.mockResolvedValue(1);
+    mockRedis.expire.mockResolvedValue(1);
+    mockRedis.ttl.mockResolvedValue(60);
+    mockRedis.keys.mockResolvedValue([]);
     setupContextMocks();
   });
 
   afterEach(() => {
+    clearActivePlugins(TEST_CONTAINER_ID);
     vi.restoreAllMocks();
   });
 
@@ -164,6 +178,7 @@ describe('PluginIpcService', () => {
     it('should extract slug from plugin file path', async () => {
       const req = makeRequest('storage.get', { key: 'test' });
       req.pluginFile = 'plugins/my-cool-plugin.js';
+      registerActivePlugin(TEST_CONTAINER_ID, 'plugins/my-cool-plugin.js');
       await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
 
       expect(prisma.userPlugin.findFirst).toHaveBeenCalledWith(
@@ -237,6 +252,7 @@ describe('PluginIpcService', () => {
         organizationId: TEST_ORG_ID,
         smartRouting: false,
         userPluginId: TEST_USER_PLUGIN_ID,
+        feature: 'plugin-ipc',
       });
     });
 
@@ -253,7 +269,7 @@ describe('PluginIpcService', () => {
       await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
 
       expect(mockTextGeneration).toHaveBeenCalledWith(
-        expect.objectContaining({ model: '2bot-ai-text-lite' }),
+        expect.objectContaining({ model: 'auto', feature: 'plugin-ipc' }),
       );
     });
 
@@ -311,6 +327,19 @@ describe('PluginIpcService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('"role" and "content"');
+    });
+
+    it('should reject empty non-system input messages', async () => {
+      const req = makeRequest('ai.chat', {
+        messages: [
+          { role: 'system', content: 'You are helpful.' },
+          { role: 'user', content: '   ' },
+        ],
+      });
+      const result = await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('at least one non-empty user/assistant message');
     });
 
     it('should pass system and assistant messages', async () => {
@@ -379,7 +408,7 @@ describe('PluginIpcService', () => {
       await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
 
       expect(mockImageGeneration).toHaveBeenCalledWith(
-        expect.objectContaining({ model: '2bot-ai-image-pro' }),
+        expect.objectContaining({ model: 'auto' }),
       );
     });
 
@@ -464,7 +493,7 @@ describe('PluginIpcService', () => {
       await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
 
       expect(mockSpeechSynthesis).toHaveBeenCalledWith(
-        expect.objectContaining({ model: '2bot-ai-voice-pro' }),
+        expect.objectContaining({ model: 'auto' }),
       );
     });
 
@@ -493,6 +522,9 @@ describe('PluginIpcService', () => {
 
   describe('AI rate limiting', () => {
     it('should allow requests within rate limit', async () => {
+      // Redis INCR returns count within limit
+      mockRedis.incr.mockResolvedValue(5);
+
       mockTextGeneration.mockResolvedValue({
         content: 'OK',
         model: 'model',
@@ -501,35 +533,40 @@ describe('PluginIpcService', () => {
         newBalance: 99.99,
       });
 
-      // Make several requests — should all succeed
-      for (let i = 0; i < 5; i++) {
-        const req = makeRequest('ai.chat', {
-          messages: [{ role: 'user', content: `Msg ${i}` }],
-        });
-        const result = await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
-        expect(result.success).toBe(true);
-      }
+      const req = makeRequest('ai.chat', {
+        messages: [{ role: 'user', content: 'Msg' }],
+      });
+      const result = await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
+      expect(result.success).toBe(true);
+      expect(mockRedis.incr).toHaveBeenCalledWith(expect.stringContaining('plugin-ai-ratelimit:'));
+    });
+
+    it('should set TTL on first request in window', async () => {
+      mockRedis.incr.mockResolvedValue(1); // first in window
+
+      mockTextGeneration.mockResolvedValue({
+        content: 'OK',
+        model: 'model',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        creditsUsed: 0.01,
+        newBalance: 99.99,
+      });
+
+      const req = makeRequest('ai.chat', {
+        messages: [{ role: 'user', content: 'Hi' }],
+      });
+      await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
+      expect(mockRedis.expire).toHaveBeenCalledWith(
+        expect.stringContaining('plugin-ai-ratelimit:'),
+        60,
+      );
     });
 
     it('should reject requests exceeding rate limit', async () => {
-      mockTextGeneration.mockResolvedValue({
-        content: 'OK',
-        model: 'model',
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        creditsUsed: 0.01,
-        newBalance: 99.99,
-      });
+      // Redis INCR returns count above limit (31 > 30)
+      mockRedis.incr.mockResolvedValue(31);
+      mockRedis.ttl.mockResolvedValue(45);
 
-      // Make 30 requests (the limit)
-      for (let i = 0; i < 30; i++) {
-        const req = makeRequest('ai.chat', {
-          messages: [{ role: 'user', content: `Msg ${i}` }],
-        });
-        const result = await pluginIpcService.handleRequest(TEST_CONTAINER_ID, req);
-        expect(result.success).toBe(true);
-      }
-
-      // The 31st should fail
       const req = makeRequest('ai.chat', {
         messages: [{ role: 'user', content: 'One too many' }],
       });

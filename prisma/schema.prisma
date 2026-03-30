@@ -971,6 +971,10 @@ model Plugin {
   inputSchema   Json?         @map("input_schema")   // What plugin accepts
   outputSchema  Json?         @map("output_schema")  // What plugin outputs
 
+  // Plugin permissions: controls what the plugin can read, write, and reply
+  // JSON: { read: { messages, userData, otherPluginOutput }, write: { sendMessages, storeData, modifyState }, reply: { canReply, priority } }
+  permissions   Json          @default("{}")        @map("permissions")
+
   // Event routing & conflict detection
   // eventTypes: which events this plugin handles (e.g. ["telegram.message", "telegram.callback"])
   eventTypes    String[]      @default([])           @map("event_types")
@@ -1059,6 +1063,10 @@ model UserPlugin {
   
   // Status
   isEnabled     Boolean       @default(true) @map("is_enabled")
+  
+  // Unified engine: standalone plugins fire concurrently on webhook events.
+  // Plugins managed exclusively through workflow steps should set this to false.
+  isStandalone  Boolean       @default(true) @map("is_standalone")
   
   // Execution stats
   executionCount Int          @default(0) @map("execution_count")
@@ -1189,6 +1197,9 @@ model WorkflowStep {
   
   // Plugin to execute
   pluginId        String    @map("plugin_id")
+  
+  // Whether this step is enabled (disabled steps are skipped at runtime)
+  isEnabled       Boolean   @default(true)  @map("is_enabled")
   
   // Step configuration
   // How to map trigger/previous step data to this plugin's input

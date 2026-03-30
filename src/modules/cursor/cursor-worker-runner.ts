@@ -46,6 +46,7 @@ import {
     WORKER_META,
     buildAssistantSystemPrompt,
     buildCoderSystemPrompt,
+    getAdaptiveWorkerMeta,
     routeToWorker,
 } from "./cursor-workers";
 import type { RepoAnalysis } from "./repo-analyzer.service";
@@ -231,6 +232,8 @@ function buildToolStartMeta(toolName: string, args: Record<string, unknown>): To
       return { kind: "create_gateway", name: (args.name as string) || "" };
     case "delete_gateway":
       return { kind: "delete_gateway", name: (args.name as string) || (args.gatewayId as string) || "" };
+    case "update_gateway":
+      return { kind: "update_gateway", gatewayId: (args.gatewayId as string) || "" };
     case "install_plugin":
       return { kind: "install_plugin", slug: (args.slug as string) || "" };
     case "uninstall_plugin":
@@ -239,6 +242,12 @@ function buildToolStartMeta(toolName: string, args: Record<string, unknown>): To
       return { kind: "toggle_plugin", name: (args.name as string) || "", enable: !!args.enable };
     case "start_workspace":
       return { kind: "start_workspace" };
+    case "stop_workspace":
+      return { kind: "stop_workspace" };
+    case "restart_workspace":
+      return { kind: "restart_workspace" };
+    case "get_workspace_status":
+      return { kind: "get_workspace_status" };
     case "navigate_page":
       return { kind: "navigate_page", path: (args.path as string) || "" };
     case "ask_user":
@@ -250,6 +259,18 @@ function buildToolStartMeta(toolName: string, args: Record<string, unknown>): To
         targetWorker: toolName === "hand_off_to_coder" ? "coder" : "assistant",
         context: (args.task as string) || (args.context as string) || "",
       };
+    case "view_plugin_config":
+      return { kind: "view_plugin_config", name: (args.name as string) || (args.userPluginId as string) || "" };
+    case "search_marketplace":
+      return { kind: "search_marketplace", query: (args.query as string) || "" };
+    case "get_gateway_metrics":
+      return { kind: "get_gateway_metrics", gatewayId: (args.gatewayId as string) || "" };
+    case "get_workspace_logs":
+      return { kind: "get_workspace_logs" };
+    case "get_workspace_metrics":
+      return { kind: "get_workspace_metrics" };
+    case "clone_plugin":
+      return { kind: "clone_plugin", sourceSlug: (args.sourceSlug as string) || "", newSlug: (args.newSlug as string) || "" };
     default:
       return { kind: "unknown", tool: toolName };
   }
@@ -322,6 +343,11 @@ function buildToolUIActions(toolName: string, args: Record<string, unknown>): UI
         { action: "navigate", path: "/gateways", label: `Deleting gateway` },
         { action: "toast", message: `Deleting gateway "${(args.name as string) || (args.gatewayId as string) || ""}"`, variant: "warning", durationMs: 1500 },
       ];
+    case "update_gateway":
+      return [
+        { action: "navigate", path: "/gateways", label: `Updating gateway` },
+        { action: "pulse", label: `Updating gateway settings`, gated: true, durationMs: 30_000 },
+      ];
 
     // ── Plugin tools ────────────────────────────────
     case "list_user_plugins":
@@ -384,6 +410,31 @@ function buildToolUIActions(toolName: string, args: Record<string, unknown>): UI
         { action: "navigate", path: "/workspace", label: "Starting workspace" },
         { action: "pulse", target: "workspace-start-btn", label: "Starting your workspace", gated: true, durationMs: 30_000 },
       ];
+    case "stop_workspace":
+      return [
+        { action: "navigate", path: "/workspace", label: "Stopping workspace" },
+        { action: "pulse", target: "workspace-start-btn", label: "Stopping your workspace", gated: true, durationMs: 30_000 },
+      ];
+    case "restart_workspace":
+      return [
+        { action: "navigate", path: "/workspace", label: "Restarting workspace" },
+        { action: "pulse", target: "workspace-start-btn", label: "Restarting your workspace", gated: true, durationMs: 30_000 },
+      ];
+    case "get_workspace_status":
+      return [
+        { action: "navigate", path: "/workspace", label: "Checking workspace status" },
+        { action: "pulse", label: "Workspace status", gated: true, durationMs: 30_000 },
+      ];
+    case "get_workspace_logs":
+      return [
+        { action: "navigate", path: "/workspace", label: "Fetching workspace logs" },
+        { action: "pulse", target: "workspace-plugins-panel", label: "Fetching workspace logs", gated: true, durationMs: 30_000 },
+      ];
+    case "get_workspace_metrics":
+      return [
+        { action: "navigate", path: "/workspace", label: "Checking workspace metrics" },
+        { action: "pulse", label: "Workspace resource usage", gated: true, durationMs: 30_000 },
+      ];
     case "navigate_page":
       return [
         { action: "navigate", path: (args.path as string) || "/", label: `Opening ${(args.path as string) || "/"}` },
@@ -414,6 +465,25 @@ function buildToolUIActions(toolName: string, args: Record<string, unknown>): UI
     case "explain_error":
       return [
         { action: "toast", message: "Analyzing error…", variant: "info", durationMs: 1500 },
+      ];
+    case "view_plugin_config":
+      return [
+        { action: "navigate", path: "/plugins", label: "Viewing plugin config" },
+        { action: "pulse", label: `Checking plugin configuration`, gated: true, durationMs: 30_000 },
+      ];
+    case "search_marketplace":
+      return [
+        { action: "toast", message: `Searching marketplace for "${(args.query as string) || ""}"…`, variant: "info", durationMs: 1500 },
+      ];
+    case "get_gateway_metrics":
+      return [
+        { action: "navigate", path: "/gateways", label: "Fetching gateway metrics" },
+        { action: "pulse", label: "Gateway metrics", gated: true, durationMs: 30_000 },
+      ];
+    case "clone_plugin":
+      return [
+        { action: "navigate", path: "/workspace", label: `Cloning plugin ${(args.sourceSlug as string) || ""}` },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Cloning ${(args.sourceSlug as string) || ""} → ${(args.newSlug as string) || ""}`, gated: true, durationMs: 30_000 },
       ];
 
     default:
@@ -506,6 +576,36 @@ async function executeSharedTool(
       }
 
       return { result: `This error doesn't match a known pattern. The full error: "${errorText}". Try checking the workspace logs or asking for more details about what you were doing when it occurred.` };
+    }
+
+    case "view_plugin_config": {
+      try {
+        const { pluginService } = await import("@/modules/plugin");
+        const { createServiceContext } = await import("@/shared/types/context");
+        const svcCtx = createServiceContext({ userId: ctx.userId, role: "MEMBER", plan: "FREE" });
+
+        const userPlugins = await pluginService.getUserPlugins(svcCtx);
+        const nameOrId = (args.name as string) || (args.userPluginId as string) || "";
+        const match = userPlugins.find(
+          (p) => p.id === nameOrId
+            || p.pluginId === nameOrId
+            || p.pluginName.toLowerCase().includes(nameOrId.toLowerCase())
+            || p.pluginSlug === nameOrId.toLowerCase().replace(/\s+/g, "-"),
+        );
+        if (!match) return { result: `No plugin found matching "${nameOrId}"` };
+
+        // Get full plugin details including config
+        const detail = await pluginService.getUserPluginById(svcCtx, match.id);
+        const d = detail as unknown as Record<string, unknown>;
+        return {
+          result: `Plugin: ${match.pluginName} (${match.pluginSlug})\nEnabled: ${match.isEnabled}\n` +
+            `Config Schema: ${JSON.stringify(d.configSchema ?? {}, null, 2)}\n` +
+            `Config Defaults: ${JSON.stringify(d.configDefaults ?? {}, null, 2)}\n` +
+            `Current Config: ${JSON.stringify(d.config ?? {}, null, 2)}`,
+        };
+      } catch (err) {
+        return { result: `Error viewing plugin config: ${(err as Error).message}` };
+      }
     }
 
     default:
@@ -788,6 +888,132 @@ async function executeAssistantTool(
       return { result: `Navigated to ${path}` };
     }
 
+    case "stop_workspace": {
+      try {
+        const { workspaceService } = await import("@/modules/workspace");
+        const { createServiceContext } = await import("@/shared/types/context");
+        const svcCtx = createServiceContext({ userId: ctx.userId, role: "MEMBER", plan: "FREE" });
+        const wsStatus = await workspaceService.getStatus(svcCtx);
+        if (!wsStatus) return { result: "No workspace found." };
+        if (wsStatus.status === "STOPPED") return { result: "Workspace is already stopped." };
+        const result = await workspaceService.stopWorkspace(svcCtx, wsStatus.id);
+        return { result: result.success ? "Workspace stopped." : `Error: ${result.message}` };
+      } catch (err) {
+        return { result: `Error stopping workspace: ${(err as Error).message}` };
+      }
+    }
+
+    case "restart_workspace": {
+      try {
+        const { workspaceService } = await import("@/modules/workspace");
+        const { createServiceContext } = await import("@/shared/types/context");
+        const svcCtx = createServiceContext({ userId: ctx.userId, role: "MEMBER", plan: "FREE" });
+        const wsStatus = await workspaceService.getStatus(svcCtx);
+        if (!wsStatus) return { result: "No workspace found." };
+        if (wsStatus.status !== "STOPPED") {
+          await workspaceService.stopWorkspace(svcCtx, wsStatus.id);
+        }
+        const result = await workspaceService.startWorkspace(svcCtx, wsStatus.id);
+        return { result: result.success ? "Workspace restarted!" : `Error: ${result.message}` };
+      } catch (err) {
+        return { result: `Error restarting workspace: ${(err as Error).message}` };
+      }
+    }
+
+    case "get_workspace_status": {
+      try {
+        const { workspaceService } = await import("@/modules/workspace");
+        const { createServiceContext } = await import("@/shared/types/context");
+        const svcCtx = createServiceContext({ userId: ctx.userId, role: "MEMBER", plan: "FREE" });
+        const wsStatus = await workspaceService.getStatus(svcCtx);
+        if (!wsStatus) return { result: "No workspace found. The user hasn't created a workspace yet." };
+        return {
+          result: `Workspace: ${wsStatus.status} [ID: ${wsStatus.id}]` +
+            (wsStatus.startedAt ? `, Started: ${wsStatus.startedAt}` : "") +
+            `, RAM: ${wsStatus.resources.ramMb}MB, CPU: ${wsStatus.resources.cpuCores} cores` +
+            `, Plugins running: ${wsStatus.runningPlugins.length}` +
+            `, Health check fails: ${wsStatus.healthCheckFails}, Restarts: ${wsStatus.restartCount}`,
+        };
+      } catch (err) {
+        return { result: `Error checking workspace status: ${(err as Error).message}` };
+      }
+    }
+
+    case "update_gateway": {
+      try {
+        const { gatewayService } = await import("@/modules/gateway");
+        const { createServiceContext } = await import("@/shared/types/context");
+        const svcCtx = createServiceContext({ userId: ctx.userId, role: "MEMBER", plan: "FREE" });
+        const gatewayId = args.gatewayId as string;
+        if (!gatewayId) return { result: "Error: gatewayId is required. Use list_gateways first." };
+
+        const updateData: { name?: string; credentials?: { botToken: string } } = {};
+        if (args.name) updateData.name = args.name as string;
+        if (args.botToken) updateData.credentials = { botToken: args.botToken as string };
+
+        const updated = await gatewayService.update(svcCtx, gatewayId, updateData as Parameters<typeof gatewayService.update>[2]);
+        return { result: `Gateway "${updated.name}" updated successfully.` };
+      } catch (err) {
+        return { result: `Error updating gateway: ${(err as Error).message}` };
+      }
+    }
+
+    case "search_marketplace": {
+      try {
+        const { pluginService } = await import("@/modules/plugin");
+        const query = (args.query as string) || "";
+        const results = await pluginService.getAvailablePlugins({ search: query, userId: ctx.userId });
+        const summary = results.map((p) =>
+          `- ${p.name} [${p.slug}] — ${p.description || "No description"}`,
+        ).join("\n");
+        return { result: summary || `No plugins found for "${query}"` };
+      } catch (err) {
+        return { result: `Error searching marketplace: ${(err as Error).message}` };
+      }
+    }
+
+    case "get_gateway_metrics": {
+      const gatewayId = args.gatewayId as string;
+      if (!gatewayId) return { result: "Error: gatewayId is required. Use list_gateways first." };
+      try {
+        const { gatewayMetricService } = await import("@/modules/gateway/gateway-metrics.service");
+        const metrics = await gatewayMetricService.getMetrics(gatewayId, { days: 7 });
+        if (metrics.length === 0) return { result: `No metrics recorded for gateway ${gatewayId} in the last 7 days.` };
+        const summary = metrics.map((m) =>
+          `[${m.period}] ${m.action}: ${m.successCount} ok, ${m.errorCount} errors, avg ${Math.round(m.avgDurationMs)}ms`,
+        ).join("\n");
+        return { result: `Gateway Metrics (last 7 days):\n${summary}` };
+      } catch (err) {
+        return { result: `Error fetching gateway metrics: ${(err as Error).message}` };
+      }
+    }
+
+    case "get_workspace_logs": {
+      try {
+        const bridge = await getBridgeClient(ctx.userId, ctx.organizationId);
+        if (!bridge) return { result: "Error: No running workspace. Start your workspace first." };
+        const level = (args.level as string) || "info";
+        const limit = Math.min((args.limit as number) || 50, 200);
+        const logs = await bridge.client.send("system.logs", { level, limit });
+        const logText = typeof logs === "string" ? logs : JSON.stringify(logs, null, 2);
+        return { result: truncateToolOutput(logText || "(no logs available)") };
+      } catch (err) {
+        return { result: `Error fetching workspace logs: ${(err as Error).message}` };
+      }
+    }
+
+    case "get_workspace_metrics": {
+      try {
+        const bridge = await getBridgeClient(ctx.userId, ctx.organizationId);
+        if (!bridge) return { result: "Error: No running workspace. Start your workspace first." };
+        const stats = await bridge.client.send("system.stats", {});
+        const statsText = typeof stats === "string" ? stats : JSON.stringify(stats, null, 2);
+        return { result: `Workspace Metrics:\n${statsText}` };
+      } catch (err) {
+        return { result: `Error fetching workspace metrics: ${(err as Error).message}` };
+      }
+    }
+
     case "hand_off_to_coder": {
       return {
         result: "Handing off to Cursor Coder...",
@@ -1007,7 +1233,20 @@ async function executeCoderTool(
       try {
         try { await client.send("plugin.stop", { file: entryFile }); } catch { /* may not be running */ }
         await client.send("plugin.start", { file: entryFile });
-        return { result: `Plugin "${slug}" restarted (entry: ${entryFile})` };
+
+        // N7: Plugin feedback loop — wait briefly then check logs for startup errors
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const logsResult = await client.send("plugin.logs", { file: entryFile }) as { logs?: string };
+          const tail = typeof logsResult?.logs === "string" ? logsResult.logs.slice(-500) : "";
+          if (tail && /error|exception|fatal|ENOENT|SyntaxError/i.test(tail)) {
+            return { result: `Plugin "${slug}" restarted but logs show errors:\n${tail}\nPlease review and fix the code.` };
+          }
+        } catch {
+          // Logs check failed — proceed without feedback
+        }
+
+        return { result: `Plugin "${slug}" restarted successfully (entry: ${entryFile})` };
       } catch (err) {
         return { result: `Error restarting plugin: ${(err as Error).message}` };
       }
@@ -1034,6 +1273,43 @@ async function executeCoderTool(
           context: (args.context as string) || "",
         },
       };
+    }
+
+    case "clone_plugin": {
+      const sourceSlug = args.sourceSlug as string;
+      const newSlug = args.newSlug as string;
+      const newName = args.newName as string || newSlug;
+      if (!sourceSlug || !newSlug) return { result: "Error: sourceSlug and newSlug are required." };
+
+      try {
+        // Read all files from source plugin directory
+        const sourceDir = `plugins/${sourceSlug}`;
+        const destDir = `plugins/${newSlug}`;
+        const files = await withBridgeRetry(() => client.fileList(sourceDir, true), `clone:list:${sourceSlug}`);
+        const fileList = Array.isArray(files) ? files as Array<{ name: string; type: string }> : [];
+        const fileNames = fileList.filter((f) => f.type === "file").map((f) => f.name);
+
+        if (fileNames.length === 0) {
+          return { result: `Error: No files found in ${sourceDir}. Is the source plugin a directory plugin?` };
+        }
+
+        // Create dest directory and copy files
+        await withBridgeRetry(() => client.fileMkdir(destDir), `clone:mkdir:${newSlug}`);
+        for (const fileName of fileNames) {
+          const content = await withBridgeRetry(
+            () => client.fileRead(`${sourceDir}/${fileName}`) as Promise<{ content?: string }>,
+            `clone:read:${fileName}`,
+          );
+          await withBridgeRetry(
+            () => client.fileWrite(`${destDir}/${fileName}`, content?.content ?? "", true),
+            `clone:write:${fileName}`,
+          );
+        }
+
+        return { result: `Cloned "${sourceSlug}" → "${newSlug}" (${fileNames.length} files copied to ${destDir}). Use create_plugin_record to register "${newName}" as a new plugin.` };
+      } catch (err) {
+        return { result: `Error cloning plugin: ${(err as Error).message}` };
+      }
     }
 
     default:
@@ -1098,6 +1374,51 @@ function getModelForWorker(_workerType: CursorWorkerType, requestModelId?: strin
 }
 
 // ===========================================
+// Hand-off Context Builder
+// ===========================================
+
+/**
+ * Build an enriched hand-off context that includes:
+ * - The worker's stated task/context
+ * - Files written so far
+ * - Recent tool results from the conversation
+ */
+function buildHandOffContext(
+  workerContext: string,
+  writtenFiles: Record<string, string>,
+  messages: TextGenerationMessage[],
+): string {
+  const parts: string[] = [];
+
+  // 1. Worker's stated context
+  if (workerContext) {
+    parts.push(`Task: ${workerContext}`);
+  }
+
+  // 2. Files written so far
+  const fileList = Object.keys(writtenFiles);
+  if (fileList.length > 0) {
+    parts.push(`Files written (${fileList.length}): ${fileList.join(", ")}`);
+  }
+
+  // 3. Last few tool results from conversation (skip system/user-message noise)
+  const toolResults: string[] = [];
+  for (let i = messages.length - 1; i >= 0 && toolResults.length < 5; i--) {
+    const msg = messages[i];
+    if (msg?.role === "user" && typeof msg.content === "string" && msg.content.startsWith("[✅ TOOL RESULT:")) {
+      // Extract tool name and first line of result
+      const firstLine = msg.content.split("\n")[0] ?? "";
+      toolResults.unshift(firstLine);
+    }
+  }
+  if (toolResults.length > 0) {
+    parts.push(`Recent results:\n${toolResults.join("\n")}`);
+  }
+
+  return parts.join("\n\n");
+}
+
+// ===========================================
 // Streaming Worker Loop (async generator)
 // ===========================================
 
@@ -1123,6 +1444,8 @@ export async function* runWorkerStream(
   // ── Session setup ────────────────────────────────────
   const sessionId = crypto.randomUUID();
   const startedAt = new Date();
+  // N1: Session-scoped logger — all log lines automatically include sessionId + userId
+  const slog = workerLog.child({ sessionId, userId });
   let totalCreditsUsed = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
@@ -1131,10 +1454,12 @@ export async function* runWorkerStream(
   let toolCallSequence = 0;
 
   // Route to initial worker
-  const initialWorker = request.workerType || routeToWorker(message);
+  // If repoUrl is attached, always route to coder (repo analysis requires workspace + coder tools)
+  const initialWorker = request.workerType
+    || (request.repoUrl ? "coder" as CursorWorkerType : routeToWorker(message));
 
-  workerLog.info(
-    { sessionId, userId, initialWorker, message: message.slice(0, 100) },
+  slog.info(
+    { initialWorker, message: message.slice(0, 100) },
     "🤖 Worker stream started",
   );
 
@@ -1177,6 +1502,17 @@ export async function* runWorkerStream(
   let finishSummary: string | undefined;
 
   // ── Repo Analysis: Clone & Analyze (if repoUrl provided) ──
+  if (request.repoUrl && !client) {
+    // Workspace required for repo clone — fail early with clear message
+    yield {
+      type: "error" as const,
+      message: "A running workspace is required to clone and analyze a repository. Please start your workspace first, then try again with the repo URL attached.",
+      sessionId,
+      creditsUsed: totalCreditsUsed,
+    };
+    return;
+  }
+
   if (request.repoUrl && client) {
     // Force coder mode for repo analysis
     if (!pluginMode) pluginMode = "create";
@@ -1229,9 +1565,8 @@ export async function* runWorkerStream(
         message: `Analyzed: ${repoAnalysis.purpose} (${repoAnalysis.language}, ${repoAnalysis.complexity}). Features: ${featureSummary}`,
       };
 
-      workerLog.info(
+      slog.info(
         {
-          sessionId,
           language: repoAnalysis.language,
           complexity: repoAnalysis.complexity,
           featureCount: repoAnalysis.features.length,
@@ -1258,7 +1593,7 @@ export async function* runWorkerStream(
 
   try {
     while (handOffCount <= MAX_HAND_OFFS) {
-      const workerMeta = WORKER_META[currentWorker];
+      let workerMeta = WORKER_META[currentWorker];
 
       // ── Emit worker_start ──────────────────────────────
       yield {
@@ -1268,15 +1603,16 @@ export async function* runWorkerStream(
         sessionId,
       };
 
-      workerLog.info(
-        { sessionId, worker: currentWorker, handOffCount },
+      slog.info(
+        { worker: currentWorker, handOffCount },
         `🔧 Worker started: ${workerMeta.displayName}`,
       );
 
       // ── Fetch lightweight user state for prompt context ──
       let userState: WorkerPromptContext["userState"];
+      let priorSessionSummaries: string[] | undefined;
       try {
-        const [user, gatewayCount, pluginCount] = await Promise.all([
+        const [user, gatewayCount, pluginCount, recentSessions] = await Promise.all([
           prisma.user.findUnique({
             where: { id: userId },
             select: { plan: true },
@@ -1287,6 +1623,13 @@ export async function* runWorkerStream(
           prisma.userPlugin.count({
             where: { userId },
           }),
+          // Load recent completed sessions for conversation continuity
+          handOffCount === 0 ? prisma.agentSession.findMany({
+            where: { userId, status: "completed", finalResponse: { not: null } },
+            orderBy: { startedAt: "desc" },
+            take: 3,
+            select: { finalResponse: true, startedAt: true, prompt: true },
+          }) : Promise.resolve([]),
         ]);
         userState = {
           plan: user?.plan ?? "FREE",
@@ -1294,6 +1637,18 @@ export async function* runWorkerStream(
           pluginCount,
           workspaceRunning: !!client,
         };
+        if (recentSessions.length > 0) {
+          priorSessionSummaries = recentSessions
+            .filter((s) => s.finalResponse)
+            .map((s) => {
+              const date = s.startedAt.toISOString().split("T")[0];
+              const task = s.prompt?.replace(/^\[worker:\w+\]\s*/, "").slice(0, 80) ?? "";
+              const result = s.finalResponse!.slice(0, 150);
+              return `[${date}] ${task} → ${result}`;
+            });
+        }
+        // N2: Adapt session limits based on user plan
+        workerMeta = getAdaptiveWorkerMeta(currentWorker, userState.plan);
       } catch {
         // Non-critical — proceed without user state
       }
@@ -1310,6 +1665,7 @@ export async function* runWorkerStream(
         userState,
         repoAnalysis,
         repoCloneDir,
+        priorSessionSummaries,
       };
 
       const systemPrompt = currentWorker === "assistant"
@@ -1325,9 +1681,15 @@ export async function* runWorkerStream(
       }));
 
       // ── Initialize messages ────────────────────────────
+      // Enrich user message with attached repo URL if present (so the LLM knows about it)
+      let userMessage = message;
+      if (request.repoUrl && handOffCount === 0) {
+        userMessage = `${message}\n\n[Attached repository: ${request.repoUrl}]`;
+      }
+
       const messages: TextGenerationMessage[] = [
         { role: "system", content: systemPrompt },
-        { role: "user", content: handOffContext ? `${handOffContext}\n\nOriginal user message: ${message}` : message },
+        { role: "user", content: handOffContext ? `${handOffContext}\n\nOriginal user message: ${userMessage}` : userMessage },
       ];
 
       // If coder + no bridge, warn early
@@ -1375,9 +1737,35 @@ export async function* runWorkerStream(
           },
         );
         if (limitError) {
-          workerLog.warn({ sessionId, worker: currentWorker, reason: limitError }, "Worker limit reached");
-          yield { type: "status" as const, message: `Limit reached: ${limitError}` };
+          slog.warn({ worker: currentWorker, reason: limitError }, "Worker limit reached");
+          const filesWritten = Object.keys(writtenFiles).length;
+          const creditHint = limitError.toLowerCase().includes("credit")
+            ? " Please add credits and try again."
+            : "";
+          finishSummary = filesWritten > 0
+            ? `Session limit reached: ${limitError}.${creditHint} ${filesWritten} file(s) were saved successfully.`
+            : `Session limit reached: ${limitError}.${creditHint}`;
+          yield { type: "status" as const, message: finishSummary };
           break;
+        }
+
+        // Pre-check user credit balance before expensive AI call
+        if (turn % 3 === 0) { // Check every 3rd iteration to avoid DB spam
+          try {
+            const { twoBotAICreditService } = await import("@/modules/credits/2bot-ai-credit.service");
+            const balance = await twoBotAICreditService.getBalance(userId);
+            if (balance.balance <= 0) {
+              const filesWritten = Object.keys(writtenFiles).length;
+              finishSummary = filesWritten > 0
+                ? `You've run out of credits. ${filesWritten} file(s) were saved successfully. Please add credits to continue.`
+                : "You've run out of credits. Please add credits to continue.";
+              slog.warn({ balance: balance.balance }, "User credits exhausted — stopping session");
+              yield { type: "status" as const, message: finishSummary };
+              break;
+            }
+          } catch {
+            // Non-critical — proceed without balance check
+          }
         }
 
         totalIterations++;
@@ -1401,6 +1789,7 @@ export async function* runWorkerStream(
               toolChoice: "auto",
               feature: "cursor",
               capability: currentWorker === "coder" ? "code-generation" : undefined,
+              traceId: sessionId,
             }),
             {
               maxRetries: 2,
@@ -1421,7 +1810,7 @@ export async function* runWorkerStream(
 
           // Text-only response (no tool calls) = worker is done talking
           if (!toolCalls || toolCalls.length === 0) {
-            workerLog.info({ sessionId, worker: currentWorker }, "Worker responded with text only — done");
+            slog.info({ worker: currentWorker }, "Worker responded with text only — done");
             // For assistant: text response IS the answer
             if (currentWorker === "assistant") {
               workerFinished = true;
@@ -1452,8 +1841,8 @@ export async function* runWorkerStream(
 
           if (allReadOnly && toolCalls.length > 1) {
             // ── Parallel execution for read-only batch ───
-            workerLog.debug(
-              { sessionId, toolCount: toolCalls.length },
+            slog.debug(
+              { toolCount: toolCalls.length },
               "Executing read-only tools in parallel",
             );
 
@@ -1469,7 +1858,8 @@ export async function* runWorkerStream(
               };
             }
 
-            // Execute all in parallel
+            // Execute all in parallel (with timing)
+            const batchStart = Date.now();
             const results = await Promise.all(
               toolCalls.map((tc) =>
                 executeTool(
@@ -1480,6 +1870,7 @@ export async function* runWorkerStream(
                 )
               ),
             );
+            const batchDurationMs = Date.now() - batchStart;
 
             // Process results and emit events
             for (let i = 0; i < toolCalls.length; i++) {
@@ -1504,7 +1895,7 @@ export async function* runWorkerStream(
                   toolName: tc.name,
                   output: toolResult.result,
                   isError,
-                  durationMs: 0,
+                  durationMs: batchDurationMs,
                 },
                 toolArgs,
                 toolCallSequence,
@@ -1591,10 +1982,10 @@ export async function* runWorkerStream(
                   role: "user",
                   content: `[TOOL RESULT: ${tc.name}]\nUser rejected the action. Do NOT retry — try a different approach or ask what they want instead.`,
                 });
-                workerLog.info({ sessionId, tool: tc.name, target }, "Destructive action rejected by user");
+                slog.info({ tool: tc.name, target }, "Destructive action rejected by user");
                 continue;
               }
-              workerLog.info({ sessionId, tool: tc.name, target }, "Destructive action approved by user");
+              slog.info({ tool: tc.name, target }, "Destructive action approved by user");
             }
 
             // ── Regular tool execution ───────────────────
@@ -1608,12 +1999,14 @@ export async function* runWorkerStream(
               };
             }
 
+            const toolStartTs = Date.now();
             const toolResult = await executeTool(
               currentWorker,
               tc.name,
               toolArgs,
               { userId, organizationId, client, pluginDir, writtenFiles },
             );
+            const toolDurationMs = Date.now() - toolStartTs;
 
             totalToolCalls++;
             const isError = toolResult.result.startsWith("Blocked:") || toolResult.result.startsWith("Error");
@@ -1653,7 +2046,7 @@ export async function* runWorkerStream(
                 toolName: tc.name,
                 output: toolResult.result,
                 isError,
-                durationMs: 0,
+                durationMs: toolDurationMs,
               },
               toolArgs,
               toolCallSequence,
@@ -1706,8 +2099,8 @@ export async function* runWorkerStream(
         } catch (err) {
           consecutiveErrors++;
           const errorMsg = (err as Error).message || String(err);
-          workerLog.error(
-            { sessionId, worker: currentWorker, turn, error: errorMsg, consecutiveErrors },
+          slog.error(
+            { worker: currentWorker, turn, error: errorMsg, consecutiveErrors },
             "Worker loop error",
           );
 
@@ -1727,7 +2120,11 @@ export async function* runWorkerStream(
           } else if (errLower.includes("timeout") || errLower.includes("econnreset")) {
             recovery = "Network timeout occurred. The request will be retried automatically.";
           } else if (errLower.includes("credit") || errLower.includes("insufficient")) {
-            recovery = "Insufficient credits to continue. Please check your balance.";
+            const filesWritten = Object.keys(writtenFiles).length;
+            recovery = filesWritten > 0
+              ? `Insufficient credits to continue. ${filesWritten} file(s) were saved. Please add credits and try again.`
+              : "Insufficient credits to continue. Please add credits and try again.";
+            finishSummary = recovery;
             yield { type: "status" as const, message: recovery };
             break; // Credits won't magically appear — stop immediately
           } else {
@@ -1762,7 +2159,7 @@ export async function* runWorkerStream(
         if (handOff.mode) pluginMode = handOff.mode;
 
         currentWorker = handOff.workerType;
-        handOffContext = handOff.context;
+        handOffContext = buildHandOffContext(handOff.context, writtenFiles, messages);
         handOffCount++;
         handOff = undefined;
         continue; // Start next worker
@@ -1779,9 +2176,9 @@ export async function* runWorkerStream(
     if (repoCloneDir && client) {
       try {
         await client.fileDelete(repoCloneDir);
-        workerLog.debug({ sessionId, repoCloneDir }, "Cleaned up cloned repo directory");
+        slog.debug({ repoCloneDir }, "Cleaned up cloned repo directory");
       } catch {
-        workerLog.warn({ sessionId, repoCloneDir }, "Failed to cleanup cloned repo directory");
+        slog.warn({ repoCloneDir }, "Failed to cleanup cloned repo directory");
       }
     }
 
@@ -1801,9 +2198,8 @@ export async function* runWorkerStream(
       durationMs,
     });
 
-    workerLog.info(
+    slog.info(
       {
-        sessionId,
         iterations: totalIterations,
         toolCalls: totalToolCalls,
         creditsUsed: totalCreditsUsed,

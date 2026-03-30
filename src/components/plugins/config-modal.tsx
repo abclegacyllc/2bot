@@ -29,7 +29,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { GatewayOption } from "@/lib/api-client";
 import { getOrgGateways, getPluginBySlug, getUserGateways } from "@/lib/api-client";
 import { apiUrl } from "@/shared/config/urls";
-import type { ConfigSchema, ConfigSchemaProperty, UserPlugin } from "@/shared/types/plugin";
+import type { ConfigSchema, ConfigSchemaProperty, PluginPermissions, UserPlugin } from "@/shared/types/plugin";
+import { PLUGIN_PERMISSION_META } from "@/shared/types/plugin";
 
 // ===========================================
 // AI Model Options for ui-component selector
@@ -182,7 +183,7 @@ function AIModelField({
         </SelectTrigger>
         <SelectContent className="max-h-[350px]">
           {/* Search input for real models */}
-          {hasRealModels && (
+          {hasRealModels ? (
             <div className="px-2 py-1.5 border-b border-border/50">
               <Input
                 type="text"
@@ -194,10 +195,10 @@ function AIModelField({
                 onKeyDown={(e) => e.stopPropagation()}
               />
             </div>
-          )}
+          ) : null}
 
           {/* Real models section */}
-          {hasRealModels && (
+          {hasRealModels ? (
             <>
               <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
                 Real Models
@@ -213,7 +214,7 @@ function AIModelField({
                 </SelectItem>
               ))}
             </>
-          )}
+          ) : null}
 
           {/* Branded tiers section (Auto modes) */}
           {!modelSearch.trim() && (
@@ -260,6 +261,7 @@ export function ConfigModal({ plugin, onClose, onSave, isSaving, token, organiza
   const [storageUsage, setStorageUsage] = useState<{ keyCount: number; totalBytes: number } | null>(null);
   const [realModels, setRealModels] = useState<RealModelOption[]>([]);
   const [modelSearch, setModelSearch] = useState("");
+  const [permissions, setPermissions] = useState<PluginPermissions>({});
   const needsGateway = plugin.requiredGateways && plugin.requiredGateways.length > 0;
 
   // Fetch the actual config schema from the plugin details endpoint
@@ -268,6 +270,9 @@ export function ConfigModal({ plugin, onClose, onSave, isSaving, token, organiza
       const result = await getPluginBySlug(plugin.pluginSlug, token);
       if (result.success && result.data?.configSchema) {
         setSchema(result.data.configSchema);
+      }
+      if (result.success && result.data?.permissions) {
+        setPermissions(result.data.permissions as PluginPermissions);
       }
     } catch {
       // If we can't fetch schema, fall back to empty
@@ -533,6 +538,38 @@ export function ConfigModal({ plugin, onClose, onSave, isSaving, token, organiza
                 Local key-value storage limit for this plugin. Set 0 for unlimited.
               </p>
             </div>
+
+            {/* Permissions */}
+            {Object.keys(permissions).length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-foreground">
+                  Permissions
+                  <span className="text-xs text-muted-foreground ml-1">(declared by plugin)</span>
+                </Label>
+                <div className="grid gap-2">
+                  {(Object.keys(PLUGIN_PERMISSION_META) as Array<keyof PluginPermissions>).map((perm) => {
+                    const granted = permissions[perm] === true;
+                    const meta = PLUGIN_PERMISSION_META[perm];
+                    return (
+                      <div key={perm} className="flex items-center gap-3">
+                        <Checkbox
+                          id={`perm-${perm}`}
+                          checked={granted}
+                          disabled
+                        />
+                        <Label htmlFor={`perm-${perm}`} className={granted ? "text-foreground" : "text-muted-foreground"}>
+                          {meta.label}
+                        </Label>
+                        <span className="text-xs text-muted-foreground">{meta.description}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  These permissions are declared by the plugin author and enforced at runtime.
+                </p>
+              </div>
+            )}
 
             {/* Config Fields */}
             {isLoadingSchema ? (

@@ -9,6 +9,7 @@
  */
 
 const ICON_MAP: Record<string, string> = {
+  bot: "🤖",
   "chart-bar": "📊",
   analytics: "📈",
   message: "💬",
@@ -17,6 +18,13 @@ const ICON_MAP: Record<string, string> = {
   utilities: "🔧",
   general: "🔌",
   messaging: "💬",
+  weather: "🌤️",
+  command: "⌨️",
+  ai: "🧠",
+  image: "🖼️",
+  api: "🔗",
+  storage: "💾",
+  notification: "🔔",
 };
 
 interface PluginIconProps {

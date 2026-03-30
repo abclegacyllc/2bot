@@ -12,41 +12,41 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { toast } from "sonner";
 import { JsonTreeView } from "@/components/bot-studio/json-tree-view";
-import type {
-  WorkflowRunDetail,
-  WorkflowRunSummary,
-  WorkflowStepRunDetail,
-} from "@/lib/api-client";
-import { getWorkflowRunDetail, getWorkflowRuns } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardHeader,
+    Card,
+    CardContent,
+    CardHeader,
 } from "@/components/ui/card";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
+import type {
+    WorkflowRunDetail,
+    WorkflowRunSummary,
+    WorkflowStepRunDetail,
+} from "@/lib/api-client";
+import { getWorkflowRunDetail, getWorkflowRuns } from "@/lib/api-client";
 import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  Loader2,
-  Play,
-  RefreshCw,
-  RotateCcw,
-  SkipForward,
-  XCircle,
+    AlertCircle,
+    CheckCircle2,
+    ChevronDown,
+    ChevronRight,
+    Clock,
+    Loader2,
+    Play,
+    RefreshCw,
+    RotateCcw,
+    SkipForward,
+    XCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 
 // ===========================================
 // Types
@@ -139,7 +139,7 @@ function StepRunRow({ stepRun }: { stepRun: WorkflowStepRunDetail }) {
       >
         <Icon className={`h-3.5 w-3.5 ${cfg.color} shrink-0 ${stepRun.status === "RUNNING" ? "animate-spin" : ""}`} />
         <span className="text-xs font-medium text-foreground flex-1 truncate">
-          Step {stepRun.stepOrder + 1}: {stepRun.stepName || stepRun.pluginSlug}
+          Step {stepRun.stepOrder}: {stepRun.stepName || stepRun.pluginSlug}
         </span>
         {stepRun.durationMs !== undefined && stepRun.durationMs !== null ? (
           <span className="text-[10px] text-muted-foreground shrink-0">
@@ -192,35 +192,26 @@ function RunRow({
   token,
   organizationId,
   onRetry,
+  forceCollapse,
 }: {
   run: WorkflowRunSummary;
   workflowId: string;
   token: string | null;
   organizationId?: string;
   onRetry?: () => Promise<void>;
+  forceCollapse?: number;
 }) {
-  // Auto-expand failed runs so users can see errors immediately
-  const [expanded, setExpanded] = useState(run.status === "FAILED");
+  const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<WorkflowRunDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const autoLoadAttempted = useRef(false);
 
   const cfg = STATUS_CONFIG[run.status] ?? { icon: Clock, color: "text-amber-500", label: "Unknown" };
   const Icon = cfg.icon;
 
-  // Auto-load details for failed runs
+  // Collapse when parent increments forceCollapse counter
   useEffect(() => {
-    if (run.status === "FAILED" && !detail && !autoLoadAttempted.current) {
-      autoLoadAttempted.current = true;
-      setLoadingDetail(true);
-      getWorkflowRunDetail(workflowId, run.id, { organizationId }, token ?? undefined)
-        .then((result) => {
-          if (result.success && result.data) setDetail(result.data);
-        })
-        .catch(() => {})
-        .finally(() => setLoadingDetail(false));
-    }
-  }, [run.status, run.id, workflowId, organizationId, token, detail]);
+    if (forceCollapse && forceCollapse > 0) setExpanded(false);
+  }, [forceCollapse]);
 
   const handleExpand = useCallback(async () => {
     if (expanded) {
@@ -371,6 +362,7 @@ export function WorkflowRunHistory({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [collapseCounter, setCollapseCounter] = useState(0);
   const limit = 10;
 
   const fetchRuns = useCallback(async () => {
@@ -388,8 +380,8 @@ export function WorkflowRunHistory({
         token ?? undefined
       );
       if (result.success && result.data) {
-        setRuns(result.data.data ?? []);
-        setTotal(result.data.meta?.total ?? 0);
+        setRuns(result.data);
+        setTotal(result.meta?.total ?? 0);
       }
     } catch {
       toast.error("Failed to load run history");
@@ -445,6 +437,17 @@ export function WorkflowRunHistory({
             <Button
               variant="ghost"
               size="sm"
+              className="h-7 px-2 text-[10px] text-muted-foreground"
+              onClick={() => setCollapseCounter((c) => c + 1)}
+              title="Collapse all expanded runs"
+            >
+              <ChevronRight className="h-3 w-3 mr-0.5" />
+              Collapse
+            </Button>
+
+            <Button
+              variant="ghost"
+              size="sm"
               className="h-7 w-7 p-0"
               onClick={fetchRuns}
               disabled={isLoading}
@@ -478,6 +481,7 @@ export function WorkflowRunHistory({
                   token={token}
                   organizationId={organizationId}
                   onRetry={onRetry}
+                  forceCollapse={collapseCounter}
                 />
               ))}
             </div>

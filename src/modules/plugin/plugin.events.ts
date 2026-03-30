@@ -17,31 +17,31 @@ import { prisma } from "@/lib/prisma";
 import { getPluginEntryPath } from "./plugin-deploy.service";
 
 import {
-    createGatewayAccessor,
-    createPluginStorage,
-    getPluginExecutor,
-    registerPlugin,
+  createGatewayAccessor,
+  createPluginStorage,
+  getPluginExecutor,
+  registerPlugin,
 } from "./plugin.executor";
 import type {
-    DiscordGuildMemberEventData,
-    DiscordInteractionEventData,
-    DiscordMessageEventData,
-    PluginContext,
-    PluginEvent,
-    PluginExecutionResult,
-    SlackAppMentionEventData,
-    SlackInteractionEventData,
-    SlackMessageEventData,
-    SlackReactionEventData,
-    TelegramCallbackEventData,
-    TelegramChatMemberUpdatedEventData,
-    TelegramChosenInlineResultEventData,
-    TelegramInlineQueryEventData,
-    TelegramMessageEventData,
-    TelegramPollAnswerEventData,
-    TelegramPollEventData,
-    WhatsAppMessageEventData,
-    WhatsAppStatusEventData,
+  DiscordGuildMemberEventData,
+  DiscordInteractionEventData,
+  DiscordMessageEventData,
+  PluginContext,
+  PluginEvent,
+  PluginExecutionResult,
+  SlackAppMentionEventData,
+  SlackInteractionEventData,
+  SlackMessageEventData,
+  SlackReactionEventData,
+  TelegramCallbackEventData,
+  TelegramChatMemberUpdatedEventData,
+  TelegramChosenInlineResultEventData,
+  TelegramInlineQueryEventData,
+  TelegramMessageEventData,
+  TelegramPollAnswerEventData,
+  TelegramPollEventData,
+  WhatsAppMessageEventData,
+  WhatsAppStatusEventData,
 } from "./plugin.interface";
 
 const eventLogger = logger.child({ module: "plugin-events" });
@@ -473,11 +473,13 @@ async function findTargetPlugins(
   // Extract gatewayId from event (if present)
   const eventGatewayId = "gatewayId" in event ? event.gatewayId : null;
 
-  // Find all enabled user plugins scoped to the correct tenant
+  // Find all enabled standalone user plugins scoped to the correct tenant
+  // Unified engine: only fire plugins marked as standalone (not managed by workflow steps)
   const userPlugins = await prisma.userPlugin.findMany({
     where: {
       userId,
       isEnabled: true,
+      isStandalone: true,
       organizationId: organizationId ?? null,
       // Filter by specific gateway when event originates from one
       ...(eventGatewayId ? { gatewayId: eventGatewayId } : {}),

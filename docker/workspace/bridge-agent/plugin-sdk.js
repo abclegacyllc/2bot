@@ -161,6 +161,11 @@ process.on('message', async (msg) => {
 
   // Handle pushed events from platform (via bridge agent)
   if (msg.type === 'plugin.event' && msg.event) {
+    // Update sdk.config if the event carries step-level config overrides
+    if (msg.event._config && typeof msg.event._config === 'object') {
+      sdk.config = msg.event._config;
+      delete msg.event._config; // Clean up — plugins shouldn't see this internal field
+    }
     if (handlersReady && eventHandlers.length > 0) {
       dispatchEvent(msg.event);
     } else {
@@ -735,9 +740,9 @@ async function sdkFetch(url, options = {}) {
 
   // Normalize headers to a plain object with lowercased keys
   const resHeaders = {};
-  const rawHeaders = rawRes.headers;
-  for (const key of Object.keys(rawHeaders)) {
-    resHeaders[key.toLowerCase()] = rawHeaders[key];
+  const responseHeaders = rawRes.headers;
+  for (const key of Object.keys(responseHeaders)) {
+    resHeaders[key.toLowerCase()] = responseHeaders[key];
   }
 
   return new FetchResponse(

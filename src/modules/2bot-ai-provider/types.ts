@@ -198,6 +198,8 @@ export interface TextGenerationRequest {
   feature?: string;
   /** Override the recorded capability (default: "text-generation"). Use "code-generation" for code-focused features. */
   capability?: AICapability;
+  /** Trace ID for request correlation across logs and billing records */
+  traceId?: string;
 }
 
 export interface TextGenerationResponse {

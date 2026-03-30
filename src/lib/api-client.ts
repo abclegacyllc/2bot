@@ -25,6 +25,7 @@ export interface ApiResponse<T> {
     code: string;
     message: string;
   };
+  meta?: { total: number; page: number; limit: number };
 }
 
 export interface FetchOptions extends Omit<RequestInit, "body"> {
@@ -566,6 +567,7 @@ export interface WorkflowStepItem {
   pluginId: string;
   pluginSlug?: string;
   pluginName?: string;
+  isEnabled: boolean;
   inputMapping: Record<string, string>;
   config: Record<string, unknown>;
   gatewayId?: string;
@@ -640,6 +642,7 @@ export function addWorkflowStep(
     order: number;
     name?: string;
     pluginId: string;
+    isEnabled?: boolean;
     inputMapping?: Record<string, string>;
     config?: Record<string, unknown>;
     onError?: string;
@@ -665,6 +668,7 @@ export function updateWorkflowStep(
     name?: string;
     order?: number;
     pluginId?: string;
+    isEnabled?: boolean;
     inputMapping?: Record<string, string>;
     config?: Record<string, unknown>;
     onError?: string;
@@ -744,7 +748,7 @@ export function getWorkflowRuns(
   params: { status?: string; page?: number; limit?: number; sortOrder?: "asc" | "desc" } = {},
   opts: { organizationId?: string } = {},
   token?: string
-): Promise<ApiResponse<{ data: WorkflowRunSummary[]; meta: { total: number; page: number; limit: number } }>> {
+): Promise<ApiResponse<WorkflowRunSummary[]>> {
   const searchParams = new URLSearchParams();
   if (params.status) searchParams.set("status", params.status);
   if (params.page) searchParams.set("page", String(params.page));

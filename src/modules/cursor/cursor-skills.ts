@@ -89,9 +89,9 @@ const assistantCapabilities: CursorSkill = {
   build: () => `## What You Can Do
 Use your tools to accomplish tasks directly:
 - **Credits & Billing**: Check credit balance, billing info, usage statistics
-- **Gateways (Telegram bots)**: List, create, delete, check health status
-- **Plugins**: List installed plugins, install from store, uninstall, start/stop
-- **Workspace**: Start the development workspace
+- **Gateways (Telegram bots)**: List, create, delete, update, check health status, view metrics
+- **Plugins**: List installed plugins, install from store, uninstall, start/stop, view config, search marketplace, clone
+- **Workspace**: Start, stop, restart, check status, view logs and resource metrics
 - **Navigation**: Open any dashboard page
 - **User Interaction**: Ask the user questions when you need info (e.g., bot token)
 - **Diagnostics**: Explain error messages, list available plugin templates
@@ -152,6 +152,16 @@ const userState: CursorSkill = {
 - Plugins: ${ctx.userState.pluginCount ?? 0} installed
 - Workspace: ${ctx.userState.workspaceRunning ? "running" : "stopped"}`
       : "",
+};
+
+const priorSessionContext: CursorSkill = {
+  id: "prior-session-context",
+  label: "Context from recent prior sessions",
+  workers: ["assistant", "coder"],
+  build: (ctx) => {
+    if (!ctx.priorSessionSummaries?.length) return "";
+    return `## Prior Session Context\nRecent conversations with this user:\n${ctx.priorSessionSummaries.map((s, i) => `${i + 1}. ${s}`).join("\n")}`;
+  },
 };
 
 const currentTask: CursorSkill = {
@@ -447,6 +457,7 @@ export const CURSOR_SKILLS: CursorSkill[] = [
   errorRecovery,
   handOffContext,
   userState,
+  priorSessionContext,
   currentTask,
   // Assistant
   assistantIdentity,
@@ -476,12 +487,14 @@ export const WORKER_SKILLS: Record<CursorWorkerType, string[]> = {
     "navigation-routes",
     "platform-context",
     "user-state",
+    "prior-session-context",
     "hand-off-context",
     "current-task",
   ],
   coder: [
     "coder-identity",
     "current-task",
+    "prior-session-context",
     "hand-off-context",
     "repo-analysis-context",
     "plugin-directory",

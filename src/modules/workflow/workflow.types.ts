@@ -239,6 +239,7 @@ export interface WorkflowStepDefinition {
   pluginId: string;
   pluginSlug?: string;
   pluginName?: string;
+  isEnabled: boolean;
   inputMapping: InputMapping;
   config: Record<string, unknown>;
   gatewayId?: string;
@@ -389,6 +390,7 @@ export interface CreateWorkflowStepRequest {
   order: number;
   name?: string;
   pluginId: string;
+  isEnabled?: boolean;
   inputMapping?: InputMapping;
   config?: Record<string, unknown>;
   gatewayId?: string;
@@ -404,6 +406,7 @@ export interface UpdateWorkflowStepRequest {
   name?: string | null;
   order?: number;
   pluginId?: string;
+  isEnabled?: boolean;
   inputMapping?: InputMapping;
   config?: Record<string, unknown>;
   gatewayId?: string | null;

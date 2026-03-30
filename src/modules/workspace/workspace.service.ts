@@ -21,22 +21,23 @@ import { decrypt, encrypt } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import {
-    getIncludedOrgWorkspace,
-    type OrgPlanType,
+  getIncludedOrgWorkspace,
+  type OrgPlanType,
 } from '@/shared/constants/org-plans';
 import {
-    getIncludedWorkspace
+  getIncludedWorkspace
 } from '@/shared/constants/plans';
 import {
-    calculateTotalWorkspace,
-    hasWorkspaceEnabled,
-    type WorkspaceAddonTier,
+  calculateTotalWorkspace,
+  hasWorkspaceEnabled,
+  type WorkspaceAddonTier,
 } from '@/shared/constants/workspace-addons';
 import { BadRequestError, ForbiddenError, NotFoundError } from '@/shared/errors';
 import type { ServiceContext } from '@/shared/types/context';
 import type { BridgeAction, WorkspaceResourceAllocation, WorkspaceStatus } from '@/shared/types/workspace';
 
 import { pluginDeployService } from '@/modules/plugin/plugin-deploy.service';
+import { clearActivePlugins } from '@/modules/plugin/plugin-ipc.service';
 import { pluginWorkspaceSyncService } from '@/modules/plugin/plugin-workspace-sync.service';
 import { pushAllWorkflowCaches } from '@/modules/workflow/workflow-cache.service';
 import { bridgeClientManager, type BridgeClient } from './bridge-client.service';
@@ -46,18 +47,18 @@ import { dockerService } from './workspace-docker.service';
 import { networkEgressService } from './workspace-iptables.service';
 import { egressProxyService } from './workspace-squid.service';
 import {
-    BRIDGE_AUTH_TOKEN_LENGTH,
-    BRIDGE_PORT,
-    CONTAINER_LABELS,
-    CONTAINER_START_TIMEOUT,
-    DEFAULT_AUTO_STOP_MINUTES,
-    DEFAULT_RESOURCES,
-    FREE_TIER_AUTO_STOP_MINUTES,
-    WORKSPACE_IMAGE,
-    WORKSPACE_NETWORK,
-    containerVolumePath,
-    orgContainerName,
-    personalContainerName,
+  BRIDGE_AUTH_TOKEN_LENGTH,
+  BRIDGE_PORT,
+  CONTAINER_LABELS,
+  CONTAINER_START_TIMEOUT,
+  DEFAULT_AUTO_STOP_MINUTES,
+  DEFAULT_RESOURCES,
+  FREE_TIER_AUTO_STOP_MINUTES,
+  WORKSPACE_IMAGE,
+  WORKSPACE_NETWORK,
+  containerVolumePath,
+  orgContainerName,
+  personalContainerName,
 } from './workspace.constants';
 import type { OrgPoolUsage, WorkspaceOperationResult } from './workspace.types';
 
@@ -83,6 +84,9 @@ const AUTH_CACHE_TTL = 30_000; // 30 seconds
 /** How often to flush activity timestamps to DB (ms) */
 const ACTIVITY_FLUSH_INTERVAL = 10_000; // 10 seconds
 
+/** How often to clean up stale auth cache entries (ms) */
+const AUTH_CACHE_CLEANUP_INTERVAL = 5 * 60_000; // 5 minutes
+
 class WorkspaceService {
   /** In-memory auth cache: containerDbId → auth info */
   private authCache = new Map<string, ContainerAuthCache>();
@@ -90,12 +94,19 @@ class WorkspaceService {
   /** Pending activity touches — flushed every ACTIVITY_FLUSH_INTERVAL */
   private pendingActivity = new Map<string, Date>();
   private activityFlushTimer: ReturnType<typeof setInterval> | null = null;
+  private authCacheCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     // Start activity flush timer
     this.activityFlushTimer = setInterval(() => {
       this.flushActivity().catch(() => {});
     }, ACTIVITY_FLUSH_INTERVAL);
+
+    // Start auth cache cleanup timer — removes entries for containers
+    // that are no longer RUNNING, preventing orphan accumulation
+    this.authCacheCleanupTimer = setInterval(() => {
+      this.cleanupAuthCache().catch(() => {});
+    }, AUTH_CACHE_CLEANUP_INTERVAL);
   }
 
   /** Flush pending activity timestamps to DB in a single batch */
@@ -119,6 +130,32 @@ class WorkspaceService {
   /** Queue an activity touch (batched, not immediate DB write) */
   touchActivity(containerDbId: string): void {
     this.pendingActivity.set(containerDbId, new Date());
+  }
+
+  /**
+   * Remove auth cache entries for containers that are no longer RUNNING.
+   * Prevents unbounded growth when containers are stopped/destroyed but
+   * their cache entries were never explicitly evicted (e.g. during auto-stop).
+   */
+  private async cleanupAuthCache(): Promise<void> {
+    if (this.authCache.size === 0) return;
+
+    const containerIds = Array.from(this.authCache.keys());
+    try {
+      const running = await prisma.workspaceContainer.findMany({
+        where: { id: { in: containerIds }, status: 'RUNNING' },
+        select: { id: true },
+      });
+      const runningIds = new Set(running.map(c => c.id));
+
+      for (const id of containerIds) {
+        if (!runningIds.has(id)) {
+          this.authCache.delete(id);
+        }
+      }
+    } catch {
+      // Non-critical — silently skip
+    }
   }
 
   // ===========================================
@@ -607,6 +644,9 @@ class WorkspaceService {
       // Disconnect bridge
       bridgeClientManager.removeClient(containerDbId);
 
+      // Clear active plugin registry for this container
+      clearActivePlugins(containerDbId);
+
       await prisma.workspaceContainer.update({
         where: { id: containerDbId },
         data: { status: 'STOPPING' },
@@ -661,6 +701,9 @@ class WorkspaceService {
 
     // Disconnect bridge
     bridgeClientManager.removeClient(containerDbId);
+
+    // Clear active plugin registry for this container
+    clearActivePlugins(containerDbId);
 
     // Remove Docker container
     if (container.containerId) {

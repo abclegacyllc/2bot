@@ -129,6 +129,31 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
     },
   },
 
+  update_gateway: {
+    name: "update_gateway",
+    description:
+      "Update an existing gateway's name or bot token. Use list_gateways to find " +
+      "the gateway ID first. For Telegram bots, use ask_user to collect the new token.",
+    parameters: {
+      type: "object",
+      properties: {
+        gatewayId: {
+          type: "string",
+          description: "The ID of the gateway to update (from list_gateways)",
+        },
+        name: {
+          type: "string",
+          description: "New display name (optional)",
+        },
+        botToken: {
+          type: "string",
+          description: "New bot token for Telegram gateways (optional, collected via ask_user)",
+        },
+      },
+      required: ["gatewayId"],
+    },
+  },
+
   install_plugin: {
     name: "install_plugin",
     description:
@@ -195,6 +220,42 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
     description:
       "Start the user's development workspace container. If no workspace exists, " +
       "creates one first. If already running, reports the status.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+
+  stop_workspace: {
+    name: "stop_workspace",
+    description:
+      "Stop the user's running workspace container. The workspace data is preserved " +
+      "and can be started again later. Use ask_user to confirm before stopping.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+
+  restart_workspace: {
+    name: "restart_workspace",
+    description:
+      "Restart the user's workspace container (stop then start). Useful when the " +
+      "workspace is unresponsive or to apply configuration changes.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+
+  get_workspace_status: {
+    name: "get_workspace_status",
+    description:
+      "Get the current status of the user's workspace — whether it's running, stopped, " +
+      "or doesn't exist. Returns container ID, status, uptime, and resource usage.",
     parameters: {
       type: "object",
       properties: {},
@@ -634,6 +695,27 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
     },
   },
 
+  view_plugin_config: {
+    name: "view_plugin_config",
+    description:
+      "View a plugin's current configuration, including its config schema, default values, " +
+      "and user-set values. Useful for understanding what settings a plugin has and debugging config issues.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Plugin name (fuzzy-matched) or slug. Use list_user_plugins to find plugins first.",
+        },
+        userPluginId: {
+          type: "string",
+          description: "UserPlugin ID (exact match, preferred over name)",
+        },
+      },
+      required: [],
+    },
+  },
+
   view_plugin_logs: {
     name: "view_plugin_logs",
     description:
@@ -684,6 +766,100 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
       required: ["error"],
     },
   },
+
+  search_marketplace: {
+    name: "search_marketplace",
+    description:
+      "Search the 2Bot plugin marketplace for available plugins by keyword or category. " +
+      "Returns matching plugins with name, slug, description, and install status.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query — keyword, category, or description text to search for.",
+        },
+      },
+      required: ["query"],
+    },
+  },
+
+  get_gateway_metrics: {
+    name: "get_gateway_metrics",
+    description:
+      "Get metrics for a specific gateway — message counts, error rates, uptime. " +
+      "Use list_gateways first to get the gateway ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        gatewayId: {
+          type: "string",
+          description: "The ID of the gateway to get metrics for.",
+        },
+      },
+      required: ["gatewayId"],
+    },
+  },
+
+  get_workspace_logs: {
+    name: "get_workspace_logs",
+    description:
+      "Get recent logs from the user's workspace container. " +
+      "Returns system logs, plugin stdout/stderr, and errors.",
+    parameters: {
+      type: "object",
+      properties: {
+        level: {
+          type: "string",
+          enum: ["debug", "info", "warn", "error"],
+          description: "Minimum log level to return (default: info)",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of log lines to return (default: 50, max: 200)",
+        },
+      },
+      required: [],
+    },
+  },
+
+  get_workspace_metrics: {
+    name: "get_workspace_metrics",
+    description:
+      "Get resource usage metrics for the user's workspace — CPU, memory, disk, uptime. " +
+      "Useful for diagnosing performance issues or checking resource limits.",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+
+  clone_plugin: {
+    name: "clone_plugin",
+    description:
+      "Clone/duplicate an existing plugin to create a new one based on its code. " +
+      "Copies all files from the source plugin directory to a new directory with a new slug. " +
+      "The new plugin is created as an independent copy.",
+    parameters: {
+      type: "object",
+      properties: {
+        sourceSlug: {
+          type: "string",
+          description: "Slug of the existing plugin to clone (e.g. 'echo-bot')",
+        },
+        newSlug: {
+          type: "string",
+          description: "Slug for the new cloned plugin (e.g. 'echo-bot-v2')",
+        },
+        newName: {
+          type: "string",
+          description: "Display name for the new plugin (e.g. 'Echo Bot V2')",
+        },
+      },
+      required: ["sourceSlug", "newSlug", "newName"],
+    },
+  },
 };
 
 // ===========================================
@@ -699,18 +875,4 @@ export function getWorkerTools(workerType: CursorWorkerType): WorkerToolDefiniti
   return toolNames
     .map((name) => ALL_TOOLS[name])
     .filter((t): t is WorkerToolDefinition => !!t);
-}
-
-/**
- * Get a single tool definition by name.
- */
-export function getToolDefinition(name: string): WorkerToolDefinition | undefined {
-  return ALL_TOOLS[name];
-}
-
-/**
- * Check if a tool name belongs to a specific worker.
- */
-export function isWorkerTool(workerType: CursorWorkerType, toolName: string): boolean {
-  return WORKER_TOOL_NAMES[workerType].includes(toolName);
 }

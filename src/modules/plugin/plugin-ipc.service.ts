@@ -14,8 +14,8 @@ import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { twoBotAIProvider } from '@/modules/2bot-ai-provider';
 import type {
-  TextGenerationMessage,
-  TwoBotAIModel,
+    TextGenerationMessage,
+    TwoBotAIModel,
 } from '@/modules/2bot-ai-provider/types';
 import { gatewayService } from '@/modules/gateway';
 import { gatewayRegistry } from '@/modules/gateway/gateway.registry';
@@ -96,40 +96,77 @@ const CONTEXT_CACHE_TTL = 5 * 60 * 1000;
 const contextCache = new Map<string, CachedPluginContext>();
 
 // ===========================================
-// AI Rate Limiting
+// Active Plugin Registry (Cross-Plugin Isolation)
+// ===========================================
+
+/**
+ * Tracks which plugin files are legitimately started per container.
+ * IPC requests from unregistered plugin files are rejected to prevent
+ * one plugin from impersonating another within the same container.
+ */
+const activePluginsPerContainer = new Map<string, Set<string>>();
+
+/** Register a plugin file as active in a container (called on plugin start) */
+export function registerActivePlugin(containerDbId: string, pluginFile: string): void {
+  let files = activePluginsPerContainer.get(containerDbId);
+  if (!files) {
+    files = new Set();
+    activePluginsPerContainer.set(containerDbId, files);
+  }
+  files.add(pluginFile);
+}
+
+/** Unregister a plugin file from a container (called on plugin stop/undeploy) */
+export function unregisterActivePlugin(containerDbId: string, pluginFile: string): void {
+  const files = activePluginsPerContainer.get(containerDbId);
+  if (files) {
+    files.delete(pluginFile);
+    if (files.size === 0) activePluginsPerContainer.delete(containerDbId);
+  }
+}
+
+/** Clear all active plugins for a container (called on container stop/destroy) */
+export function clearActivePlugins(containerDbId: string): void {
+  activePluginsPerContainer.delete(containerDbId);
+}
+
+/** Check if a plugin file is registered as active in a container */
+function isPluginActive(containerDbId: string, pluginFile: string): boolean {
+  const files = activePluginsPerContainer.get(containerDbId);
+  return files?.has(pluginFile) ?? false;
+}
+
+// ===========================================
+// AI Rate Limiting (Redis-backed)
 // ===========================================
 
 /** Per-plugin AI rate limit: max requests per window */
 const AI_RATE_LIMIT_MAX = 30;
 /** Rate limit window: 60 seconds */
-const AI_RATE_LIMIT_WINDOW_MS = 60 * 1000;
-
-/** Rate limit tracker: userPluginId → { count, windowStart } */
-const aiRateLimits = new Map<string, { count: number; windowStart: number }>();
+const AI_RATE_LIMIT_WINDOW_S = 60;
 
 /**
- * Check and increment the AI rate limit for a plugin.
+ * Check and increment the AI rate limit for a plugin using Redis INCR + EXPIRE.
+ * Survives server restarts and works across multiple instances.
  * Throws if the plugin has exceeded its per-minute AI request limit.
  */
-function checkAiRateLimit(userPluginId: string): void {
-  const now = Date.now();
-  const entry = aiRateLimits.get(userPluginId);
+async function checkAiRateLimit(userPluginId: string): Promise<void> {
+  const { redis } = await import('@/lib/redis');
+  const key = `plugin-ai-ratelimit:${userPluginId}`;
 
-  if (!entry || now - entry.windowStart >= AI_RATE_LIMIT_WINDOW_MS) {
-    // New window
-    aiRateLimits.set(userPluginId, { count: 1, windowStart: now });
-    return;
+  const count = await redis.incr(key);
+  if (count === 1) {
+    // First request in this window — set the TTL
+    await redis.expire(key, AI_RATE_LIMIT_WINDOW_S);
   }
 
-  if (entry.count >= AI_RATE_LIMIT_MAX) {
-    const remainingMs = AI_RATE_LIMIT_WINDOW_MS - (now - entry.windowStart);
+  if (count > AI_RATE_LIMIT_MAX) {
+    const ttl = await redis.ttl(key);
     throw new Error(
       `AI rate limit exceeded (${AI_RATE_LIMIT_MAX} requests/min). ` +
-      `Try again in ${Math.ceil(remainingMs / 1000)}s.`
+      `Try again in ${ttl > 0 ? ttl : AI_RATE_LIMIT_WINDOW_S}s.`
     );
   }
-
-  entry.count++;
 }
 
 // ===========================================
@@ -151,6 +188,12 @@ class PluginIpcService {
     const { id, pluginFile, method, data } = request;
 
     try {
+      // Cross-plugin isolation: verify this pluginFile was started by our deploy service
+      if (!isPluginActive(containerDbId, pluginFile)) {
+        ipcLog.warn({ containerDbId, pluginFile, method }, 'IPC rejected — plugin file not in active registry');
+        return { id, success: false, error: 'Plugin not registered as active in this container' };
+      }
+
       // Resolve plugin context (userId, orgId, userPluginId)
       const ctx = await this.resolvePluginContext(containerDbId, pluginFile);
 
@@ -663,21 +706,47 @@ class PluginIpcService {
     usage: { inputTokens: number; outputTokens: number; totalTokens: number };
     creditsUsed: number;
   }> {
-    checkAiRateLimit(userPluginId);
+    await checkAiRateLimit(userPluginId);
 
     const messages = data.messages as TextGenerationMessage[];
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       throw new Error('ai.chat requires "messages" array with at least one message');
     }
 
-    // Validate message format
+    // Validate message format (allow empty-string content for workflow steps)
     for (const msg of messages) {
-      if (!msg.role || !msg.content) {
+      if (!msg.role || (msg.content === undefined || msg.content === null)) {
         throw new Error('Each message must have "role" and "content" fields');
       }
       if (!['system', 'user', 'assistant'].includes(msg.role)) {
         throw new Error(`Invalid message role: "${msg.role}". Must be "system", "user", or "assistant"`);
       }
+    }
+
+    const hasNonEmptyInput = messages.some((msg) => {
+      if (msg.role === 'system') return false;
+
+      if (typeof msg.content === 'string' && msg.content.trim().length > 0) {
+        return true;
+      }
+
+      if (Array.isArray(msg.parts) && msg.parts.length > 0) {
+        return msg.parts.some((part) => {
+          if (part.type === 'text') {
+            return typeof part.text === 'string' && part.text.trim().length > 0;
+          }
+          if (part.type === 'image_url') {
+            return typeof part.image_url?.url === 'string' && part.image_url.url.trim().length > 0;
+          }
+          return false;
+        });
+      }
+
+      return false;
+    });
+
+    if (!hasNonEmptyInput) {
+      throw new Error('ai.chat requires at least one non-empty user/assistant message');
     }
 
     const model = (data.model as string) || 'auto';
@@ -727,7 +796,7 @@ class PluginIpcService {
     model: string;
     creditsUsed: number;
   }> {
-    checkAiRateLimit(userPluginId);
+    await checkAiRateLimit(userPluginId);
 
     const prompt = data.prompt as string;
     if (!prompt || typeof prompt !== 'string') {
@@ -786,7 +855,7 @@ class PluginIpcService {
     characterCount: number;
     creditsUsed: number;
   }> {
-    checkAiRateLimit(userPluginId);
+    await checkAiRateLimit(userPluginId);
 
     const text = data.text as string;
     if (!text || typeof text !== 'string') {
@@ -837,17 +906,19 @@ class PluginIpcService {
     } else {
       contextCache.clear();
     }
-    // Also clear AI rate limits when clearing all caches
-    if (!containerDbId) {
-      aiRateLimits.clear();
-    }
+    // AI rate limits are now in Redis — no local state to clear
   }
 
   /**
-   * Clear AI rate limits (for testing or admin resets)
+   * Clear AI rate limits (for testing or admin resets).
+   * Rate limits are now stored in Redis, so this clears via key pattern.
    */
-  clearRateLimits(): void {
-    aiRateLimits.clear();
+  async clearRateLimits(): Promise<void> {
+    const { redis } = await import('@/lib/redis');
+    const keys = await redis.keys('plugin-ai-ratelimit:*');
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
   }
 
 }

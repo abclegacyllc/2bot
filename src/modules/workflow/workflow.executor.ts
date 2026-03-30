@@ -19,42 +19,43 @@ import { prisma } from "@/lib/prisma";
 import { gatewayRegistry, gatewayService } from "@/modules/gateway";
 import { getPluginEntryPath } from "@/modules/plugin/plugin-deploy.service";
 import type {
-  DiscordInteraction,
-  DiscordMessageCreate,
-  SlackEventCallback,
-  SlackInteractionPayload,
-  TelegramUpdate,
-  WhatsAppIncomingMessage,
+    DiscordInteraction,
+    DiscordMessageCreate,
+    SlackEventCallback,
+    SlackInteractionPayload,
+    TelegramUpdate,
+    WhatsAppIncomingMessage,
 } from "@/modules/plugin/plugin.events";
 import {
-  transformDiscordInteraction,
-  transformDiscordMessageCreate,
-  transformSlackEventCallback,
-  transformSlackInteraction,
-  transformTelegramUpdate,
-  transformWhatsAppMessage,
+    transformDiscordInteraction,
+    transformDiscordMessageCreate,
+    transformSlackEventCallback,
+    transformSlackInteraction,
+    transformTelegramUpdate,
+    transformWhatsAppMessage,
 } from "@/modules/plugin/plugin.events";
 import {
-  createGatewayAccessor,
-  createPluginStorage,
-  getPluginExecutor,
+    createGatewayAccessor,
+    createPluginStorage,
+    getPluginExecutor,
 } from "@/modules/plugin/plugin.executor";
 import type {
-  PluginContext,
-  PluginEvent,
-  WorkflowMetadata,
+    PluginContext,
+    PluginEvent,
+    WorkflowMetadata,
 } from "@/modules/plugin/plugin.interface";
+import { BadRequestError, NotFoundError, ServiceUnavailableError } from "@/shared/errors";
 
 import {
-  buildTemplateContext,
-  evaluateCondition,
-  resolveInputMapping,
+    buildTemplateContext,
+    evaluateCondition,
+    resolveInputMapping,
 } from "./template.engine";
 import { workflowService } from "./workflow.service";
 import type {
-  InputMapping,
-  StepCondition,
-  WorkflowExecutionContext,
+    InputMapping,
+    StepCondition,
+    WorkflowExecutionContext,
 } from "./workflow.types";
 
 const execLogger = logger.child({ module: "workflow-executor" });
@@ -108,15 +109,15 @@ export async function executeWorkflow(
   });
 
   if (!workflow) {
-    throw new Error(`Workflow not found: ${workflowId}`);
+    throw new NotFoundError(`Workflow not found: ${workflowId}`);
   }
 
   if (!workflow.isEnabled || workflow.status !== "ACTIVE") {
-    throw new Error(`Workflow is not active: ${workflowId}`);
+    throw new BadRequestError(`Workflow is not active: ${workflowId}`);
   }
 
   if (workflow.steps.length === 0) {
-    throw new Error(`Workflow has no steps: ${workflowId}`);
+    throw new BadRequestError(`Workflow has no steps: ${workflowId}`);
   }
 
   // Check that the bound gateway (if any) is connected
@@ -126,7 +127,7 @@ export async function executeWorkflow(
       select: { status: true },
     });
     if (gw && gw.status !== "CONNECTED") {
-      throw new Error(
+      throw new ServiceUnavailableError(
         `Workflow gateway is ${gw.status} — cannot execute workflow "${workflow.name}"`
       );
     }
@@ -186,6 +187,22 @@ export async function executeWorkflow(
     const stepRunId = await workflowService.createStepRun(runId, step.order);
 
     try {
+      // Skip disabled steps (n8n-style "Deactivated" node)
+      if (!step.isEnabled) {
+        await workflowService.skipStepRun(stepRunId);
+        executionCtx.steps[step.order] = {
+          input: null,
+          output: null,
+          status: "skipped",
+          durationMs: Date.now() - stepStart,
+        };
+        execLogger.debug(
+          { workflowId, runId, stepOrder: step.order },
+          "Step skipped (disabled)"
+        );
+        continue;
+      }
+
       // Build template context for this step
       const templateCtx = buildTemplateContext(
         triggerData,
@@ -382,8 +399,27 @@ function buildStepEvent(
     message?: unknown;
   } | null;
 
+  // When no inputMapping is configured, resolvedInput is {}.
+  // Auto-populate from trigger data so plugins can access message fields directly
+  // (e.g. input.text, input.message) without requiring explicit mapping.
+  let effectiveInput = resolvedInput;
+  if (
+    resolvedInput &&
+    typeof resolvedInput === "object" &&
+    Object.keys(resolvedInput as Record<string, unknown>).length === 0 &&
+    td
+  ) {
+    if (td.message && typeof td.message === "object") {
+      // Message-based triggers: spread message fields for direct access (input.text, input.from, etc.)
+      effectiveInput = { ...(td.message as Record<string, unknown>), message: td.message };
+    } else {
+      // Other triggers (webhook, schedule): pass entire trigger data as input
+      effectiveInput = triggerData;
+    }
+  }
+
   const workflowMeta: WorkflowMetadata = {
-    input: resolvedInput,
+    input: effectiveInput,
     previousOutput,
     stepOrder,
     runId,
@@ -456,7 +492,7 @@ function buildStepEvent(
   return {
     type: "workflow.step",
     data: {
-      input: resolvedInput,
+      input: effectiveInput,
       previousOutput,
       gatewayId: defaultGatewayId,
       trigger: {

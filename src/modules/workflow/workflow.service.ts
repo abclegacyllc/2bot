@@ -12,27 +12,27 @@ import { Prisma } from "@prisma/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
-  ConflictError,
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
 } from "@/shared/errors";
 
 import { pushWorkflowCache, removeWorkflowCache } from "./workflow-cache.service";
 import type {
-  CreateWorkflowRequest,
-  CreateWorkflowStepRequest,
-  InputMapping,
-  StepCondition,
-  StepErrorHandler,
-  TriggerConfig,
-  UpdateWorkflowRequest,
-  UpdateWorkflowStepRequest,
-  WorkflowDefinition,
-  WorkflowRunDetail,
-  WorkflowRunSummary,
-  WorkflowStepDefinition,
-  WorkflowStepRunDetail,
+    CreateWorkflowRequest,
+    CreateWorkflowStepRequest,
+    InputMapping,
+    StepCondition,
+    StepErrorHandler,
+    TriggerConfig,
+    UpdateWorkflowRequest,
+    UpdateWorkflowStepRequest,
+    WorkflowDefinition,
+    WorkflowRunDetail,
+    WorkflowRunSummary,
+    WorkflowStepDefinition,
+    WorkflowStepRunDetail,
 } from "./workflow.types";
 
 const workflowLogger = logger.child({ module: "workflow" });
@@ -267,12 +267,24 @@ async function addStep(
   if (!workflow) throw new NotFoundError("Workflow not found");
   verifyOwner(workflow, owner);
 
+  // Shift existing steps at or after the target order to make room
+  await prisma.workflowStep.updateMany({
+    where: {
+      workflowId,
+      order: { gte: data.order },
+    },
+    data: {
+      order: { increment: 1 },
+    },
+  });
+
   const step = await prisma.workflowStep.create({
     data: {
       workflowId,
       order: data.order,
       name: data.name,
       pluginId: data.pluginId,
+      isEnabled: data.isEnabled ?? true,
       inputMapping: (data.inputMapping ?? {}) as object,
       config: (data.config ?? {}) as object,
       gatewayId: data.gatewayId,
@@ -357,6 +369,7 @@ async function updateStep(
   const updateData: Prisma.WorkflowStepUncheckedUpdateInput = {};
   if (data.name !== undefined) updateData.name = data.name;
   if (data.pluginId !== undefined) updateData.pluginId = data.pluginId;
+  if (data.isEnabled !== undefined) updateData.isEnabled = data.isEnabled;
   if (data.inputMapping !== undefined) updateData.inputMapping = (data.inputMapping ?? {}) as object;
   if (data.config !== undefined) updateData.config = (data.config ?? {}) as object;
   if (data.gatewayId !== undefined) updateData.gatewayId = data.gatewayId ?? null;
@@ -717,6 +730,7 @@ function toWorkflowDefinition(workflow: {
     order: number;
     name: string | null;
     pluginId: string;
+    isEnabled: boolean;
     inputMapping: unknown;
     config: unknown;
     gatewayId: string | null;
@@ -751,6 +765,7 @@ function toStepDefinition(step: {
   order: number;
   name: string | null;
   pluginId: string;
+  isEnabled: boolean;
   inputMapping: unknown;
   config: unknown;
   gatewayId: string | null;
@@ -766,6 +781,7 @@ function toStepDefinition(step: {
     pluginId: step.pluginId,
     pluginSlug: step.plugin.slug,
     pluginName: step.plugin.name,
+    isEnabled: step.isEnabled,
     inputMapping: (step.inputMapping ?? {}) as InputMapping,
     config: (step.config ?? {}) as Record<string, unknown>,
     gatewayId: step.gatewayId ?? undefined,

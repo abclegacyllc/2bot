@@ -9,6 +9,19 @@
 import { z } from 'zod';
 
 // ===========================================
+// Shared Path Validation
+// ===========================================
+
+/**
+ * Validates a filesystem path to prevent path traversal attacks.
+ * Rejects paths containing `..`, absolute paths, and null bytes.
+ */
+const safePath = z.string().min(1).refine(
+  (p) => !p.includes('..') && !p.startsWith('/') && !p.includes('\0'),
+  { message: 'Path must be relative, cannot contain ".." or null bytes' },
+);
+
+// ===========================================
 // Workspace Create / Start
 // ===========================================
 
@@ -26,7 +39,10 @@ export type CreateWorkspaceInput = z.infer<typeof createWorkspaceSchema>;
 // ===========================================
 
 export const fileListSchema = z.object({
-  path: z.string().default('/'),
+  path: z.string().refine(
+    (p) => !p.includes('..') && !p.includes('\0'),
+    { message: 'Path cannot contain ".." or null bytes' },
+  ).default('/'),
   recursive: z.preprocess(
     (val) => {
       if (typeof val === 'string') return val === 'true';
@@ -37,26 +53,26 @@ export const fileListSchema = z.object({
 });
 
 export const fileReadSchema = z.object({
-  path: z.string().min(1),
+  path: safePath,
 });
 
 export const fileWriteSchema = z.object({
-  path: z.string().min(1),
+  path: safePath,
   content: z.string().max(5 * 1024 * 1024), // 5MB max
   createDirs: z.boolean().default(true),
 });
 
 export const fileDeleteSchema = z.object({
-  path: z.string().min(1),
+  path: safePath,
 });
 
 export const fileMkdirSchema = z.object({
-  path: z.string().min(1),
+  path: safePath,
 });
 
 export const fileRenameSchema = z.object({
-  oldPath: z.string().min(1),
-  newPath: z.string().min(1),
+  oldPath: safePath,
+  newPath: safePath,
 });
 
 // ===========================================
@@ -64,12 +80,12 @@ export const fileRenameSchema = z.object({
 // ===========================================
 
 export const pluginStartSchema = z.object({
-  file: z.string().min(1),
+  file: safePath,
   env: z.record(z.string(), z.string()).optional(),
 });
 
 export const pluginStopSchema = z.object({
-  file: z.string().min(1),
+  file: safePath,
   force: z.boolean().default(false),
 });
 

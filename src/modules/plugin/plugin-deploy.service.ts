@@ -24,6 +24,7 @@ import { decrypt } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { marketplaceLoader } from '@/modules/marketplace/marketplace-loader.service';
+import { registerActivePlugin, unregisterActivePlugin } from '@/modules/plugin/plugin-ipc.service';
 import { bridgeClientManager } from '@/modules/workspace';
 import type { BridgeClient } from '@/modules/workspace/bridge-client.service';
 
@@ -34,6 +35,43 @@ const PLUGIN_DIR = 'plugins';
 
 /** Bot-dir layout prefix */
 const BOTS_DIR = 'bots';
+
+// ===========================================
+// Code Validation
+// ===========================================
+
+/** Dangerous patterns that plugins must not use */
+const DANGEROUS_PATTERNS = [
+  { pattern: /\bchild_process\b/, reason: 'child_process is not allowed — use the SDK for system operations' },
+  { pattern: /\brequire\s*\(\s*['"]fs['"]\s*\)/, reason: 'Direct fs access is not allowed — use the SDK storage API' },
+  { pattern: /\bprocess\.exit\b/, reason: 'process.exit() is not allowed in plugins' },
+  { pattern: /\beval\s*\(/, reason: 'eval() is not allowed for security reasons' },
+  { pattern: /\bnew\s+Function\s*\(/, reason: 'new Function() is not allowed for security reasons' },
+];
+
+/**
+ * Validate plugin code before deployment.
+ * Checks for JavaScript syntax errors and dangerous patterns.
+ * @throws Error if code fails validation
+ */
+function validatePluginCode(code: string, pluginSlug: string): void {
+  // Check for dangerous patterns
+  for (const { pattern, reason } of DANGEROUS_PATTERNS) {
+    if (pattern.test(code)) {
+      throw new Error(`Plugin "${pluginSlug}" rejected: ${reason}`);
+    }
+  }
+
+  // Basic syntax check via Node's vm module (synchronous, no execution)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const vm = require('node:vm');
+    new vm.Script(code, { filename: `${pluginSlug}.js` });
+  } catch (err) {
+    const msg = err instanceof SyntaxError ? err.message : String(err);
+    throw new Error(`Plugin "${pluginSlug}" has a syntax error: ${msg}`);
+  }
+}
 
 /**
  * Compute the entry file path for a plugin.
@@ -538,6 +576,7 @@ class PluginDeployService {
       await client.pluginStop(filePath).catch(() => {
         // Ignore — plugin might not be running
       });
+      unregisterActivePlugin(container.id, filePath);
 
       // Clear container-local SQLite storage for this plugin (non-blocking)
       await client.send('storage.clearPlugin', { pluginFile: filePath }).catch(() => {
@@ -701,6 +740,7 @@ class PluginDeployService {
 
     try {
       await client.pluginStop(filePath);
+      unregisterActivePlugin(container.id, filePath);
       deployLog.info({ pluginSlug, filePath }, 'Plugin process stopped');
       return true;
     } catch (err) {
@@ -726,6 +766,9 @@ class PluginDeployService {
     code: string,
     gatewayId?: string | null,
   ): Promise<boolean> {
+    // Validate code before writing to container
+    validatePluginCode(code, pluginSlug);
+
     const filePath = gatewayId
       ? getPluginEntryPath(gatewayId, pluginSlug)
       : `${PLUGIN_DIR}/${pluginSlug}.js`;
@@ -770,12 +813,14 @@ class PluginDeployService {
   ): Promise<boolean> {
     try {
       await client.pluginStart(filePath, env, storageQuotaMb);
+      registerActivePlugin(client.containerDbId, filePath);
       deployLog.info({ filePath }, 'Plugin process started');
       return true;
     } catch (err) {
       // Plugin may already be running — that's OK
       const msg = (err as Error).message ?? '';
       if (msg.includes('already running')) {
+        registerActivePlugin(client.containerDbId, filePath);
         deployLog.debug({ filePath }, 'Plugin already running — skipping start');
         return true;
       }

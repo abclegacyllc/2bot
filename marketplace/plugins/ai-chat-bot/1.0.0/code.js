@@ -18,13 +18,41 @@ sdk.onEvent(async (event) => {
   if (sdk.isWorkflowStep(event)) {
     const input = sdk.getWorkflowInput(event);
     const prev = sdk.getWorkflowPreviousOutput(event);
-    const text = (input && input.text) || (input && input.message) || (prev && prev.text) || '';
+
+    // Normalize workflow input from common shapes (text/message/content or raw object/string)
+    const rawText =
+      (input && (input.text ?? input.message ?? input.content ?? input.prompt)) ??
+      (typeof input === 'string' ? input : null) ??
+      (prev && (prev.text ?? prev.message ?? prev.content ?? prev.output)) ??
+      (typeof prev === 'string' ? prev : null);
+
+    let text = '';
+    if (typeof rawText === 'string') {
+      text = rawText.trim();
+    } else if (rawText !== null && rawText !== undefined) {
+      try {
+        text = JSON.stringify(rawText);
+      } catch {
+        text = String(rawText);
+      }
+    }
+
     const model = sdk.config.model || 'auto';
     const systemPrompt = sdk.config.systemPrompt || 'You are a helpful assistant.';
 
+    // Avoid upstream provider 400s when workflow step has no usable input.
+    if (!text) {
+      return {
+        content: '',
+        model,
+        skipped: true,
+        reason: 'No workflow input provided for AI processing',
+      };
+    }
+
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: String(text) },
+      { role: 'user', content: text },
     ];
 
     const result = await sdk.ai.chat({ messages, model });

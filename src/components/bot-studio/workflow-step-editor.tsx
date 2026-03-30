@@ -12,34 +12,35 @@
 import { useCallback, useRef, useState } from "react";
 
 import { ConfigFormRenderer } from "@/components/bot-studio/config-form-renderer";
-import type { WorkflowStepItem } from "@/lib/api-client";
-import type { ConfigSchema } from "@/shared/types/plugin";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardHeader,
+    Card,
+    CardContent,
+    CardHeader,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import type { WorkflowStepItem } from "@/lib/api-client";
+import type { ConfigSchema } from "@/shared/types/plugin";
 import {
-  ChevronDown,
-  Loader2,
-  Plus,
-  Puzzle,
-  Save,
-  Trash2,
-  X,
+    ChevronDown,
+    Loader2,
+    Plus,
+    Puzzle,
+    Save,
+    Trash2,
+    X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 // ===========================================
 // Types
@@ -49,6 +50,7 @@ interface WorkflowStepEditorProps {
   step: WorkflowStepItem;
   configSchema?: ConfigSchema | null;
   onSave: (stepId: string, data: StepEditorData) => Promise<void>;
+  onToggleEnabled?: (stepId: string, isEnabled: boolean) => Promise<void>;
   onClose: () => void;
   isDisabled?: boolean;
   /** Steps that come before this one in the workflow (for dynamic variables) */
@@ -274,6 +276,7 @@ export function WorkflowStepEditor({
   step,
   configSchema,
   onSave,
+  onToggleEnabled,
   onClose,
   isDisabled,
   previousSteps = [],
@@ -388,6 +391,17 @@ export function WorkflowStepEditor({
           >
             <X className="h-4 w-4" />
           </Button>
+        </div>
+        {/* Enable/Disable toggle */}
+        <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
+          <span className="text-xs text-muted-foreground">
+            {step.isEnabled !== false ? "Step enabled" : "Step disabled (skipped at runtime)"}
+          </span>
+          <Switch
+            checked={step.isEnabled !== false}
+            onCheckedChange={(checked) => onToggleEnabled?.(step.id, checked)}
+            disabled={isDisabled}
+          />
         </div>
       </CardHeader>
 

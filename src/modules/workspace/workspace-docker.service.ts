@@ -16,11 +16,11 @@ import Docker from 'dockerode';
 import { logger } from '@/lib/logger';
 
 import {
-    BRIDGE_PORT,
-    CONTAINER_LABELS,
-    CONTAINER_STOP_TIMEOUT,
-    WORKSPACE_IMAGE,
-    WORKSPACE_NETWORK,
+  BRIDGE_PORT,
+  CONTAINER_LABELS,
+  CONTAINER_STOP_TIMEOUT,
+  WORKSPACE_IMAGE,
+  WORKSPACE_NETWORK,
 } from './workspace.constants';
 import type { DockerContainerInfo, DockerCreateOptions } from './workspace.types';
 
@@ -179,8 +179,18 @@ class DockerService {
   async startContainer(containerId: string): Promise<void> {
     const docker = getDocker();
     const container = docker.getContainer(containerId);
-    await container.start();
-    log.info({ containerId }, 'Container started');
+    try {
+      await container.start();
+      log.info({ containerId }, 'Container started');
+    } catch (err: unknown) {
+      // Docker returns 304 when container is already running — not an error
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('304') || message.includes('already started') || message.includes('already running')) {
+        log.debug({ containerId }, 'Container already running');
+      } else {
+        throw err;
+      }
+    }
   }
 
   /**

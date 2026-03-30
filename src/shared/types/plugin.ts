@@ -120,6 +120,36 @@ export interface ConfigSchema {
 }
 
 // ===========================================
+// Plugin Permissions
+// ===========================================
+
+/**
+ * Permission flags that control what a plugin can do at runtime.
+ * Stored as JSON in Plugin.permissions. Defaults: all false.
+ */
+export interface PluginPermissions {
+  /** Can send reply messages to the chat */
+  reply?: boolean;
+  /** Can use persistent key-value storage */
+  storage?: boolean;
+  /** Can access gateway APIs (send to other channels) */
+  gateways?: boolean;
+  /** Can make outbound HTTP/network requests */
+  network?: boolean;
+}
+
+/** All available permission keys with labels */
+export const PLUGIN_PERMISSION_META: Record<
+  keyof PluginPermissions,
+  { label: string; description: string }
+> = {
+  reply: { label: "Reply to messages", description: "Send messages back to the chat" },
+  storage: { label: "Persistent storage", description: "Read/write key-value data that persists across restarts" },
+  gateways: { label: "Gateway access", description: "Access gateway APIs to send messages to other channels" },
+  network: { label: "Network access", description: "Make outbound HTTP requests to external services" },
+};
+
+// ===========================================
 // Plugin Definition (Full Details)
 // ===========================================
 
@@ -145,6 +175,8 @@ export interface PluginDefinition {
   avgRating: number;
   /** Number of reviews (marketplace) */
   reviewCount: number;
+  /** Runtime permissions granted to this plugin */
+  permissions?: PluginPermissions;
 }
 
 // ===========================================

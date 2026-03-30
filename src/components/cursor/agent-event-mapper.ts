@@ -465,6 +465,124 @@ function mapToolStartToActions(
         },
       ];
 
+    case "stop_workspace":
+      return [
+        { action: "navigate", path: "/workspace", label: "Stopping workspace" },
+        {
+          action: "toast",
+          message: "Stopping workspace…",
+          variant: "warning",
+          durationMs: 2000,
+        },
+      ];
+
+    case "restart_workspace":
+      return [
+        { action: "navigate", path: "/workspace", label: "Restarting workspace" },
+        {
+          action: "toast",
+          message: "Restarting workspace…",
+          variant: "info",
+          durationMs: 2000,
+        },
+      ];
+
+    case "get_workspace_status":
+      return [
+        { action: "navigate", path: "/workspace", label: "Checking workspace status" },
+        {
+          action: "highlight",
+          target: "workspace-status-badge",
+          label: "Checking workspace status",
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
+    case "update_gateway":
+      return [
+        { action: "navigate", path: "/gateways", label: "Updating gateway" },
+        {
+          action: "highlight",
+          target: "create-gateway-btn",
+          label: `Updating gateway ${meta.gatewayId}`,
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
+    case "view_plugin_config":
+      return [
+        { action: "navigate", path: "/workspace", label: `Viewing config: ${meta.name}` },
+        {
+          action: "highlight",
+          target: "workspace-plugins-panel",
+          label: `Plugin config: ${meta.name}`,
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
+    case "search_marketplace":
+      return [
+        { action: "navigate", path: "/plugins", label: `Searching: ${meta.query}` },
+        {
+          action: "highlight",
+          target: "plugin-store-list",
+          label: `Searching marketplace: "${meta.query}"`,
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
+    case "get_gateway_metrics":
+      return [
+        { action: "navigate", path: "/gateways", label: "Checking gateway metrics" },
+        {
+          action: "highlight",
+          target: "create-gateway-btn",
+          label: `Metrics for gateway ${meta.gatewayId}`,
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
+    case "get_workspace_logs":
+      return [
+        { action: "navigate", path: "/workspace", label: "Fetching workspace logs" },
+        {
+          action: "highlight",
+          target: "workspace-plugins-panel",
+          label: "Fetching workspace logs",
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
+    case "get_workspace_metrics":
+      return [
+        { action: "navigate", path: "/workspace", label: "Checking workspace metrics" },
+        {
+          action: "highlight",
+          target: "workspace-plugins-panel",
+          label: "Workspace resource metrics",
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
+    case "clone_plugin":
+      return [
+        { action: "navigate", path: "/workspace", label: `Cloning ${meta.sourceSlug}` },
+        {
+          action: "highlight",
+          target: "workspace-plugins-panel",
+          label: `Cloning ${meta.sourceSlug} → ${meta.newSlug}`,
+          durationMs: 30_000,
+          gated: true,
+        },
+      ];
+
     case "navigate_page":
       return [
         { action: "navigate", path: meta.path, label: `Opening ${meta.path}` },

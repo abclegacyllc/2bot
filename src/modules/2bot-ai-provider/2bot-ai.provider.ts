@@ -22,46 +22,46 @@ import { twoBotAICreditService } from "@/modules/credits";
 import { aiCacheService } from "./ai-cache.service";
 import type { AICapability } from "./ai-capabilities";
 import {
-  getAvailableTwoBotAIModels,
-  getTwoBotAIModel,
-  getTwoBotAIModelsByCapability,
-  isTwoBotAIModelId,
-  resolveTwoBotAIModel,
-  TWOBOT_AI_MODEL_TIERS,
-  twoBotAIModelResolver,
-  type ModelResolutionResult,
-  type TwoBotAIModelId,
-  type TwoBotAIModelInfo,
+    getAvailableTwoBotAIModels,
+    getTwoBotAIModel,
+    getTwoBotAIModelsByCapability,
+    isTwoBotAIModelId,
+    resolveTwoBotAIModel,
+    TWOBOT_AI_MODEL_TIERS,
+    twoBotAIModelResolver,
+    type ModelResolutionResult,
+    type TwoBotAIModelId,
+    type TwoBotAIModelInfo,
 } from "./model-catalog";
 import { recordModelFailure, recordModelSuccess } from "./model-health-tracker";
 import type { SmartRoutingResult } from "./model-router";
 import { getSmartRoutingDecision, validateModelAvailable } from "./model-router";
 import {
-  getAutoFallbackChain,
-  getAvailableModels,
-  getConfiguredProviders,
-  getModelIfAvailable,
-  getProvidersStatus,
-  isProviderConfigured
+    getAutoFallbackChain,
+    getAvailableModels,
+    getConfiguredProviders,
+    getModelIfAvailable,
+    getProvidersStatus,
+    isProviderConfigured
 } from "./provider-config";
 import {
-  getProviderAdapter,
-  getProviderEntry,
+    getProviderAdapter,
+    getProviderEntry,
 } from "./provider-registry";
 import { withRetry } from "./retry.util";
 import type {
-  ImageGenerationRequest,
-  ImageGenerationResponse,
-  ModelInfo,
-  SpeechRecognitionRequest,
-  SpeechRecognitionResponse,
-  SpeechSynthesisRequest,
-  SpeechSynthesisResponse,
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk,
-  TwoBotAIModel,
-  TwoBotAIProvider
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    ModelInfo,
+    SpeechRecognitionRequest,
+    SpeechRecognitionResponse,
+    SpeechSynthesisRequest,
+    SpeechSynthesisResponse,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk,
+    TwoBotAIModel,
+    TwoBotAIProvider
 } from "./types";
 import { TwoBotAIError } from "./types";
 
@@ -553,6 +553,7 @@ export const twoBotAIProvider = {
 
     log.info({
       userId: request.userId,
+      traceId: request.traceId,
       model: request.model,
       originalModel: routingResult?.wasRouted ? originalModel : undefined,
       smartRouted: routingResult?.wasRouted || false,

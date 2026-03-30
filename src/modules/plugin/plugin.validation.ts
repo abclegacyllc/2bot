@@ -10,6 +10,12 @@
 import { GatewayType } from "@prisma/client";
 import { z } from "zod";
 
+// Builtin plugins use UUID, custom plugins use CUID
+const pluginIdSchema = z.string().min(1, "Plugin ID is required").refine(
+  (val) => z.string().cuid().safeParse(val).success || z.string().uuid().safeParse(val).success,
+  "Invalid plugin ID (must be CUID or UUID)"
+);
+
 // ===========================================
 // Common Schemas
 // ===========================================
@@ -105,7 +111,7 @@ export const pluginConfigSchema = z.record(z.string(), z.unknown()).default({});
  * Accepts either pluginId (CUID) or slug for flexibility
  */
 export const installPluginSchema = z.object({
-  pluginId: z.string().cuid("Invalid plugin ID").optional(),
+  pluginId: pluginIdSchema.optional(),
   slug: z.string().min(1, "Slug is required").optional(),
   config: pluginConfigSchema.optional(),
   gatewayId: z.string().cuid("Invalid gateway ID").optional(),
@@ -134,7 +140,7 @@ export const togglePluginSchema = z.object({
  * Plugin ID parameter validation
  */
 export const pluginIdParamSchema = z.object({
-  id: z.string().cuid("Invalid plugin ID"),
+  id: pluginIdSchema,
 });
 
 /**
@@ -276,7 +282,7 @@ export const pluginListQuerySchema = z.object({
  */
 export const userPluginsQuerySchema = z.object({
   enabled: z.enum(["true", "false"]).transform(v => v === "true").optional(),
-  pluginId: z.string().cuid().optional(),
+  pluginId: pluginIdSchema.optional(),
 }).merge(paginationSchema);
 
 // ===========================================

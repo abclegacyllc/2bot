@@ -12,44 +12,69 @@
  * @module components/bot-studio/workflow-canvas
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  Panel,
-  MarkerType,
-  type Node,
-  type Edge,
-  type NodeTypes,
-  type NodeProps,
-  Handle,
-  Position,
-  useNodesState,
-  useEdgesState,
-  BackgroundVariant,
-  type OnNodeDrag,
+    Background,
+    BackgroundVariant,
+    BaseEdge,
+    Controls,
+    Handle,
+    MarkerType,
+    MiniMap,
+    Panel,
+    Position,
+    ReactFlow,
+    getSmoothStepPath,
+    useEdgesState,
+    useNodesState,
+    useReactFlow,
+    type Edge,
+    type EdgeProps,
+    type EdgeTypes,
+    type Node,
+    type NodeProps,
+    type NodeTypes,
+    type OnNodeDrag,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { WorkflowStepItem } from "@/lib/api-client";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertCircle,
-  ArrowDown,
-  Clock,
-  Copy,
-  GripVertical,
-  MapPin,
-  Plus,
-  Puzzle,
-  Radio,
-  Settings2,
-  Trash2,
-  Zap,
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { WorkflowStepItem } from "@/lib/api-client";
+import {
+    AlertCircle,
+    ArrowDown,
+    BarChart3,
+    Bot,
+    CheckCircle2,
+    Clock,
+    Cloud,
+    Code,
+    Copy,
+    FileText,
+    Globe,
+    GripVertical,
+    Image,
+    Loader2,
+    MapPin,
+    MessageCircle,
+    MessageSquare,
+    Plus,
+    Power,
+    Puzzle,
+    Radio,
+    Repeat,
+    Search,
+    Settings2,
+    Shield,
+    SkipForward,
+    Terminal,
+    Timer,
+    Trash2,
+    XCircle,
+    Zap,
+    type LucideIcon,
+} from "lucide-react";
 import { PLUGIN_DRAG_TYPE } from "./workflow-plugin-sidebar";
 
 // ===========================================
@@ -57,7 +82,7 @@ import { PLUGIN_DRAG_TYPE } from "./workflow-plugin-sidebar";
 // ===========================================
 
 const NODE_WIDTH = 300;
-const NODE_GAP_Y = 120;
+const NODE_GAP_Y = 150;
 const TRIGGER_Y = 60;
 const FIRST_STEP_Y = TRIGGER_Y + NODE_GAP_Y + 20;
 
@@ -72,12 +97,15 @@ interface WorkflowCanvasProps {
   triggerConfig?: Record<string, unknown>;
   /** Map of stepId → error message from the last workflow run */
   stepErrors?: Record<string, string>;
+  /** Map of stepId → last run status for execution overlay (P2) */
+  stepRunStatuses?: Record<string, { status: string; durationMs?: number }>;
   onSelectStep: (step: WorkflowStepItem) => void;
   onAddStep: (afterOrder: number) => void;
   onDeleteStep: (stepId: string) => Promise<void>;
   onMoveStep: (stepId: string, newOrder: number) => Promise<void>;
   onDropPlugin?: (pluginId: string, pluginName: string, afterOrder: number) => void;
   onDuplicateStep?: (step: WorkflowStepItem) => void;
+  onToggleStepEnabled?: (stepId: string, isEnabled: boolean) => Promise<void>;
   onClickTrigger?: () => void;
   isDisabled?: boolean;
 }
@@ -99,18 +127,26 @@ type StepNodeData = {
   totalSteps: number;
   /** Error message from the last run for this step */
   stepError?: string;
+  /** Last run execution status for this step (P2 overlay) */
+  runStatus?: { status: string; durationMs?: number };
   onSelect: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
   onInsertBefore: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onToggleEnabled: () => void;
   isDisabled?: boolean;
 };
 
 type AddNodeData = {
   onAdd: () => void;
+  hasSteps: boolean;
   isDisabled?: boolean;
+};
+
+type BotOutputNodeData = {
+  label: string;
 };
 
 // ===========================================
@@ -128,6 +164,7 @@ interface ContextMenuState {
     onInsertBefore: () => void;
     onMoveUp: () => void;
     onMoveDown: () => void;
+    onToggleEnabled: () => void;
   };
   isFirst: boolean;
   isLast: boolean;
@@ -217,6 +254,9 @@ function TriggerNode({ data }: NodeProps<Node<TriggerNodeData>>) {
         </p>
       )}
       <Handle type="source" position={Position.Bottom} className="!bg-emerald-500 !w-2.5 !h-2.5 !border-2 !border-background" />
+      <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 font-mono whitespace-nowrap pointer-events-none">
+        trigger data
+      </div>
     </div>
   );
 }
@@ -231,13 +271,55 @@ function stepSummary(step: WorkflowStepItem): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+// Plugin slug → icon mapping
+const PLUGIN_ICONS: Record<string, LucideIcon> = {
+  "ai-chat-bot": Bot,
+  "ai-image-bot": Image,
+  "analytics": BarChart3,
+  "api-service": Globe,
+  "auto-responder": Repeat,
+  "blank": FileText,
+  "command-bot": Terminal,
+  "echo-bot": MessageCircle,
+  "multi-file-bot": FileText,
+  "scheduled-reporter": Timer,
+  "storage-demo": Code,
+  "weather-bot": Cloud,
+};
+
+function getStepIcon(step: WorkflowStepItem): LucideIcon {
+  const slug = step.pluginSlug ?? "";
+  // Direct slug match
+  if (PLUGIN_ICONS[slug]) return PLUGIN_ICONS[slug];
+  // Custom plugins — match the base slug (after "custom-xxx-")
+  const baseSlug = slug.replace(/^custom-[a-z0-9]+-/, "");
+  // Look for keyword matches in slug
+  if (baseSlug.includes("weather")) return Cloud;
+  if (baseSlug.includes("echo") || baseSlug.includes("reply") || baseSlug.includes("respon")) return MessageCircle;
+  if (baseSlug.includes("ban") || baseSlug.includes("mod") || baseSlug.includes("filter")) return Shield;
+  if (baseSlug.includes("search") || baseSlug.includes("find")) return Search;
+  if (baseSlug.includes("counter") || baseSlug.includes("analyt")) return BarChart3;
+  if (baseSlug.includes("image") || baseSlug.includes("photo")) return Image;
+  if (baseSlug.includes("api") || baseSlug.includes("http")) return Globe;
+  if (baseSlug.includes("bot") || baseSlug.includes("ai") || baseSlug.includes("chat")) return Bot;
+  // Fallback to generic
+  return Puzzle;
+}
+
 // ===========================================
 // Custom Node: Workflow Step (rich)
 // ===========================================
 
 function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
-  const { step, index, isSelected, isFirst, isLast, onSelect, onDelete, onDuplicate, onInsertBefore, onMoveUp, onMoveDown, isDisabled, stepError } = data;
+  const { step, index, isSelected, isFirst, isLast, onSelect, onDelete, onDuplicate, onInsertBefore, onMoveUp, onMoveDown, onToggleEnabled, isDisabled, stepError, runStatus } = data;
 
+  const stepDisabled = step.isEnabled === false;
+  const stepIconElement = useMemo(
+    () => createElement(getStepIcon(step), { className: "h-3.5 w-3.5 text-emerald-500 shrink-0" }),
+    [step]
+  );
+
+  const hasCondition = Boolean(step.condition);
   const timeoutSec = typeof (step.config as Record<string, unknown> | null)?.timeoutMs === "number"
     ? Math.round(((step.config as Record<string, unknown>).timeoutMs as number) / 1000)
     : null;
@@ -245,19 +327,60 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
   const inputCount = Object.keys(step.inputMapping ?? {}).length;
   const configCount = Object.keys(step.config ?? {}).filter((k) => k !== "timeoutMs").length;
 
+  // P2: Run status icon
+  const runStatusIcon = runStatus ? (
+    runStatus.status === "completed" ? (
+      <div className="absolute -top-2 -right-2 z-10 flex items-center gap-0.5 bg-emerald-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-medium shadow-sm">
+        <CheckCircle2 className="h-2.5 w-2.5" />
+        {runStatus.durationMs !== undefined ? `${runStatus.durationMs < 1000 ? `${runStatus.durationMs}ms` : `${(runStatus.durationMs / 1000).toFixed(1)}s`}` : null}
+      </div>
+    ) : runStatus.status === "failed" ? (
+      <div className="absolute -top-2 -right-2 z-10 flex items-center gap-0.5 bg-red-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-medium shadow-sm">
+        <XCircle className="h-2.5 w-2.5" /> Failed
+      </div>
+    ) : runStatus.status === "skipped" ? (
+      <div className="absolute -top-2 -right-2 z-10 flex items-center gap-0.5 bg-zinc-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-medium shadow-sm">
+        <SkipForward className="h-2.5 w-2.5" /> Skipped
+      </div>
+    ) : runStatus.status === "running" ? (
+      <div className="absolute -top-2 -right-2 z-10 flex items-center gap-0.5 bg-sky-500 text-white rounded-full px-1.5 py-0.5 text-[9px] font-medium shadow-sm animate-pulse">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" /> Running
+      </div>
+    ) : null
+  ) : null;
+
   return (
     <div
       className={`rounded-lg border-2 transition-all cursor-pointer group relative ${
-        stepError
-          ? "border-red-500/60 bg-red-500/5 shadow-md shadow-red-500/10"
-          : isSelected
+        stepDisabled
+          ? "border-dashed border-zinc-500/40 bg-zinc-500/5 opacity-50"
+          : stepError
+            ? "border-red-500/60 bg-red-500/5 shadow-md shadow-red-500/10"
+            : hasCondition && !isSelected
+            ? "border-amber-500/50 bg-amber-500/5 hover:border-amber-500/70 hover:shadow-md"
+            : isSelected
             ? "border-emerald-500 bg-emerald-500/10 shadow-lg shadow-emerald-500/10"
             : "border-border bg-card hover:border-emerald-500/40 hover:shadow-md"
       } ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}
       style={{ width: NODE_WIDTH }}
       onClick={onSelect}
     >
+      {/* Conditional diamond marker */}
+      {hasCondition ? (
+        <div className="absolute -left-3.5 top-1/2 -translate-y-1/2 z-10">
+          <div className="w-4 h-4 rotate-45 bg-amber-500 border-2 border-background rounded-sm shadow-sm" />
+        </div>
+      ) : null}
       <Handle type="target" position={Position.Top} className="!bg-emerald-500 !w-2.5 !h-2.5 !border-2 !border-background" />
+      {/* Input port label */}
+      {!stepDisabled ? (
+        <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 font-mono whitespace-nowrap pointer-events-none">
+          {inputCount > 0 ? `${inputCount} mapped input${inputCount !== 1 ? "s" : ""}` : "in"}
+        </div>
+      ) : null}
+
+      {/* P2: Run status overlay */}
+      {runStatusIcon}
 
       {/* Drag grip indicator */}
       <div className="absolute -left-6 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-50 transition-opacity">
@@ -274,7 +397,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
             {index + 1}
           </Badge>
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <Puzzle className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+            {stepIconElement}
             <span className="text-sm font-medium text-foreground truncate">
               {step.name || step.pluginName || step.pluginSlug || "Unnamed Step"}
             </span>
@@ -301,6 +424,11 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
 
       {/* Status badges */}
       <div className="flex items-center gap-1.5 px-3 pb-2 flex-wrap">
+        {stepDisabled ? (
+          <Badge variant="outline" className="text-[9px] px-1 py-0 text-zinc-500 border-zinc-500/30 border-dashed">
+            Disabled
+          </Badge>
+        ) : null}
         {stepError ? (
           <Badge variant="destructive" className="text-[9px] px-1 py-0 gap-0.5" title={stepError}>
             <AlertCircle className="h-2.5 w-2.5" /> Failed
@@ -329,6 +457,16 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
         {timeoutSec !== null && timeoutSec !== 60 ? (
           <Badge variant="outline" className="text-[9px] px-1 py-0 text-orange-500 border-orange-500/30">
             <Clock className="h-2 w-2 mr-0.5" /> {timeoutSec}s
+          </Badge>
+        ) : null}
+        {runStatus?.durationMs !== undefined ? (
+          <Badge variant="outline" className={`text-[9px] px-1 py-0 ${
+            runStatus.status === "completed" ? "text-emerald-500 border-emerald-500/30"
+              : runStatus.status === "failed" ? "text-red-500 border-red-500/30"
+                : "text-zinc-500 border-zinc-500/30"
+          }`}>
+            <Timer className="h-2 w-2 mr-0.5" />
+            {runStatus.durationMs < 1000 ? `${runStatus.durationMs}ms` : `${(runStatus.durationMs / 1000).toFixed(1)}s`}
           </Badge>
         ) : null}
       </div>
@@ -390,10 +528,26 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
           >
             <Trash2 className="h-3 w-3" />
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`h-6 w-6 p-0 ${stepDisabled ? "text-zinc-400" : "text-emerald-500"}`}
+            onClick={(e) => { e.stopPropagation(); onToggleEnabled(); }}
+            disabled={isDisabled}
+            title={stepDisabled ? "Enable step" : "Disable step"}
+          >
+            <Power className="h-3 w-3" />
+          </Button>
         </div>
       </div>
 
       <Handle type="source" position={Position.Bottom} className="!bg-emerald-500 !w-2.5 !h-2.5 !border-2 !border-background" />
+      {/* Output port label */}
+      {!stepDisabled ? (
+        <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 font-mono whitespace-nowrap pointer-events-none">
+          out
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -403,9 +557,34 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
 // ===========================================
 
 function AddStepNode({ data }: NodeProps<Node<AddNodeData>>) {
+  if (!data.hasSteps) {
+    // Empty state — larger CTA
+    return (
+      <div style={{ width: NODE_WIDTH }} className="flex flex-col items-center">
+        <div className="rounded-lg border-2 border-dashed border-emerald-500/30 bg-emerald-500/5 px-6 py-8 text-center w-full hover:border-emerald-500/50 hover:bg-emerald-500/10 transition-colors">
+          <div className="flex items-center justify-center h-10 w-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 mx-auto mb-3">
+            <Plus className="h-5 w-5 text-emerald-500" />
+          </div>
+          <p className="text-sm font-medium text-foreground mb-1">Add your first step</p>
+          <p className="text-[11px] text-muted-foreground mb-3">
+            Drop a plugin from the sidebar or click below
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-500"
+            onClick={data.onAdd}
+            disabled={data.isDisabled}
+          >
+            <Plus className="h-3.5 w-3.5" /> Choose a plugin
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ width: NODE_WIDTH }}>
-      <Handle type="target" position={Position.Top} className="!bg-border !w-2 !h-2 !border-2 !border-background" />
       <div className="flex flex-col items-center gap-1">
         <Button
           variant="outline"
@@ -417,6 +596,34 @@ function AddStepNode({ data }: NodeProps<Node<AddNodeData>>) {
           <Plus className="h-3.5 w-3.5" /> Add a step
         </Button>
         <p className="text-[10px] text-muted-foreground/50">Choose a plugin to process data</p>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================
+// Custom Node: Bot Output (reply indicator)
+// ===========================================
+
+function BotOutputNode({ data }: NodeProps<Node<BotOutputNodeData>>) {
+  return (
+    <div
+      className="rounded-lg border-2 border-sky-500/40 bg-sky-500/5 px-4 py-3 shadow-sm"
+      style={{ width: NODE_WIDTH }}
+    >
+      <Handle type="target" position={Position.Top} className="!bg-sky-500 !w-2.5 !h-2.5 !border-2 !border-background" />
+      <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center h-7 w-7 rounded-md bg-sky-500/10 border border-sky-500/30">
+          <MessageSquare className="h-4 w-4 text-sky-500" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+            Output
+          </p>
+          <p className="text-sm font-semibold text-foreground">
+            {data.label}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -445,6 +652,7 @@ function CanvasContextMenu({
 
   const items = [
     { label: "Edit Step", icon: Settings2, action: menu.handlers.onSelect },
+    { label: menu.step.isEnabled === false ? "Enable Step" : "Disable Step", icon: Power, action: menu.handlers.onToggleEnabled },
     { label: "Insert Before", icon: Plus, action: menu.handlers.onInsertBefore },
     { label: "Duplicate", icon: Copy, action: menu.handlers.onDuplicate },
     null, // separator
@@ -486,6 +694,101 @@ function CanvasContextMenu({
 }
 
 // ===========================================
+// Auto-fit: zoom to fit when step count changes
+// ===========================================
+
+function AutoFitOnChange({ stepCount }: { stepCount: number }) {
+  const { fitView } = useReactFlow();
+  const prevCount = useRef(stepCount);
+  useEffect((): (() => void) | void => {
+    if (prevCount.current === stepCount) return;
+    prevCount.current = stepCount;
+    const t = setTimeout(() => fitView({ padding: 0.4, maxZoom: 1, duration: 300 }), 50);
+    return () => clearTimeout(t);
+  }, [stepCount, fitView]);
+  return null;
+}
+
+// ===========================================
+// Custom Edge: Insert-between (shows + button on hover)
+// ===========================================
+
+function InsertBetweenEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+  label,
+  labelStyle,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  data,
+}: EdgeProps<Edge<{ onInsert?: () => void }>>) {
+  const [hovered, setHovered] = useState(false);
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <g
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Invisible wider hit area for hover detection */}
+      <path
+        d={edgePath}
+        fill="none"
+        strokeWidth={20}
+        stroke="transparent"
+        className="react-flow__edge-interaction"
+      />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={style}
+        markerEnd={markerEnd}
+        label={hovered ? undefined : label}
+        labelStyle={labelStyle}
+        labelBgStyle={labelBgStyle}
+        labelBgPadding={labelBgPadding}
+        labelBgBorderRadius={labelBgBorderRadius}
+      />
+      {hovered && data?.onInsert ? (
+        <foreignObject
+          x={labelX - 12}
+          y={labelY - 12}
+          width={24}
+          height={24}
+          className="overflow-visible"
+        >
+          <button
+            className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-emerald-500 bg-background text-emerald-500 shadow-md hover:bg-emerald-500 hover:text-white transition-all cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onInsert?.();
+            }}
+            title="Insert step here"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </foreignObject>
+      ) : null}
+    </g>
+  );
+}
+
+// ===========================================
 // Node Types Registry
 // ===========================================
 
@@ -493,6 +796,11 @@ const nodeTypes: NodeTypes = {
   trigger: TriggerNode,
   step: StepNode,
   addStep: AddStepNode,
+  botOutput: BotOutputNode,
+};
+
+const edgeTypes: EdgeTypes = {
+  insertBetween: InsertBetweenEdge,
 };
 
 // ===========================================
@@ -505,12 +813,14 @@ export function WorkflowCanvas({
   triggerType,
   triggerConfig,
   stepErrors,
+  stepRunStatuses,
   onSelectStep,
   onAddStep,
   onDeleteStep,
   onMoveStep,
   onDropPlugin,
   onDuplicateStep,
+  onToggleStepEnabled,
   onClickTrigger,
   isDisabled,
 }: WorkflowCanvasProps) {
@@ -530,6 +840,7 @@ export function WorkflowCanvas({
       onDelete: () => onDeleteStep(step.id),
       onDuplicate: () => onDuplicateStep?.(step),
       onInsertBefore: () => onAddStep(step.order),
+      onToggleEnabled: () => onToggleStepEnabled?.(step.id, !step.isEnabled),
       onMoveUp: () => {
         if (idx > 0) {
           const prev = sortedSteps[idx - 1];
@@ -543,7 +854,7 @@ export function WorkflowCanvas({
         }
       },
     }));
-  }, [sortedSteps, onSelectStep, onDeleteStep, onDuplicateStep, onAddStep, onMoveStep]);
+  }, [sortedSteps, onSelectStep, onDeleteStep, onDuplicateStep, onAddStep, onMoveStep, onToggleStepEnabled]);
 
   // Build nodes and edges from workflow data
   const { initialNodes, initialEdges } = useMemo(() => {
@@ -585,12 +896,14 @@ export function WorkflowCanvas({
           isLast: idx === sortedSteps.length - 1,
           totalSteps: sortedSteps.length,
           stepError: stepErrors?.[step.id],
+          runStatus: stepRunStatuses?.[step.id],
           onSelect: handlers?.onSelect ?? (() => {}),
           onDelete: handlers?.onDelete ?? (() => {}),
           onDuplicate: handlers?.onDuplicate ?? (() => {}),
           onInsertBefore: handlers?.onInsertBefore ?? (() => {}),
           onMoveUp: handlers?.onMoveUp ?? (() => {}),
           onMoveDown: handlers?.onMoveDown ?? (() => {}),
+          onToggleEnabled: handlers?.onToggleEnabled ?? (() => {}),
           isDisabled,
         } satisfies StepNodeData,
         draggable: !isDisabled,
@@ -599,26 +912,107 @@ export function WorkflowCanvas({
       // Edge from previous node
       const prevStep = sortedSteps[idx - 1];
       const sourceId = idx === 0 || !prevStep ? "trigger" : `step-${prevStep.id}`;
+      const stepIsDisabled = step.isEnabled === false;
+
+      // Data flow label — shows what data this step receives
+      const inputKeys = Object.keys(step.inputMapping ?? {});
+      let edgeLabel: string | undefined;
+      if (stepIsDisabled) {
+        edgeLabel = "skipped";
+      } else if (inputKeys.length > 0) {
+        edgeLabel = `${inputKeys.length} input${inputKeys.length !== 1 ? "s" : ""} mapped`;
+      } else if (idx === 0) {
+        edgeLabel = "trigger data";
+      } else {
+        edgeLabel = "prev.output";
+      }
+
       edges.push({
         id: `e-${sourceId}-${nodeId}`,
         source: sourceId,
         target: nodeId,
-        type: "smoothstep",
-        animated: step.condition !== null && step.condition !== undefined,
-        style: { stroke: "#10b981", strokeWidth: 2.5 },
+        type: "insertBetween",
+        animated: !stepIsDisabled && step.condition !== null && step.condition !== undefined,
+        label: edgeLabel,
+        data: { onInsert: isDisabled ? undefined : () => onAddStep(step.order) },
+        labelStyle: {
+          fontSize: 9,
+          fontWeight: 500,
+          fill: stepIsDisabled ? "#71717a" : "#6b7280",
+          fontFamily: "ui-monospace, monospace",
+        },
+        labelBgStyle: {
+          fill: "hsl(var(--background))",
+          fillOpacity: 0.9,
+        },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 4,
+        style: stepIsDisabled
+          ? { stroke: "#71717a", strokeWidth: 1.5, opacity: 0.3, strokeDasharray: "6 4" }
+          : { stroke: "#10b981", strokeWidth: 2 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: "#10b981",
-          width: 20,
-          height: 20,
+          color: stepIsDisabled ? "#71717a" : "#10b981",
+          width: 18,
+          height: 18,
         },
       });
     });
 
-    // Add-step node at the bottom
-    const addNodeY = sortedSteps.length === 0
-      ? FIRST_STEP_Y
-      : FIRST_STEP_Y + sortedSteps.length * NODE_GAP_Y;
+    // Bot output node — show "Reply to user" for BOT_MESSAGE workflows
+    const isBotMessage = triggerType === "BOT_MESSAGE";
+    const lastStep = sortedSteps[sortedSteps.length - 1];
+
+    if (isBotMessage && sortedSteps.length > 0 && lastStep) {
+      const botOutputY = FIRST_STEP_Y + sortedSteps.length * NODE_GAP_Y;
+      nodes.push({
+        id: "bot-output",
+        type: "botOutput",
+        position: { x: centerX - NODE_WIDTH / 2, y: botOutputY },
+        data: {
+          label: "Reply to user",
+        } satisfies BotOutputNodeData,
+        draggable: false,
+        selectable: false,
+      });
+
+      edges.push({
+        id: `e-step-${lastStep.id}-bot-output`,
+        source: `step-${lastStep.id}`,
+        target: "bot-output",
+        type: "smoothstep",
+        label: "response",
+        labelStyle: {
+          fontSize: 9,
+          fontWeight: 500,
+          fill: "#0ea5e9",
+          fontFamily: "ui-monospace, monospace",
+        },
+        labelBgStyle: {
+          fill: "hsl(var(--background))",
+          fillOpacity: 0.9,
+        },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 4,
+        style: { stroke: "#0ea5e9", strokeWidth: 2 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: "#0ea5e9",
+          width: 18,
+          height: 18,
+        },
+      });
+    }
+
+    // Add-step node — detached from the chain (no connecting edge)
+    const addNodeY = (() => {
+      const lastNodeY = isBotMessage && sortedSteps.length > 0
+        ? FIRST_STEP_Y + sortedSteps.length * NODE_GAP_Y  // after bot output
+        : sortedSteps.length > 0
+          ? FIRST_STEP_Y + (sortedSteps.length - 1) * NODE_GAP_Y  // after last step
+          : TRIGGER_Y + NODE_GAP_Y;  // after trigger
+      return lastNodeY + NODE_GAP_Y + 20;
+    })();
 
     nodes.push({
       id: "add-step",
@@ -629,31 +1023,15 @@ export function WorkflowCanvas({
           const last = sortedSteps[sortedSteps.length - 1];
           onAddStep(last ? last.order + 1 : 0);
         },
+        hasSteps: sortedSteps.length > 0,
         isDisabled,
       } satisfies AddNodeData,
       draggable: false,
       selectable: false,
     });
 
-    // Edge to add-step node
-    const lastStep = sortedSteps[sortedSteps.length - 1];
-    const lastStepId = lastStep ? `step-${lastStep.id}` : "trigger";
-    edges.push({
-      id: `e-${lastStepId}-add`,
-      source: lastStepId,
-      target: "add-step",
-      type: "smoothstep",
-      style: { stroke: "#10b981", strokeWidth: 1.5, opacity: 0.4, strokeDasharray: "6 4" },
-      markerEnd: {
-        type: MarkerType.Arrow,
-        color: "#10b981",
-        width: 16,
-        height: 16,
-      },
-    });
-
     return { initialNodes: nodes, initialEdges: edges };
-  }, [sortedSteps, selectedStepId, triggerType, triggerConfig, stepErrors, stepHandlers, onAddStep, onClickTrigger, isDisabled]);
+  }, [sortedSteps, selectedStepId, triggerType, triggerConfig, stepErrors, stepRunStatuses, stepHandlers, onAddStep, onClickTrigger, isDisabled]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -703,6 +1081,7 @@ export function WorkflowCanvas({
           onInsertBefore: handlers.onInsertBefore,
           onMoveUp: handlers.onMoveUp,
           onMoveDown: handlers.onMoveDown,
+          onToggleEnabled: handlers.onToggleEnabled,
         },
         isFirst: idx === 0,
         isLast: idx === sortedSteps.length - 1,
@@ -836,6 +1215,7 @@ export function WorkflowCanvas({
         onPaneClick={handlePaneClick}
         onNodeDragStop={handleNodeDragStop}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.4, maxZoom: 1 }}
         panOnDrag
@@ -866,6 +1246,7 @@ export function WorkflowCanvas({
           pannable
           zoomable
         />
+        <AutoFitOnChange stepCount={sortedSteps.length} />
         {/* Step count & keyboard hint */}
         <Panel position="top-right" className="!m-2">
           <div className="text-[10px] text-muted-foreground bg-card/80 backdrop-blur-sm border border-border rounded px-2 py-1 space-y-0.5">

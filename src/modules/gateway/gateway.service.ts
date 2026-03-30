@@ -18,7 +18,7 @@ import { pluginDeployService } from "@/modules/plugin/plugin-deploy.service";
 import { pluginIpcService } from "@/modules/plugin/plugin-ipc.service";
 import { removeWorkflowCache } from "@/modules/workflow/workflow-cache.service";
 import { bridgeClientManager } from "@/modules/workspace";
-import { BadRequestError, ForbiddenError, NotFoundError, ValidationError } from "@/shared/errors";
+import { BadRequestError, ForbiddenError, NotFoundError } from "@/shared/errors";
 import type { ServiceContext } from "@/shared/types/context";
 
 import type {
@@ -367,28 +367,9 @@ class GatewayService {
     }
 
     if (data.mode !== undefined && data.mode !== existing.mode) {
-      // Validate mode switch: prevent orphaning active resources
-      if (data.mode === "workflow") {
-        // Switching to workflow: check for enabled standalone plugins
-        const enabledPlugin = await prisma.userPlugin.findFirst({
-          where: { gatewayId: id, isEnabled: true },
-        });
-        if (enabledPlugin) {
-          throw new ValidationError("Disable or uninstall the standalone plugin before switching to workflow mode", {
-            mode: ["This bot has an active plugin installed"],
-          });
-        }
-      } else if (data.mode === "plugin") {
-        // Switching to plugin: check for active workflows
-        const activeWorkflow = await prisma.workflow.findFirst({
-          where: { gatewayId: id, status: "ACTIVE" },
-        });
-        if (activeWorkflow) {
-          throw new ValidationError("Deactivate workflows before switching to plugin mode", {
-            mode: ["This bot has active workflows"],
-          });
-        }
-      }
+      // Unified engine: mode is now informational only.
+      // Both plugins and workflows can coexist on the same gateway,
+      // so we no longer block switching based on active resources.
       updateData.mode = data.mode;
     }
 

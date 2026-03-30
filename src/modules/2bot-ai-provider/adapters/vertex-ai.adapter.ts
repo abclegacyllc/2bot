@@ -17,13 +17,13 @@
 import { logger } from "@/lib/logger";
 import OpenAI from "openai";
 import type {
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    TextGenerationRequest,
-    TextGenerationResponse,
-    TextGenerationStreamChunk,
-    ToolCallResult,
-    ToolDefinition,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  TextGenerationRequest,
+  TextGenerationResponse,
+  TextGenerationStreamChunk,
+  ToolCallResult,
+  ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 import { genLangTextGeneration, genLangTextGenerationStream } from "./google-genlang.adapter";

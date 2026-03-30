@@ -17,6 +17,8 @@ import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { bridgeClientManager } from "@/modules/workspace";
 
+import type { PluginPermissions } from "@/shared/types/plugin";
+
 import { getPluginEntryPath, pluginDeployService } from "./plugin-deploy.service";
 
 import type { GatewayType } from "@prisma/client";
@@ -361,12 +363,14 @@ async function executeInWorkspace(
 
     // Push event to the running plugin via IPC
     // Convert to raw format so container plugins see standard API field names
+    // Include _config so the SDK can update sdk.config per-execution (step-level overrides)
     const bridgeResult = await Promise.race([
       client.pluginEvent(pluginFile, {
         type: event.type,
         data: toRawTelegramUpdate(event),
         gatewayId: 'gatewayId' in event ? event.gatewayId : undefined,
         _workflow: event._workflow,
+        _config: context.config,
       }),
       new Promise<never>((_, reject) => {
         setTimeout(() => {
@@ -441,6 +445,32 @@ export class PluginExecutor {
     );
 
     try {
+      // ── Permission enforcement ──
+      // Check Plugin.permissions JSON before executing
+      const pluginRecord = await prisma.plugin.findFirst({
+        where: { slug: pluginSlug },
+        select: { permissions: true },
+      });
+      if (pluginRecord?.permissions && typeof pluginRecord.permissions === "object") {
+        const perms = pluginRecord.permissions as PluginPermissions;
+        // If the plugin declares permissions, enforce them
+        if (Object.keys(perms).length > 0) {
+          // Events that require "reply" permission (messaging events)
+          const replyEvents = ["telegram.message", "telegram.callback", "discord.message", "slack.message", "whatsapp.message"];
+          if (replyEvents.includes(event.type) && perms.reply === false) {
+            executorLogger.warn(
+              { pluginSlug, eventType: event.type, userId: context.userId },
+              "Plugin execution blocked: reply permission denied"
+            );
+            return {
+              success: false,
+              error: "Permission denied: plugin does not have reply permission",
+              metrics: { durationMs: Date.now() - startTime },
+            };
+          }
+        }
+      }
+
       // Execute with circuit breaker protection (scoped per user)
       const result = await executePluginWithCircuit(pluginSlug, async () => {
         let innerResult: PluginExecutionResult;

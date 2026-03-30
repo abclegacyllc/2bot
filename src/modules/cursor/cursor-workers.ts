@@ -68,6 +68,8 @@ export interface WorkerPromptContext {
   repoAnalysis?: RepoAnalysis;
   /** Directory where the repo was cloned (for coder to read source files) */
   repoCloneDir?: string;
+  /** Summaries from recent prior sessions with this user */
+  priorSessionSummaries?: string[];
 }
 
 // ===========================================
@@ -93,6 +95,32 @@ export const WORKER_META: Record<CursorWorkerType, CursorWorkerMeta> = {
   },
 };
 
+// Plan-based multipliers for session limits
+const PLAN_MULTIPLIERS: Record<string, number> = {
+  FREE: 1,
+  PRO: 2,
+  BUSINESS: 3,
+};
+
+/**
+ * Get worker meta with limits adjusted for the user's plan.
+ * PRO users get 2× iterations/credits/timeout, BUSINESS gets 3×.
+ */
+export function getAdaptiveWorkerMeta(
+  workerType: CursorWorkerType,
+  plan?: string,
+): CursorWorkerMeta {
+  const base = WORKER_META[workerType];
+  const multiplier = PLAN_MULTIPLIERS[plan ?? "FREE"] ?? 1;
+  if (multiplier === 1) return base;
+  return {
+    ...base,
+    maxIterations: base.maxIterations * multiplier,
+    maxCreditsPerSession: base.maxCreditsPerSession * multiplier,
+    sessionTimeoutMs: base.sessionTimeoutMs * multiplier,
+  };
+}
+
 // ===========================================
 // Frontend Router — Zero-Cost Heuristic
 // ===========================================
@@ -111,8 +139,8 @@ export function routeToWorker(message: string): CursorWorkerType {
   const lower = message.toLowerCase();
 
   // ── Code-related → Coder ────────────────────────────
-  // "create/build/make/write a plugin"
-  if (/\b(create|build|make|write|develop)\b.*\bplugin\b/i.test(lower)) return "coder";
+  // "create/build/make/write/prepare a plugin"
+  if (/\b(create|build|make|write|develop|prepare)\b.*\bplugin\b/i.test(lower)) return "coder";
 
   // "edit/change/modify/fix/improve/refactor plugin/code"
   if (/\b(edit|change|modify|fix|improve|update|refactor|tweak|adjust)\b.*\b(plugin|code)\b/i.test(lower)) return "coder";
@@ -177,10 +205,22 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     // Platform action tools
     "create_gateway",
     "delete_gateway",
+    "update_gateway",
     "install_plugin",
     "uninstall_plugin",
     "toggle_plugin",
     "start_workspace",
+    "stop_workspace",
+    "restart_workspace",
+    "get_workspace_status",
+    // Plugin config
+    "view_plugin_config",
+    // Marketplace
+    "search_marketplace",
+    // Metrics & logs
+    "get_gateway_metrics",
+    "get_workspace_logs",
+    "get_workspace_metrics",
     // Navigation
     "navigate_page",
     // Interaction
@@ -206,6 +246,9 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     "create_plugin_record",
     "update_plugin_record",
     "restart_plugin",
+    "clone_plugin",
+    // Plugin config
+    "view_plugin_config",
     // Diagnostics
     "view_plugin_logs",
     "explain_error",

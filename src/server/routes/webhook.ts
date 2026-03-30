@@ -357,11 +357,14 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Mode-based dispatch
-            if (gateway.mode === "workflow") {
-              // Workflow mode: check workflow triggers for messages, callbacks, and edited messages
-              if (update.message) {
-                await checkTelegramMessageTrigger(
+            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently.
+            // Workflows execute their pipeline; standalone plugins fire independently.
+            const dispatches: Promise<void>[] = [];
+
+            // 1. Check workflow triggers (if any active workflows exist on this gateway)
+            if (update.message) {
+              dispatches.push(
+                checkTelegramMessageTrigger(
                   gatewayId,
                   gateway.userId,
                   gateway.organizationId ?? null,
@@ -378,9 +381,11 @@ webhookRouter.post(
                     } : undefined,
                   },
                   update
-                );
-              } else if (update.callback_query) {
-                await checkTelegramCallbackTrigger(
+                ).then(() => {}),
+              );
+            } else if (update.callback_query) {
+              dispatches.push(
+                checkTelegramCallbackTrigger(
                   gatewayId,
                   gateway.userId,
                   gateway.organizationId ?? null,
@@ -396,9 +401,11 @@ webhookRouter.post(
                     } : undefined,
                   },
                   update
-                );
-              } else if (update.edited_message) {
-                await checkTelegramMessageTrigger(
+                ).then(() => {}),
+              );
+            } else if (update.edited_message) {
+              dispatches.push(
+                checkTelegramMessageTrigger(
                   gatewayId,
                   gateway.userId,
                   gateway.organizationId ?? null,
@@ -415,24 +422,29 @@ webhookRouter.post(
                     } : undefined,
                   },
                   update
-                );
-              }
-            } else {
-              // Plugin mode: route directly to plugins (no workflow check)
-              const result = await handleTelegramWebhook(
+                ).then(() => {}),
+              );
+            }
+
+            // 2. Route to standalone plugins (isStandalone=true only)
+            dispatches.push(
+              handleTelegramWebhook(
                 gatewayId,
                 gateway.userId,
                 gateway.organizationId ?? null,
                 update,
                 executeGateway
-              );
-              if (result.pluginsExecuted > 0) {
-                webhookLogger.info(
-                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                  'Webhook routed to plugin',
-                );
-              }
-            }
+              ).then((result) => {
+                if (result.pluginsExecuted > 0) {
+                  webhookLogger.info(
+                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                    'Webhook routed to standalone plugins',
+                  );
+                }
+              }),
+            );
+
+            await Promise.allSettled(dispatches);
           } catch (err) {
             webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, 'Webhook dispatch failed');
           }
@@ -727,30 +739,39 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Mode-based dispatch
-            if (gateway.mode === "workflow") {
-              await checkDiscordMessageTrigger(
+            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently
+            const dispatches: Promise<void>[] = [];
+
+            // 1. Check workflow triggers
+            dispatches.push(
+              checkDiscordMessageTrigger(
                 gatewayId,
                 gateway.userId,
                 gateway.organizationId ?? null,
                 interaction,
                 interaction
-              );
-            } else {
-              const result = await handleDiscordWebhook(
+              ).then(() => {}),
+            );
+
+            // 2. Route to standalone plugins
+            dispatches.push(
+              handleDiscordWebhook(
                 gatewayId,
                 gateway.userId,
                 gateway.organizationId ?? null,
                 interaction,
                 executeGateway,
-              );
-              if (result.pluginsExecuted > 0) {
-                webhookLogger.info(
-                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                  "Discord interaction routed to plugin",
-                );
-              }
-            }
+              ).then((result) => {
+                if (result.pluginsExecuted > 0) {
+                  webhookLogger.info(
+                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                    "Discord interaction routed to standalone plugins",
+                  );
+                }
+              }),
+            );
+
+            await Promise.allSettled(dispatches);
           } catch (err) {
             webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, "Discord dispatch failed");
           }
@@ -1026,30 +1047,39 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Mode-based dispatch
-            if (gateway.mode === "workflow") {
-              await checkSlackMessageTrigger(
+            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently
+            const dispatches: Promise<void>[] = [];
+
+            // 1. Check workflow triggers
+            dispatches.push(
+              checkSlackMessageTrigger(
                 gatewayId,
                 gateway.userId,
                 gateway.organizationId ?? null,
                 payload,
                 payload
-              );
-            } else {
-              const result = await handleSlackWebhook(
+              ).then(() => {}),
+            );
+
+            // 2. Route to standalone plugins
+            dispatches.push(
+              handleSlackWebhook(
                 gatewayId,
                 gateway.userId,
                 gateway.organizationId ?? null,
                 payload,
                 executeGateway,
-              );
-              if (result.pluginsExecuted > 0) {
-                webhookLogger.info(
-                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                  "Slack event routed to plugin",
-                );
-              }
-            }
+              ).then((result) => {
+                if (result.pluginsExecuted > 0) {
+                  webhookLogger.info(
+                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                    "Slack event routed to standalone plugins",
+                  );
+                }
+              }),
+            );
+
+            await Promise.allSettled(dispatches);
           } catch (err) {
             webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, "Slack dispatch failed");
           }
@@ -1329,22 +1359,24 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Mode-based dispatch
-            if (gateway.mode === "workflow") {
-              // Workflow mode: only check workflow triggers
-              interface WhatsAppPayload {
-                entry?: Array<{
-                  changes?: Array<{
-                    value?: { messages?: Array<Record<string, unknown>> };
-                  }>;
+            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently
+            const dispatches: Promise<void>[] = [];
+
+            // 1. Check workflow triggers for each message in the payload
+            interface WhatsAppPayload {
+              entry?: Array<{
+                changes?: Array<{
+                  value?: { messages?: Array<Record<string, unknown>> };
                 }>;
-              }
-              const waPayload = payload as WhatsAppPayload;
-              if (waPayload.entry) {
-                for (const entry of waPayload.entry) {
-                  for (const change of entry.changes ?? []) {
-                    for (const msg of change.value?.messages ?? []) {
-                      await checkWhatsAppMessageTrigger(
+              }>;
+            }
+            const waPayload = payload as WhatsAppPayload;
+            if (waPayload.entry) {
+              for (const entry of waPayload.entry) {
+                for (const change of entry.changes ?? []) {
+                  for (const msg of change.value?.messages ?? []) {
+                    dispatches.push(
+                      checkWhatsAppMessageTrigger(
                         gatewayId,
                         gateway.userId,
                         gateway.organizationId ?? null,
@@ -1356,27 +1388,32 @@ webhookRouter.post(
                           timestamp?: string;
                         },
                         msg
-                      );
-                    }
+                      ).then(() => {}),
+                    );
                   }
                 }
               }
-            } else {
-              // Plugin mode: route directly to plugins
-              const result = await handleWhatsAppWebhook(
+            }
+
+            // 2. Route to standalone plugins
+            dispatches.push(
+              handleWhatsAppWebhook(
                 gatewayId,
                 gateway.userId,
                 gateway.organizationId ?? null,
                 payload,
                 executeGateway,
-              );
-              if (result.pluginsExecuted > 0) {
-                webhookLogger.info(
-                  { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                  "WhatsApp event routed to plugin",
-                );
-              }
-            }
+              ).then((result) => {
+                if (result.pluginsExecuted > 0) {
+                  webhookLogger.info(
+                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                    "WhatsApp event routed to standalone plugins",
+                  );
+                }
+              }),
+            );
+
+            await Promise.allSettled(dispatches);
           } catch (err) {
             webhookLogger.error({ gatewayId, error: err instanceof Error ? err.message : String(err) }, "WhatsApp dispatch failed");
           }

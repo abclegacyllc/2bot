@@ -214,6 +214,16 @@ export type ToolStartMeta =
   | { kind: "uninstall_plugin"; name: string }
   | { kind: "toggle_plugin"; name: string; enable: boolean }
   | { kind: "start_workspace" }
+  | { kind: "stop_workspace" }
+  | { kind: "restart_workspace" }
+  | { kind: "get_workspace_status" }
+  | { kind: "update_gateway"; gatewayId: string }
+  | { kind: "view_plugin_config"; name: string }
+  | { kind: "search_marketplace"; query: string }
+  | { kind: "get_gateway_metrics"; gatewayId: string }
+  | { kind: "get_workspace_logs" }
+  | { kind: "get_workspace_metrics" }
+  | { kind: "clone_plugin"; sourceSlug: string; newSlug: string }
   | { kind: "navigate_page"; path: string }
   // ── Shared interaction tools (new) ──────────────────
   | { kind: "ask_user"; question: string }

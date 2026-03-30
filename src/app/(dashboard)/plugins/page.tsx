@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Personal Installed Plugins Page (My Plugins)
+ * Available Plugins Page
  *
- * Displays the user's installed plugins with enable/disable toggle,
- * configuration, update metadata, view source, and uninstall functionality.
+ * Displays the plugin catalog with install/uninstall actions.
+ * Users can browse, search, and install plugins from this page.
  *
  * @module app/(dashboard)/plugins
  */
@@ -12,35 +12,25 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
-import { ConfigModal } from "@/components/plugins/config-modal";
-import { PluginIcon } from "@/components/plugins/plugin-icon";
 import { useAuth } from "@/components/providers/auth-provider";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { apiUrl } from "@/shared/config/urls";
-import type { UserPlugin } from "@/shared/types/plugin";
 import { ExternalLink, Loader2, Pencil } from "lucide-react";
-import Link from "next/link";
+
+import type { InstalledPlugin, PluginListItem } from "@/shared/types/plugin";
+
+import { PluginIcon } from "@/components/plugins/plugin-icon";
 import { useRouter } from "next/navigation";
 
 // ===========================================
@@ -48,7 +38,7 @@ import { useRouter } from "next/navigation";
 // ===========================================
 
 interface UpdatePluginDialogProps {
-  plugin: UserPlugin | null;
+  plugin: PluginListItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   token: string | null;
@@ -65,9 +55,9 @@ function UpdatePluginDialog({ plugin, open, onOpenChange, token, onUpdated }: Up
   // Sync form when plugin changes
   useEffect(() => {
     if (plugin) {
-      setName(plugin.pluginName);
-      setDescription(plugin.pluginDescription);
-      setCategory(plugin.pluginCategory || "general");
+      setName(plugin.name);
+      setDescription(plugin.description);
+      setCategory(plugin.category || "general");
       setError(null);
     }
   }, [plugin]);
@@ -77,7 +67,7 @@ function UpdatePluginDialog({ plugin, open, onOpenChange, token, onUpdated }: Up
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch(apiUrl(`/plugins/custom/${plugin.pluginId}`), {
+      const response = await fetch(apiUrl(`/plugins/custom/${plugin.id}`), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -110,7 +100,7 @@ function UpdatePluginDialog({ plugin, open, onOpenChange, token, onUpdated }: Up
         <DialogHeader>
           <DialogTitle className="text-foreground">Update Plugin</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            Update the metadata for <strong>{plugin?.pluginName}</strong>. This changes the name, description, and category.
+            Update the metadata for <strong>{plugin?.name}</strong>. This changes the name, description, and category shown in the plugin catalog.
           </DialogDescription>
         </DialogHeader>
 
@@ -190,141 +180,120 @@ function UpdatePluginDialog({ plugin, open, onOpenChange, token, onUpdated }: Up
 // ===========================================
 
 interface PluginCardProps {
-  plugin: UserPlugin;
-  onToggle: (id: string, enabled: boolean) => void;
-  onConfigure: (plugin: UserPlugin) => void;
-  onUninstall: (id: string) => void;
-  onUpdatePlugin: (plugin: UserPlugin) => void;
-  onViewSource: (plugin: UserPlugin) => void;
-  isUpdating: boolean;
+  plugin: PluginListItem;
+  isInstalled: boolean;
+  isInstalling: boolean;
+  onUninstall: (slug: string) => void;
+  onUpdate: (plugin: PluginListItem) => void;
 }
 
-function PluginCard({ plugin, onToggle, onConfigure, onUninstall, onUpdatePlugin, onViewSource, isUpdating }: PluginCardProps) {
+function PluginCard({ plugin, isInstalled, isInstalling, onUninstall, onUpdate }: PluginCardProps) {
+  const router = useRouter();
+
   return (
-    <Card className="border-border bg-card/50">
+    <Card className="border-border bg-card/50 hover:bg-card/70 transition-colors" data-ai-target={`store-plugin-${plugin.slug}`}>
       <CardHeader className="pb-3">
         <div className="flex items-start gap-4">
-          <PluginIcon icon={plugin.pluginIcon} name={plugin.pluginName} />
+          <PluginIcon icon={plugin.icon} name={plugin.name} size="lg" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle className="text-foreground text-lg">{plugin.pluginName}</CardTitle>
+              <CardTitle
+                className="text-foreground text-lg cursor-pointer hover:underline"
+                onClick={() => router.push(`/plugins/${plugin.slug}`)}
+              >
+                {plugin.name}
+              </CardTitle>
+              {plugin.isBuiltin ? (
+                <span className="px-2 py-0.5 rounded text-xs bg-blue-900/50 text-blue-300">
+                  Built-in
+                </span>
+              ) : null}
               {plugin.authorType === "USER" ? (
                 <span className="px-2 py-0.5 rounded text-xs bg-purple-900/50 text-purple-300">
                   Custom
                 </span>
               ) : null}
-              {(plugin.entryFile?.split('/').length ?? 0) > 2 ? (
-                <span className="px-2 py-0.5 rounded text-xs bg-blue-900/50 text-blue-300">
-                  Multi-file
-                </span>
-              ) : null}
             </div>
             <CardDescription className="text-muted-foreground mt-1">
-              {plugin.pluginDescription}
+              {plugin.description}
             </CardDescription>
-          </div>
-          {/* Enable/Disable Toggle */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {plugin.isEnabled ? "Enabled" : "Disabled"}
-            </span>
-            <button
-              onClick={() => onToggle(plugin.id, !plugin.isEnabled)}
-              disabled={isUpdating}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                plugin.isEnabled ? "bg-emerald-600" : "bg-muted"
-              } ${isUpdating ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-            >
-              {isUpdating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin mx-auto text-muted-foreground" />
-              ) : (
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    plugin.isEnabled ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              )}
-            </button>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="pt-0 space-y-4">
-        {/* Stats row */}
-        <div className="flex items-center gap-4 text-sm">
-          <div className="text-muted-foreground">
-            <span className="text-foreground font-medium">{plugin.executionCount}</span> executions
-          </div>
-          {plugin.lastExecutedAt ? (
-            <div className="text-muted-foreground">
-              Last run:{" "}
-              <span className="text-muted-foreground">
-                {new Date(plugin.lastExecutedAt).toLocaleDateString()}
+      <CardContent className="pt-0">
+        {/* Tags */}
+        {plugin.tags.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {plugin.tags.slice(0, 4).map((tag) => (
+              <span
+                key={tag}
+                className="px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground"
+              >
+                {tag}
               </span>
-            </div>
-          ) : (
-            <div className="text-muted-foreground">Never executed</div>
-          )}
-        </div>
-
-        {/* Error message */}
-        {plugin.lastError ? (
-          <div className="p-2 rounded bg-red-900/20 border border-red-900/50 text-red-400 text-sm">
-            <span className="font-medium">Last error:</span> {plugin.lastError}
+            ))}
+            {plugin.tags.length > 4 ? (
+              <span className="px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground">
+                +{plugin.tags.length - 4}
+              </span>
+            ) : null}
           </div>
         ) : null}
 
-        {/* Category badge */}
-        <div className="flex flex-wrap gap-1.5">
-          <span className="px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground">
-            {plugin.pluginCategory}
-          </span>
+        {/* Metadata row */}
+        <div className="flex items-center justify-between text-sm text-muted-foreground mb-4">
+          <span>v{plugin.version}</span>
+          <span className="capitalize">{plugin.category}</span>
         </div>
+
+        {/* Required gateways */}
+        {plugin.requiredGateways.length > 0 ? (
+          <div className="text-xs text-muted-foreground mb-4">
+            Requires: {plugin.requiredGateways.join(", ")}
+          </div>
+        ) : null}
 
         {/* Action buttons */}
-        <div className="flex gap-2 pt-2">
+        {isInstalled ? (
+          <div className="space-y-2">
+            {/* Custom plugin actions: Update Plugin + View Source */}
+            {plugin.authorType === "USER" ? (
+              <>
+                <Button
+                  variant="outline"
+                  className="w-full border-purple-900/50 text-purple-300 hover:bg-purple-900/20 hover:text-purple-200"
+                  onClick={() => onUpdate(plugin)}
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                  Update Plugin
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/workspace?focus=plugins/${plugin.slug}/index.js`)}
+                  className="w-full text-xs text-muted-foreground hover:text-foreground flex items-center justify-center gap-1 py-1 transition-colors"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  View Source Code
+                </button>
+              </>
+            ) : null}
+            <Button
+              variant="outline"
+              className="w-full border-red-900/50 text-red-400 hover:bg-red-900/20 hover:text-red-300"
+              onClick={() => onUninstall(plugin.slug)}
+              disabled={isInstalling}
+            >
+              {isInstalling ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Removing...</> : "Uninstall"}
+            </Button>
+          </div>
+        ) : (
           <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onConfigure(plugin)}
-            disabled={isUpdating}
-            className="flex-1 border-border text-foreground hover:bg-muted"
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-foreground"
+            onClick={() => router.push("/bots")}
           >
-            Configure
+            Go to My Bots to install
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onUpdatePlugin(plugin)}
-            disabled={isUpdating}
-            className="border-purple-900/50 text-purple-400 hover:bg-purple-900/20"
-          >
-            <Pencil className="h-3.5 w-3.5 mr-1" /> Update Plugin
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onViewSource(plugin)}
-            disabled={isUpdating}
-            className="border-blue-900/50 text-blue-400 hover:bg-blue-900/20"
-          >
-            <ExternalLink className="h-3.5 w-3.5 mr-1" /> View Source
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onUninstall(plugin.id)}
-            disabled={isUpdating}
-            className="border-red-900/50 text-red-400 hover:bg-red-900/20"
-          >
-            Uninstall
-          </Button>
-        </div>
-
-        {/* Install date */}
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>{plugin.pluginCategory}</span>
-          <span>Installed {new Date(plugin.createdAt).toLocaleDateString()}</span>
-        </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -334,24 +303,40 @@ function PluginCard({ plugin, onToggle, onConfigure, onUninstall, onUpdatePlugin
 // Main Page Content
 // ===========================================
 
-function MyPluginsContent() {
-  const { token } = useAuth();
+function PluginsContent() {
+  const { token, context } = useAuth();
   const router = useRouter();
-  const [plugins, setPlugins] = useState<UserPlugin[]>([]);
+  const [plugins, setPlugins] = useState<PluginListItem[]>([]);
+  const [installedPlugins, setInstalledPlugins] = useState<Map<string, InstalledPlugin>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
-  const [configuringPlugin, setConfiguringPlugin] = useState<UserPlugin | null>(null);
-  const [isSavingConfig, setIsSavingConfig] = useState(false);
-  const [uninstallId, setUninstallId] = useState<string | null>(null);
-  const [updatePlugin, setUpdatePlugin] = useState<UserPlugin | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [installingSlug, setInstallingSlug] = useState<string | null>(null);
+  const [updatePlugin, setUpdatePlugin] = useState<PluginListItem | null>(null);
 
-  // Fetch user's installed plugins
+  // Determine if in organization context
+  const isOrgContext = context.type === "organization" && !!context.organizationId;
+  const orgId = context.organizationId;
+  // Categories for filtering (B4 — action-oriented labels)
+  const categories = ["analytics", "messaging", "automation", "moderation", "utilities", "general"];
+  const CATEGORY_LABELS: Record<string, string> = {
+    messaging: "💬 Reply & Chat",
+    analytics: "📊 Track & Analyze",
+    automation: "⚡ Automate Tasks",
+    moderation: "🛡️ Moderate Content",
+    utilities: "🔧 Tools & Utilities",
+    general: "🔌 Other",
+  };
+
+  // Fetch available plugins
   const fetchPlugins = useCallback(async () => {
     try {
-      const response = await fetch(apiUrl("/plugins/installed"), {
+      const params = new URLSearchParams();
+      if (searchQuery) params.set("search", searchQuery);
+      if (selectedCategory) params.set("category", selectedCategory);
+
+      const response = await fetch(apiUrl(`/plugins?${params.toString()}`), {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -363,154 +348,105 @@ function MyPluginsContent() {
       setPlugins(result.data || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load plugins");
-    } finally {
+    }
+  }, [token, searchQuery, selectedCategory]);
+
+  // Fetch user's/org's installed plugins
+  const fetchInstalledPlugins = useCallback(async () => {
+    try {
+      // Use org endpoint if in org context, otherwise use personal endpoint
+      const pluginsEndpoint = isOrgContext && orgId
+        ? apiUrl(`/orgs/${orgId}/plugins`)
+        : apiUrl("/plugins/installed");
+      
+      const response = await fetch(pluginsEndpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch installed plugins");
+      }
+
+      const result = await response.json();
+      const installed = new Map<string, InstalledPlugin>();
+      for (const up of result.data || []) {
+        // API returns SafeUserPlugin with pluginSlug, not plugin.slug
+        installed.set(up.pluginSlug, {
+          id: up.id,
+          pluginId: up.pluginId,
+          enabled: up.isEnabled,
+        });
+      }
+      setInstalledPlugins(installed);
+    } catch (err) {
+      console.error("Failed to fetch installed plugins:", err);
+    }
+  }, [token, isOrgContext, orgId]);
+
+  // Initial load
+  useEffect(() => {
+    async function load() {
+      setIsLoading(true);
+      await Promise.all([fetchPlugins(), fetchInstalledPlugins()]);
       setIsLoading(false);
     }
-  }, [token]);
-
-  useEffect(() => {
-    fetchPlugins();
-  }, [fetchPlugins]);
-
-  // Toggle plugin enabled state
-  const handleToggle = async (id: string, enabled: boolean) => {
-    setUpdatingId(id);
-    try {
-      const response = await fetch(apiUrl(`/plugins/installed/${id}/toggle`), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ enabled }),
-      });
-
-      if (!response.ok) {
-        const result = await response.json();
-        throw new Error(result.error?.message || "Failed to update plugin");
-      }
-
-      // Update local state
-      setPlugins((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, isEnabled: enabled } : p))
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update plugin");
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  // Save plugin configuration
-  const handleSaveConfig = async (config: Record<string, unknown>) => {
-    if (!configuringPlugin) return;
-
-    setIsSavingConfig(true);
-    try {
-      const response = await fetch(apiUrl(`/plugins/installed/${configuringPlugin.id}/config`), {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ config }),
-      });
-
-      if (!response.ok) {
-        const result = await response.json();
-        throw new Error(result.error?.message || "Failed to save config");
-      }
-
-      // Update local state
-      setPlugins((prev) =>
-        prev.map((p) =>
-          p.id === configuringPlugin.id ? { ...p, config } : p
-        )
-      );
-      setConfiguringPlugin(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save config");
-    } finally {
-      setIsSavingConfig(false);
-    }
-  };
+    load();
+  }, [fetchPlugins, fetchInstalledPlugins]);
 
   // Uninstall plugin
-  const handleUninstall = async (id: string) => {
-    setUninstallId(null);
-    setUpdatingId(id);
+  const handleUninstall = async (slug: string) => {
+    const installed = installedPlugins.get(slug);
+    if (!installed) return;
+
+    setInstallingSlug(slug);
     try {
-      const response = await fetch(apiUrl(`/plugins/installed/${id}`), {
+      // Use org endpoint if in org context, otherwise use personal endpoint
+      const uninstallEndpoint = isOrgContext && orgId
+        ? apiUrl(`/orgs/${orgId}/plugins/${installed.id}`)
+        : apiUrl(`/plugins/installed/${installed.id}`);
+
+      const response = await fetch(uninstallEndpoint, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
-      });
+      })
 
       if (!response.ok) {
         const result = await response.json();
         throw new Error(result.error?.message || "Failed to uninstall plugin");
       }
 
-      // Remove from local state
-      setPlugins((prev) => prev.filter((p) => p.id !== id));
+      // Refresh installed plugins
+      await fetchInstalledPlugins();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to uninstall plugin");
     } finally {
-      setUpdatingId(null);
+      setInstallingSlug(null);
     }
   };
 
+  // Filter plugins by search
+  const filteredPlugins = plugins.filter((plugin) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      plugin.name.toLowerCase().includes(query) ||
+      plugin.description.toLowerCase().includes(query) ||
+      plugin.tags.some((tag) => tag.toLowerCase().includes(query))
+    );
+  });
+
   return (
     <div className="min-h-screen bg-background p-8">
-      <div className="max-w-4xl mx-auto space-y-8">
+      <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">My Plugins</h1>
+            <h1 className="text-3xl font-bold text-foreground">Plugins</h1>
             <p className="text-muted-foreground mt-1">
-              Manage your installed plugins and configurations
+              Browse available plugins for your bots
             </p>
           </div>
-          <div className="flex gap-3">
-            <Link href="/plugins/create">
-              <Button className="bg-purple-600 hover:bg-purple-700">
-                Create Plugin
-              </Button>
-            </Link>
-          </div>
         </div>
-
-        {/* Search & Filters */}
-        {plugins.length > 0 ? (
-          <div className="space-y-3">
-            <Input
-              placeholder="Search installed plugins..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-muted border-border text-foreground max-w-sm"
-            />
-            <div className="flex gap-2 flex-wrap">
-              <Button
-                variant={selectedCategory === null ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSelectedCategory(null)}
-                className={selectedCategory === null ? "bg-muted" : "border-border text-foreground hover:bg-muted"}
-              >
-                All
-              </Button>
-              {["analytics", "messaging", "automation", "moderation", "utilities", "general"].map((cat) => (
-                <Button
-                  key={cat}
-                  variant={selectedCategory === cat ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelectedCategory(cat)}
-                  className={selectedCategory === cat ? "bg-muted" : "border-border text-foreground hover:bg-muted"}
-                >
-                  {cat.charAt(0).toUpperCase() + cat.slice(1)}
-                </Button>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         {/* Error message */}
         {error ? (
@@ -525,98 +461,118 @@ function MyPluginsContent() {
           </div>
         ) : null}
 
-        {/* Plugin list */}
+        {/* Search and filters */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex-1">
+            <Input
+              placeholder="Search plugins..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              variant={selectedCategory === null ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSelectedCategory(null)}
+              className={
+                selectedCategory === null
+                  ? "bg-muted"
+                  : "border-border text-foreground hover:bg-muted"
+              }
+            >
+              All
+            </Button>
+            {categories.map((category) => (
+              <Button
+                key={category}
+                variant={selectedCategory === category ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedCategory(category)}
+                className={
+                  selectedCategory === category
+                    ? "bg-muted"
+                    : "border-border text-foreground hover:bg-muted"
+                }
+              >
+                {CATEGORY_LABELS[category] ?? category.charAt(0).toUpperCase() + category.slice(1)}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {/* Plugin grid */}
         {isLoading ? (
-          <div className="space-y-4">
-            {[1, 2].map((i) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map((i) => (
               <Card key={i} className="border-border bg-card/50 animate-pulse">
                 <CardHeader>
                   <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-muted" />
+                    <div className="w-12 h-12 rounded-lg bg-muted" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-5 bg-muted rounded w-1/3" />
-                      <div className="h-4 bg-muted rounded w-2/3" />
+                      <div className="h-5 bg-muted rounded w-3/4" />
+                      <div className="h-4 bg-muted rounded w-full" />
                     </div>
                   </div>
                 </CardHeader>
+                <CardContent>
+                  <div className="h-10 bg-muted rounded" />
+                </CardContent>
               </Card>
             ))}
           </div>
-        ) : plugins.length === 0 ? (
-          <Card className="border-border bg-card/50">
-            <CardContent className="py-12 text-center">
-              <div className="text-4xl mb-4">🔌</div>
-              <p className="text-muted-foreground mb-4">You haven&apos;t installed any plugins yet</p>
-              <Link href="/plugins/create">
-                <Button className="bg-purple-600 hover:bg-purple-700">
-                  Create Your First Plugin
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        ) : (() => {
-          const query = searchQuery.toLowerCase().trim();
-          const filtered = plugins.filter((p) => {
-            if (selectedCategory && p.pluginCategory !== selectedCategory) return false;
-            if (query) {
-              return (
-                p.pluginName.toLowerCase().includes(query) ||
-                p.pluginDescription.toLowerCase().includes(query) ||
-                p.pluginSlug.toLowerCase().includes(query)
-              );
-            }
-            return true;
-          });
-          return filtered.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">No plugins match your search</p>
+        ) : filteredPlugins.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="text-4xl mb-4">🔍</div>
+            <p className="text-muted-foreground">No plugins found</p>
+            {searchQuery || selectedCategory ? (
               <Button
                 variant="outline"
                 size="sm"
                 className="mt-4 border-border text-foreground"
-                onClick={() => { setSearchQuery(""); setSelectedCategory(null); }}
+                onClick={() => {
+                  setSearchQuery("");
+                  setSelectedCategory(null);
+                }}
               >
                 Clear filters
               </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {filtered.map((plugin) => (
-                <PluginCard
-                  key={plugin.id}
-                  plugin={plugin}
-                  onToggle={handleToggle}
-                  onConfigure={setConfiguringPlugin}
-                  onUninstall={(id) => setUninstallId(id)}
-                  onUpdatePlugin={setUpdatePlugin}
-                  onViewSource={(p) => router.push(`/workspace?focus=${p.entryFile || `plugins/${p.pluginSlug}.js`}`)}
-                  isUpdating={updatingId === plugin.id}
-                />
-              ))}
-            </div>
-          );
-        })()}
-
-        {/* Stats */}
-        {plugins.length > 0 ? (
-          <div className="text-center text-sm text-muted-foreground">
-            {plugins.length} plugin{plugins.length !== 1 ? "s" : ""} installed
-            {" \u2022 "}
-            {plugins.filter((p) => p.isEnabled).length} enabled
+            ) : null}
           </div>
-        ) : null}
-      </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-ai-target="plugin-store-list">
+            {filteredPlugins.map((plugin) => (
+              <PluginCard
+                key={plugin.id}
+                plugin={plugin}
+                isInstalled={installedPlugins.has(plugin.slug)}
+                isInstalling={installingSlug === plugin.slug}
+                onUninstall={handleUninstall}
+                onUpdate={setUpdatePlugin}
+              />
+            ))}
+          </div>
+        )}
 
-      {/* Config Modal */}
-      {configuringPlugin ? (
-        <ConfigModal
-          plugin={configuringPlugin}
-          onClose={() => setConfiguringPlugin(null)}
-          onSave={handleSaveConfig}
-          isSaving={isSavingConfig}
-          token={token || undefined}
-        />
-      ) : null}
+        {/* Stats + Developer link (B6) */}
+        <div className="text-center space-y-2">
+          <div className="text-sm text-muted-foreground">
+            {filteredPlugins.length} plugin{filteredPlugins.length !== 1 ? "s" : ""} available
+            {installedPlugins.size > 0 ? ` • ${installedPlugins.size} installed` : ""}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Are you a developer?{" "}
+            <button
+              type="button"
+              onClick={() => router.push("/plugins/create")}
+              className="text-emerald-400 hover:underline"
+            >
+              Create custom plugins →
+            </button>
+          </p>
+        </div>
+      </div>
 
       {/* Update Plugin Dialog */}
       <UpdatePluginDialog
@@ -624,29 +580,11 @@ function MyPluginsContent() {
         open={!!updatePlugin}
         onOpenChange={(open) => { if (!open) setUpdatePlugin(null); }}
         token={token}
-        onUpdated={fetchPlugins}
+        onUpdated={() => {
+          fetchPlugins();
+          setUpdatePlugin(null);
+        }}
       />
-
-      {/* Uninstall Confirmation Dialog */}
-      <AlertDialog open={!!uninstallId} onOpenChange={(open) => { if (!open) setUninstallId(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Uninstall Plugin</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to uninstall this plugin? This will remove all configuration and data associated with it.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => uninstallId && handleUninstall(uninstallId)}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              Uninstall
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
@@ -658,7 +596,9 @@ function MyPluginsContent() {
 export default function PluginsPage() {
   return (
     <ProtectedRoute>
-      <MyPluginsContent />
+      <PluginsContent />
     </ProtectedRoute>
   );
 }
+
+//

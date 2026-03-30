@@ -8,6 +8,12 @@
 
 import { z } from "zod";
 
+// Builtin plugins use UUID, custom plugins use CUID
+const pluginIdSchema = z.string().min(1, "Plugin ID is required").refine(
+  (val) => z.string().cuid().safeParse(val).success || z.string().uuid().safeParse(val).success,
+  "Invalid plugin ID (must be CUID or UUID)"
+);
+
 // ===========================================
 // Common Schemas
 // ===========================================
@@ -172,7 +178,8 @@ export const createWorkflowStepSchema = z.object({
     .min(0, "Order must be non-negative")
     .max(99, "Maximum 100 steps allowed"),
   name: z.string().min(1).max(100).optional(),
-  pluginId: z.string().cuid("Invalid plugin ID"),
+  pluginId: pluginIdSchema,
+  isEnabled: z.boolean().optional(),
   inputMapping: inputMappingSchema,
   config: z.record(z.string(), z.unknown()).optional(),
   gatewayId: z.string().cuid("Invalid gateway ID").optional(),
@@ -187,7 +194,8 @@ export const createWorkflowStepSchema = z.object({
 export const updateWorkflowStepSchema = z.object({
   order: z.number().int().min(0).max(99).optional(),
   name: z.string().min(1).max(100).nullish(),
-  pluginId: z.string().cuid("Invalid plugin ID").optional(),
+  pluginId: pluginIdSchema.optional(),
+  isEnabled: z.boolean().optional(),
   inputMapping: inputMappingSchema,
   config: z.record(z.string(), z.unknown()).optional(),
   gatewayId: z.string().cuid("Invalid gateway ID").nullish(),
