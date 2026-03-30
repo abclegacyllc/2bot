@@ -1,0 +1,10 @@
+export { Header } from './header';
+export { HeroSection } from './hero-section';
+export { InteractiveProductDemo } from './interactive-product-demo';
+export { ProductGallery } from './product-gallery';
+export { FeaturesSection } from './features-section';
+export { PricingSection } from './pricing-section';
+export { TeamSection } from './team-section';
+export { FAQSection } from './faq-section';
+export { CTASection } from './cta-section';
+export { Footer } from './footer';
