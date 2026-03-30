@@ -84,5 +84,9 @@ vitest*.ts
 .sentryclirc
 *.tsbuildinfo
 
-# Accidental psql output files
+# Accidental terminal command fragment files
 ql *
+= *
+leep *
+elect*
+t p = *

@@ -63,8 +63,12 @@ next-env.d.ts
 # Nginx generated route maps
 nginx/gateway-routes.map
 
-# Accidental psql output files
+# Accidental terminal command fragment files
 ql *
+= *
+leep *
+elect*
+t p = *
 
 # IDE / editor tools
 .qodo/
