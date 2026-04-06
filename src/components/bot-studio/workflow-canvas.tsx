@@ -38,12 +38,17 @@ import {
 import "@xyflow/react/dist/style.css";
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { PluginCodeGraph } from "@/components/bot-studio/plugin-code-graph";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useWorkspace } from "@/hooks/use-workspace";
 import type { WorkflowStepItem } from "@/lib/api-client";
+import { apiUrl } from "@/shared/config/urls";
+import type { WorkspaceFileEntry } from "@/shared/types/workspace";
 import {
     AlertCircle,
     ArrowDown,
+    ArrowLeft,
     BarChart3,
     Bot,
     CheckCircle2,
@@ -75,7 +80,32 @@ import {
     Zap,
     type LucideIcon,
 } from "lucide-react";
+import { useTheme } from "next-themes";
+import dynamic from "next/dynamic";
 import { PLUGIN_DRAG_TYPE } from "./workflow-plugin-sidebar";
+
+// Dynamically import Monaco to avoid SSR issues
+const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+      Loading editor...
+    </div>
+  ),
+});
+
+function getLanguage(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  const langMap: Record<string, string> = {
+    ts: "typescript", tsx: "typescript",
+    js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
+    json: "json", md: "markdown",
+    yaml: "yaml", yml: "yaml",
+    html: "html", css: "css",
+    py: "python", sh: "shell",
+  };
+  return langMap[ext || ""] || "plaintext";
+}
 
 // ===========================================
 // Constants
@@ -103,7 +133,7 @@ interface WorkflowCanvasProps {
   onAddStep: (afterOrder: number) => void;
   onDeleteStep: (stepId: string) => Promise<void>;
   onMoveStep: (stepId: string, newOrder: number) => Promise<void>;
-  onDropPlugin?: (pluginId: string, pluginName: string, afterOrder: number) => void;
+  onDropPlugin?: (pluginId: string, pluginName: string, pluginSlug: string, afterOrder: number) => void;
   onDuplicateStep?: (step: WorkflowStepItem) => void;
   onToggleStepEnabled?: (stepId: string, isEnabled: boolean) => Promise<void>;
   onClickTrigger?: () => void;
@@ -227,7 +257,7 @@ function TriggerNode({ data }: NodeProps<Node<TriggerNodeData>>) {
   return (
     <div
       className={`rounded-lg border-2 ${colorClass} px-4 py-3 shadow-sm cursor-pointer hover:shadow-md transition-shadow`}
-      style={{ width: NODE_WIDTH }}
+      style={{ width: NODE_WIDTH, animation: "trigger-breathe 3s ease-in-out infinite" }}
       onClick={data.onClickTrigger}
     >
       <div className="flex items-center gap-2">
@@ -242,7 +272,7 @@ function TriggerNode({ data }: NodeProps<Node<TriggerNodeData>>) {
             {label}
           </p>
         </div>
-        <Radio className="h-4 w-4 text-emerald-500 animate-pulse" />
+        <Radio className="h-4 w-4 text-[var(--canvas-accent)] animate-pulse" />
       </div>
       {filterSummary ? (
         <p className="text-[10px] text-muted-foreground mt-1.5 pl-9 truncate font-mono">
@@ -253,7 +283,7 @@ function TriggerNode({ data }: NodeProps<Node<TriggerNodeData>>) {
           Click to configure filters
         </p>
       )}
-      <Handle type="source" position={Position.Bottom} className="!bg-emerald-500 !w-2.5 !h-2.5 !border-2 !border-background" />
+      <Handle type="source" position={Position.Bottom} className="!w-2.5 !h-2.5 !border-2 !border-background" style={{ backgroundColor: "var(--canvas-accent, #10b981)" }} />
       <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 font-mono whitespace-nowrap pointer-events-none">
         trigger data
       </div>
@@ -315,7 +345,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
 
   const stepDisabled = step.isEnabled === false;
   const stepIconElement = useMemo(
-    () => createElement(getStepIcon(step), { className: "h-3.5 w-3.5 text-emerald-500 shrink-0" }),
+    () => createElement(getStepIcon(step), { className: "h-3.5 w-3.5 text-[var(--canvas-accent)] shrink-0" }),
     [step]
   );
 
@@ -359,10 +389,13 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
             : hasCondition && !isSelected
             ? "border-amber-500/50 bg-amber-500/5 hover:border-amber-500/70 hover:shadow-md"
             : isSelected
-            ? "border-emerald-500 bg-emerald-500/10 shadow-lg shadow-emerald-500/10"
-            : "border-border bg-card hover:border-emerald-500/40 hover:shadow-md"
+            ? "border-[var(--canvas-accent)] bg-[var(--canvas-accent)]/10 shadow-lg shadow-[var(--canvas-accent)]/10"
+            : "border-[var(--node-border)] bg-[var(--node-bg)] hover:border-[var(--canvas-accent)]/40 hover:shadow-md"
       } ${isDisabled ? "opacity-60 pointer-events-none" : ""}`}
-      style={{ width: NODE_WIDTH }}
+      style={{
+        width: NODE_WIDTH,
+        ...(isSelected ? { animation: "node-glow-pulse 2s ease-in-out infinite" } : {}),
+      }}
       onClick={onSelect}
     >
       {/* Conditional diamond marker */}
@@ -371,7 +404,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
           <div className="w-4 h-4 rotate-45 bg-amber-500 border-2 border-background rounded-sm shadow-sm" />
         </div>
       ) : null}
-      <Handle type="target" position={Position.Top} className="!bg-emerald-500 !w-2.5 !h-2.5 !border-2 !border-background" />
+      <Handle type="target" position={Position.Top} className="!w-2.5 !h-2.5 !border-2 !border-background" style={{ backgroundColor: "var(--canvas-accent, #10b981)" }} />
       {/* Input port label */}
       {!stepDisabled ? (
         <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 font-mono whitespace-nowrap pointer-events-none">
@@ -531,7 +564,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
           <Button
             variant="ghost"
             size="sm"
-            className={`h-6 w-6 p-0 ${stepDisabled ? "text-zinc-400" : "text-emerald-500"}`}
+            className={`h-6 w-6 p-0 ${stepDisabled ? "text-zinc-400" : "text-[var(--canvas-accent)]"}`}
             onClick={(e) => { e.stopPropagation(); onToggleEnabled(); }}
             disabled={isDisabled}
             title={stepDisabled ? "Enable step" : "Disable step"}
@@ -541,7 +574,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
         </div>
       </div>
 
-      <Handle type="source" position={Position.Bottom} className="!bg-emerald-500 !w-2.5 !h-2.5 !border-2 !border-background" />
+      <Handle type="source" position={Position.Bottom} className="!w-2.5 !h-2.5 !border-2 !border-background" style={{ backgroundColor: "var(--canvas-accent, #10b981)" }} />
       {/* Output port label */}
       {!stepDisabled ? (
         <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/60 font-mono whitespace-nowrap pointer-events-none">
@@ -561,9 +594,9 @@ function AddStepNode({ data }: NodeProps<Node<AddNodeData>>) {
     // Empty state — larger CTA
     return (
       <div style={{ width: NODE_WIDTH }} className="flex flex-col items-center">
-        <div className="rounded-lg border-2 border-dashed border-emerald-500/30 bg-emerald-500/5 px-6 py-8 text-center w-full hover:border-emerald-500/50 hover:bg-emerald-500/10 transition-colors">
-          <div className="flex items-center justify-center h-10 w-10 rounded-full bg-emerald-500/10 border border-emerald-500/30 mx-auto mb-3">
-            <Plus className="h-5 w-5 text-emerald-500" />
+        <div className="rounded-lg border-2 border-dashed border-[var(--canvas-accent)]/30 bg-[var(--canvas-accent)]/5 px-6 py-8 text-center w-full hover:border-[var(--canvas-accent)]/50 hover:bg-[var(--canvas-accent)]/10 transition-colors">
+          <div className="flex items-center justify-center h-10 w-10 rounded-full bg-[var(--canvas-accent)]/10 border border-[var(--canvas-accent)]/30 mx-auto mb-3">
+            <Plus className="h-5 w-5 text-[var(--canvas-accent)]" />
           </div>
           <p className="text-sm font-medium text-foreground mb-1">Add your first step</p>
           <p className="text-[11px] text-muted-foreground mb-3">
@@ -572,7 +605,7 @@ function AddStepNode({ data }: NodeProps<Node<AddNodeData>>) {
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5 text-xs border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-500"
+            className="gap-1.5 text-xs border-[var(--canvas-accent)]/40 text-[var(--canvas-accent)] hover:bg-[var(--canvas-accent)]/10 hover:text-[var(--canvas-accent)]"
             onClick={data.onAdd}
             disabled={data.isDisabled}
           >
@@ -589,11 +622,11 @@ function AddStepNode({ data }: NodeProps<Node<AddNodeData>>) {
         <Button
           variant="outline"
           size="sm"
-          className="gap-1.5 text-xs border-dashed hover:border-emerald-500 hover:text-emerald-500"
+          className="gap-1.5 text-xs border-dashed hover:border-[var(--canvas-accent)] hover:text-[var(--canvas-accent)]"
           onClick={data.onAdd}
           disabled={data.isDisabled}
         >
-          <Plus className="h-3.5 w-3.5" /> Add a step
+          <Plus className="h-3.5 w-3.5" /> Add Plugin
         </Button>
         <p className="text-[10px] text-muted-foreground/50">Choose a plugin to process data</p>
       </div>
@@ -609,7 +642,7 @@ function BotOutputNode({ data }: NodeProps<Node<BotOutputNodeData>>) {
   return (
     <div
       className="rounded-lg border-2 border-sky-500/40 bg-sky-500/5 px-4 py-3 shadow-sm"
-      style={{ width: NODE_WIDTH }}
+      style={{ width: NODE_WIDTH, animation: "bot-output-pulse 2.5s ease-in-out infinite" }}
     >
       <Handle type="target" position={Position.Top} className="!bg-sky-500 !w-2.5 !h-2.5 !border-2 !border-background" />
       <div className="flex items-center gap-2">
@@ -773,7 +806,8 @@ function InsertBetweenEdge({
           className="overflow-visible"
         >
           <button
-            className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-emerald-500 bg-background text-emerald-500 shadow-md hover:bg-emerald-500 hover:text-white transition-all cursor-pointer"
+            className="flex h-6 w-6 items-center justify-center rounded-full border-2 bg-background shadow-md transition-all cursor-pointer"
+            style={{ borderColor: "var(--canvas-accent, #10b981)", color: "var(--canvas-accent, #10b981)" }}
             onClick={(e) => {
               e.stopPropagation();
               data.onInsert?.();
@@ -804,6 +838,20 @@ const edgeTypes: EdgeTypes = {
 };
 
 // ===========================================
+// Helpers
+// ===========================================
+
+/** Flatten nested workspace file entries into a flat list */
+function flattenFiles(entries: WorkspaceFileEntry[]): WorkspaceFileEntry[] {
+  const result: WorkspaceFileEntry[] = [];
+  for (const entry of entries) {
+    result.push(entry);
+    if (entry.children) result.push(...flattenFiles(entry.children));
+  }
+  return result;
+}
+
+// ===========================================
 // Main Component
 // ===========================================
 
@@ -827,6 +875,110 @@ export function WorkflowCanvas({
   const [isDragOver, setIsDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+
+  // ----- Layer 2: drill-down into plugin code graph -----
+  const [layer2Step, setLayer2Step] = useState<WorkflowStepItem | null>(null);
+  const [codeFiles, setCodeFiles] = useState<Map<string, string> | null>(null);
+  const [codeLoading, setCodeLoading] = useState(false);
+  const [codeError, setCodeError] = useState<string | undefined>();
+  const { workspace, readFile: wsReadFile } = useWorkspace({ autoPoll: false });
+
+  // ----- Layer 3: code viewer for selected file -----
+  const [layer3File, setLayer3File] = useState<string | null>(null);
+  const { resolvedTheme } = useTheme();
+
+  // Exit Layer 2 if the drilled-into step was deleted
+  useEffect(() => {
+    if (layer2Step && !steps.some((s) => s.id === layer2Step.id)) {
+      setLayer2Step(null);
+    }
+  }, [steps, layer2Step]);
+
+  // Reset Layer 3 when Layer 2 step changes
+  useEffect(() => {
+    setLayer3File(null);
+  }, [layer2Step]);
+
+  // Fetch plugin files when Layer 2 step changes
+  useEffect(() => {
+    if (!layer2Step?.entryFile || !workspace?.id) return;
+    setCodeLoading(true);
+    setCodeError(undefined);
+    setCodeFiles(null);
+
+    const entryDir = layer2Step.entryFile.includes("/")
+      ? layer2Step.entryFile.substring(0, layer2Step.entryFile.lastIndexOf("/"))
+      : "";
+    const dirPath = entryDir || "/plugins";
+
+    // Single-file plugins sit directly in the shared plugins/ folder.
+    // Only fetch directory listing for plugins that have their own subdirectory.
+    const isSingleFilePlugin = entryDir.endsWith("/plugins") || entryDir === "plugins" || entryDir === "";
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const filesMap = new Map<string, string>();
+        const entryContent = await wsReadFile(layer2Step.entryFile!);
+        const entryRelative = entryDir
+          ? layer2Step.entryFile!.substring(entryDir.length + 1)
+          : layer2Step.entryFile!;
+        filesMap.set(entryRelative, entryContent);
+
+        if (!isSingleFilePlugin) {
+          try {
+            const res = await fetch(
+              apiUrl(`/workspace/${workspace.id}/files?path=${encodeURIComponent("/" + dirPath)}&recursive=true`),
+              { headers: { Authorization: `Bearer ${localStorage.getItem("token") ?? ""}` } }
+            );
+            if (res.ok) {
+              const json = await res.json() as Record<string, unknown>;
+              const entries: WorkspaceFileEntry[] = (("data" in json) ? json.data : json) as WorkspaceFileEntry[];
+              const codeExtensions = [".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx", ".json"];
+              const fileEntries = flattenFiles(entries).filter(
+                (f) => f.type === "FILE" && codeExtensions.some((ext) => f.name.endsWith(ext))
+              );
+              const toRead = fileEntries.slice(0, 30);
+              const results = await Promise.allSettled(
+                toRead.map(async (f) => {
+                  const content = await wsReadFile(f.path.startsWith("/") ? f.path.slice(1) : f.path);
+                  const relativePath = entryDir
+                    ? f.path.replace(new RegExp(`^/?${entryDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?`), "")
+                    : f.path;
+                  return { path: relativePath, content };
+                })
+              );
+              for (const r of results) {
+                if (r.status === "fulfilled") filesMap.set(r.value.path, r.value.content);
+              }
+            }
+          } catch {
+            // Non-critical: we still have the entry file
+          }
+        }
+
+        if (!cancelled) setCodeFiles(filesMap);
+      } catch (err) {
+        if (!cancelled) setCodeError(err instanceof Error ? err.message : "Failed to load plugin files");
+      } finally {
+        if (!cancelled) setCodeLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [layer2Step?.id, layer2Step?.entryFile, workspace?.id, wsReadFile]);
+
+  const handleNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (node.type === "step") {
+        const stepData = node.data as StepNodeData;
+        if (stepData.step.entryFile) {
+          setLayer2Step(stepData.step);
+        }
+      }
+    },
+    []
+  );
 
   const sortedSteps = useMemo(
     () => [...steps].sort((a, b) => a.order - b.order),
@@ -949,10 +1101,10 @@ export function WorkflowCanvas({
         labelBgBorderRadius: 4,
         style: stepIsDisabled
           ? { stroke: "#71717a", strokeWidth: 1.5, opacity: 0.3, strokeDasharray: "6 4" }
-          : { stroke: "#10b981", strokeWidth: 2 },
+          : { stroke: "var(--edge-color, #10b981)", strokeWidth: 2 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: stepIsDisabled ? "#71717a" : "#10b981",
+          color: stepIsDisabled ? "#71717a" : "var(--edge-color, #10b981)",
           width: 18,
           height: 18,
         },
@@ -994,10 +1146,10 @@ export function WorkflowCanvas({
         },
         labelBgPadding: [6, 3] as [number, number],
         labelBgBorderRadius: 4,
-        style: { stroke: "#0ea5e9", strokeWidth: 2 },
+        style: { stroke: "var(--edge-animated, #0ea5e9)", strokeWidth: 2 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: "#0ea5e9",
+          color: "var(--edge-animated, #0ea5e9)",
           width: 18,
           height: 18,
         },
@@ -1119,10 +1271,10 @@ export function WorkflowCanvas({
       if (!raw || !onDropPlugin) return;
 
       try {
-        const plugin = JSON.parse(raw) as { id: string; name: string };
+        const plugin = JSON.parse(raw) as { id: string; name: string; slug: string };
         const last = sortedSteps[sortedSteps.length - 1];
         const afterOrder = last ? last.order + 1 : 0;
-        onDropPlugin(plugin.id, plugin.name, afterOrder);
+        onDropPlugin(plugin.id, plugin.name, plugin.slug ?? "", afterOrder);
       } catch {
         // Invalid drag data — ignore
       }
@@ -1185,81 +1337,168 @@ export function WorkflowCanvas({
     <div
       ref={reactFlowWrapper}
       className={`rounded-lg border overflow-hidden transition-colors relative ${
-        isDragOver
-          ? "border-emerald-500 bg-emerald-500/5 border-dashed"
-          : "border-border bg-background/50"
+        layer2Step
+          ? "border-border"
+          : isDragOver
+            ? "border-[var(--canvas-accent)] bg-[var(--canvas-accent)]/5 border-dashed"
+            : "border-border"
       }`}
-      style={{ height: "calc(100vh - 280px)", minHeight: 500 }}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      style={{ height: "calc(100vh - 280px)", minHeight: 500, backgroundColor: "var(--canvas-bg, var(--background))" }}
+      onDragOver={layer2Step ? undefined : handleDragOver}
+      onDragLeave={layer2Step ? undefined : handleDragLeave}
+      onDrop={layer2Step ? undefined : handleDrop}
     >
-      {/* Drop visual feedback overlay */}
-      {isDragOver ? (
-        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-          <div className="bg-emerald-500/10 border-2 border-dashed border-emerald-500/40 rounded-lg px-6 py-3">
-            <p className="text-sm font-medium text-emerald-500">
-              Drop to add as new step
-            </p>
+      {layer2Step ? (
+        /* ========== Layer 2/3: Code Graph or Code Viewer ========== */
+        <div className="flex flex-col h-full">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card/80 backdrop-blur-sm shrink-0 z-10">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => { setLayer2Step(null); setLayer3File(null); }}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Workflow
+            </Button>
+            <span className="text-muted-foreground text-xs">/</span>
+            {layer3File ? (
+              <>
+                <button
+                  className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  onClick={() => setLayer3File(null)}
+                >
+                  {layer2Step.name || layer2Step.pluginName || layer2Step.pluginSlug}
+                </button>
+                <span className="text-muted-foreground text-xs">/</span>
+                <span className="text-xs font-medium truncate font-mono">{layer3File}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xs font-medium truncate">
+                  {layer2Step.name || layer2Step.pluginName || layer2Step.pluginSlug}
+                </span>
+                {layer2Step.entryFile ? (
+                  <span className="text-[10px] text-muted-foreground font-mono ml-auto">
+                    {layer2Step.entryFile.replace(/^bots\/[^/]+\/plugins\//, "")}
+                  </span>
+                ) : null}
+              </>
+            )}
+          </div>
+          <div className="flex-1 min-h-0">
+            {layer3File ? (
+              /* ---- Layer 3: Code Viewer ---- */
+              <MonacoEditor
+                height="100%"
+                value={codeFiles?.get(layer3File) ?? "// File content not available"}
+                language={getLanguage(layer3File)}
+                theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  fontSize: 13,
+                  lineNumbers: "on",
+                  renderLineHighlight: "none",
+                  folding: true,
+                }}
+              />
+            ) : (
+              /* ---- Layer 2: Code Graph ---- */
+              <PluginCodeGraph
+                files={codeFiles}
+                entryFile={
+                  layer2Step.entryFile?.includes("/")
+                    ? layer2Step.entryFile.substring(layer2Step.entryFile.lastIndexOf("/") + 1)
+                    : layer2Step.entryFile ?? ""
+                }
+                isLoading={codeLoading}
+                error={codeError}
+                onFileClick={(path) => setLayer3File(path)}
+              />
+            )}
           </div>
         </div>
-      ) : null}
+      ) : (
+        /* ========== Layer 1: Workflow Canvas ========== */
+        <>
+          {/* Drop visual feedback overlay */}
+          {isDragOver ? (
+            <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+              <div className="bg-[var(--canvas-accent)]/10 border-2 border-dashed border-[var(--canvas-accent)]/40 rounded-lg px-6 py-3">
+                <p className="text-sm font-medium text-[var(--canvas-accent)]">
+                  Drop to add as new step
+                </p>
+              </div>
+            </div>
+          ) : null}
 
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={handleNodeClick}
-        onNodeContextMenu={handleNodeContextMenu}
-        onPaneClick={handlePaneClick}
-        onNodeDragStop={handleNodeDragStop}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.4, maxZoom: 1 }}
-        panOnDrag
-        zoomOnScroll
-        zoomOnPinch
-        minZoom={0.3}
-        maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-        nodesDraggable={!isDisabled}
-        nodesConnectable={false}
-        elementsSelectable
-        selectNodesOnDrag={false}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="hsl(var(--muted-foreground))" className="opacity-20" />
-        <Controls
-          showInteractive={false}
-          className="!bg-card !border-border !shadow-sm [&>button]:!bg-card [&>button]:!border-border [&>button]:!fill-foreground [&>button:hover]:!bg-muted"
-        />
-        <MiniMap
-          nodeStrokeWidth={3}
-          nodeColor={(n) => {
-            if (n.type === "trigger") return "hsl(142 71% 45%)";
-            if (n.type === "step") return n.data?.isSelected ? "hsl(142 71% 45%)" : "hsl(var(--muted-foreground))";
-            return "transparent";
-          }}
-          maskColor="hsl(var(--background) / 0.8)"
-          className="!bg-card/80 !border-border !shadow-sm"
-          pannable
-          zoomable
-        />
-        <AutoFitOnChange stepCount={sortedSteps.length} />
-        {/* Step count & keyboard hint */}
-        <Panel position="top-right" className="!m-2">
-          <div className="text-[10px] text-muted-foreground bg-card/80 backdrop-blur-sm border border-border rounded px-2 py-1 space-y-0.5">
-            <p>{sortedSteps.length} step{sortedSteps.length !== 1 ? "s" : ""}</p>
-            <p className="opacity-60">Right-click for menu · Del to remove</p>
-          </div>
-        </Panel>
-      </ReactFlow>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={handleNodeClick}
+            onNodeDoubleClick={handleNodeDoubleClick}
+            onNodeContextMenu={handleNodeContextMenu}
+            onPaneClick={handlePaneClick}
+            onNodeDragStop={handleNodeDragStop}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.4, maxZoom: 1 }}
+            panOnDrag
+            zoomOnScroll
+            zoomOnPinch
+            minZoom={0.3}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
+            nodesDraggable={!isDisabled}
+            nodesConnectable={false}
+            elementsSelectable
+            selectNodesOnDrag={false}
+          >
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={parseInt(getComputedStyle(document.documentElement).getPropertyValue("--canvas-grid-size").trim() || "16", 10)}
+              size={1}
+              color="var(--canvas-grid, hsl(var(--muted-foreground)))"
+              className="opacity-30"
+              style={{ backgroundColor: "var(--canvas-bg)" }}
+            />
+            <Controls
+              showInteractive={false}
+              className="!bg-card !border-border !shadow-sm [&>button]:!bg-card [&>button]:!border-border [&>button]:!fill-foreground [&>button:hover]:!bg-muted"
+            />
+            <MiniMap
+              nodeStrokeWidth={3}
+              nodeColor={(n) => {
+                if (n.type === "trigger") return "var(--canvas-accent, hsl(142 71% 45%))";
+                if (n.type === "step") return n.data?.isSelected ? "var(--canvas-accent, hsl(142 71% 45%))" : "hsl(var(--muted-foreground))";
+                return "transparent";
+              }}
+              maskColor="hsl(var(--background) / 0.8)"
+              className="!bg-card/80 !border-border !shadow-sm"
+              pannable
+              zoomable
+            />
+            <AutoFitOnChange stepCount={sortedSteps.length} />
+            {/* Step count & keyboard hint */}
+            <Panel position="top-right" className="!m-2">
+              <div className="text-[10px] text-muted-foreground bg-card/80 backdrop-blur-sm border border-border rounded px-2 py-1 space-y-0.5">
+                <p>{sortedSteps.length} step{sortedSteps.length !== 1 ? "s" : ""}</p>
+                <p className="opacity-60">Double-click step to view code · Right-click for menu</p>
+              </div>
+            </Panel>
+          </ReactFlow>
 
-      {/* Context menu */}
-      {contextMenu && !isDisabled ? (
-        <CanvasContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
-      ) : null}
+          {/* Context menu */}
+          {contextMenu && !isDisabled ? (
+            <CanvasContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

@@ -121,6 +121,9 @@ cursorRouter.post(
       repoUrl: body.repoUrl,
       repoBranch: body.repoBranch,
       description: body.description,
+      workflowContext: body.workflowContext,
+      studioMode: body.studioMode,
+      resumeSessionId: body.resumeSessionId,
     };
 
     // SSE headers
@@ -174,9 +177,9 @@ cursorRouter.post(
 /**
  * POST /api/cursor/worker-answer
  *
- * Provide an answer to a pending ask_user question.
- * The worker stream pauses when it asks the user a question via ask_user.
- * This endpoint resolves that pending question so the stream continues.
+ * Provide an answer to a pending question (destructive action approval).
+ * For ask_user questions, sessions are now suspended to DB — use
+ * POST /worker-stream with resumeSessionId instead.
  *
  * Body: { sessionId: string; answer: string }
  */
@@ -190,12 +193,98 @@ cursorRouter.post(
       throw new BadRequestError("sessionId and answer are required");
     }
 
+    // Try in-memory resolve first (for destructive-action approvals that still use Promises)
     const resolved = resolveUserAnswer(sessionId, answer, req.user.id);
-    if (!resolved) {
-      throw new BadRequestError("No pending question found for this session. It may have timed out.");
+    if (resolved) {
+      res.json({ success: true, data: { message: "Answer received" } });
+      return;
     }
 
-    res.json({ success: true, data: { message: "Answer received" } });
+    // Check if this is a suspended session — guide the client to use resume
+    const session = await agentSessionService.getSessionForResume(sessionId);
+    if (session && session.userId === req.user.id) {
+      res.status(200).json({
+        success: true,
+        data: {
+          message: "Session is suspended. Use POST /worker-stream with resumeSessionId to resume.",
+          suspended: true,
+          sessionId,
+        },
+      });
+      return;
+    }
+
+    throw new BadRequestError("No pending question found for this session. It may have timed out or completed.");
+  }),
+);
+
+/**
+ * POST /api/cursor/worker-restore
+ *
+ * Undo all file modifications from a Cursor Coder session.
+ * Restores files to their pre-modification state with conflict detection.
+ *
+ * Body: { sessionId: string; force?: boolean }
+ */
+cursorRouter.post(
+  "/worker-restore",
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw new BadRequestError("Not authenticated");
+
+    const { sessionId, force } = req.body as { sessionId?: string; force?: boolean };
+    if (!sessionId) {
+      throw new BadRequestError("sessionId is required");
+    }
+
+    // Need a bridge client for file operations
+    const { getBridgeClient } = await import("@/modules/cursor/cursor-bridge");
+    const bridge = await getBridgeClient(req.user.id, (req.user as { organizationId?: string | null }).organizationId ?? null);
+    if (!bridge?.client) {
+      throw new BadRequestError("No workspace connection. The workspace must be running to restore files.");
+    }
+
+    const { restoreFileActions } = await import("@/modules/cursor");
+    const result = await restoreFileActions(sessionId, bridge.client, !!force);
+
+    res.json({ success: true, data: result });
+  }),
+);
+
+/**
+ * GET /api/cursor/worker-actions
+ *
+ * Get tracked file actions for a Cursor session (for undo UI).
+ *
+ * Query: ?sessionId=X
+ */
+cursorRouter.get(
+  "/worker-actions",
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw new BadRequestError("Not authenticated");
+
+    const sessionId = req.query.sessionId as string | undefined;
+    if (!sessionId) {
+      throw new BadRequestError("sessionId query parameter is required");
+    }
+
+    const { getSessionActions } = await import("@/modules/cursor");
+    const actions = getSessionActions(sessionId);
+
+    res.json({
+      success: true,
+      data: {
+        sessionId,
+        actionCount: actions.length,
+        actions: actions.map((a) => ({
+          id: a.id,
+          type: a.type,
+          path: a.path,
+          contentTruncated: a.contentTruncated,
+          toolCallId: a.toolCallId,
+          timestamp: a.timestamp,
+        })),
+      },
+    });
   }),
 );
 

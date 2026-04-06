@@ -59,6 +59,7 @@
   ],
   "exclude": [
     "node_modules",
-    "_archive_"
+    "_archive_",
+    ".next-admin"
   ]
 }

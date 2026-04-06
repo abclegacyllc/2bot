@@ -24,6 +24,7 @@ import { workflowService } from "@/modules/workflow/workflow.service";
 import {
     createWorkflowSchema,
     createWorkflowStepSchema,
+    installPluginStepSchema,
     triggerWorkflowSchema,
     updateWorkflowSchema,
     updateWorkflowStepSchema,
@@ -192,6 +193,34 @@ workflowRouter.delete(
 // ===========================================
 // Workflow Steps
 // ===========================================
+
+/**
+ * POST /workflows/:id/steps/install-plugin
+ * Install a marketplace plugin as a workflow step (unified operation).
+ * Deploys template to container + creates step in one call.
+ */
+workflowRouter.post(
+  "/:id/steps/install-plugin",
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = getOwner(req);
+
+    const parseResult = installPluginStepSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
+    }
+
+    const step = await workflowService.installPluginStep(
+      owner,
+      getParam(req, "id"),
+      parseResult.data
+    );
+
+    res.status(201).json({
+      success: true,
+      data: step,
+    });
+  })
+);
 
 /**
  * POST /workflows/:id/steps

@@ -378,7 +378,7 @@ export function checkSessionLimits(
  * Large outputs (e.g., from ls -la) are cut to a reasonable size
  * with a note about truncation.
  */
-export function truncateToolOutput(output: string, maxChars = 8000): string {
+export function truncateToolOutput(output: string, maxChars = 3000): string {
   if (output.length <= maxChars) return output;
 
   const truncated = output.substring(0, maxChars);

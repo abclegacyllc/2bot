@@ -777,7 +777,7 @@ export function BotDetailView({
   }, []);
 
   const handleDropPlugin = useCallback(
-    async (pluginId: string, pluginName: string, afterOrder: number) => {
+    async (pluginId: string, pluginName: string, _pluginSlug: string, afterOrder: number) => {
       if (!workflow) return;
       try {
         const result = await addWorkflowStep(

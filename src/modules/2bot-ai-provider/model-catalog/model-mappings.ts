@@ -61,8 +61,8 @@ const MANUAL_MAPPINGS: Partial<Record<TwoBotAIModelId, TwoBotAIModelMapping>> = 
     },
   },
 
-  '2bot-ai-voice-ultra': {
-    twobotAIModelId: '2bot-ai-voice-ultra',
+  '2bot-ai-voice-premium': {
+    twobotAIModelId: '2bot-ai-voice-premium',
     providerOptions: [OPENAI_TTS1_HD],
     defaultStrategy: 'priority',
     strategyConfig: {

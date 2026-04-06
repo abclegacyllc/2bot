@@ -16,20 +16,25 @@ export type {
     CursorAgentDone,
     CursorAgentError, CursorAgentEvent, CursorAgentToolStart,
     CursorAskUserEvent,
+    CursorFileActionEvent,
     CursorWorkerStartEvent,
     CursorWorkerSwitchEvent,
     ToolStartMeta
 } from "./cursor-agent.types";
 
+// File action tracking (undo support)
+export { getSessionActions, restoreSession as restoreFileActions } from "./cursor-file-actions";
+export type { CursorFileAction, RestoreResult } from "./cursor-file-actions";
+
 // Multi-worker system
 export { getWorkerTools } from "./cursor-worker-tools";
 export type { WorkerToolDefinition } from "./cursor-worker-tools";
-export { WORKER_META, WORKER_TOOL_NAMES, buildAssistantSystemPrompt, buildCoderSystemPrompt, routeToWorker } from "./cursor-workers";
+export { WORKER_META, WORKER_TOOL_NAMES, WORKFLOW_TOOL_NAMES, buildAssistantSystemPrompt, buildCoderSystemPrompt, routeToWorker } from "./cursor-workers";
 export type { CursorWorkerMeta, CursorWorkerType, WorkerPromptContext } from "./cursor-workers";
 
 // Worker runner (multi-worker agentic loop)
 export { resolveUserAnswer, runWorkerStream } from "./cursor-worker-runner";
-export type { WorkerStreamRequest } from "./cursor-worker-runner";
+export type { WorkerStreamRequest, WorkflowContext } from "./cursor-worker-runner";
 
 // Repo analyzer
 export { analyzeRepo } from "./repo-analyzer.service";

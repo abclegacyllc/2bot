@@ -315,6 +315,9 @@ function DashboardContent() {
       const currentOrg = availableOrgs.find(o => o.id === orgId);
       const orgSlug = currentOrg?.slug || orgId;
       router.replace(`/organizations/${orgSlug}`);
+    } else if (!isOrgContext) {
+      // Personal users go straight to Studio
+      router.replace("/studio");
     }
   }, [isOrgContext, orgId, availableOrgs, router, pathname]);
 

@@ -1217,6 +1217,21 @@ model WorkflowStep {
   // Error handling
   onError         String    @default("stop")  // "stop", "continue", "retry"
   maxRetries      Int       @default(0)       @map("max_retries")
+
+  // ─── Unified Engine: fields absorbed from UserPlugin ───────────────
+  // Workspace entry file path (relative to workspace root)
+  entryFile       String?   @map("entry_file") @db.VarChar(500)
+  
+  // Storage quota for local KV store in MB (0 = unlimited, default 50)
+  storageQuotaMb  Int       @default(50) @map("storage_quota_mb")
+
+  // Reference to legacy UserPlugin record (for migration/backward compat)
+  userPluginId    String?   @map("user_plugin_id")
+
+  // Execution stats
+  executionCount  Int       @default(0) @map("execution_count")
+  lastExecutedAt  DateTime? @map("last_executed_at")
+  lastError       String?   @map("last_error")
   
   // Timestamps
   createdAt       DateTime  @default(now()) @map("created_at")
@@ -1946,7 +1961,7 @@ model AgentSession {
   model            String
 
   // Session lifecycle
-  status           String    @default("running")  // running, completed, max_iterations, max_credits, error, cancelled
+  status           String    @default("running")  // running, completed, paused, max_iterations, max_credits, error, cancelled
 
   // Metrics
   iterationCount   Int       @default(0) @map("iteration_count")
@@ -1959,6 +1974,10 @@ model AgentSession {
   prompt           String    @db.Text          // User's original prompt
   finalResponse    String?   @map("final_response") @db.Text  // AI's final text (on completion)
   error            String?   @db.Text          // Error message (on failure)
+
+  // Suspend/Resume — enables Copilot-style "answer whenever" UX
+  messages         Json?                        // Full LLM messages array snapshot (saved on suspend)
+  suspendedState   Json?     @map("suspended_state") // Worker state blob: worker type, metrics, context (saved on suspend)
 
   // Duration
   durationMs       Int?      @map("duration_ms")

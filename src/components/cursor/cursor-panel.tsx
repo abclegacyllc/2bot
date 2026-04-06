@@ -40,7 +40,7 @@ import {
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ModelSelector, type RealModelOption } from "@/components/2bot-ai-assistant/model-selector";
+import { ModelSelector, type RealModelOption } from "@/components/shared/model-selector";
 import type { CursorAgentEvent } from "@/modules/cursor/cursor-agent.types";
 import type { CursorWorkerType } from "@/modules/cursor/cursor-workers";
 import { describeAgentEvent, mapAgentEventToActions } from "./agent-event-mapper";
@@ -314,7 +314,10 @@ export function CursorPanel() {
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.data?.models) setRealModels(data.data.models);
+        if (data?.data?.models) {
+          // Only show models that support function calling (agent requires tools)
+          setRealModels(data.data.models.filter((m: { functionCalling?: boolean }) => m.functionCalling !== false));
+        }
       })
       .catch(() => { /* ignore */ });
   }, []);
@@ -340,6 +343,24 @@ export function CursorPanel() {
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [askUserPending]);
+
+  // Restore suspended session from localStorage on mount
+  const restoredSuspendedRef = useRef(false);
+  useEffect(() => {
+    if (restoredSuspendedRef.current) return;
+    try {
+      const raw = localStorage.getItem(`cursor-suspended-panel`);
+      if (raw) {
+        const pending = JSON.parse(raw) as { sessionId: string; sensitive: boolean };
+        if (pending.sessionId) {
+          restoredSuspendedRef.current = true;
+          queueMicrotask(() => {
+            setAskUserPending(pending);
+          });
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   const cursor = useCursorOptional();
   const pathname = usePathname();
@@ -548,6 +569,20 @@ export function CursorPanel() {
           break;
         }
 
+        case "suspended": {
+          // Session suspended — the stream is closing. Save pending question to localStorage.
+          addMessage({ role: "assistant", content: event.question, status: "success" });
+          const pending = { sessionId: event.sessionId, sensitive: event.sensitive ?? false };
+          setAskUserPending(pending);
+          try {
+            localStorage.setItem(
+              `cursor-suspended-panel`,
+              JSON.stringify(pending),
+            );
+          } catch { /* ignore */ }
+          break;
+        }
+
         case "thinking": {
           if (msgId) {
             updateMessage(msgId, { content: event.text.slice(0, 200), status: "thinking" });
@@ -632,15 +667,54 @@ export function CursorPanel() {
     async (command: string) => {
       if (!command.trim()) return;
 
-      // ── Ask-user answer: send the answer to the worker stream ──
+      // ── Ask-user answer: resume the suspended session via new stream ──
       if (askUserPending && !askUserPending.sensitive) {
         const text = command.trim();
         addMessage({ role: "user", content: text });
         setInput("");
+        const savedSessionId = askUserPending.sessionId;
         setAskUserPending(null);
-        const token = localStorage.getItem("token") || "";
-        const brain = await loadWorkerBrain();
-        await brain.sendWorkerAnswer(askUserPending.sessionId, text, token);
+        try { localStorage.removeItem(`cursor-suspended-panel`); } catch { /* ignore */ }
+
+        // Resume via a new stream with resumeSessionId
+        setIsRunning(true);
+        const msgId = addMessage({ role: "assistant", content: "Resuming...", status: "thinking" });
+        assistantMsgIdRef.current = msgId;
+
+        try {
+          const token = localStorage.getItem("token") || "";
+          const brain = await loadWorkerBrain();
+          const cleanup = brain.streamWorker(
+            {
+              message: text,
+              resumeSessionId: savedSessionId,
+              modelId: selectedModel !== "auto" ? selectedModel : undefined,
+            },
+            token,
+            handleWorkerEvent,
+            () => {
+              assistantMsgIdRef.current = null;
+              workerCleanupRef.current = null;
+              setIsRunning(false);
+              setActiveWorker(null);
+            },
+            (errMsg) => {
+              playError();
+              if (assistantMsgIdRef.current) {
+                updateMessage(assistantMsgIdRef.current, { content: errMsg, status: "error" });
+              }
+              assistantMsgIdRef.current = null;
+              workerCleanupRef.current = null;
+              setIsRunning(false);
+              setActiveWorker(null);
+            },
+          );
+          workerCleanupRef.current = cleanup;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          updateMessage(msgId, { content: `Error: ${msg}`, status: "error" });
+          setIsRunning(false);
+        }
         return;
       }
 
@@ -705,7 +779,7 @@ export function CursorPanel() {
         setIsRunning(false);
       }
     },
-    [cursor, isRunning, askUserPending, handleWorkerEvent, addMessage, updateMessage, selectedModel],
+    [cursor, isRunning, askUserPending, handleWorkerEvent, addMessage, updateMessage, selectedModel, repoUrl],
   );
 
   const handleSubmit = (e: React.FormEvent) => {

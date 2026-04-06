@@ -18,6 +18,7 @@
 
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 import type { AgentSessionStatus, AgentToolResult } from "./agent.types";
 
@@ -168,6 +169,121 @@ export async function completeSession(params: {
     log.error(
       { sessionId: params.id, error: (error as Error).message },
       "Failed to complete agent session record",
+    );
+  }
+}
+
+// ===========================================
+// Suspend / Resume (Copilot-style persistence)
+// ===========================================
+
+/**
+ * Suspend a running session — save full state to DB so it can resume later.
+ * Called when the AI asks the user a question (ask_user tool).
+ * The SSE stream closes after this; the user can answer hours/days later.
+ */
+export async function suspendSession(params: {
+  id: string;
+  messages: unknown[];
+  suspendedState: Record<string, unknown>;
+  iterationCount: number;
+  toolCallCount: number;
+  totalCreditsUsed: number;
+  inputTokens: number;
+  outputTokens: number;
+}): Promise<void> {
+  try {
+    await prisma.agentSession.update({
+      where: { id: params.id },
+      data: {
+        status: "paused",
+        messages: params.messages as object,
+        suspendedState: params.suspendedState as object,
+        iterationCount: params.iterationCount,
+        toolCallCount: params.toolCallCount,
+        totalCreditsUsed: params.totalCreditsUsed,
+        inputTokens: params.inputTokens,
+        outputTokens: params.outputTokens,
+      },
+    });
+
+    log.info({ sessionId: params.id }, "Agent session suspended (paused)");
+  } catch (error) {
+    log.error(
+      { sessionId: params.id, error: (error as Error).message },
+      "Failed to suspend agent session",
+    );
+    throw error; // Critical — if state isn't saved, resume is impossible
+  }
+}
+
+/**
+ * Load a suspended session for resume.
+ * Returns null if the session doesn't exist or isn't paused.
+ */
+export async function getSessionForResume(sessionId: string) {
+  try {
+    const session = await prisma.agentSession.findUnique({
+      where: { id: sessionId },
+      select: {
+        id: true,
+        userId: true,
+        organizationId: true,
+        workspaceId: true,
+        model: true,
+        status: true,
+        messages: true,
+        suspendedState: true,
+        prompt: true,
+        startedAt: true,
+      },
+    });
+
+    if (!session) {
+      log.warn({ sessionId }, "Session not found for resume");
+      return null;
+    }
+
+    if (session.status !== "paused") {
+      log.warn({ sessionId, status: session.status }, "Session is not paused — cannot resume");
+      return null;
+    }
+
+    if (!session.messages || !session.suspendedState) {
+      log.warn({ sessionId }, "Session missing messages or suspendedState");
+      return null;
+    }
+
+    return session;
+  } catch (error) {
+    log.error(
+      { sessionId, error: (error as Error).message },
+      "Failed to load session for resume",
+    );
+    return null;
+  }
+}
+
+/**
+ * Mark a paused session as running again (called when resume starts).
+ */
+export async function resumeSession(sessionId: string): Promise<void> {
+  try {
+    await prisma.agentSession.update({
+      where: { id: sessionId },
+      data: {
+        status: "running",
+        // Clear saved state — it's now loaded into the live worker
+        messages: Prisma.DbNull,
+        suspendedState: Prisma.DbNull,
+      },
+    });
+
+    log.info({ sessionId }, "Agent session resumed");
+  } catch (error) {
+    log.error(
+      { sessionId, error: (error as Error).message },
+      "Failed to mark session as resumed",
     );
   }
 }

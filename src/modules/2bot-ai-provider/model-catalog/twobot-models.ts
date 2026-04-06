@@ -105,17 +105,6 @@ const TRANSCRIBE_FEATURES: TwoBotAIModelFeatures = {
 };
 
 // Code Generation feature presets
-const CODE_FREE_FEATURES: TwoBotAIModelFeatures = {
-  streaming: true,
-  functionCalling: true,  // gemma-3n supports tool calling
-  vision: false,
-  jsonMode: false,
-  systemMessage: true,
-  multiTurn: true,
-  reasoning: false,
-  codeExecution: true,
-};
-
 const CODE_LITE_FEATURES: TwoBotAIModelFeatures = {
   streaming: true,
   functionCalling: true,
@@ -156,40 +145,15 @@ const CODE_ULTRA_FEATURES: TwoBotAIModelFeatures = {
 /**
  * All 2Bot AI model definitions
  * 
- * 4-Tier System:
- * - free: Zero-cost AI for simple tasks (available to all plans)
+ * 3-Tier System:
  * - lite: Fast and affordable for everyday tasks
  * - pro: Balanced performance and quality
- * - ultra: Maximum capability for demanding tasks
+ * - premium: Maximum capability for demanding tasks
  */
 export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
   // ==========================================================================
   // Text Generation Models
   // ==========================================================================
-
-  '2bot-ai-text-free': {
-    id: '2bot-ai-text-free',
-    displayName: '2Bot AI Text Free',
-    description: 'Free AI for simple tasks — no credits required',
-    capability: 'text-generation',
-    tier: 'free',
-    maxContextTokens: 32768,
-    maxOutputTokens: 4096,
-    isAvailable: true,
-    isDeprecated: false,
-    releasedAt: new Date('2025-07-01'),
-    features: {
-      streaming: true,
-      functionCalling: false,
-      vision: false,
-      jsonMode: false,
-      systemMessage: true,
-      multiTurn: true,
-      reasoning: false,
-      codeExecution: false,
-    },
-    tags: ['free', 'simple', 'no-credits'],
-  },
 
   '2bot-ai-text-lite': {
     id: '2bot-ai-text-lite',
@@ -221,12 +185,12 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
     tags: ['balanced', 'vision', 'code', 'recommended'],
   },
 
-  '2bot-ai-text-ultra': {
-    id: '2bot-ai-text-ultra',
-    displayName: '2Bot AI Text Ultra',
+  '2bot-ai-text-premium': {
+    id: '2bot-ai-text-premium',
+    displayName: '2Bot AI Text Premium',
     description: 'Maximum capability with advanced reasoning',
     capability: 'text-generation',
-    tier: 'ultra',
+    tier: 'premium',
     maxContextTokens: 200000,
     maxOutputTokens: 32768,
     isAvailable: true,
@@ -239,21 +203,6 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
   // ==========================================================================
   // Code Generation Models
   // ==========================================================================
-
-  '2bot-ai-code-free': {
-    id: '2bot-ai-code-free',
-    displayName: '2Bot AI Code Free',
-    description: 'Free code generation with tool calling — no credits required',
-    capability: 'code-generation',
-    tier: 'free',
-    maxContextTokens: 32768,
-    maxOutputTokens: 4096,
-    isAvailable: true,
-    isDeprecated: false,
-    releasedAt: new Date('2025-07-15'),
-    features: CODE_FREE_FEATURES,
-    tags: ['free', 'code', 'no-credits', 'agent'],
-  },
 
   '2bot-ai-code-lite': {
     id: '2bot-ai-code-lite',
@@ -285,12 +234,12 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
     tags: ['code', 'agent', 'recommended', 'function-calling'],
   },
 
-  '2bot-ai-code-ultra': {
-    id: '2bot-ai-code-ultra',
-    displayName: '2Bot AI Code Ultra',
+  '2bot-ai-code-premium': {
+    id: '2bot-ai-code-premium',
+    displayName: '2Bot AI Code Premium',
     description: 'Top-tier code generation with vision support and largest models',
     capability: 'code-generation',
-    tier: 'ultra',
+    tier: 'premium',
     maxContextTokens: 200000,
     maxOutputTokens: 65536,
     isAvailable: true,
@@ -319,12 +268,12 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
     tags: ['reasoning', 'math', 'logic', 'coding'],
   },
 
-  '2bot-ai-reasoning-ultra': {
-    id: '2bot-ai-reasoning-ultra',
-    displayName: '2Bot AI Reasoning Ultra',
+  '2bot-ai-reasoning-premium': {
+    id: '2bot-ai-reasoning-premium',
+    displayName: '2Bot AI Reasoning Premium',
     description: 'Advanced reasoning with maximum thinking depth',
     capability: 'text-generation',
-    tier: 'ultra',
+    tier: 'premium',
     maxContextTokens: 200000,
     maxOutputTokens: 65536,
     isAvailable: true,
@@ -353,12 +302,12 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
     tags: ['creative', 'artwork', 'design'],
   },
 
-  '2bot-ai-image-ultra': {
-    id: '2bot-ai-image-ultra',
-    displayName: '2Bot AI Image Ultra',
+  '2bot-ai-image-premium': {
+    id: '2bot-ai-image-premium',
+    displayName: '2Bot AI Image Premium',
     description: 'Premium HD image generation with larger sizes',
     capability: 'image-generation',
-    tier: 'ultra',
+    tier: 'premium',
     maxContextTokens: 4000,
     maxOutputTokens: 0,
     isAvailable: true,
@@ -387,12 +336,12 @@ export const TWOBOT_AI_MODELS: Record<TwoBotAIModelId, TwoBotAIModel> = {
     tags: ['tts', 'audio', 'narration'],
   },
 
-  '2bot-ai-voice-ultra': {
-    id: '2bot-ai-voice-ultra',
-    displayName: '2Bot AI Voice Ultra',
+  '2bot-ai-voice-premium': {
+    id: '2bot-ai-voice-premium',
+    displayName: '2Bot AI Voice Premium',
     description: 'High-definition voice synthesis with enhanced clarity',
     capability: 'speech-synthesis',
-    tier: 'ultra',
+    tier: 'premium',
     maxContextTokens: 4096,
     maxOutputTokens: 0,
     isAvailable: true,

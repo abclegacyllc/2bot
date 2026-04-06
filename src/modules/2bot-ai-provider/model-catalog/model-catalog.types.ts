@@ -73,15 +73,14 @@ export interface ProviderModelOption {
 // ============================================================================
 
 /**
- * Tier levels for 2Bot models - affects pricing, capabilities, and plan access
+ * Tier levels for 2Bot models - affects capabilities and plan access
  * 
  * Plan Access Matrix:
- * - ALL plans: free (always available)
- * - FREE plan: free, lite
- * - STARTER plan: free, lite, pro
- * - PRO+ plans: free, lite, pro, ultra
+ * - FREE plan: lite
+ * - STARTER plan: lite, pro
+ * - PRO+ plans: lite, pro, premium
  */
-export type TwoBotAIModelTier = 'free' | 'lite' | 'pro' | 'ultra';
+export type TwoBotAIModelTier = 'lite' | 'pro' | 'premium';
 
 /**
  * Tier metadata for display and pricing multipliers
@@ -123,36 +122,18 @@ export interface TwoBotAIModelTierInfo {
  * Tier definitions with display information
  */
 export const TWOBOT_AI_MODEL_TIERS: Record<TwoBotAIModelTier, TwoBotAIModelTierInfo> = {
-  free: {
-    tier: 'free',
-    displayName: 'Free',
-    description: 'Free AI for simple tasks',
-    badgeColor: 'green',
-    priceMultiplier: 0,
-    // Free tier: only truly free or near-free models (0 credits)
-    // Text: Apriel 1.6 (0), Qwen3-8B (0), Gemma 3n (0.000018), Llama 3.1 8B (0.00003)
-    minCostThreshold: 0,
-    maxCostThreshold: 0.00005,
-    // Code free: same boundary
-    minCodeCostThreshold: 0,
-    maxCodeCostThreshold: 0.00005,
-    // No image generation for free tier
-    minImageCostThreshold: 0,
-    maxImageCostThreshold: 0,
-  },
   lite: {
     tier: 'lite',
     displayName: 'Lite',
     description: 'Fast and cost-effective',
     badgeColor: 'gray',
     priceMultiplier: 1.0,
-    // Text: GPT-OSS 20B (0.000051) → Haiku 4.5 (0.0018), o3-mini (0.00165)
-    // NON-OVERLAPPING: starts above free max, ends below pro min
-    minCostThreshold: 0.00005,
+    // Lite: includes free-tier models + affordable models up to Haiku 4.5
+    // Text: Apriel 1.6 (0), Gemma 3n (0.000018), GPT-OSS 20B (0.000051) → Haiku 4.5 (0.0018)
+    minCostThreshold: 0,
     maxCostThreshold: 0.002,
     // Code lite: shifted lower — code specialists are cheaper
-    // Qwen2.5-Coder-32B (0.000072) → GPT-OSS 120B (0.000225)
-    minCodeCostThreshold: 0.00005,
+    minCodeCostThreshold: 0,
     maxCodeCostThreshold: 0.0005,
     // Images: budget models only (FLUX Schnell)
     minImageCostThreshold: 0,
@@ -165,7 +146,7 @@ export const TWOBOT_AI_MODEL_TIERS: Record<TwoBotAIModelTier, TwoBotAIModelTierI
     badgeColor: 'blue',
     priceMultiplier: 2.0,
     // Text: Mistral Large (0.0024) → Sonnet 4.6 (0.0054)
-    // NON-OVERLAPPING: starts above lite max, ends below ultra min
+    // NON-OVERLAPPING: starts above lite max, ends below premium min
     minCostThreshold: 0.002,
     maxCostThreshold: 0.006,
     // Code pro: shifted lower — best code models are cheaper
@@ -176,9 +157,9 @@ export const TWOBOT_AI_MODEL_TIERS: Record<TwoBotAIModelTier, TwoBotAIModelTierI
     minImageCostThreshold: 5,
     maxImageCostThreshold: 16,
   },
-  ultra: {
-    tier: 'ultra',
-    displayName: 'Ultra',
+  premium: {
+    tier: 'premium',
+    displayName: 'Premium',
     description: 'Maximum capability and quality',
     badgeColor: 'gold',
     priceMultiplier: 4.0,
@@ -186,7 +167,7 @@ export const TWOBOT_AI_MODEL_TIERS: Record<TwoBotAIModelTier, TwoBotAIModelTierI
     // NON-OVERLAPPING: starts above pro max
     minCostThreshold: 0.006,
     maxCostThreshold: Infinity,
-    // Code ultra: GPT-5 (0.003375), Gemini 3 Pro (0.0042), Sonnet 4.6 (0.0054)
+    // Code premium: GPT-5 (0.003375), Gemini 3 Pro (0.0042), Sonnet 4.6 (0.0054)
     minCodeCostThreshold: 0.003,
     maxCodeCostThreshold: Infinity,
     // Images: premium models (DALL-E 3 HD, Imagen Ultra, Ideogram)
@@ -281,28 +262,26 @@ export interface TwoBotAIModelMapping {
  * All valid 2Bot AI model identifiers
  * Format: 2bot-ai-{capability}-{tier}
  * 
- * Tiers: lite, pro, ultra
+ * Tiers: lite, pro, premium
  */
 export type TwoBotAIModelId =
   // Text Generation Models
-  | '2bot-ai-text-free'
   | '2bot-ai-text-lite'
   | '2bot-ai-text-pro'
-  | '2bot-ai-text-ultra'
+  | '2bot-ai-text-premium'
   // Code Generation Models
-  | '2bot-ai-code-free'
   | '2bot-ai-code-lite'
   | '2bot-ai-code-pro'
-  | '2bot-ai-code-ultra'
+  | '2bot-ai-code-premium'
   // Reasoning Models
   | '2bot-ai-reasoning-pro'
-  | '2bot-ai-reasoning-ultra'
+  | '2bot-ai-reasoning-premium'
   // Image Generation Models
   | '2bot-ai-image-pro'
-  | '2bot-ai-image-ultra'
+  | '2bot-ai-image-premium'
   // Speech Synthesis Models
   | '2bot-ai-voice-pro'
-  | '2bot-ai-voice-ultra'
+  | '2bot-ai-voice-premium'
   // Speech Recognition Models
   | '2bot-ai-transcribe-lite';
 
@@ -317,20 +296,18 @@ export function isTwoBotAIModelId(value: string): value is TwoBotAIModelId {
  * Array of all valid 2Bot model IDs for runtime validation
  */
 export const VALID_TWOBOT_AI_MODEL_IDS: TwoBotAIModelId[] = [
-  '2bot-ai-text-free',
   '2bot-ai-text-lite',
   '2bot-ai-text-pro',
-  '2bot-ai-text-ultra',
-  '2bot-ai-code-free',
+  '2bot-ai-text-premium',
   '2bot-ai-code-lite',
   '2bot-ai-code-pro',
-  '2bot-ai-code-ultra',
+  '2bot-ai-code-premium',
   '2bot-ai-reasoning-pro',
-  '2bot-ai-reasoning-ultra',
+  '2bot-ai-reasoning-premium',
   '2bot-ai-image-pro',
-  '2bot-ai-image-ultra',
+  '2bot-ai-image-premium',
   '2bot-ai-voice-pro',
-  '2bot-ai-voice-ultra',
+  '2bot-ai-voice-premium',
   '2bot-ai-transcribe-lite',
 ];
 

@@ -58,7 +58,8 @@ const outputFormat: CursorSkill = {
   build: () => `## Output Rules
 - Be concise — 2-4 sentences for conversational replies, no markdown headers or bullet lists in chat text
 - ALWAYS use tools to take real actions — never describe what you "would" do or pretend a tool succeeded without calling it
-- Never invent data — if a tool returned an error or no results, say so honestly`,
+- Never invent data — if a tool returned an error or no results, say so honestly
+- If you catch yourself writing "Could you...", "Please read...", "Can you check..." directed at the user for an action YOU can perform with a tool — STOP and call the tool instead`,
 };
 
 const errorRecovery: CursorSkill = {
@@ -68,6 +69,22 @@ const errorRecovery: CursorSkill = {
   build: () => `## Error Recovery
 - If a tool call fails, READ the error message, adapt your approach, and try differently — do NOT retry the exact same call
 - If a tool returns "Blocked: ...", that action is forbidden — try a different approach or inform the user`,
+};
+
+const agentAutonomy: CursorSkill = {
+  id: "agent-autonomy",
+  label: "Autonomous agent behavior — never delegate to users",
+  workers: ["assistant", "coder"],
+  build: () => `## Autonomous Agent Rules (CRITICAL)
+You are an autonomous AI agent. You have tools — USE THEM PROACTIVELY.
+- NEVER ask the user to read files, run commands, check status, or perform any action you can do with your tools
+- NEVER list files/steps and ask "should I proceed?" — just proceed
+- NEVER say "I would need to..." or "I could..." — DO IT by calling the tool
+- If you need file contents → call read_file (or get_file_outline / get_function for efficiency)
+- If you need to search code → call search_files or search_codebase
+- If you need to check something → call the appropriate tool
+- If unsure which file to edit → call list_files then read_file to figure it out YOURSELF
+- Only use ask_user when you genuinely need USER INPUT that cannot be determined from available tools (e.g., a secret token, a preference choice, a name they want to use)`,
 };
 
 // ===========================================
@@ -116,7 +133,16 @@ const assistantRules: CursorSkill = {
 3. When you don't need any tool, just respond naturally with text — your text becomes the chat message
 4. If a request is ambiguous between platform-help and code-work, default to asking the user
 5. You can chain multiple tool calls in one turn (e.g., list_gateways then navigate_page)
-6. You have limited turns (10 max) — be efficient, don't waste turns on unnecessary confirmations`,
+6. You have limited turns (10 max) — be efficient, don't waste turns on unnecessary confirmations
+
+## ask_user Best Practices
+When calling \`ask_user\`, ALWAYS provide \`options\` with clear multiple-choice answers:
+- Keep the question to ONE concise sentence
+- Provide 2-5 short options covering the most likely answers
+- The LAST option must always be: { "label": "Other (type my own)", "value": "__freetext__" }
+- Keep option labels short (3-8 words) — avoid long explanations
+- Example: question: "Which gateway do you want to use?" + options: [ { label: "MyTelegramBot", value: "gw_abc" }, { label: "TestBot", value: "gw_xyz" }, { label: "Other (type my own)", value: "__freetext__" } ]
+- For sensitive info (tokens/secrets), set sensitive: true and skip options — free-text only`,
 };
 
 const navigationRoutes: CursorSkill = {
@@ -124,7 +150,7 @@ const navigationRoutes: CursorSkill = {
   label: "Available dashboard routes for navigate_page",
   workers: ["assistant"],
   build: () => `## Dashboard Routes
-Main pages: \`/\`, \`/bots\`, \`/workspace\`, \`/credits\`, \`/billing\`, \`/usage\`, \`/settings\`, \`/2bot-ai\`, \`/organizations\`, \`/invites\`
+Main pages: \`/\`, \`/bots\`, \`/workspace\`, \`/credits\`, \`/billing\`, \`/usage\`, \`/settings\`, \`/organizations\`, \`/invites\`
 Sub-pages: \`/gateways/create\`, \`/gateways/<id>\`, \`/plugins/create\`, \`/billing/upgrade\`, \`/billing/workspace\`
 Org routes: \`/organizations/<orgSlug>/bots\`, \`.../gateways\`, \`.../plugins\`, \`.../members\`, \`.../workspace\`, \`.../billing\`, \`.../credits\`, \`.../usage\`, \`.../settings\`, \`.../departments\`, \`.../quotas\`, \`.../monitoring\``,
 };
@@ -298,7 +324,8 @@ const coderWorkflow: CursorSkill = {
 1. \`list_user_plugins\` — find the plugin (get pluginId)
 2. \`list_files\` + \`read_file\` — read EVERY file, understand the full structure
 3. Plan changes — which files to modify, add, or remove
-4. \`write_file\` — apply changes (write COMPLETE files, not diffs)
+4. \`edit_file\` — apply targeted changes (search/replace, cheaper than rewriting)
+   \`write_file\` — only for new files or complete rewrites
 5. \`run_command\` — \`node --check <file>\` to verify syntax
 6. \`update_plugin_record\` — sync metadata to DB
 7. \`restart_plugin\` — reload with new code
@@ -330,7 +357,8 @@ const codeQuality: CursorSkill = {
   build: (ctx) => {
     const pluginSlug = ctx.pluginSlug || "my-plugin";
     return `## Code Quality Standards
-- Write COMPLETE files — not diffs or patches
+- Prefer \`edit_file\` for modifying existing files (search/replace — cheaper and faster)
+- Use \`write_file\` only for NEW files or full rewrites where most content changes
 - Include try/catch in every event handler
 - Use \`sdk.config.*\` for any user-customizable value
 - End entry file with: \`console.log('[${pluginSlug}] Ready');\`
@@ -341,13 +369,29 @@ const codeQuality: CursorSkill = {
 
 const coderEfficiency: CursorSkill = {
   id: "coder-efficiency",
-  label: "Turn limits and tool batching guidance",
+  label: "Turn limits, tool batching, and cost-saving rules",
   workers: ["coder"],
-  build: () => `## Efficiency
+  build: () => `## Efficiency & Cost Rules
 - You have at most 25 turns — be efficient, do NOT waste turns
 - Batch multiple read-only tool calls in one turn (e.g., read_file + list_files together)
 - Read ALL needed files before planning changes — don't read one, edit, read another, edit again
-- Use \`view_plugin_logs\` after \`restart_plugin\` to verify the plugin started without errors`,
+- Use \`view_plugin_logs\` after \`restart_plugin\` to verify the plugin started without errors
+
+### Smart File Reading (read less, understand more)
+When exploring unfamiliar code, use this tool hierarchy:
+1. **get_file_outline** — ALWAYS start here. Gets imports, classes, functions, exports (~50 tokens vs ~500+ for full file)
+2. **get_function** — Extract a specific function/method by name when you know what you need
+3. **search_symbols** — Find function/class definitions across files by name pattern
+4. **read_file** — LAST resort. Only for small files (<50 lines) or when you need the full context
+
+NEVER raw-read a large file to "see what's in it" — use get_file_outline first.
+
+### Prefer edit_file over write_file (critical for cost)
+Output tokens (the code you write) cost 3-4× more than input tokens.
+- For EXISTING files, ALWAYS use \`edit_file\` with targeted search/replace edits — NEVER rewrite the full file with \`write_file\`
+- For NEW files, use \`write_file\` — this is the only valid use case
+- When making multiple changes to one file, batch them in a single \`edit_file\` call with multiple edits
+- This rule alone saves 50-80% of output token costs`,
 };
 
 const coderBoundary: CursorSkill = {
@@ -407,6 +451,7 @@ const repoAnalysisContext: CursorSkill = {
     return `## Analyze Repo Mode — Creating Plugin from External Repository
 
 You are creating a NEW 2Bot plugin inspired by an external repository.
+CRITICAL: You have the full analysis below AND access to the source files. DO NOT ask the user what the bot does — YOU can read the code yourself. START WORKING IMMEDIATELY.
 
 ### Source Repository Analysis
 - **Language:** ${a.language}
@@ -419,6 +464,11 @@ ${apiSection}${envSection}${cmdSection}${logicSection}${depsSection}${configSect
 ### Source Code Location
 The cloned repo files are at \`${cloneDir}/\`. Use \`read_file\` to read any source file for deeper understanding.
 File tree: ${a.fileTree.slice(0, 50).join(", ")}${a.fileTree.length > 50 ? ` ... (${a.fileTree.length} total)` : ""}
+
+### MANDATORY First Actions (do these NOW, do NOT ask the user first)
+1. Use \`list_files\` on \`${cloneDir}/\` to see the full structure
+2. Use \`read_file\` on 3-5 key source files (entry point, handlers, config) to understand the implementation
+3. Then start generating the plugin — do NOT ask the user what the bot does or how it works
 
 ### Your Objectives
 1. **READ** key repo files at \`${cloneDir}/\` to understand the implementation deeply
@@ -446,6 +496,56 @@ File tree: ${a.fileTree.slice(0, 50).join(", ")}${a.fileTree.length > 50 ? ` ...
 };
 
 // ===========================================
+// ── Workflow Context Skill (assistant in studio) ──
+// ===========================================
+
+const workflowContext: CursorSkill = {
+  id: "workflow-context",
+  label: "Workflow awareness when user is in Studio",
+  workers: ["assistant"],
+  build: (ctx) => {
+    const wf = ctx.workflowContext;
+    if (!wf) return ""; // Skip when not in Studio workflow mode
+
+    const stepList = wf.steps.length > 0
+      ? wf.steps.map((s) =>
+          `  ${s.order}. ${s.name} (${s.pluginSlug})${s.isEnabled ? "" : " [disabled]"} — id: ${s.id}`
+        ).join("\n")
+      : "  (no steps yet)";
+
+    return `## Workflow Context — Studio Mode
+You are helping the user build a workflow in the 2Bot Studio.
+
+**Current Workflow:**
+- Name: ${wf.workflowName}
+- ID: ${wf.workflowId}
+- Trigger: ${wf.triggerType}
+- Bot: ${wf.botName ?? "unknown"}
+
+**Steps (in order):**
+${stepList}
+
+**Your Capabilities:**
+You have workflow mutation tools available:
+- \`add_workflow_step\` — Add a new plugin step to the workflow
+- \`remove_workflow_step\` — Delete a step
+- \`update_workflow_step\` — Update a step's config, name, or enabled state
+- \`reorder_workflow_step\` — Move a step to a different position
+- \`toggle_workflow_step\` — Enable or disable a step
+- \`update_workflow_trigger\` — Change the trigger type
+- \`list_available_plugins\` — Search for plugins that can be added as steps
+- \`test_workflow\` — Trigger a test execution of the workflow
+
+**Rules:**
+- ALWAYS use workflow tools for mutations — never just describe changes
+- After making changes, briefly confirm what you did
+- When adding steps, suggest appropriate plugins from the user's installed list
+- Use \`list_available_plugins\` if you need to find a plugin by function
+- Step order is 0-indexed: the first step after the trigger is order 0`;
+  },
+};
+
+// ===========================================
 // Skill Registry
 // ===========================================
 
@@ -455,6 +555,7 @@ export const CURSOR_SKILLS: CursorSkill[] = [
   platformContext,
   outputFormat,
   errorRecovery,
+  agentAutonomy,
   handOffContext,
   userState,
   priorSessionContext,
@@ -474,12 +575,14 @@ export const CURSOR_SKILLS: CursorSkill[] = [
   coderEfficiency,
   coderBoundary,
   repoAnalysisContext,
+  workflowContext,
 ];
 
 /** Skills assigned to each worker, in prompt order */
 export const WORKER_SKILLS: Record<CursorWorkerType, string[]> = {
   assistant: [
     "assistant-identity",
+    "agent-autonomy",
     "assistant-capabilities",
     "assistant-rules",
     "output-format",
@@ -490,9 +593,11 @@ export const WORKER_SKILLS: Record<CursorWorkerType, string[]> = {
     "prior-session-context",
     "hand-off-context",
     "current-task",
+    "workflow-context",
   ],
   coder: [
     "coder-identity",
+    "agent-autonomy",
     "current-task",
     "prior-session-context",
     "hand-off-context",

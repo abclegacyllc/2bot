@@ -39,7 +39,11 @@ export type CursorAgentEvent =
   // Multi-worker events (new)
   | CursorWorkerStartEvent
   | CursorWorkerSwitchEvent
-  | CursorAskUserEvent;
+  | CursorAskUserEvent
+  // Suspend/Resume (Copilot-style persistence)
+  | CursorAgentSuspendedEvent
+  // File action tracking (undo support)
+  | CursorFileActionEvent;
 
 // --- Individual event types ---
 
@@ -179,8 +183,57 @@ export interface CursorAskUserEvent {
   question: string;
   /** If true, the input should mask text (for secrets like bot tokens) */
   sensitive: boolean;
+  /** Clickable answer options (last one is typically free-text) */
+  options?: Array<{ label: string; value: string }>;
   /** Session ID (used to route the user's answer back) */
   sessionId: string;
+}
+
+/**
+ * Session suspended — the AI needs a user answer but the stream closes.
+ * The user can answer minutes, hours, or days later and resume the session.
+ * Frontend should persist this state (e.g., localStorage) and offer a resume flow.
+ */
+export interface CursorAgentSuspendedEvent {
+  type: "suspended";
+  /** Session ID (used to resume) */
+  sessionId: string;
+  /** The question the AI was asking */
+  question: string;
+  /** Clickable answer options */
+  options?: Array<{ label: string; value: string }>;
+  /** If true, the input should mask text (for secrets) */
+  sensitive: boolean;
+}
+
+/** File action tracked for undo — emitted after each write_file or delete_file */
+export interface CursorFileActionEvent {
+  type: "file_action";
+  action: {
+    id: string;
+    type: "created" | "modified" | "deleted";
+    path: string;
+    /** First lines of original content (for diff preview) */
+    originalPreview: string | null;
+    /** First lines of new content (for diff preview) */
+    newPreview: string | null;
+    toolCallId: string;
+  };
+}
+
+/** Session suspended — the AI asked a question and the stream closed.
+ *  State has been saved to DB. The user can answer now or days later.
+ *  To resume: POST /worker-stream with { resumeSessionId, message: <answer> } */
+export interface CursorAgentSuspendedEvent {
+  type: "suspended";
+  /** Session ID needed to resume */
+  sessionId: string;
+  /** The question to display to the user */
+  question: string;
+  /** If true, the input should mask text (for secrets like bot tokens) */
+  sensitive: boolean;
+  /** Clickable answer options */
+  options?: Array<{ label: string; value: string }>;
 }
 
 // ===========================================
@@ -191,6 +244,7 @@ export type ToolStartMeta =
   // ── Coder tools (workspace) ─────────────────────────
   | { kind: "read_file"; path: string }
   | { kind: "write_file"; path: string; bytes: number }
+  | { kind: "edit_file"; path: string; editCount: number }
   | { kind: "list_files"; path: string }
   | { kind: "create_directory"; path: string }
   | { kind: "delete_file"; path: string }

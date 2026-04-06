@@ -51,9 +51,9 @@ export default function LoginPage() {
       // Use auth context login which updates user state
       await login(data.email, data.password, data.rememberMe);
 
-      // Redirect to dashboard after successful login
+      // Redirect to studio after successful login
       // Use serviceUrl for cross-subdomain redirect in enterprise mode
-      window.location.href = serviceUrl('dashboard', '/');
+      window.location.href = serviceUrl('dashboard', '/studio');
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed. Please check your credentials.");
     } finally {

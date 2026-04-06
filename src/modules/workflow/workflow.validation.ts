@@ -169,6 +169,22 @@ export const stepConditionSchema = z
   .optional();
 
 /**
+ * Install plugin as workflow step schema.
+ * Accepts a plugin slug (resolved to pluginId server-side) and step position.
+ */
+export const installPluginStepSchema = z.object({
+  slug: z.string().min(1).max(100),
+  order: z
+    .number()
+    .int()
+    .min(0, "Order must be non-negative")
+    .max(99, "Maximum 100 steps allowed"),
+  name: z.string().min(1).max(100).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+  gatewayId: z.string().cuid("Invalid gateway ID").optional(),
+});
+
+/**
  * Create workflow step schema
  */
 export const createWorkflowStepSchema = z.object({

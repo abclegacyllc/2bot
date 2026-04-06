@@ -28,6 +28,28 @@ export interface WorkerStreamClientRequest {
   repoBranch?: string;
   /** User description of what the plugin should do */
   description?: string;
+  /** Workflow context for Studio AI operations */
+  workflowContext?: WorkflowContext;
+  /** Studio mode — controls tool availability and prompt behavior */
+  studioMode?: "agent" | "ask" | "plan";
+  /** Resume a suspended session — message becomes the user's answer */
+  resumeSessionId?: string;
+}
+
+/** Workflow context passed from Studio to give the AI awareness of the current workflow */
+export interface WorkflowContext {
+  workflowId: string;
+  workflowName: string;
+  triggerType: string;
+  botName?: string;
+  steps: Array<{
+    id: string;
+    order: number;
+    name: string;
+    pluginSlug: string;
+    isEnabled: boolean;
+    entryFile?: string;
+  }>;
 }
 
 /**

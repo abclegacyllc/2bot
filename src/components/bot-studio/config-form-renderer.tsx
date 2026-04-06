@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { RealModelOption } from "@/components/2bot-ai-assistant/model-selector";
+import type { RealModelOption } from "@/components/shared/model-selector";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -45,20 +45,18 @@ interface ConfigFormRendererProps {
 
 const AI_MODEL_OPTIONS = [
   { id: "auto", label: "Auto (Recommended)", group: "Auto" },
-  { id: "2bot-ai-text-free", label: "Text Free", group: "Text Generation" },
   { id: "2bot-ai-text-lite", label: "Text Lite", group: "Text Generation" },
   { id: "2bot-ai-text-pro", label: "Text Pro", group: "Text Generation" },
-  { id: "2bot-ai-text-ultra", label: "Text Ultra", group: "Text Generation" },
-  { id: "2bot-ai-code-free", label: "Code Free", group: "Code Generation" },
+  { id: "2bot-ai-text-premium", label: "Text Premium", group: "Text Generation" },
   { id: "2bot-ai-code-lite", label: "Code Lite", group: "Code Generation" },
   { id: "2bot-ai-code-pro", label: "Code Pro", group: "Code Generation" },
-  { id: "2bot-ai-code-ultra", label: "Code Ultra", group: "Code Generation" },
+  { id: "2bot-ai-code-premium", label: "Code Premium", group: "Code Generation" },
   { id: "2bot-ai-reasoning-pro", label: "Reasoning Pro", group: "Reasoning" },
-  { id: "2bot-ai-reasoning-ultra", label: "Reasoning Ultra", group: "Reasoning" },
+  { id: "2bot-ai-reasoning-premium", label: "Reasoning Premium", group: "Reasoning" },
   { id: "2bot-ai-image-pro", label: "Image Pro", group: "Image Generation" },
-  { id: "2bot-ai-image-ultra", label: "Image Ultra", group: "Image Generation" },
+  { id: "2bot-ai-image-premium", label: "Image Premium", group: "Image Generation" },
   { id: "2bot-ai-voice-pro", label: "Voice Pro", group: "Speech" },
-  { id: "2bot-ai-voice-ultra", label: "Voice Ultra", group: "Speech" },
+  { id: "2bot-ai-voice-premium", label: "Voice Premium", group: "Speech" },
   { id: "2bot-ai-transcribe-lite", label: "Transcribe Lite", group: "Speech" },
 ] as const;
 
@@ -208,7 +206,6 @@ function formatCredits(input: number, output: number | undefined, unit: string):
 }
 
 function getCreditColor(tier: string): string {
-  if (tier === "free") return "text-emerald-500";
   if (tier === "lite") return "text-muted-foreground";
   if (tier === "pro") return "text-blue-500";
   return "text-amber-500";
@@ -245,12 +242,10 @@ function AIModelField({
   const currentValue = String(value ?? prop.default ?? "auto");
 
   // Filter real models by capability if schema specifies enum with branded IDs
-  const capability = useMemo(() => capabilityForEnum(prop.enum as string[] | undefined), [prop.enum]);
+  // Default to text-generation if no capability can be determined from schema
+  const capability = useMemo(() => capabilityForEnum(prop.enum as string[] | undefined) ?? 'text-generation', [prop.enum]);
   const filteredRealModels = useMemo(() => {
-    let models = realModels;
-    if (capability) {
-      models = models.filter((m) => m.capability === capability);
-    }
+    let models = realModels.filter((m) => m.capability === capability);
     if (modelSearch.trim()) {
       const q = modelSearch.toLowerCase();
       models = models.filter(

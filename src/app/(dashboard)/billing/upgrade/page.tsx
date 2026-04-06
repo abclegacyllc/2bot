@@ -61,7 +61,7 @@ function formatPrice(cents: number | null): string {
   return `$${(cents / 100).toFixed(0)}`;
 }
 
-function UpgradeContent() {
+export function UpgradeContent() {
   const { context, isLoading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);

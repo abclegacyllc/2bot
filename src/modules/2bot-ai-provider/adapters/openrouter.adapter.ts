@@ -15,12 +15,13 @@
 
 import { logger } from "@/lib/logger";
 import OpenAI from "openai";
+import { setProviderValidated } from "../provider-config";
 import type {
-    TextGenerationRequest,
-    TextGenerationResponse,
-    TextGenerationStreamChunk,
-    ToolCallResult,
-    ToolDefinition,
+  TextGenerationRequest,
+  TextGenerationResponse,
+  TextGenerationStreamChunk,
+  ToolCallResult,
+  ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -319,7 +320,10 @@ function mapOpenRouterError(error: unknown): TwoBotAIError {
       return new TwoBotAIError("Model not available on OpenRouter.", "MODEL_UNAVAILABLE", 404);
     }
     if (status === 402) {
-      return new TwoBotAIError("This provider is temporarily unavailable. Please try a different model.", "PROVIDER_ERROR", 402);
+      // Insufficient credits — mark the whole provider as unavailable
+      // so models stop showing up in the selector until next health check
+      setProviderValidated("openrouter", false);
+      return new TwoBotAIError("OpenRouter has insufficient credits. Please add credits at openrouter.ai/settings/credits.", "PROVIDER_ERROR", 402);
     }
     if (message.includes("content") && message.includes("policy")) {
       return new TwoBotAIError("Content was filtered due to policy violations.", "CONTENT_FILTERED", 400);

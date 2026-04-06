@@ -16,6 +16,7 @@
 
 import { logger } from "@/lib/logger";
 import OpenAI from "openai";
+import { setProviderValidated } from "../provider-config";
 import type {
   ImageGenerationRequest,
   ImageGenerationResponse,
@@ -129,6 +130,7 @@ async function getAccessToken(): Promise<string> {
     });
 
     if (!tokenResponse.ok) {
+      setProviderValidated("google", false);
       throw new TwoBotAIError(
         "Failed to obtain Vertex AI access token",
         "PROVIDER_ERROR",

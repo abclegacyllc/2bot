@@ -23,10 +23,10 @@ export { twoBotAIProvider } from "./2bot-ai.provider";
 
 // AI Capabilities (Universal naming - single source of truth)
 export {
-    CAPABILITY_INFO, PROVIDER_CAPABILITIES, getCapabilitiesByCategory,
+    CAPABILITY_INFO, getCapabilitiesByCategory,
     getCapabilityInfo,
     getCommonCapabilities,
-    isValidCapability, type AICapability,
+    isValidCapability, PROVIDER_CAPABILITIES, type AICapability,
     type AICapabilityCategory,
     type CapabilityInfo,
     type ProviderName
@@ -43,25 +43,25 @@ export {
 
 // Model registry (single source of truth for all model metadata)
 export {
-    CHAT_CAPS, EMBEDDING_CAPS, IMAGE_GEN_CAPS, MARGIN,
-    MODEL_REGISTRY, SPEECH_REC_CAPS,
-    SPEECH_SYNTH_CAPS,
-    VISION_CAPS, creditPerChar,
+    CHAT_CAPS, computeQualityScore, creditPerChar,
     creditPerImage,
     creditPerInputToken,
     creditPerMinute,
-    creditPerOutputToken, getProviderModelIds,
+    creditPerOutputToken, EMBEDDING_CAPS, getProviderModelIds,
     getRegistryEntriesByCapability,
     getRegistryEntriesByProvider,
-    getRegistryEntry, isRegisteredModel, registryToModelInfo, type ModelRegistryEntry,
-    type ProviderCost
+    getRegistryEntry, IMAGE_GEN_CAPS, isRegisteredModel, MARGIN,
+    MODEL_REGISTRY, qualityScoreToTier, registryToModelInfo, SPEECH_REC_CAPS,
+    SPEECH_SYNTH_CAPS,
+    VISION_CAPS, type ModelRegistryEntry,
+    type ProviderCost, type QualityTier
 } from "./model-registry";
 
 // Model pricing (single source of truth)
 export {
-    ANTHROPIC_TEXT_GENERATION_PRICING, FALLBACK_PRICING_BY_CAPABILITY, OPENAI_IMAGE_GENERATION_PRICING,
+    ANTHROPIC_TEXT_GENERATION_PRICING, calculateCreditsForUsageByCapability, FALLBACK_PRICING_BY_CAPABILITY, getModelPricingByCapability, OPENAI_IMAGE_GENERATION_PRICING,
     OPENAI_SPEECH_RECOGNITION_PRICING,
-    OPENAI_SPEECH_SYNTHESIS_PRICING, OPENAI_TEXT_EMBEDDING_PRICING, OPENAI_TEXT_GENERATION_PRICING, calculateCreditsForUsageByCapability, getModelPricingByCapability, type ImageGenerationModelPricing,
+    OPENAI_SPEECH_SYNTHESIS_PRICING, OPENAI_TEXT_EMBEDDING_PRICING, OPENAI_TEXT_GENERATION_PRICING, type ImageGenerationModelPricing,
     type ModelPricing,
     type SpeechRecognitionModelPricing,
     type SpeechSynthesisModelPricing, type TextEmbeddingModelPricing, type TextGenerationModelPricing
@@ -155,11 +155,7 @@ export {
 
 // Model Catalog - 2Bot AI branded models
 export {
-    ModelResolutionError, TWOBOT_AI_MODELS, TWOBOT_AI_MODEL_MAPPINGS,
-    // Constants
-    TWOBOT_AI_MODEL_TIERS,
-    // Model Resolver
-    TwoBotAIModelResolver, VALID_TWOBOT_AI_MODEL_IDS, canResolveTwoBotAIModel,
+    canResolveTwoBotAIModel,
     // Model getters
     getAvailableTwoBotAIModels, getDefaultStrategy, getEnabledProviderOptions,
     getPrimaryProviderOption, getResolvableTwoBotAIModels, getTwoBotAIModel,
@@ -167,8 +163,12 @@ export {
     getTwoBotAIModelMapping, getTwoBotAIModelsByCapability,
     getTwoBotAIModelsByTier, hasMultipleProviders,
     // Type guards
-    isTwoBotAIModelId, resetRoundRobinState, resolveTwoBotAIModel,
-    resolveTwoBotAIModelWithOptions, twoBotAIModelExists, twoBotAIModelResolver, type ModelResolutionErrorReason, type ModelResolutionRequest,
+    isTwoBotAIModelId, ModelResolutionError, resetRoundRobinState, resolveTwoBotAIModel,
+    resolveTwoBotAIModelWithOptions, TWOBOT_AI_MODEL_MAPPINGS,
+    // Constants
+    TWOBOT_AI_MODEL_TIERS, TWOBOT_AI_MODELS, twoBotAIModelExists,
+    // Model Resolver
+    TwoBotAIModelResolver, twoBotAIModelResolver, VALID_TWOBOT_AI_MODEL_IDS, type ModelResolutionErrorReason, type ModelResolutionRequest,
     type ModelResolutionResult, type ModelSelectionConfig, type ModelSelectionStrategy, type ProviderModelOption, type TwoBotAIModelCatalog, type TwoBotAIModel as TwoBotAIModelDefinition, type TwoBotAIModelFeatures,
     // Types
     type TwoBotAIModelId, type TwoBotAIModelInfo, type TwoBotAIModelMapping, type TwoBotAIModelTier,

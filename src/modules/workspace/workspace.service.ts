@@ -21,16 +21,16 @@ import { decrypt, encrypt } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import {
-  getIncludedOrgWorkspace,
-  type OrgPlanType,
+    getIncludedOrgWorkspace,
+    type OrgPlanType,
 } from '@/shared/constants/org-plans';
 import {
-  getIncludedWorkspace
+    getIncludedWorkspace
 } from '@/shared/constants/plans';
 import {
-  calculateTotalWorkspace,
-  hasWorkspaceEnabled,
-  type WorkspaceAddonTier,
+    calculateTotalWorkspace,
+    hasWorkspaceEnabled,
+    type WorkspaceAddonTier,
 } from '@/shared/constants/workspace-addons';
 import { BadRequestError, ForbiddenError, NotFoundError } from '@/shared/errors';
 import type { ServiceContext } from '@/shared/types/context';
@@ -47,18 +47,18 @@ import { dockerService } from './workspace-docker.service';
 import { networkEgressService } from './workspace-iptables.service';
 import { egressProxyService } from './workspace-squid.service';
 import {
-  BRIDGE_AUTH_TOKEN_LENGTH,
-  BRIDGE_PORT,
-  CONTAINER_LABELS,
-  CONTAINER_START_TIMEOUT,
-  DEFAULT_AUTO_STOP_MINUTES,
-  DEFAULT_RESOURCES,
-  FREE_TIER_AUTO_STOP_MINUTES,
-  WORKSPACE_IMAGE,
-  WORKSPACE_NETWORK,
-  containerVolumePath,
-  orgContainerName,
-  personalContainerName,
+    BRIDGE_AUTH_TOKEN_LENGTH,
+    BRIDGE_PORT,
+    CONTAINER_LABELS,
+    CONTAINER_START_TIMEOUT,
+    DEFAULT_AUTO_STOP_MINUTES,
+    DEFAULT_RESOURCES,
+    FREE_TIER_AUTO_STOP_MINUTES,
+    WORKSPACE_IMAGE,
+    WORKSPACE_NETWORK,
+    containerVolumePath,
+    orgContainerName,
+    personalContainerName,
 } from './workspace.constants';
 import type { OrgPoolUsage, WorkspaceOperationResult } from './workspace.types';
 
@@ -949,7 +949,15 @@ class WorkspaceService {
   async fileRead(ctx: ServiceContext, containerDbId: string, path: string) {
     const client = await this.getBridgeClient(ctx, containerDbId);
     this.touchActivity(containerDbId);
-    return client.fileRead(path);
+    try {
+      return await client.fileRead(path);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/not found|ENOENT|no such file/i.test(msg)) {
+        throw new NotFoundError(`File not found: ${path}`);
+      }
+      throw err;
+    }
   }
 
   async fileWrite(ctx: ServiceContext, containerDbId: string, path: string, content: string) {

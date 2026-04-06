@@ -15,8 +15,8 @@ import { gatewayChatService } from "@/modules/gateway/gateway-chats.service";
 import { gatewayMetricService } from "@/modules/gateway/gateway-metrics.service";
 import type { GatewayListItem, SafeGateway } from "@/modules/gateway/gateway.types";
 import {
-    createGatewaySchema,
-    updateGatewaySchema,
+  createGatewaySchema,
+  updateGatewaySchema,
 } from "@/modules/gateway/gateway.validation";
 import { BadRequestError, NotFoundError, ValidationError } from "@/shared/errors";
 import type { ApiResponse, PaginatedResponse } from "@/shared/types";
@@ -647,6 +647,32 @@ gatewayRouter.get(
         provider.execute(id, "getMyCommands", {}),
       ]);
 
+    // Resolve avatar URL from bot's profile photo
+    let avatarUrl: string | null = null;
+    if (meResult.status === "fulfilled") {
+      const me = meResult.value as { id: number };
+      try {
+        const photos = await provider.execute(id, "getUserProfilePhotos", { user_id: me.id, limit: 1 }) as {
+          total_count: number;
+          photos: Array<Array<{ file_id: string; width: number }>>;
+        };
+        if (photos.total_count > 0 && photos.photos[0]?.length) {
+          // Pick largest resolution
+          const photo = photos.photos[0][photos.photos[0].length - 1] ?? photos.photos[0][0];
+          if (photo) {
+            const file = await provider.execute(id, "getFile", { file_id: photo.file_id }) as { file_path?: string };
+            if (file.file_path) {
+              const credentials = gatewayService.getDecryptedCredentials(gateway);
+              const botToken = (credentials as { botToken: string }).botToken;
+              avatarUrl = `https://api.telegram.org/file/bot${botToken}/${file.file_path}`;
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — avatar just won't be displayed
+      }
+    }
+
     const profile = {
       identity: meResult.status === "fulfilled" ? meResult.value : null,
       name: nameResult.status === "fulfilled"
@@ -659,6 +685,7 @@ gatewayRouter.get(
         ? (shortDescResult.value as Record<string, unknown>).short_description ?? null
         : null,
       commands: commandsResult.status === "fulfilled" ? commandsResult.value : [],
+      avatarUrl,
     };
 
     res.json({ success: true, data: profile });

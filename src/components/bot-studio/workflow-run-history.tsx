@@ -335,6 +335,25 @@ function RunRow({
                   No step data available
                 </p>
               )}
+
+              {/* System log (auto-reply status, gateway info) */}
+              {(() => {
+                const output = detail.output as Record<string, unknown> | undefined;
+                const sysLog = output?._systemLog;
+                if (!Array.isArray(sysLog) || sysLog.length === 0) return null;
+                return (
+                  <div className="mt-2 border-t border-border/50 pt-2">
+                    <p className="text-[10px] text-muted-foreground font-medium mb-1">System Log</p>
+                    <div className="space-y-0.5">
+                      {(sysLog as string[]).map((line, i) => (
+                        <p key={i} className="text-[10px] text-muted-foreground/80 font-mono">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <p className="text-[10px] text-muted-foreground text-center py-2">

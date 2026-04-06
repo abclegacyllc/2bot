@@ -70,6 +70,20 @@ export interface WorkerPromptContext {
   repoCloneDir?: string;
   /** Summaries from recent prior sessions with this user */
   priorSessionSummaries?: string[];
+  /** Workflow context — present when user is in Studio and interacting with a workflow */
+  workflowContext?: {
+    workflowId: string;
+    workflowName: string;
+    triggerType: string;
+    botName?: string;
+    steps: Array<{
+      id: string;
+      order: number;
+      name: string;
+      pluginSlug: string;
+      isEnabled: boolean;
+    }>;
+  };
 }
 
 // ===========================================
@@ -133,10 +147,23 @@ export function getAdaptiveWorkerMeta(
  * everything else goes to Assistant (who can still hand off to Coder
  * if the LLM determines it's needed).
  *
+ * When workflowContext is present (Studio mode), workflow-related messages
+ * are always routed to Assistant which has workflow mutation tools.
+ *
  * This replaces the old `classifyCommand()` which cost 1 LLM call per message.
  */
-export function routeToWorker(message: string): CursorWorkerType {
+export function routeToWorker(
+  message: string,
+  options?: { hasWorkflowContext?: boolean },
+): CursorWorkerType {
   const lower = message.toLowerCase();
+
+  // ── Workflow context → force Assistant for workflow ops ──
+  if (options?.hasWorkflowContext) {
+    if (/\b(step|trigger|workflow|test\s+it|run\s+it|enable|disable|reorder|move)\b/i.test(lower)) {
+      return "assistant";
+    }
+  }
 
   // ── Code-related → Coder ────────────────────────────
   // "create/build/make/write/prepare a plugin"
@@ -234,11 +261,16 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     // Workspace file tools
     "read_file",
     "write_file",
+    "edit_file",
     "list_files",
     "create_directory",
     "delete_file",
     "run_command",
     "search_files",
+    // AST-powered code intelligence tools
+    "get_file_outline",
+    "get_function",
+    "search_symbols",
     // Platform query tools (needed to find gateways/plugins)
     "list_gateways",
     "list_user_plugins",
@@ -260,3 +292,44 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     "finish",
   ],
 };
+
+/** Workflow tools added to assistant when workflowContext is present */
+export const WORKFLOW_TOOL_NAMES: string[] = [
+  "add_workflow_step",
+  "remove_workflow_step",
+  "update_workflow_step",
+  "reorder_workflow_step",
+  "toggle_workflow_step",
+  "update_workflow_trigger",
+  "list_available_plugins",
+  "test_workflow",
+  "read_plugin_file",
+  "write_plugin_file",
+];
+
+/**
+ * Read-only / diagnostic tools for Ask mode.
+ * Ask mode should be able to look things up and investigate, but never mutate.
+ */
+export const ASK_MODE_TOOL_NAMES: string[] = [
+  // Platform queries
+  "check_credits",
+  "check_billing",
+  "check_usage",
+  "list_gateways",
+  "check_gateway_status",
+  "list_user_plugins",
+  "get_workspace_status",
+  // Plugin config (read-only)
+  "view_plugin_config",
+  // Diagnostics & logs
+  "get_gateway_metrics",
+  "get_workspace_logs",
+  "get_workspace_metrics",
+  "explain_error",
+  // Workflow read-only (when context available)
+  "list_available_plugins",
+  "read_plugin_file",
+  // Interaction
+  "ask_user",
+];

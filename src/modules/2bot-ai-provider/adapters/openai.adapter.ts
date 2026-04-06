@@ -10,18 +10,19 @@
 import { logger } from "@/lib/logger";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { setProviderValidated } from "../provider-config";
 import type {
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    SpeechRecognitionRequest,
-    SpeechRecognitionResponse,
-    SpeechSynthesisRequest,
-    SpeechSynthesisResponse,
-    TextGenerationRequest,
-    TextGenerationResponse,
-    TextGenerationStreamChunk,
-    ToolCallResult,
-    ToolDefinition,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  SpeechRecognitionRequest,
+  SpeechRecognitionResponse,
+  SpeechSynthesisRequest,
+  SpeechSynthesisResponse,
+  TextGenerationRequest,
+  TextGenerationResponse,
+  TextGenerationStreamChunk,
+  ToolCallResult,
+  ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -447,6 +448,14 @@ export async function openaiSpeechRecognition(request: SpeechRecognitionRequest)
 function mapOpenAIError(error: unknown): TwoBotAIError {
   if (error instanceof OpenAI.APIError) {
     switch (error.status) {
+      case 401:
+      case 403:
+        setProviderValidated("openai", false);
+        return new TwoBotAIError(
+          "OpenAI authentication failed. Check API key.",
+          "PROVIDER_ERROR",
+          401
+        );
       case 429:
         return new TwoBotAIError(
           "Rate limit exceeded. Please try again later.",

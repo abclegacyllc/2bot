@@ -246,6 +246,13 @@ export interface WorkflowStepDefinition {
   condition?: StepCondition;
   onError: StepErrorHandler;
   maxRetries: number;
+  // Unified Engine fields (absorbed from UserPlugin)
+  entryFile?: string;
+  userPluginId?: string;
+  storageQuotaMb?: number;
+  executionCount?: number;
+  lastExecutedAt?: Date;
+  lastError?: string;
 }
 
 /**

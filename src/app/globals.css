@@ -131,6 +131,15 @@
   }
 }
 
+/* =============================================================================
+   Smooth Theme Transitions
+   Fade background, border, color, and glow when switching themes.
+   Disabled during page load by next-themes (adds [data-theme-transition] after mount).
+   ============================================================================= */
+html:not(.disable-transitions) * {
+  transition: background-color 300ms ease, border-color 300ms ease, color 300ms ease, box-shadow 300ms ease, fill 300ms ease;
+}
+
 /* AI Cursor — Pulse & Spotlight animations */
 @keyframes cursor-page-pulse {
   0%, 100% { opacity: 0.4; }
@@ -151,6 +160,273 @@
 @keyframes accordion-up {
   from { height: var(--radix-accordion-content-height); }
   to { height: 0; }
+}
+
+/* =============================================================================
+   Studio Theme Variables — Defaults
+   Optional vars used by the workflow canvas & glassmorphism components.
+   Themes that don't set these get sensible fallbacks via var(--X, fallback).
+   ============================================================================= */
+
+:root {
+  --glow-primary: transparent;
+  --glow-accent: transparent;
+  --canvas-bg: oklch(0.97 0 0);
+  --canvas-grid: oklch(0.85 0 0);
+  --canvas-grid-size: 16;
+  --node-bg: oklch(1 0 0);
+  --node-border: oklch(0.85 0 0);
+  --node-glow: transparent;
+  --canvas-accent: oklch(0.527 0.17 155);
+  --canvas-accent-fg: oklch(0.98 0 0);
+  --edge-color: oklch(0.527 0.17 155);
+  --edge-animated: oklch(0.527 0.17 155);
+  --glass-bg: oklch(1 0 0 / 70%);
+  --glass-border: oklch(0.85 0 0 / 50%);
+}
+
+.dark {
+  --canvas-bg: oklch(0.145 0 0);
+  --canvas-grid: oklch(0.3 0 0);
+  --node-bg: oklch(0.205 0 0);
+  --node-border: oklch(0.35 0 0);
+  --canvas-accent: oklch(0.6 0.2 155);
+  --edge-color: oklch(0.6 0.2 155);
+  --edge-animated: oklch(0.6 0.2 195);
+  --glass-bg: oklch(0.205 0 0 / 70%);
+  --glass-border: oklch(0.35 0 0 / 40%);
+  --glow-primary: transparent;
+  --glow-accent: transparent;
+  --node-glow: transparent;
+}
+
+/* =============================================================================
+   Neon Cosmic Theme
+   Dark-only theme with deep cosmic backgrounds, neon purple/cyan glow, and
+   glassmorphism. Applied via next-themes class attribute on <html>.
+   ============================================================================= */
+
+.neon-cosmic {
+  color-scheme: dark;
+
+  /* Core */
+  --background: oklch(0.13 0.02 260);
+  --foreground: oklch(0.95 0.01 260);
+  --card: oklch(0.18 0.02 260);
+  --card-foreground: oklch(0.95 0.01 260);
+  --popover: oklch(0.18 0.02 260);
+  --popover-foreground: oklch(0.95 0.01 260);
+  --primary: oklch(0.65 0.25 280);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.22 0.03 260);
+  --secondary-foreground: oklch(0.9 0.01 260);
+  --muted: oklch(0.22 0.03 260);
+  --muted-foreground: oklch(0.65 0.03 260);
+  --accent: oklch(0.7 0.2 195);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.65 0.22 25);
+  --border: oklch(0.3 0.04 260 / 50%);
+  --input: oklch(0.3 0.04 260 / 60%);
+  --ring: oklch(0.65 0.25 280);
+  --sidebar: oklch(0.15 0.02 260);
+  --sidebar-foreground: oklch(0.9 0.01 260);
+  --sidebar-primary: oklch(0.65 0.25 280);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.22 0.03 260);
+  --sidebar-accent-foreground: oklch(0.9 0.01 260);
+  --sidebar-border: oklch(0.3 0.04 260 / 40%);
+  --sidebar-ring: oklch(0.65 0.25 280);
+  --chart-1: oklch(0.65 0.25 280);
+  --chart-2: oklch(0.7 0.2 195);
+  --chart-3: oklch(0.75 0.15 140);
+  --chart-4: oklch(0.7 0.2 330);
+  --chart-5: oklch(0.8 0.15 80);
+
+  /* Studio / Canvas */
+  --glow-primary: oklch(0.65 0.25 280 / 40%);
+  --glow-accent: oklch(0.7 0.2 195 / 40%);
+  --canvas-bg: oklch(0.11 0.02 260);
+  --canvas-grid: oklch(0.25 0.04 260);
+  --canvas-grid-size: 20;
+  --node-bg: oklch(0.16 0.02 260 / 80%);
+  --node-border: oklch(0.35 0.05 260 / 60%);
+  --node-glow: oklch(0.65 0.25 280 / 30%);
+  --canvas-accent: oklch(0.7 0.2 195);
+  --canvas-accent-fg: oklch(0.98 0 0);
+  --edge-color: oklch(0.55 0.15 280);
+  --edge-animated: oklch(0.7 0.2 195);
+  --glass-bg: oklch(0.16 0.02 260 / 60%);
+  --glass-border: oklch(0.4 0.05 260 / 30%);
+}
+
+/* =============================================================================
+   Glassmorphism & Glow Utility Classes
+   Theme-aware: only glow when the theme provides non-transparent glow vars.
+   ============================================================================= */
+
+@layer utilities {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 20px var(--glow-primary), 0 0 40px var(--glow-primary);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 20px var(--glow-accent), 0 0 40px var(--glow-accent);
+  }
+
+  .neon-text {
+    text-shadow: 0 0 10px var(--glow-primary), 0 0 20px var(--glow-primary);
+  }
+
+  .neon-border {
+    box-shadow: inset 0 0 8px var(--glow-primary), 0 0 12px var(--glow-primary);
+  }
+}
+
+/* =============================================================================
+   Animated Canvas Effects
+   Dot grid drift, node glow pulse, edge flow, trigger breathing.
+   All animations respect prefers-reduced-motion (handled at bottom).
+   ============================================================================= */
+
+@keyframes canvas-grid-drift {
+  0% { background-position: 0 0; }
+  100% { background-position: 40px 40px; }
+}
+
+@keyframes node-glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--node-glow); }
+  50% { box-shadow: 0 0 20px var(--node-glow), 0 0 40px var(--node-glow); }
+}
+
+@keyframes trigger-breathe {
+  0%, 100% { box-shadow: 0 0 6px var(--glow-accent); }
+  50% { box-shadow: 0 0 16px var(--glow-accent), 0 0 32px var(--glow-accent); }
+}
+
+@keyframes edge-flow {
+  0% { stroke-dashoffset: 24; }
+  100% { stroke-dashoffset: 0; }
+}
+
+@keyframes bot-output-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* =============================================================================
+   CursorStudioBar Animations
+   Floating island, gradient flow, glow breathing, slide-up, chip stagger.
+   ============================================================================= */
+
+@keyframes studio-bar-enter {
+  0% { opacity: 0; transform: translateY(20px) scale(0.97); }
+  60% { opacity: 1; transform: translateY(-3px) scale(1.005); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes studio-bar-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes studio-bar-gradient-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes studio-bar-glow-breathe {
+  0%, 100% { opacity: 0.4; filter: blur(12px); }
+  50% { opacity: 0.8; filter: blur(18px); }
+}
+
+@keyframes studio-bar-glow-active {
+  0%, 100% { opacity: 0.6; filter: blur(14px); }
+  50% { opacity: 1; filter: blur(22px); }
+}
+
+@keyframes studio-bar-slide-up {
+  0% { transform: translateY(100%); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes studio-bar-slide-down {
+  0% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+@keyframes studio-chip-enter {
+  0% { opacity: 0; transform: translateY(6px) scale(0.92); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes studio-bar-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.studio-bar-wrapper {
+  animation: studio-bar-enter 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.studio-bar-wrapper.is-revealed {
+  animation: studio-bar-slide-up 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.studio-bar-island {
+  animation: studio-bar-float 4s ease-in-out infinite;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.studio-bar-island:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 0 0 1px var(--glow-accent);
+}
+.studio-bar-island.is-streaming {
+  animation: none;
+}
+
+.studio-bar-glow-layer {
+  animation: studio-bar-glow-breathe 3s ease-in-out infinite;
+}
+.studio-bar-island.is-streaming .studio-bar-glow-layer {
+  animation: studio-bar-glow-active 1.5s ease-in-out infinite;
+}
+
+.studio-bar-gradient-border {
+  background-size: 200% 200%;
+  animation: studio-bar-gradient-flow 4s ease infinite;
+}
+
+.studio-chip {
+  animation: studio-chip-enter 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.studio-chip:nth-child(1) { animation-delay: 0.05s; }
+.studio-chip:nth-child(2) { animation-delay: 0.1s; }
+.studio-chip:nth-child(3) { animation-delay: 0.15s; }
+.studio-chip:nth-child(4) { animation-delay: 0.2s; }
+
+.studio-bar-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 25%,
+    var(--glow-accent) 50%,
+    transparent 75%
+  );
+  background-size: 200% 100%;
+  animation: studio-bar-shimmer 3s linear infinite;
+  opacity: 0.06;
+}
+
+/* Wire edge-flow animation to @xyflow animated edges */
+.react-flow__edge.animated path {
+  stroke-dasharray: 12 12;
+  animation: edge-flow 1s linear infinite;
 }
 
 /* Respect prefers-reduced-motion */

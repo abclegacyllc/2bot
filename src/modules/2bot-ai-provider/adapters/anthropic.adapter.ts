@@ -9,6 +9,7 @@
 
 import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
+import { setProviderValidated } from "../provider-config";
 import type {
     TextGenerationRequest,
     TextGenerationResponse,
@@ -194,6 +195,37 @@ function mapAnthropicFinishReason(
 }
 
 // ===========================================
+// Prompt Caching
+// ===========================================
+
+/** Minimum system prompt length to enable caching (below this, caching overhead isn't worth it) */
+const CACHE_MIN_SYSTEM_LENGTH = 1000;
+
+/**
+ * Format system prompt for Anthropic with optional prompt caching.
+ *
+ * For long system prompts (>1000 chars), uses the block-array format with
+ * `cache_control: { type: "ephemeral" }` so Anthropic caches the prefix.
+ * Subsequent requests within 5 minutes pay only 10% of input token price
+ * for the cached portion — ideal for multi-turn agentic loops.
+ *
+ * Short prompts are passed as plain strings (no caching overhead).
+ */
+function formatSystemForAnthropic(
+  content: string | undefined,
+): string | Anthropic.TextBlockParam[] | undefined {
+  if (!content) return undefined;
+  if (content.length < CACHE_MIN_SYSTEM_LENGTH) return content;
+  return [
+    {
+      type: "text" as const,
+      text: content,
+      cache_control: { type: "ephemeral" as const },
+    },
+  ];
+}
+
+// ===========================================
 // Text Generation
 // ===========================================
 
@@ -211,7 +243,7 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
 
     const createParams: Anthropic.MessageCreateParamsNonStreaming = {
       model: mapModelId(request.model),
-      system: systemMessage?.content,
+      system: formatSystemForAnthropic(systemMessage?.content),
       messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
@@ -230,10 +262,15 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
     const content = textBlock?.type === "text" ? (textBlock as { type: "text"; text: string }).text : "";
     const toolCalls = extractAnthropicToolCalls(response.content);
 
+    const cacheCreated = (response.usage as unknown as Record<string, unknown>).cache_creation_input_tokens as number | undefined;
+    const cacheRead = (response.usage as unknown as Record<string, unknown>).cache_read_input_tokens as number | undefined;
+
     log.info({
       model: request.model,
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
+      ...(cacheCreated ? { cacheCreated } : {}),
+      ...(cacheRead ? { cacheRead } : {}),
       hasImages,
       toolCallCount: toolCalls?.length ?? 0,
     }, "Anthropic text generation completed");
@@ -275,7 +312,7 @@ export async function* anthropicTextGenerationStream(
 
     const streamParams: Anthropic.MessageCreateParamsStreaming = {
       model: mapModelId(request.model),
-      system: systemMessage?.content,
+      system: formatSystemForAnthropic(systemMessage?.content),
       messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
@@ -364,10 +401,15 @@ export async function* anthropicTextGenerationStream(
     // Get final message for usage
     const finalMessage = await stream.finalMessage();
 
+    const cacheCreated = (finalMessage.usage as unknown as Record<string, unknown>).cache_creation_input_tokens as number | undefined;
+    const cacheRead = (finalMessage.usage as unknown as Record<string, unknown>).cache_read_input_tokens as number | undefined;
+
     log.info({
       model: request.model,
       inputTokens: finalMessage.usage.input_tokens,
       outputTokens: finalMessage.usage.output_tokens,
+      ...(cacheCreated ? { cacheCreated } : {}),
+      ...(cacheRead ? { cacheRead } : {}),
       contentLength: totalContent.length,
     }, "Anthropic stream completed");
 
@@ -388,6 +430,14 @@ export async function* anthropicTextGenerationStream(
 function mapAnthropicError(error: unknown): TwoBotAIError {
   if (error instanceof Anthropic.APIError) {
     switch (error.status) {
+      case 401:
+      case 403:
+        setProviderValidated("anthropic", false);
+        return new TwoBotAIError(
+          "Anthropic authentication failed. Check API key.",
+          "PROVIDER_ERROR",
+          401
+        );
       case 429:
         return new TwoBotAIError(
           "Rate limit exceeded. Please try again later.",

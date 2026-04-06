@@ -18,6 +18,7 @@ import { CursorPanel } from "@/components/cursor/cursor-panel";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ContextSwitcher } from "@/components/layouts";
 import { useAuth } from "@/components/providers/auth-provider";
+import { ResourceWarningBanner } from "@/components/quota";
 import { SupportWidget } from "@/components/support";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,6 @@ import {
     Activity,
     Bot,
     Box,
-    Brain,
     Building2,
     ChevronDown,
     ChevronLeft,
@@ -51,7 +51,6 @@ import { useState, type ReactNode } from "react";
 // Shared navigation items (both contexts) - base paths
 const sharedNavItemsBase = [
   { path: "", label: "Dashboard", icon: Home },
-  { path: "/2bot-ai", label: "2Bot AI", icon: Brain },
   { path: "/bots", label: "Bots", icon: Bot },
   { path: "/marketplace", label: "Marketplace", icon: Store },
   { path: "/workspace", label: "Workspace", icon: Box },
@@ -374,7 +373,10 @@ function DashboardLayoutContent({ children }: { children: ReactNode }) {
         <Header onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
 
         {/* Page content */}
-        <main className="p-6">{children}</main>
+        <main className="p-6">
+          <ResourceWarningBanner className="mb-4" />
+          {children}
+        </main>
       </div>
 
       {/* Support Widget */}

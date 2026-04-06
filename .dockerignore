@@ -42,7 +42,9 @@ docs
 ssl
 
 # Database backups
+backups
 *.sql
+*.sql.gz
 !prisma/migrations/**/*.sql
 
 # Backup / temp files

@@ -213,6 +213,7 @@ class PluginDeployService {
     manifestJson: string,
     entry = 'index.js',
     env?: Record<string, string>,
+    gatewayId?: string | null,
   ): Promise<boolean> {
     const container = await prisma.workspaceContainer.findFirst({
       where: {
@@ -234,7 +235,10 @@ class PluginDeployService {
       return false;
     }
 
-    const pluginDir = `${PLUGIN_DIR}/${pluginSlug}`;
+    // Gateway-bound plugins go under bots/{gwId}/plugins/{slug}/
+    const pluginDir = gatewayId
+      ? `${BOTS_DIR}/${gatewayId}/${PLUGIN_DIR}/${pluginSlug}`
+      : `${PLUGIN_DIR}/${pluginSlug}`;
 
     // Build the full file list: plugin.json + all user files
     const allFiles = [
@@ -481,23 +485,49 @@ class PluginDeployService {
         fileExists = true;
       } catch {
         // File missing — try to recover from marketplace bundle first, then codeBundle
-        let templateCode: string | null = null;
-
-        // Try marketplace filesystem bundle first
         const bundle = marketplaceLoader.getBundleCode(up.plugin.slug);
-        if (bundle?.code) {
-          templateCode = bundle.code;
-        } else if (up.plugin.codeBundle) {
-          // Fallback to DB codeBundle (custom plugins)
-          templateCode = up.plugin.codeBundle;
-        }
 
-        if (templateCode) {
-          const recovered_ = await this.writePluginFile(client, up.plugin.slug, templateCode, up.gatewayId);
-          if (recovered_) {
+        if (bundle?.layout === "directory" && bundle.files) {
+          // Directory plugin recovery — write all files
+          const pluginDir = up.gatewayId
+            ? `${BOTS_DIR}/${up.gatewayId}/${PLUGIN_DIR}/${up.plugin.slug}`
+            : `${PLUGIN_DIR}/${up.plugin.slug}`;
+          const manifestJson = JSON.stringify({
+            slug: up.plugin.slug,
+            entryFile: bundle.entryFile || "index.js",
+            layout: "directory",
+          });
+          const allFiles = [
+            { path: `${pluginDir}/plugin.json`, content: manifestJson },
+            ...Object.entries(bundle.files).map(([relPath, content]) => ({
+              path: `${pluginDir}/${relPath}`,
+              content,
+            })),
+          ];
+          try {
+            await client.fileWriteMulti(allFiles);
             fileExists = true;
             recovered++;
-            deployLog.info({ pluginSlug: up.plugin.slug }, 'Plugin file recovered from template');
+            deployLog.info({ pluginSlug: up.plugin.slug, fileCount: allFiles.length }, 'Directory plugin recovered from bundle');
+          } catch (writeErr) {
+            deployLog.warn({ pluginSlug: up.plugin.slug, error: (writeErr as Error).message }, 'Directory plugin recovery failed');
+          }
+        } else {
+          // Single-file recovery
+          let templateCode: string | null = null;
+          if (bundle?.code) {
+            templateCode = bundle.code;
+          } else if (up.plugin.codeBundle) {
+            templateCode = up.plugin.codeBundle;
+          }
+
+          if (templateCode) {
+            const recovered_ = await this.writePluginFile(client, up.plugin.slug, templateCode, up.gatewayId);
+            if (recovered_) {
+              fileExists = true;
+              recovered++;
+              deployLog.info({ pluginSlug: up.plugin.slug }, 'Plugin file recovered from template');
+            }
           }
         }
 
@@ -653,8 +683,32 @@ class PluginDeployService {
     }
 
     // Try marketplace filesystem bundle first, then DB codeBundle
-    let templateCode: string | null = null;
     const bundle = marketplaceLoader.getBundleCode(userPlugin.plugin.slug);
+
+    // --- Directory plugin recovery ---
+    if (bundle?.layout === "directory" && bundle.files) {
+      deployLog.info({ pluginSlug }, 'Recovering directory plugin files from marketplace bundle');
+      const gwId = extractGatewayIdFromPath(filePath);
+      const manifestJson = JSON.stringify({
+        slug: userPlugin.plugin.slug,
+        name: pluginSlug,
+        entryFile: bundle.entryFile || "index.js",
+        layout: "directory",
+      });
+      return this.writeDirectoryToContainer(
+        userId,
+        organizationId ?? null,
+        pluginSlug,
+        bundle.files,
+        manifestJson,
+        bundle.entryFile || "index.js",
+        undefined,
+        gwId,
+      );
+    }
+
+    // --- Single-file recovery ---
+    let templateCode: string | null = null;
     if (bundle?.code) {
       templateCode = bundle.code;
     } else if (userPlugin.plugin.codeBundle) {

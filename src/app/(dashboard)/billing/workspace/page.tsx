@@ -19,37 +19,37 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardFooter,
+    CardHeader,
+    CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
 import { getPlanDisplayName, INCLUDED_WORKSPACE_TIER, PLAN_LIMITS, type PlanType } from "@/shared/constants/plans";
 import {
-  ALL_ADDON_TIERS,
-  calculateTotalWorkspace,
-  canPurchaseAddon,
-  getMinRequiredPlanForAddon,
-  WORKSPACE_ADDONS,
-  WORKSPACE_PRICING,
-  WORKSPACE_SPECS,
-  type WorkspaceAddonTier
+    ALL_ADDON_TIERS,
+    calculateTotalWorkspace,
+    canPurchaseAddon,
+    getMinRequiredPlanForAddon,
+    WORKSPACE_ADDONS,
+    WORKSPACE_PRICING,
+    WORKSPACE_SPECS,
+    type WorkspaceAddonTier
 } from "@/shared/constants/workspace-addons";
 import {
-  AlertCircle,
-  Check,
-  Cpu,
-  HardDrive,
-  Info,
-  Loader2,
-  Lock,
-  MemoryStick,
-  Plus,
-  Server
+    AlertCircle,
+    Check,
+    Cpu,
+    HardDrive,
+    Info,
+    Loader2,
+    Lock,
+    MemoryStick,
+    Plus,
+    Server
 } from "lucide-react";
 import { useState } from "react";
 
@@ -310,7 +310,7 @@ function WorkspaceSummary({
 /**
  * Main Workspace Page Content
  */
-function WorkspaceContent() {
+export function WorkspaceContent() {
   const { user, token, isLoading: authLoading } = useAuth();
   const [purchaseLoading, setPurchaseLoading] = useState<WorkspaceAddonTier | null>(null);
   const [error, setError] = useState<string | null>(null);

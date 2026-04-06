@@ -9,39 +9,42 @@
 
 import { logger } from "@/lib/logger";
 import {
-  agentService,
-  clearSessionApprovals,
-  getSessionActions,
-  resolveApproval,
-  restoreSession as restoreAgentSession,
-  type AgentStreamEvent,
+    agentService,
+    clearSessionApprovals,
+    getSessionActions,
+    resolveApproval,
+    restoreSession as restoreAgentSession,
+    type AgentStreamEvent,
 } from "@/modules/2bot-ai-agent";
 import {
-  checkAllProviders,
-  getAvailableFeatures,
-  getCachedHealthStatus,
-  getProvidersStatus,
-  getRegistryEntry,
-  getTwoBotAIModel,
-  isTwoBotAIModelId,
-  MARGIN,
-  MODEL_REGISTRY,
-  TWOBOT_AI_MODEL_TIERS,
-  TwoBotAIError,
-  twoBotAIProvider,
-  type AICapability,
-  type ImageQuality,
-  type ImageSize,
-  type ImageStyle,
-  type SpeechSynthesisFormat,
-  type SpeechSynthesisVoice,
-  type TextGenerationMessage,
-  type TwoBotAIModel,
-  type TwoBotAIModelId,
-  type TwoBotAIModelInfo
+    checkAllProviders,
+    computeQualityScore,
+    getAvailableFeatures,
+    getCachedHealthStatus,
+    getProvidersStatus,
+    getRegistryEntry,
+    getTwoBotAIModel,
+    isTwoBotAIModelId,
+    MARGIN,
+    MODEL_REGISTRY,
+    qualityScoreToTier,
+    TwoBotAIError,
+    twoBotAIProvider,
+    type AICapability,
+    type ImageQuality,
+    type ImageSize,
+    type ImageStyle,
+    type QualityTier,
+    type SpeechSynthesisFormat,
+    type SpeechSynthesisVoice,
+    type TextGenerationMessage,
+    type TwoBotAIModel,
+    type TwoBotAIModelId,
+    type TwoBotAIModelInfo
 } from "@/modules/2bot-ai-provider";
 import { getModelHealthSummary, isModelHealthy } from "@/modules/2bot-ai-provider/model-health-tracker";
 import { isProviderConfigured } from "@/modules/2bot-ai-provider/provider-config";
+import { areHealthChecksReady } from "@/modules/2bot-ai-provider/provider-health.service";
 import { BadRequestError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { createServiceContext, type ServiceContext } from "@/shared/types/context";
@@ -309,13 +312,15 @@ interface RealModelResponse {
   creditsOutput?: number;
   /** Unit label for non-text display */
   creditUnit: "1k tok" | "img" | "1k ch" | "min";
-  /** Cost tier: free / lite / pro / ultra */
-  tier: "free" | "lite" | "pro" | "ultra";
+  /** Performance tier: free / lite / pro / premium */
+  tier: QualityTier;
   providers: string[];
   isPreview?: boolean;
   deprecated?: boolean;
   /** Whether the model is currently healthy (not auto-disabled due to repeated failures) */
   isHealthy: boolean;
+  /** Whether the model supports function/tool calling */
+  functionCalling: boolean;
 }
 
 interface RealModelsResponse {
@@ -336,27 +341,29 @@ twoBotAIRouter.get(
   asyncHandler(async (req: Request, res: Response<ApiResponse<RealModelsResponse>>) => {
     const capability = req.query.capability as string | undefined;
 
+    // Don't serve models until health checks have validated providers
+    if (!areHealthChecksReady()) {
+      res.json({ success: true, data: { models: [] } });
+      return;
+    }
+
     // Baseline: $3/M input tokens ≈ Claude Sonnet 4.6 / GPT-4o level = 1x
     // MARGIN = 200 (2× markup: $1 = 100 credits)
 
-    // Tier assignment based on comparable cost (same thresholds as auto-curator)
-    function assignTier(comparableCost: number, capability: string, imageCredits?: number): RealModelResponse["tier"] {
-      if (capability === "image-generation" && imageCredits !== undefined) {
-        const { free: f, lite: l, pro: p } = TWOBOT_AI_MODEL_TIERS;
-        if (imageCredits <= (f.maxImageCostThreshold ?? 0)) return "free";
-        if (imageCredits <= (l.maxImageCostThreshold ?? 5)) return "lite";
-        if (imageCredits <= (p.maxImageCostThreshold ?? 16)) return "pro";
-        return "ultra";
+    // Performance-based tier assignment using quality score
+    // Derived from model capability levels (reasoning × 2 + creativity × 1.5 + speed × 0.5)
+    // For non-text models without capability levels, fall back to cost-based bucketing
+    function assignTier(entry: typeof MODEL_REGISTRY[number]): QualityTier {
+      // Use quality score if capabilities have performance levels
+      const caps = entry.capabilities;
+      if (caps && (caps.reasoning || caps.creativity || caps.speed)) {
+        return qualityScoreToTier(computeQualityScore(caps));
       }
-      const isCode = capability === "code-generation";
-      const { free: f, lite: l, pro: p } = TWOBOT_AI_MODEL_TIERS;
-      const freeMax = isCode ? (f.maxCodeCostThreshold ?? f.maxCostThreshold) : f.maxCostThreshold;
-      const liteMax = isCode ? (l.maxCodeCostThreshold ?? l.maxCostThreshold) : l.maxCostThreshold;
-      const proMax = isCode ? (p.maxCodeCostThreshold ?? p.maxCostThreshold) : p.maxCostThreshold;
-      if (comparableCost <= freeMax) return "free";
-      if (comparableCost < liteMax) return "lite";
-      if (comparableCost < proMax) return "pro";
-      return "ultra";
+      // Fallback for models without capability levels (image, voice, embedding):
+      // use cost-based bucketing via the registry's numeric tier
+      if (entry.tier <= 1) return "lite";
+      if (entry.tier <= 2) return "pro";
+      return "premium";
     }
 
     const models: RealModelResponse[] = [];
@@ -382,15 +389,21 @@ twoBotAIRouter.get(
       const toCreditsPerK = (usdPer1M: number) =>
         Math.round(((usdPer1M / 1_000_000) * MARGIN * 1000) * 1000) / 1000;
 
+      // Track whether any provider had explicit pricing data
+      let hasPricingData = false;
+
       if (entry.capability === "text-generation" || entry.capability === "code-generation" || entry.capability === "text-embedding") {
         // Pick cheapest provider by input cost; grab both input + output from same provider
         let bestInputUsd = Infinity;
         let bestOutputUsd: number | undefined;
         for (const c of costs) {
-          const inp = c!.inputPer1M ?? Infinity;
-          if (inp < bestInputUsd) {
-            bestInputUsd = inp;
-            bestOutputUsd = c!.outputPer1M;
+          const inp = c!.inputPer1M;
+          if (inp !== undefined) {
+            hasPricingData = true;
+            if (inp < bestInputUsd) {
+              bestInputUsd = inp;
+              bestOutputUsd = c!.outputPer1M;
+            }
           }
         }
         creditsInput = bestInputUsd === Infinity ? 0 : toCreditsPerK(bestInputUsd);
@@ -398,36 +411,33 @@ twoBotAIRouter.get(
         creditUnit = "1k tok";
       } else if (entry.capability === "image-generation") {
         const cheapestImage = Math.min(...costs.map((c) => c!.perImage ?? Infinity));
+        hasPricingData = cheapestImage !== Infinity;
         creditsInput = cheapestImage === Infinity ? 0 : Math.round((cheapestImage * MARGIN) * 100) / 100;
         creditUnit = "img";
       } else if (entry.capability === "speech-synthesis") {
         const cheapestChar = Math.min(...costs.map((c) => c!.perCharM ?? Infinity));
+        hasPricingData = cheapestChar !== Infinity;
         creditsInput = cheapestChar === Infinity ? 0 : toCreditsPerK(cheapestChar);
         creditUnit = "1k ch";
       } else if (entry.capability === "speech-recognition") {
         const cheapestMin = Math.min(...costs.map((c) => c!.perMinute ?? Infinity));
+        hasPricingData = cheapestMin !== Infinity;
         creditsInput = cheapestMin === Infinity ? 0 : Math.round((cheapestMin * MARGIN) * 100) / 100;
         creditUnit = "min";
       }
 
       const isPreview = entry.displayName.includes("Preview") || entry.badge === "NEW";
 
-      // Compute comparable cost for tier assignment
-      let comparableCost = 0;
-      if (entry.capability === "text-generation" || entry.capability === "code-generation" || entry.capability === "text-embedding") {
-        const bestCost = costs.reduce((best, c) => {
-          const inp = c!.inputPer1M ?? Infinity;
-          return inp < best.inp ? { inp, out: c!.outputPer1M ?? 0 } : best;
-        }, { inp: Infinity, out: 0 });
-        comparableCost = bestCost.inp === Infinity ? 0
-          : (bestCost.inp / 1_000_000) * MARGIN + (bestCost.out / 1_000_000) * MARGIN;
-      }
-      const tier = assignTier(comparableCost, entry.capability, entry.capability === "image-generation" ? creditsInput : undefined);
+      const tier = assignTier(entry);
 
-      // Skip models with no pricing data (creditsInput === 0 for text/code means no cost configured)
-      if (creditsInput === 0 && (entry.capability === "text-generation" || entry.capability === "code-generation" || entry.capability === "text-embedding")) {
+      // Skip models with no pricing data (no provider had cost fields defined)
+      // Genuinely free models (inputPer1M: 0) are kept — they have pricing data, it's just $0
+      if (!hasPricingData) {
         continue;
       }
+
+      // Skip unhealthy models (auto-disabled after repeated failures)
+      if (!isModelHealthy(entry.id)) continue;
 
       models.push({
         id: entry.id,
@@ -442,11 +452,12 @@ twoBotAIRouter.get(
         isPreview,
         deprecated: entry.deprecated,
         isHealthy: isModelHealthy(entry.id),
+        functionCalling: entry.capabilities?.supportsFunctionCalling ?? false,
       });
     }
 
-    // Sort: by tier order, then cheapest first within tier
-    const tierOrder = { free: 0, lite: 1, pro: 2, ultra: 3 };
+    // Sort: by tier order (performance), then cheapest first within tier
+    const tierOrder: Record<QualityTier, number> = { lite: 0, pro: 1, premium: 2 };
     models.sort((a, b) => tierOrder[a.tier] - tierOrder[b.tier] || a.creditsInput - b.creditsInput);
 
     res.json({

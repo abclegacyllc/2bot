@@ -99,6 +99,49 @@ export function creditPerSecond(perSec: number): number {
 }
 
 // ===========================================
+// Quality Score (Performance-Based Tiers)
+// ===========================================
+
+const CAPABILITY_LEVEL_SCORES: Record<string, number> = {
+  none: 0, low: 1, medium: 2, high: 3, highest: 4,
+};
+
+/**
+ * Compute a quality score from model capability levels.
+ *
+ * Weights: reasoning × 2  +  creativity × 1.5  +  speed × 0.5
+ * Range: 0 (worst) → 16 (best)
+ *
+ * This gives performance-based tiers instead of cost-based.
+ * A cheap model that scores high on reasoning ranks above an
+ * expensive model that scores low.
+ */
+export function computeQualityScore(caps: ModelCapabilities | undefined): number {
+  if (!caps) return 0;
+  const r = CAPABILITY_LEVEL_SCORES[caps.reasoning ?? "none"] ?? 0;
+  const c = CAPABILITY_LEVEL_SCORES[caps.creativity ?? "none"] ?? 0;
+  const s = CAPABILITY_LEVEL_SCORES[caps.speed ?? "none"] ?? 0;
+  return r * 2 + c * 1.5 + s * 0.5;
+}
+
+export type QualityTier = "lite" | "pro" | "premium";
+
+/**
+ * Map a quality score to a tier name.
+ *
+ * | Score   | Tier    | Meaning                          |
+ * |---------|---------|----------------------------------|
+ * | 0–9     | lite    | Fast & cost-effective            |
+ * | 9.1–13  | pro     | Strong models for complex tasks  |
+ * | 13.1+   | premium | Flagship / best-in-class         |
+ */
+export function qualityScoreToTier(score: number): QualityTier {
+  if (score <= 9) return "lite";
+  if (score <= 13) return "pro";
+  return "premium";
+}
+
+// ===========================================
 // Capability Presets (defined ONCE)
 // ===========================================
 

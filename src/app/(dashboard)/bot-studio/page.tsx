@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Bot Studio → Bots redirect
+ * Bot Studio → Studio redirect
  *
- * Legacy route that redirects to the new /bots page.
+ * Legacy route that redirects to the new /studio page.
  *
  * @module app/(dashboard)/bot-studio
  */
@@ -15,7 +15,7 @@ export default function BotStudioRedirect() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/bots");
+    router.replace("/studio");
   }, [router]);
 
   return null;

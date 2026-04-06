@@ -87,6 +87,7 @@ export interface AgentToolResult {
 export type AgentSessionStatus =
   | "running"            // Actively processing iterations
   | "completed"          // Finished successfully (AI returned text, no more tool calls)
+  | "paused"             // Suspended, waiting for user answer (can resume hours/days later)
   | "awaiting_approval"  // Paused, waiting for user to approve a terminal command
   | "max_iterations"     // Hit iteration limit
   | "max_credits"        // Hit credit cap

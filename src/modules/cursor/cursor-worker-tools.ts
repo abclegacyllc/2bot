@@ -15,7 +15,7 @@
  */
 
 import type { CursorWorkerType } from "./cursor-workers";
-import { WORKER_TOOL_NAMES } from "./cursor-workers";
+import { ASK_MODE_TOOL_NAMES, WORKER_TOOL_NAMES, WORKFLOW_TOOL_NAMES } from "./cursor-workers";
 
 // ===========================================
 // Tool Definition Type
@@ -326,6 +326,223 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
   },
 
   // ═══════════════════════════════════════════
+  // WORKFLOW TOOLS (assistant-only, loaded when workflowContext is present)
+  // ═══════════════════════════════════════════
+
+  add_workflow_step: {
+    name: "add_workflow_step",
+    description:
+      "Add a new plugin step to the current workflow. Specify the plugin ID, " +
+      "desired order position (0-indexed), and optional name/config.",
+    parameters: {
+      type: "object",
+      properties: {
+        pluginId: {
+          type: "string",
+          description: "The ID of the plugin to add as a step (use list_available_plugins to find IDs).",
+        },
+        order: {
+          type: "number",
+          description: "Position in the step list (0-indexed). Existing steps at or after this position are shifted down.",
+        },
+        name: {
+          type: "string",
+          description: "Human-readable name for this step (optional, defaults to plugin name).",
+        },
+        config: {
+          type: "object",
+          description: "Optional plugin configuration key-value pairs.",
+        },
+      },
+      required: ["pluginId", "order"],
+    },
+  },
+
+  remove_workflow_step: {
+    name: "remove_workflow_step",
+    description:
+      "Delete a step from the current workflow by its step ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        stepId: {
+          type: "string",
+          description: "The ID of the step to remove.",
+        },
+      },
+      required: ["stepId"],
+    },
+  },
+
+  update_workflow_step: {
+    name: "update_workflow_step",
+    description:
+      "Update an existing workflow step's configuration, name, or enabled state.",
+    parameters: {
+      type: "object",
+      properties: {
+        stepId: {
+          type: "string",
+          description: "The ID of the step to update.",
+        },
+        name: {
+          type: "string",
+          description: "New name for the step.",
+        },
+        config: {
+          type: "object",
+          description: "Updated plugin configuration key-value pairs.",
+        },
+        isEnabled: {
+          type: "boolean",
+          description: "Whether the step is enabled.",
+        },
+      },
+      required: ["stepId"],
+    },
+  },
+
+  reorder_workflow_step: {
+    name: "reorder_workflow_step",
+    description:
+      "Move a workflow step to a new position (0-indexed). Other steps are shifted accordingly.",
+    parameters: {
+      type: "object",
+      properties: {
+        stepId: {
+          type: "string",
+          description: "The ID of the step to move.",
+        },
+        newOrder: {
+          type: "number",
+          description: "The new 0-indexed position for this step.",
+        },
+      },
+      required: ["stepId", "newOrder"],
+    },
+  },
+
+  toggle_workflow_step: {
+    name: "toggle_workflow_step",
+    description:
+      "Enable or disable a workflow step without removing it.",
+    parameters: {
+      type: "object",
+      properties: {
+        stepId: {
+          type: "string",
+          description: "The ID of the step to toggle.",
+        },
+        isEnabled: {
+          type: "boolean",
+          description: "true to enable, false to disable.",
+        },
+      },
+      required: ["stepId", "isEnabled"],
+    },
+  },
+
+  update_workflow_trigger: {
+    name: "update_workflow_trigger",
+    description:
+      "Change the workflow's trigger type (e.g. BOT_MESSAGE, TELEGRAM_MESSAGE, WEBHOOK).",
+    parameters: {
+      type: "object",
+      properties: {
+        triggerType: {
+          type: "string",
+          description: "The new trigger type (BOT_MESSAGE, TELEGRAM_MESSAGE, DISCORD_MESSAGE, SLACK_MESSAGE, WHATSAPP_MESSAGE, WEBHOOK, SCHEDULE, MANUAL).",
+        },
+        triggerConfig: {
+          type: "object",
+          description: "Optional trigger configuration (e.g. schedule cron, webhook path).",
+        },
+      },
+      required: ["triggerType"],
+    },
+  },
+
+  list_available_plugins: {
+    name: "list_available_plugins",
+    description:
+      "List plugins that the user has installed and can be added as workflow steps. " +
+      "Returns plugin ID, name, slug, and description. Use to find the right plugin to add.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Optional search keyword to filter plugins by name or description.",
+        },
+      },
+      required: [],
+    },
+  },
+
+  test_workflow: {
+    name: "test_workflow",
+    description:
+      "Trigger a test execution of the current workflow. Returns the run ID for tracking.",
+    parameters: {
+      type: "object",
+      properties: {
+        params: {
+          type: "object",
+          description: "Optional test parameters to pass to the workflow trigger.",
+        },
+      },
+      required: [],
+    },
+  },
+
+  read_plugin_file: {
+    name: "read_plugin_file",
+    description:
+      "Read a source file from a workflow step's plugin directory. Use the step's entryFile " +
+      "from the workflow context to know the plugin's root. The path is relative to the " +
+      "plugin directory (e.g. 'index.js', 'lib/prompt.ts').",
+    parameters: {
+      type: "object",
+      properties: {
+        stepId: {
+          type: "string",
+          description: "The workflow step ID whose plugin file to read.",
+        },
+        path: {
+          type: "string",
+          description: "File path relative to the plugin directory.",
+        },
+      },
+      required: ["stepId", "path"],
+    },
+  },
+
+  write_plugin_file: {
+    name: "write_plugin_file",
+    description:
+      "Write or overwrite a source file in a workflow step's plugin directory. " +
+      "Directories are created automatically. The path is relative to the plugin directory.",
+    parameters: {
+      type: "object",
+      properties: {
+        stepId: {
+          type: "string",
+          description: "The workflow step ID whose plugin file to write.",
+        },
+        path: {
+          type: "string",
+          description: "File path relative to the plugin directory.",
+        },
+        content: {
+          type: "string",
+          description: "The full file contents to write.",
+        },
+      },
+      required: ["stepId", "path", "content"],
+    },
+  },
+
+  // ═══════════════════════════════════════════
   // CODER-ONLY TOOLS (workspace file operations)
   // These are carried over from the existing agent
   // ═══════════════════════════════════════════
@@ -351,7 +568,8 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
     name: "write_file",
     description:
       "Write or overwrite a file in the workspace. Directories are created automatically. " +
-      "The path is relative to the workspace root.",
+      "The path is relative to the workspace root. Use for NEW files or complete rewrites only. " +
+      "For targeted changes to existing files, prefer edit_file (cheaper and faster).",
     parameters: {
       type: "object",
       properties: {
@@ -365,6 +583,42 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
         },
       },
       required: ["path", "content"],
+    },
+  },
+
+  edit_file: {
+    name: "edit_file",
+    description:
+      "Edit an existing file by applying search/replace operations. Much cheaper than write_file " +
+      "because you only send the changed parts. Each edit finds an exact text match and replaces it. " +
+      "Use for targeted changes to existing files. For new files or complete rewrites, use write_file.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Relative file path inside the workspace",
+        },
+        edits: {
+          type: "array",
+          description: "Array of search/replace operations to apply in order",
+          items: {
+            type: "object",
+            properties: {
+              search: {
+                type: "string",
+                description: "Exact text to find in the file (must match exactly, including whitespace and indentation)",
+              },
+              replace: {
+                type: "string",
+                description: "Text to replace the search match with",
+              },
+            },
+            required: ["search", "replace"],
+          },
+        },
+      },
+      required: ["path", "edits"],
     },
   },
 
@@ -466,6 +720,75 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
           type: "number",
           description: "Maximum number of results (default: 30)",
           default: 30,
+        },
+      },
+      required: ["pattern"],
+    },
+  },
+
+  get_file_outline: {
+    name: "get_file_outline",
+    description:
+      "Get a compact structural outline of a file showing imports, classes, methods, functions, " +
+      "and exports — WITHOUT reading the full file contents. This is much cheaper than read_file " +
+      "and should be your FIRST step when exploring unfamiliar files. " +
+      "Use read_file only after you know which specific section you need.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Relative file path inside the workspace",
+        },
+      },
+      required: ["path"],
+    },
+  },
+
+  get_function: {
+    name: "get_function",
+    description:
+      "Extract a single function or method body by name from a file. " +
+      "Returns just the function code with line numbers. " +
+      "Much cheaper than reading the entire file when you only need one function.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Relative file path inside the workspace",
+        },
+        name: {
+          type: "string",
+          description: "Name of the function or method to extract",
+        },
+      },
+      required: ["path", "name"],
+    },
+  },
+
+  search_symbols: {
+    name: "search_symbols",
+    description:
+      "Search for function, class, or method names across multiple files. " +
+      "Returns matching symbol signatures with file paths and line numbers. " +
+      "Faster and more precise than search_files for finding code definitions.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Symbol name or substring to search for (case-insensitive)",
+        },
+        path: {
+          type: "string",
+          description: "Directory to search in (default: workspace root)",
+          default: ".",
+        },
+        type: {
+          type: "string",
+          description: "Filter by symbol type: 'function', 'class', or 'all' (default: 'all')",
+          default: "all",
         },
       },
       required: ["pattern"],
@@ -633,13 +956,37 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
       "Ask the user a question and wait for their response. " +
       "Use this when you genuinely need information from the user — " +
       "a bot token, a preference, confirmation for a destructive action, etc. " +
-      "The user sees the question in the chat and types their answer.",
+      "The user sees the question in the chat with clickable answer options.\n\n" +
+      "IMPORTANT: Always provide `options` with 2-5 short, clear choices covering the most common answers. " +
+      "The LAST option should always be { label: \"Other (type my own)\", value: \"__freetext__\" } so " +
+      "the user can type a custom answer if none of the choices fit. " +
+      "Keep option labels short (3-8 words). Keep the question concise (one sentence).",
     parameters: {
       type: "object",
       properties: {
         question: {
           type: "string",
-          description: "The question to ask the user",
+          description: "A concise question (one sentence) to ask the user",
+        },
+        options: {
+          type: "array",
+          description:
+            "Clickable answer choices. Provide 2-5 options. " +
+            "The last option MUST be { label: \"Other (type my own)\", value: \"__freetext__\" }.",
+          items: {
+            type: "object",
+            properties: {
+              label: {
+                type: "string",
+                description: "Short display label the user clicks (3-8 words)",
+              },
+              value: {
+                type: "string",
+                description: "Value sent back when selected (use \"__freetext__\" for the free-text option)",
+              },
+            },
+            required: ["label", "value"],
+          },
         },
         sensitive: {
           type: "boolean",
@@ -869,9 +1216,31 @@ const ALL_TOOLS: Record<string, WorkerToolDefinition> = {
 /**
  * Get the tool definitions for a specific worker type.
  * Filters ALL_TOOLS based on WORKER_TOOL_NAMES.
+ * When hasWorkflowContext is true, workflow mutation tools are added to the assistant.
  */
-export function getWorkerTools(workerType: CursorWorkerType): WorkerToolDefinition[] {
-  const toolNames = WORKER_TOOL_NAMES[workerType];
+export function getWorkerTools(
+  workerType: CursorWorkerType,
+  options?: { hasWorkflowContext?: boolean; studioMode?: "agent" | "ask" | "plan" },
+): WorkerToolDefinition[] {
+  // Ask mode: read-only diagnostic tools — can investigate but not mutate
+  if (options?.studioMode === "ask") {
+    return ASK_MODE_TOOL_NAMES
+      .map((name) => ALL_TOOLS[name])
+      .filter((t): t is WorkerToolDefinition => !!t);
+  }
+
+  const toolNames = [...WORKER_TOOL_NAMES[workerType]];
+
+  // Conditionally add workflow tools for assistant in studio mode
+  if (workerType === "assistant" && options?.hasWorkflowContext) {
+    // Plan mode: add workflow tools but only read-only ones
+    if (options.studioMode === "plan") {
+      toolNames.push("list_available_plugins");
+    } else {
+      toolNames.push(...WORKFLOW_TOOL_NAMES);
+    }
+  }
+
   return toolNames
     .map((name) => ALL_TOOLS[name])
     .filter((t): t is WorkerToolDefinition => !!t);

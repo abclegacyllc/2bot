@@ -119,9 +119,9 @@ function RegisterForm() {
         }
       }
 
-      // Redirect to dashboard
+      // Redirect to studio
       // Use serviceUrl for cross-subdomain redirect in enterprise mode
-      window.location.href = serviceUrl('dashboard', '/');
+      window.location.href = serviceUrl('dashboard', '/studio');
     } catch {
       setError("Network error. Please check your connection and try again.");
     } finally {

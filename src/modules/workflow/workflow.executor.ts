@@ -250,7 +250,8 @@ export async function executeWorkflow(
         stepCfg,
         step.gatewayId ?? workflow.gatewayId,
         stepCfg.gatewayActionsEnabled === true,
-        runCache
+        runCache,
+        { entryFile: step.entryFile, userPluginId: step.userPluginId }
       );
 
       // Build plugin event — reconstruct platform event from raw trigger data
@@ -285,6 +286,17 @@ export async function executeWorkflow(
           status: "completed",
           durationMs: stepDuration,
         };
+
+        // Update step-level execution stats
+        void prisma.workflowStep.update({
+          where: { id: step.id },
+          data: {
+            executionCount: { increment: 1 },
+            lastExecutedAt: new Date(),
+            lastError: null,
+          },
+        }).catch(() => { /* best-effort stats */ });
+
         execLogger.debug(
           { workflowId, runId, stepOrder: step.order, durationMs: stepDuration },
           "Step completed"
@@ -304,6 +316,16 @@ export async function executeWorkflow(
           status: "failed",
           durationMs: stepDuration2,
         };
+
+        // Update step-level execution stats with error
+        void prisma.workflowStep.update({
+          where: { id: step.id },
+          data: {
+            executionCount: { increment: 1 },
+            lastExecutedAt: new Date(),
+            lastError: result.error ?? "Unknown error",
+          },
+        }).catch(() => { /* best-effort stats */ });
 
         if (step.onError === "continue") {
           execLogger.warn(
@@ -365,6 +387,11 @@ export async function executeWorkflow(
     { workflowId, runId, durationMs: totalDuration, stepCount: workflow.steps.length },
     "Workflow execution completed"
   );
+
+  // ── Auto-reply for BOT_MESSAGE workflows ──────────────────────────
+  // When a BOT_MESSAGE workflow completes, send the last step's output
+  // back to the originating chat so the user gets a reply on Telegram/etc.
+  await sendAutoReply(workflow, runId, triggerData, lastOutput);
 
   return runId;
 }
@@ -557,6 +584,9 @@ async function executeStepWithRetry(
 /**
  * Build a PluginContext for executing a workflow step.
  * Uses per-run cache to avoid redundant gateway/userPlugin queries.
+ *
+ * Prefers step-level entryFile/userPluginId from the unified model.
+ * Falls back to UserPlugin lookup for backward compatibility.
  */
 async function buildPluginContext(
   pluginId: string,
@@ -566,41 +596,57 @@ async function buildPluginContext(
   config: Record<string, unknown>,
   gatewayId: string | null | undefined,
   gatewayActionsEnabled = false,
-  runCache?: WorkflowRunCache
+  runCache?: WorkflowRunCache,
+  stepOverrides?: { entryFile?: string | null; userPluginId?: string | null }
 ): Promise<PluginContext> {
   // Cache key for userPlugin: scoped to plugin + gateway
   const cacheKey = `${pluginId}:${gatewayId ?? "null"}`;
   let userPlugin = runCache?.userPlugins.get(cacheKey) ?? null;
 
   if (!userPlugin) {
-    // Find the user's plugin installation (scoped to org + gateway for multi-instance)
-    const found = await prisma.userPlugin.findFirst({
-      where: { pluginId, userId, organizationId: organizationId ?? null, gatewayId: gatewayId ?? null },
-    });
-
-    if (!found) {
-      // Auto-create UserPlugin so IPC service can resolve context for workflow-mode plugins
-      execLogger.info(
-        { pluginId, pluginSlug, userId },
-        "Plugin not installed for user — auto-creating installation for workflow execution"
-      );
-      const created = await prisma.userPlugin.create({
-        data: {
-          userId,
-          pluginId,
-          organizationId: organizationId ?? null,
-          gatewayId: gatewayId ?? null,
-          config: {},
-          isEnabled: true,
-          entryFile: getPluginEntryPath(gatewayId, pluginSlug),
-        },
+    // Prefer step-level userPluginId from the unified model
+    if (stepOverrides?.userPluginId) {
+      const found = await prisma.userPlugin.findUnique({
+        where: { id: stepOverrides.userPluginId },
       });
-      userPlugin = { id: created.id, isEnabled: true, config: created.config, entryFile: created.entryFile };
-    } else if (!found.isEnabled) {
-      // Plugin is disabled — do NOT auto-re-enable; let the step fail gracefully
-      throw new Error(`Plugin "${pluginSlug}" is disabled — skipping workflow step`);
-    } else {
-      userPlugin = { id: found.id, isEnabled: found.isEnabled, config: found.config, entryFile: found.entryFile };
+      if (found && found.isEnabled) {
+        userPlugin = { id: found.id, isEnabled: found.isEnabled, config: found.config, entryFile: found.entryFile };
+      } else if (found && !found.isEnabled) {
+        throw new Error(`Plugin "${pluginSlug}" is disabled — skipping workflow step`);
+      }
+      // If not found (orphaned userPluginId), fall through to standard lookup
+    }
+
+    if (!userPlugin) {
+      // Find the user's plugin installation (scoped to org + gateway for multi-instance)
+      const found = await prisma.userPlugin.findFirst({
+        where: { pluginId, userId, organizationId: organizationId ?? null, gatewayId: gatewayId ?? null },
+      });
+
+      if (!found) {
+        // Auto-create UserPlugin so IPC service can resolve context for workflow-mode plugins
+        execLogger.info(
+          { pluginId, pluginSlug, userId },
+          "Plugin not installed for user — auto-creating installation for workflow execution"
+        );
+        const created = await prisma.userPlugin.create({
+          data: {
+            userId,
+            pluginId,
+            organizationId: organizationId ?? null,
+            gatewayId: gatewayId ?? null,
+            config: {},
+            isEnabled: true,
+            entryFile: getPluginEntryPath(gatewayId, pluginSlug),
+          },
+        });
+        userPlugin = { id: created.id, isEnabled: true, config: created.config, entryFile: created.entryFile };
+      } else if (!found.isEnabled) {
+        // Plugin is disabled — do NOT auto-re-enable; let the step fail gracefully
+        throw new Error(`Plugin "${pluginSlug}" is disabled — skipping workflow step`);
+      } else {
+        userPlugin = { id: found.id, isEnabled: found.isEnabled, config: found.config, entryFile: found.entryFile };
+      }
     }
 
     // Store in cache for later steps that might use the same plugin+gateway
@@ -662,8 +708,8 @@ async function buildPluginContext(
     executeGateway
   );
 
-  // Entry file for the plugin (prefer DB value, fall back to computed bot-dir path)
-  const entryFile = userPlugin.entryFile ?? getPluginEntryPath(gatewayId, pluginSlug);
+  // Entry file for the plugin (prefer step-level, then DB value, then computed bot-dir path)
+  const entryFile = stepOverrides?.entryFile ?? userPlugin.entryFile ?? getPluginEntryPath(gatewayId, pluginSlug);
 
   return {
     userId,
@@ -685,4 +731,179 @@ function timeout(ms: number): Promise<never> {
   return new Promise((_, reject) => {
     setTimeout(() => reject(new Error(`Step execution timed out after ${ms}ms`)), ms);
   });
+}
+
+// ===========================================
+// Auto-Reply
+// ===========================================
+
+/**
+ * Extract a user-readable reply string from the last step's output.
+ * Checks common plugin output shapes before falling back to JSON.
+ */
+function extractReplyText(output: unknown): string {
+  if (typeof output === "string") return output;
+  if (typeof output !== "object" || output === null) return String(output);
+
+  const out = output as Record<string, unknown>;
+  // Common plugin output keys (content, text, message, response, reply, result, answer)
+  const keys = ["content", "text", "message", "response", "reply", "result", "answer"];
+  for (const key of keys) {
+    if (typeof out[key] === "string" && (out[key] as string).trim()) {
+      return out[key] as string;
+    }
+  }
+  return JSON.stringify(output, null, 2);
+}
+
+/**
+ * Send a message directly via Telegram Bot API (no in-memory connection required).
+ * This avoids the provider connection check and circuit breaker — used only for
+ * auto-reply where we know the gateway is alive (it just delivered us a webhook).
+ */
+async function sendTelegramDirect(
+  botToken: string,
+  chatId: string | number,
+  text: string
+): Promise<void> {
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  });
+  const data = (await res.json()) as { ok: boolean; description?: string; error_code?: number };
+  if (!data.ok) {
+    throw new Error(`Telegram API error ${data.error_code}: ${data.description}`);
+  }
+}
+
+/**
+ * After a BOT_MESSAGE workflow completes, automatically send the last step's
+ * output back to the user who triggered it.
+ *
+ * Uses the Telegram HTTP API directly rather than provider.execute() to avoid
+ * connection/circuit-breaker issues — the gateway is clearly alive since it
+ * just delivered us the webhook that triggered this workflow.
+ */
+async function sendAutoReply(
+  workflow: { id: string; triggerType: string; gatewayId: string | null },
+  runId: string,
+  triggerData: unknown,
+  lastOutput: unknown
+): Promise<void> {
+  // Guard: only for BOT_MESSAGE trigger
+  if (workflow.triggerType !== "BOT_MESSAGE") return;
+
+  if (!workflow.gatewayId) {
+    execLogger.debug({ workflowId: workflow.id, runId }, "Auto-reply skipped: no gatewayId");
+    return;
+  }
+
+  if (lastOutput === undefined || lastOutput === null) {
+    execLogger.debug({ workflowId: workflow.id, runId }, "Auto-reply skipped: no lastOutput");
+    // Record on the run so the user can see why no reply was sent
+    await appendRunLog(runId, "No reply sent — last step produced no output.");
+    return;
+  }
+
+  // Extract chat ID from trigger data
+  const td = triggerData as Record<string, unknown> | undefined;
+  const msgData = (td?.message ?? td) as Record<string, unknown> | undefined;
+  const chatId = msgData?.chatId ?? msgData?.chat_id;
+
+  if (!chatId) {
+    execLogger.warn(
+      { workflowId: workflow.id, runId, triggerDataKeys: td ? Object.keys(td) : [] },
+      "Auto-reply skipped: chatId not found in trigger data"
+    );
+    await appendRunLog(runId, "No reply sent — could not determine chat ID from trigger.");
+    return;
+  }
+
+  // Extract reply text
+  const replyText = extractReplyText(lastOutput);
+  if (!replyText.trim()) {
+    execLogger.debug({ workflowId: workflow.id, runId }, "Auto-reply skipped: empty replyText");
+    await appendRunLog(runId, "No reply sent — output resolved to empty text.");
+    return;
+  }
+
+  // Load gateway to determine type and get credentials
+  const gw = await prisma.gateway.findUnique({ where: { id: workflow.gatewayId } });
+  if (!gw) {
+    execLogger.warn({ workflowId: workflow.id, runId, gatewayId: workflow.gatewayId }, "Auto-reply skipped: gateway not found");
+    await appendRunLog(runId, "No reply sent — gateway not found in database.");
+    return;
+  }
+
+  try {
+    if (gw.type === "TELEGRAM_BOT") {
+      // Bypass provider connection system — send directly via Telegram HTTP API
+      const credentials = gatewayService.getDecryptedCredentials(gw) as { botToken?: string };
+      if (!credentials.botToken) {
+        throw new Error("Bot token not found in gateway credentials");
+      }
+      await sendTelegramDirect(credentials.botToken, chatId as string | number, replyText);
+    } else {
+      // For other gateway types, use the provider system with reconnect fallback
+      const provider = gatewayRegistry.get(gw.type);
+      const credentials = gatewayService.getDecryptedCredentials(gw);
+      try {
+        await provider.execute(gw.id, "sendMessage", { chat_id: chatId, text: replyText });
+      } catch (sendErr) {
+        const msg = sendErr instanceof Error ? sendErr.message : "";
+        if (msg.includes("not connected") || msg.includes("Not connected") || msg.includes("unavailable")) {
+          await provider.connect(gw.id, credentials, (gw.config as Record<string, unknown>) ?? {});
+          await provider.execute(gw.id, "sendMessage", { chat_id: chatId, text: replyText });
+        } else {
+          throw sendErr;
+        }
+      }
+    }
+
+    execLogger.info(
+      { workflowId: workflow.id, runId, gatewayId: gw.id, chatId, gwType: gw.type },
+      "Auto-reply sent to user"
+    );
+    await appendRunLog(runId, `Reply sent to chat ${chatId} via ${gw.type}.`);
+  } catch (replyErr) {
+    const errMsg = replyErr instanceof Error ? replyErr.message : String(replyErr);
+    execLogger.error(
+      { workflowId: workflow.id, runId, gatewayId: gw.id, chatId, error: errMsg },
+      "Failed to send auto-reply"
+    );
+    await appendRunLog(runId, `Failed to send reply: ${errMsg}`);
+  }
+}
+
+/**
+ * Append a human-readable log line to a workflow run's output metadata.
+ * This surfaces in Run History so users can see what happened.
+ */
+async function appendRunLog(runId: string, message: string): Promise<void> {
+  try {
+    const run = await prisma.workflowRun.findUnique({
+      where: { id: runId },
+      select: { output: true },
+    });
+    const raw = run?.output;
+    const existing = (typeof raw === "object" && raw !== null && !Array.isArray(raw))
+      ? (raw as Record<string, unknown>)
+      : {};
+    const logs = Array.isArray(existing._systemLog) ? [...(existing._systemLog as string[])] : [];
+    logs.push(`[${new Date().toISOString()}] ${message}`);
+
+    // Preserve original output under _output if it wasn't an object
+    const merged = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? { ...existing, _systemLog: logs }
+      : { _output: raw, _systemLog: logs };
+
+    await prisma.workflowRun.update({
+      where: { id: runId },
+      data: { output: merged },
+    });
+  } catch {
+    // Best-effort — don't let logging failures block
+  }
 }

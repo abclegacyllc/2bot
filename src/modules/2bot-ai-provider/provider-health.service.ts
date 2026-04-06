@@ -16,8 +16,6 @@ import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { discoverAllModels } from "./model-discovery.service";
-import { recordModelFailure } from "./model-health-tracker";
-import { MODEL_REGISTRY } from "./model-registry";
 import { setProviderValidated } from "./provider-config";
 import type { TwoBotAIProvider } from "./types";
 
@@ -41,6 +39,9 @@ interface ProviderHealthStatus {
 const isProduction = process.env.NODE_ENV === "production";
 const CACHE_TTL_MS = isProduction ? 30 * 60 * 1000 : 5 * 60 * 1000;
 const healthCache = new Map<TwoBotAIProvider, ProviderHealthStatus>();
+
+/** Whether the initial health check has completed (prevents serving unchecked models) */
+let healthChecksInitialized = false;
 
 log.info({ cacheTtlMinutes: CACHE_TTL_MS / 60000, isProduction }, "Provider health cache TTL configured");
 
@@ -305,23 +306,38 @@ async function validateOpenRouterKey(): Promise<{ valid: boolean; error?: string
 
     // Check credit balance
     try {
-      const body = await response.json() as { data?: { limit_remaining?: number; usage?: number; limit?: number } };
+      const body = await response.json() as {
+        data?: {
+          limit_remaining?: number | null;
+          usage?: number;
+          limit?: number | null;
+          is_free_tier?: boolean;
+        };
+      };
       const remaining = body.data?.limit_remaining;
-      if (remaining !== undefined && remaining !== null && remaining <= 0) {
-        log.warn({ remaining, usage: body.data?.usage, limit: body.data?.limit }, "OpenRouter has insufficient credits — disabling OpenRouter models");
-        // Mark all OpenRouter models as unhealthy
-        for (const entry of MODEL_REGISTRY) {
-          if (entry.providers.openrouter) {
-            recordModelFailure(entry.id, "OpenRouter insufficient credits");
-            recordModelFailure(entry.id, "OpenRouter insufficient credits");
-            recordModelFailure(entry.id, "OpenRouter insufficient credits");
-          }
-        }
-        // Key is valid but balance is depleted — still mark provider as valid
-        // (individual models are disabled via model-health-tracker)
-        return { valid: true, latencyMs };
+      const isFreeTier = body.data?.is_free_tier === true;
+      const limit = body.data?.limit;
+
+      // Free tier with no explicit limit — very limited credits, most models will 402
+      if (isFreeTier && limit === null) {
+        log.warn(
+          { isFreeTier, usage: body.data?.usage, limit },
+          "OpenRouter free tier with no credit limit — marking provider as unavailable",
+        );
+        return { valid: false, error: "OpenRouter free tier has insufficient credits for AI requests", latencyMs };
       }
-      log.info({ latencyMs, creditRemaining: remaining }, "OpenRouter API key validated successfully");
+
+      // Explicit limit set but remaining is too low for any useful request
+      const MIN_USABLE_BALANCE = 0.01;
+      if (typeof remaining === "number" && remaining < MIN_USABLE_BALANCE) {
+        log.warn(
+          { remaining, usage: body.data?.usage, limit },
+          "OpenRouter has insufficient credits — marking provider as unavailable",
+        );
+        return { valid: false, error: `Insufficient OpenRouter credits (remaining: $${remaining.toFixed(4)})`, latencyMs };
+      }
+
+      log.info({ latencyMs, creditRemaining: remaining, isFreeTier }, "OpenRouter API key validated successfully");
     } catch {
       // If we can't parse balance, key is still valid
       log.info({ latencyMs }, "OpenRouter API key validated (balance check unavailable)");
@@ -583,4 +599,14 @@ export async function initializeProviderHealth(): Promise<void> {
   } catch (error) {
     log.error({ error }, "Model discovery failed");
   }
+
+  healthChecksInitialized = true;
+}
+
+/**
+ * Whether initial provider health checks have completed.
+ * Before this returns true, model lists should not be trusted.
+ */
+export function areHealthChecksReady(): boolean {
+  return healthChecksInitialized;
 }

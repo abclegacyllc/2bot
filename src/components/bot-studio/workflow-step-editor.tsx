@@ -71,7 +71,7 @@ const KNOWN_VARIABLE_ROOTS = [
 ];
 
 // Also validate the form: steps[N].xxx
-const KNOWN_STEP_SUBPATHS = ["output", "error"];
+const _KNOWN_STEP_SUBPATHS = ["output", "error"];
 
 /** Match all {{...}} variable references in a string */
 function extractVariables(value: string): Array<{ variable: string; start: number; end: number }> {

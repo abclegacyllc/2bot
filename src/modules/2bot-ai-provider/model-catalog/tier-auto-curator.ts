@@ -12,16 +12,16 @@
  */
 
 import {
-  getAllImageGenPricing,
-  getAllTextGenPricing,
+    getAllImageGenPricing,
+    getAllTextGenPricing,
 } from '../model-pricing';
 import type { TwoBotAIProvider } from '../types';
 import type {
-  ModelSelectionStrategy,
-  ProviderModelOption,
-  TwoBotAIModelId,
-  TwoBotAIModelMapping,
-  TwoBotAIModelTier,
+    ModelSelectionStrategy,
+    ProviderModelOption,
+    TwoBotAIModelId,
+    TwoBotAIModelMapping,
+    TwoBotAIModelTier,
 } from './model-catalog.types';
 import { TWOBOT_AI_MODEL_TIERS } from './model-catalog.types';
 import { TWOBOT_AI_MODELS } from './twobot-models';
@@ -218,18 +218,13 @@ export interface TierCurationRule {
  */
 export const TIER_CURATION_RULES: Partial<Record<TwoBotAIModelId, TierCurationRule>> = {
   // ---- Text models: auto-curate by cost range ----
-  '2bot-ai-text-free': {
-    defaultStrategy: 'priority',
-    maxPerProvider: 1,
-    maxOptions: 3,
-  },
   '2bot-ai-text-lite': {
     defaultStrategy: 'lowest-cost',
   },
   '2bot-ai-text-pro': {
     defaultStrategy: 'lowest-cost',
   },
-  '2bot-ai-text-ultra': {
+  '2bot-ai-text-premium': {
     defaultStrategy: 'lowest-cost',
   },
 
@@ -238,7 +233,7 @@ export const TIER_CURATION_RULES: Partial<Record<TwoBotAIModelId, TierCurationRu
     defaultStrategy: 'lowest-cost',
     requireReasoning: true,
   },
-  '2bot-ai-reasoning-ultra': {
+  '2bot-ai-reasoning-premium': {
     defaultStrategy: 'lowest-cost',
     requireReasoning: true,
   },
@@ -247,7 +242,7 @@ export const TIER_CURATION_RULES: Partial<Record<TwoBotAIModelId, TierCurationRu
   '2bot-ai-image-pro': {
     defaultStrategy: 'lowest-cost',
   },
-  '2bot-ai-image-ultra': {
+  '2bot-ai-image-premium': {
     defaultStrategy: 'lowest-cost',
     // Exclude standard-quality dall-e-3; include HD via alwaysInclude
     alwaysExclude: ['dall-e-3'],
@@ -261,11 +256,6 @@ export const TIER_CURATION_RULES: Partial<Record<TwoBotAIModelId, TierCurationRu
   },
 
   // ---- Code generation models: auto-curate code-capable models ----
-  '2bot-ai-code-free': {
-    defaultStrategy: 'priority',
-    maxPerProvider: 1,
-    maxOptions: 3,
-  },
   '2bot-ai-code-lite': {
     defaultStrategy: 'lowest-cost',
     maxPerProvider: 3,
@@ -274,13 +264,13 @@ export const TIER_CURATION_RULES: Partial<Record<TwoBotAIModelId, TierCurationRu
     defaultStrategy: 'lowest-cost',
     maxPerProvider: 3,
   },
-  '2bot-ai-code-ultra': {
+  '2bot-ai-code-premium': {
     defaultStrategy: 'lowest-cost',
   },
 
   // ---- Voice/transcribe: manual only (OpenAI-only, single provider) ----
   '2bot-ai-voice-pro': { manualOnly: true },
-  '2bot-ai-voice-ultra': { manualOnly: true },
+  '2bot-ai-voice-premium': { manualOnly: true },
   '2bot-ai-transcribe-lite': { manualOnly: true },
 };
 
@@ -387,7 +377,7 @@ export function autoGenerateProviderOptions(
   }
 
   // Step 2: Filter by cost range (non-overlapping: min inclusive, max exclusive)
-  // Exception: ultra tier uses inclusive max (Infinity)
+  // Exception: premium tier uses inclusive max (Infinity)
   let filtered = entries.filter(
     (e) => e.comparableCost >= minCost && (maxCost === Infinity ? true : e.comparableCost < maxCost)
   );

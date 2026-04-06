@@ -24,30 +24,31 @@ import crypto from "crypto";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import {
-    checkSessionLimits,
-    truncateToolOutput,
-    validateToolCallArgs,
+  checkSessionLimits,
+  truncateToolOutput,
+  validateToolCallArgs,
 } from "@/modules/2bot-ai-agent/agent-safety";
 import * as agentSessionService from "@/modules/2bot-ai-agent/agent-session.service";
-import { twoBotAIProvider } from "@/modules/2bot-ai-provider";
+import { canResolveTwoBotAIModel, twoBotAIProvider } from "@/modules/2bot-ai-provider";
 import { withRetry } from "@/modules/2bot-ai-provider/retry.util";
 import type { TextGenerationMessage, ToolDefinition } from "@/modules/2bot-ai-provider/types";
 import type { BridgeClient } from "@/modules/workspace/bridge-client.service";
 
 import type { UIAction } from "@/components/cursor/cursor.types";
 import type {
-    CursorAgentEvent,
-    ToolStartMeta,
+  CursorAgentEvent,
+  ToolStartMeta,
 } from "./cursor-agent.types";
 import { getBridgeClient, withBridgeRetry } from "./cursor-bridge";
+import { initSession as initFileTracking, readFileForBackup, trackFileAction } from "./cursor-file-actions";
 import { getWorkerTools } from "./cursor-worker-tools";
 import type { CursorWorkerType, WorkerPromptContext } from "./cursor-workers";
 import {
-    WORKER_META,
-    buildAssistantSystemPrompt,
-    buildCoderSystemPrompt,
-    getAdaptiveWorkerMeta,
-    routeToWorker,
+  WORKER_META,
+  buildAssistantSystemPrompt,
+  buildCoderSystemPrompt,
+  getAdaptiveWorkerMeta,
+  routeToWorker,
 } from "./cursor-workers";
 import type { RepoAnalysis } from "./repo-analyzer.service";
 
@@ -79,6 +80,72 @@ export interface WorkerStreamRequest {
   repoBranch?: string;
   /** Optional: user description of what they want from the repo */
   description?: string;
+  /** Optional: workflow context for Studio AI operations */
+  workflowContext?: WorkflowContext;
+  /** Optional: studio mode — controls tool availability and prompt behavior */
+  studioMode?: "agent" | "ask" | "plan";
+  /** Optional: resume a suspended session. Message becomes the user's answer. */
+  resumeSessionId?: string;
+}
+
+/** Workflow context passed from Studio via CursorStudioBar */
+export interface WorkflowContext {
+  workflowId: string;
+  workflowName: string;
+  triggerType: string;
+  botName?: string;
+  steps: Array<{
+    id: string;
+    order: number;
+    name: string;
+    pluginSlug: string;
+    isEnabled: boolean;
+    entryFile?: string;
+  }>;
+}
+
+/**
+ * State blob saved to DB when a session is suspended.
+ * Contains everything needed to resume the agentic loop from where it left off.
+ */
+export interface SuspendedSessionState {
+  // Worker context
+  currentWorker: CursorWorkerType;
+  handOffCount: number;
+  handOffContext?: string;
+
+  // Plugin context (mutable during session)
+  pluginSlug?: string;
+  pluginName?: string;
+  pluginMode?: "create" | "edit";
+  pluginDir: string;
+  pluginId?: string;
+
+  // Repo analysis (computed once, reused)
+  repoAnalysis?: RepoAnalysis;
+  repoCloneDir?: string;
+
+  // Session metrics (accumulated)
+  totalIterations: number;
+  totalToolCalls: number;
+  totalCreditsUsed: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  toolCallSequence: number;
+  pausedMs: number;
+
+  // File tracking
+  writtenFiles: Record<string, string>;
+
+  // For done event
+  lastAssistantText?: string;
+
+  // Original request params (needed for tool defs, model routing, etc.)
+  studioMode?: "agent" | "ask" | "plan";
+  hasWorkflowContext: boolean;
+  workflowContext?: WorkflowContext;
+  modelId?: string;
+  repoUrl?: string;
 }
 
 // ===========================================
@@ -97,7 +164,7 @@ interface PendingAnswer {
 const pendingAnswers = new Map<string, PendingAnswer>();
 
 /** Wait for the user to answer a question. Rejects after timeout. */
-function waitForUserAnswer(sessionId: string, userId: string, timeoutMs = 120_000): Promise<string> {
+function waitForUserAnswer(sessionId: string, userId: string, timeoutMs = 600_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingAnswers.delete(sessionId);
@@ -191,6 +258,144 @@ function extractPluginContext(message: string): {
 }
 
 // ===========================================
+// Context Window Pruning
+// ===========================================
+
+/** Iteration threshold after which pruning kicks in */
+const PRUNE_AFTER_ITERATION = 4;
+
+/** Number of recent exchange pairs to keep intact */
+const KEEP_RECENT_PAIRS = 2;
+
+/**
+ * Prune old messages to cap context window growth.
+ *
+ * After PRUNE_AFTER_ITERATION iterations, old tool results and assistant messages
+ * are compressed into brief summaries. Keeps:
+ * - messages[0]: system prompt (always)
+ * - messages[1]: original user message (always)
+ * - A rolling context summary of ALL old exchanges
+ * - Last KEEP_RECENT_PAIRS exchange pairs intact (full detail)
+ *
+ * This is deterministic string processing — NO LLM call needed.
+ */
+function pruneMessages(
+  messages: TextGenerationMessage[],
+  keepRecent: number = KEEP_RECENT_PAIRS,
+): TextGenerationMessage[] {
+  // Need at least system + user + some history to prune
+  if (messages.length <= 2 + keepRecent * 2) return messages;
+
+  const system = messages[0]!;   // system prompt
+  const userMsg = messages[1]!;  // original user message
+
+  // Everything after the first two messages is the conversation
+  const conversation = messages.slice(2);
+
+  // Count exchange boundaries: each assistant message starts a new exchange
+  // An exchange = 1 assistant message + N tool result messages after it
+  const exchangeStarts: number[] = [];
+  for (let i = 0; i < conversation.length; i++) {
+    if (conversation[i]!.role === "assistant") {
+      exchangeStarts.push(i);
+    }
+  }
+
+  // If fewer exchanges than keepRecent, nothing to prune
+  if (exchangeStarts.length <= keepRecent) return messages;
+
+  // Split: old exchanges (to summarize) vs recent (to keep intact)
+  const cutoffExchangeIdx = exchangeStarts.length - keepRecent;
+  const cutoffMsgIdx = exchangeStarts[cutoffExchangeIdx]!;
+
+  const oldMessages = conversation.slice(0, cutoffMsgIdx);
+  const recentMessages = conversation.slice(cutoffMsgIdx);
+
+  // Build a richer rolling summary that preserves decision context
+  const summaryLines: string[] = [];
+  const filesRead: string[] = [];
+  const filesWritten: string[] = [];
+  const toolsUsed = new Set<string>();
+  const decisions: string[] = [];
+  const userAnswers: string[] = [];
+
+  for (const msg of oldMessages) {
+    if (msg.role === "assistant") {
+      // Capture key decisions and actions from assistant text (first 200 chars)
+      const text = msg.content.trim();
+      if (text.length > 0) {
+        // Grab the substantive first sentence/paragraph
+        const firstPara = text.split("\n\n")[0]?.slice(0, 200) || text.slice(0, 200);
+        decisions.push(firstPara);
+      }
+    } else if (msg.role === "user") {
+      // Tool results — extract tool name, files, and key outcomes
+      const toolMatch = msg.content.match(/^\[(✅ TOOL RESULT|❌ TOOL ERROR|⚠️ SYSTEM ERROR):?\s*([^\]]*)\]/);
+      if (toolMatch) {
+        const toolName = toolMatch[2] || "unknown";
+        toolsUsed.add(toolName);
+
+        if (toolName === "read_file" || toolName === "get_file_outline" || toolName === "get_function") {
+          // Extract the file path from the result
+          const pathMatch = msg.content.match(/(?:read_file|get_file_outline|get_function)\]\s*\n?(.+?)[\n:]/);
+          if (pathMatch) filesRead.push(pathMatch[1]!.trim().slice(0, 80));
+        }
+        if (toolName === "write_file" || toolName === "edit_file") {
+          const pathMatch = msg.content.match(/(?:Written|Edited):?\s*(.+?)[\n\s]/);
+          if (pathMatch) filesWritten.push(pathMatch[1]!.trim().slice(0, 80));
+        }
+      } else if (!msg.content.startsWith("[")) {
+        // This is a user answer to ask_user
+        const answer = msg.content.trim().slice(0, 150);
+        if (answer) userAnswers.push(answer);
+      }
+    }
+  }
+
+  // Build a structured summary that's easy for ANY model to follow
+  summaryLines.push(`[ROLLING CONTEXT — ${cutoffExchangeIdx} earlier exchanges compressed]`);
+  summaryLines.push("");
+
+  if (decisions.length > 0) {
+    summaryLines.push("Actions taken so far:");
+    // Keep the last N decisions (most relevant), trim old ones shorter
+    const recentDecisions = decisions.slice(-6);
+    for (const d of recentDecisions) {
+      summaryLines.push(`• ${d}`);
+    }
+    summaryLines.push("");
+  }
+
+  if (userAnswers.length > 0) {
+    summaryLines.push("User answers provided:");
+    for (const a of userAnswers) {
+      summaryLines.push(`• "${a}"`);
+    }
+    summaryLines.push("");
+  }
+
+  if (filesRead.length > 0) {
+    summaryLines.push(`Files read: ${[...new Set(filesRead)].slice(0, 15).join(", ")}`);
+  }
+  if (filesWritten.length > 0) {
+    summaryLines.push(`Files written/edited: ${[...new Set(filesWritten)].join(", ")}`);
+  }
+  if (toolsUsed.size > 0) {
+    summaryLines.push(`Tools used: ${[...toolsUsed].join(", ")}`);
+  }
+
+  summaryLines.push("");
+  summaryLines.push("IMPORTANT: Continue from where you left off. The user's original request is in the first message above. Do NOT re-ask questions the user already answered.");
+
+  const summaryMsg: TextGenerationMessage = {
+    role: "user",
+    content: summaryLines.join("\n"),
+  };
+
+  return [system, userMsg, summaryMsg, ...recentMessages];
+}
+
+// ===========================================
 // Tool Start Meta Builder
 // ===========================================
 
@@ -200,6 +405,8 @@ function buildToolStartMeta(toolName: string, args: Record<string, unknown>): To
       return { kind: "read_file", path: (args.path as string) || "" };
     case "write_file":
       return { kind: "write_file", path: (args.path as string) || "", bytes: ((args.content as string) || "").length };
+    case "edit_file":
+      return { kind: "edit_file", path: (args.path as string) || "", editCount: (Array.isArray(args.edits) ? args.edits.length : 0) };
     case "list_files":
       return { kind: "list_files", path: (args.path as string) || "/" };
     case "create_directory":
@@ -209,6 +416,12 @@ function buildToolStartMeta(toolName: string, args: Record<string, unknown>): To
     case "run_command":
       return { kind: "run_command", command: (args.command as string) || "" };
     case "search_files":
+      return { kind: "search_files", pattern: (args.pattern as string) || "" };
+    case "get_file_outline":
+      return { kind: "read_file", path: (args.path as string) || "" };
+    case "get_function":
+      return { kind: "read_file", path: `${(args.path as string) || ""}:${(args.name as string) || ""}` };
+    case "search_symbols":
       return { kind: "search_files", pattern: (args.pattern as string) || "" };
     case "list_gateways":
       return { kind: "list_gateways" };
@@ -303,6 +516,11 @@ function buildToolUIActions(toolName: string, args: Record<string, unknown>): UI
         { action: "navigate", path: "/workspace", label: `Writing ${shortenPath((args.path as string) || "")}` },
         { action: "pulse", target: "workspace-plugins-panel", label: `Writing ${shortenPath((args.path as string) || "")} (${((args.content as string) || "").length} bytes)`, gated: true, durationMs: 30_000 },
       ];
+    case "edit_file":
+      return [
+        { action: "navigate", path: "/workspace", label: `Editing ${shortenPath((args.path as string) || "")}` },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Editing ${shortenPath((args.path as string) || "")} (${Array.isArray(args.edits) ? args.edits.length : 0} changes)`, gated: true, durationMs: 30_000 },
+      ];
     case "list_files":
       return [
         { action: "navigate", path: "/workspace", label: "Scanning plugin files" },
@@ -325,6 +543,21 @@ function buildToolUIActions(toolName: string, args: Record<string, unknown>): UI
       return [
         { action: "navigate", path: "/workspace", label: "Searching code" },
         { action: "pulse", target: "workspace-plugins-panel", label: `Searching for "${(args.pattern as string) || ""}"`, gated: true, durationMs: 30_000 },
+      ];
+    case "get_file_outline":
+      return [
+        { action: "navigate", path: "/workspace", label: "Analyzing structure" },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Outline of ${shortenPath((args.path as string) || "")}`, gated: true, durationMs: 15_000 },
+      ];
+    case "get_function":
+      return [
+        { action: "navigate", path: "/workspace", label: `Extracting ${(args.name as string) || "function"}` },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Reading ${(args.name as string) || "function"} from ${shortenPath((args.path as string) || "")}`, gated: true, durationMs: 15_000 },
+      ];
+    case "search_symbols":
+      return [
+        { action: "navigate", path: "/workspace", label: "Searching symbols" },
+        { action: "pulse", target: "workspace-plugins-panel", label: `Finding symbols matching "${(args.pattern as string) || ""}"`, gated: true, durationMs: 30_000 },
       ];
 
     // ── Gateway tools ───────────────────────────────
@@ -1044,7 +1277,7 @@ async function executeCoderTool(
   client: BridgeClient,
   pluginDir: string,
   writtenFiles: Record<string, string>,
-  ctx: { userId: string; organizationId: string | null },
+  ctx: { userId: string; organizationId: string | null; sessionId?: string },
 ): Promise<ToolExecResult | null> {
   switch (toolName) {
     case "read_file": {
@@ -1064,14 +1297,99 @@ async function executeCoderTool(
       const path = args.path as string;
       const content = args.content as string;
       try {
+        // Backup before write for undo support
+        const backup = ctx.sessionId ? await readFileForBackup(client, path) : null;
         await withBridgeRetry(() => client.fileWrite(path, content, true), `write_file:${path}`);
         const relativePath = path.startsWith(pluginDir + "/")
           ? path.slice(pluginDir.length + 1)
           : path;
         writtenFiles[relativePath] = content;
+        // Track for undo
+        if (ctx.sessionId) {
+          trackFileAction(ctx.sessionId, {
+            id: crypto.randomUUID(),
+            type: backup?.content !== null ? "modified" : "created",
+            path,
+            originalContent: backup?.content ?? null,
+            newContent: content.length > 500_000 ? content.substring(0, 500_000) : content,
+            contentTruncated: backup?.truncated ?? false,
+            toolCallId: `write_file:${relativePath}`,
+            timestamp: new Date(),
+          });
+        }
         return { result: `Written: ${path} (${content.length} bytes)` };
       } catch (err) {
         return { result: `Error writing ${path}: ${(err as Error).message}` };
+      }
+    }
+
+    case "edit_file": {
+      const path = args.path as string;
+      const edits = args.edits as Array<{ search: string; replace: string }>;
+      if (!Array.isArray(edits) || edits.length === 0) {
+        return { result: `Error: edits must be a non-empty array of {search, replace} objects` };
+      }
+      try {
+        // Read current file content
+        const readResult = await withBridgeRetry(() => client.fileRead(path), `edit_file_read:${path}`) as { content?: string };
+        if (!readResult?.content && readResult?.content !== "") {
+          return { result: `Error: file not found or not readable: ${path}` };
+        }
+        const originalContent = readResult.content;
+
+        // Backup before edit for undo support
+        const backup = ctx.sessionId ? { content: originalContent, truncated: originalContent.length > 500_000 } : null;
+
+        // Apply edits sequentially
+        let current = originalContent;
+        const applied: string[] = [];
+        for (let i = 0; i < edits.length; i++) {
+          const edit = edits[i]!;
+          const idx = current.indexOf(edit.search);
+          if (idx === -1) {
+            // Search text not found — provide helpful context
+            const snippet = current.slice(0, 200).replace(/\n/g, "\\n");
+            return {
+              result: `Error in edit ${i + 1}/${edits.length}: search text not found in ${path}. `
+                + `Search was ${edit.search.length} chars starting with "${edit.search.slice(0, 60)}...". `
+                + `File starts with: "${snippet}..."`,
+            };
+          }
+          // Check for ambiguous matches (search text appears multiple times)
+          const secondIdx = current.indexOf(edit.search, idx + 1);
+          if (secondIdx !== -1) {
+            return {
+              result: `Error in edit ${i + 1}/${edits.length}: search text found multiple times in ${path}. `
+                + `Include more surrounding context to make the match unique.`,
+            };
+          }
+          current = current.slice(0, idx) + edit.replace + current.slice(idx + edit.search.length);
+          applied.push(`#${i + 1}: replaced ${edit.search.length} chars → ${edit.replace.length} chars`);
+        }
+
+        // Write modified content
+        await withBridgeRetry(() => client.fileWrite(path, current, true), `edit_file:${path}`);
+        const relativePath = path.startsWith(pluginDir + "/")
+          ? path.slice(pluginDir.length + 1)
+          : path;
+        writtenFiles[relativePath] = current;
+
+        // Track for undo
+        if (ctx.sessionId && backup) {
+          trackFileAction(ctx.sessionId, {
+            id: crypto.randomUUID(),
+            type: "modified",
+            path,
+            originalContent: backup.content.length > 500_000 ? backup.content.substring(0, 500_000) : backup.content,
+            newContent: current.length > 500_000 ? current.substring(0, 500_000) : current,
+            contentTruncated: backup.truncated,
+            toolCallId: `edit_file:${relativePath}`,
+            timestamp: new Date(),
+          });
+        }
+        return { result: `Edited: ${path} (${edits.length} change${edits.length > 1 ? "s" : ""} applied). ${applied.join("; ")}` };
+      } catch (err) {
+        return { result: `Error editing ${path}: ${(err as Error).message}` };
       }
     }
 
@@ -1099,11 +1417,26 @@ async function executeCoderTool(
     case "delete_file": {
       const path = args.path as string;
       try {
+        // Backup before delete for undo support
+        const backup = ctx.sessionId ? await readFileForBackup(client, path) : null;
         await withBridgeRetry(() => client.fileDelete(path), `delete_file:${path}`);
         const relativePath = path.startsWith(pluginDir + "/")
           ? path.slice(pluginDir.length + 1)
           : path;
         delete writtenFiles[relativePath];
+        // Track for undo
+        if (ctx.sessionId) {
+          trackFileAction(ctx.sessionId, {
+            id: crypto.randomUUID(),
+            type: "deleted",
+            path,
+            originalContent: backup?.content ?? null,
+            newContent: null,
+            contentTruncated: backup?.truncated ?? false,
+            toolCallId: `delete_file:${relativePath}`,
+            timestamp: new Date(),
+          });
+        }
         return { result: `Deleted: ${path}` };
       } catch {
         return { result: `Error deleting ${path}: file not found` };
@@ -1160,6 +1493,146 @@ async function executeCoderTool(
         return { result: truncateToolOutput(result?.output ?? "(no matches)") };
       } catch {
         return { result: `Search error: could not execute grep for "${pattern}"` };
+      }
+    }
+
+    case "get_file_outline": {
+      const filePath = args.path as string;
+      try {
+        const { detectLanguage, getFileOutline, formatOutline, getFallbackOutline } = await import(
+          "@/modules/cursor/code-indexer/ast-parser"
+        );
+        const fileResult = await withBridgeRetry(
+          () => client.fileRead(filePath),
+          `get_file_outline:${filePath}`,
+        ) as { content?: string } | null;
+        const content = fileResult?.content ?? "";
+        if (!content) return { result: `File is empty or not found: ${filePath}` };
+
+        const lang = detectLanguage(filePath);
+        if (!lang) {
+          return { result: truncateToolOutput(getFallbackOutline(content, filePath)) };
+        }
+        const outline = getFileOutline(content, lang);
+        return { result: truncateToolOutput(formatOutline(outline)) };
+      } catch (err) {
+        return { result: `Error reading outline: ${(err as Error).message}` };
+      }
+    }
+
+    case "get_function": {
+      const filePath = args.path as string;
+      const funcName = args.name as string;
+      try {
+        const { detectLanguage, getFunction, extractFunctions } = await import(
+          "@/modules/cursor/code-indexer/ast-parser"
+        );
+        const fileResult = await withBridgeRetry(
+          () => client.fileRead(filePath),
+          `get_function:${filePath}:${funcName}`,
+        ) as { content?: string } | null;
+        const content = fileResult?.content ?? "";
+        if (!content) return { result: `File is empty or not found: ${filePath}` };
+
+        const lang = detectLanguage(filePath);
+        if (!lang) {
+          return { result: `Unsupported language for AST parsing: ${filePath}. Use read_file instead.` };
+        }
+
+        const fn = getFunction(content, lang, funcName);
+        if (fn) {
+          return {
+            result: truncateToolOutput(
+              `[${filePath}:${fn.startLine}-${fn.endLine}]${fn.isMethod ? ` (method of ${fn.className})` : ""}\n${fn.body}`,
+            ),
+          };
+        }
+
+        // Fuzzy match: maybe they got the name slightly wrong
+        const allFns = extractFunctions(content, lang);
+        const fuzzyMatch = allFns.filter((f) => f.name.toLowerCase().includes(funcName.toLowerCase()));
+        if (fuzzyMatch.length > 0) {
+          const names = fuzzyMatch.map((f) => `  ${f.name} (L${f.startLine})`).join("\n");
+          return { result: `Function "${funcName}" not found. Did you mean:\n${names}` };
+        }
+
+        return { result: `Function "${funcName}" not found in ${filePath}` };
+      } catch (err) {
+        return { result: `Error extracting function: ${(err as Error).message}` };
+      }
+    }
+
+    case "search_symbols": {
+      const pattern = (args.pattern as string).toLowerCase();
+      const searchPath = (args.path as string) || ".";
+      const symbolType = (args.type as string) || "all";
+      try {
+        const { detectLanguage, extractFunctions, extractClasses } = await import(
+          "@/modules/cursor/code-indexer/ast-parser"
+        );
+
+        // List files in the search path
+        const fileList = await withBridgeRetry(
+          () => client.fileList(searchPath, true),
+          `search_symbols:list:${searchPath}`,
+        ) as Array<{ path: string; type: string }> | null;
+        if (!fileList || fileList.length === 0) {
+          return { result: `No files found in ${searchPath}` };
+        }
+
+        // Filter to parseable files
+        const parseableFiles = fileList.filter(
+          (f) => f.type === "file" && detectLanguage(f.path) !== null,
+        );
+
+        const matches: string[] = [];
+        const MAX_FILES = 50; // Don't parse too many files
+        const MAX_MATCHES = 30;
+        const filesToScan = parseableFiles.slice(0, MAX_FILES);
+
+        for (const file of filesToScan) {
+          if (matches.length >= MAX_MATCHES) break;
+          try {
+            const fileResult = await withBridgeRetry(
+              () => client.fileRead(file.path),
+              `search_symbols:read:${file.path}`,
+            ) as { content?: string } | null;
+            const content = fileResult?.content;
+            if (!content) continue;
+
+            const lang = detectLanguage(file.path)!;
+
+            if (symbolType === "all" || symbolType === "function") {
+              const fns = extractFunctions(content, lang);
+              for (const fn of fns) {
+                if (fn.name.toLowerCase().includes(pattern)) {
+                  matches.push(`[fn] ${file.path}:${fn.startLine} — ${fn.signature}`);
+                  if (matches.length >= MAX_MATCHES) break;
+                }
+              }
+            }
+
+            if (symbolType === "all" || symbolType === "class") {
+              const classes = extractClasses(content, lang);
+              for (const cls of classes) {
+                if (cls.name.toLowerCase().includes(pattern)) {
+                  const methodList = cls.methods.map((m) => m.name).join(", ");
+                  matches.push(`[cls] ${file.path}:${cls.startLine} — ${cls.name} { ${methodList} }`);
+                  if (matches.length >= MAX_MATCHES) break;
+                }
+              }
+            }
+          } catch {
+            // Skip files that fail to parse
+          }
+        }
+
+        if (matches.length === 0) {
+          return { result: `No symbols matching "${args.pattern}" found in ${searchPath} (scanned ${filesToScan.length} files)` };
+        }
+        return { result: truncateToolOutput(matches.join("\n")) };
+      } catch (err) {
+        return { result: `Error searching symbols: ${(err as Error).message}` };
       }
     }
 
@@ -1331,6 +1804,8 @@ async function executeTool(
     client: BridgeClient | null;
     pluginDir: string;
     writtenFiles: Record<string, string>;
+    workflowContext?: WorkflowContext;
+    sessionId?: string;
   },
 ): Promise<ToolExecResult> {
   // Safety validation (skip hand_off, ask_user, finish, navigate)
@@ -1347,6 +1822,17 @@ async function executeTool(
   // Try shared tools first (list_gateways, list_user_plugins)
   const sharedResult = await executeSharedTool(toolName, args, ctx);
   if (sharedResult) return sharedResult;
+
+  // Try workflow tools (when in studio mode)
+  if (ctx.workflowContext) {
+    const { executeWorkflowTool } = await import("./cursor-workflow-tools");
+    const wfResult = await executeWorkflowTool(toolName, args, {
+      userId: ctx.userId,
+      organizationId: ctx.organizationId,
+      workflowContext: ctx.workflowContext,
+    });
+    if (wfResult) return wfResult;
+  }
 
   // Then try worker-specific tools
   if (workerType === "assistant") {
@@ -1369,8 +1855,39 @@ async function executeTool(
 // Model Selection per Worker
 // ===========================================
 
-function getModelForWorker(_workerType: CursorWorkerType, requestModelId?: string): string {
-  return requestModelId || "auto";
+/**
+ * Smart model selection: use cheap lite model for tool-routing iterations,
+ * full model only when generating substantial text/code output.
+ *
+ * This is the "Planner/Executor" pattern used by Cursor AI and GitHub Copilot:
+ * - Routing decisions (which tool to call next) → cheap model
+ * - Code generation / substantial replies → user's chosen model
+ *
+ * Output tokens cost 3-4× more than input, but routing iterations produce
+ * minimal output (just tool call JSON), so the savings come from cheaper input rates.
+ */
+const LITE_ROUTING_MODEL = "2bot-ai-text-lite";
+
+function getModelForWorker(
+  _workerType: CursorWorkerType,
+  requestModelId: string | undefined,
+  useRoutingModel: boolean,
+): string {
+  // If no explicit model selected, always use auto (already cheapest)
+  if (!requestModelId) return "auto";
+
+  // For routing iterations (tool-only, no substantial text), use lite model
+  // This saves 40-70% on input token costs for planning/routing turns
+  // Falls back to user's model if lite can't resolve (e.g., no providers configured)
+  if (useRoutingModel) {
+    try {
+      if (canResolveTwoBotAIModel(LITE_ROUTING_MODEL)) return LITE_ROUTING_MODEL;
+    } catch { /* fallback to user model */ }
+    return requestModelId;
+  }
+
+  // For code generation and substantive replies, use the user's chosen model
+  return requestModelId;
 }
 
 // ===========================================
@@ -1441,26 +1958,60 @@ export async function* runWorkerStream(
     organizationId,
   } = request;
 
+  // ── Resume: load suspended session from DB ───────────
+  let isResume = false;
+  let resumeMessages: TextGenerationMessage[] | undefined;
+  let resumeState: SuspendedSessionState | undefined;
+
+  if (request.resumeSessionId) {
+    const saved = await agentSessionService.getSessionForResume(request.resumeSessionId);
+    if (!saved) {
+      yield {
+        type: "error" as const,
+        message: "Could not resume session — it may have expired or already completed.",
+      };
+      return;
+    }
+    // Defense-in-depth: verify ownership
+    if (saved.userId !== userId) {
+      yield {
+        type: "error" as const,
+        message: "Session ownership mismatch.",
+      };
+      return;
+    }
+    resumeMessages = saved.messages as unknown as TextGenerationMessage[];
+    resumeState = saved.suspendedState as unknown as SuspendedSessionState;
+    isResume = true;
+
+    // Mark session as running again (clears saved state from DB)
+    await agentSessionService.resumeSession(saved.id);
+  }
+
   // ── Session setup ────────────────────────────────────
-  const sessionId = crypto.randomUUID();
+  const sessionId = isResume ? request.resumeSessionId! : crypto.randomUUID();
   const startedAt = new Date();
   // N1: Session-scoped logger — all log lines automatically include sessionId + userId
   const slog = workerLog.child({ sessionId, userId });
-  let totalCreditsUsed = 0;
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let totalIterations = 0;
-  let totalToolCalls = 0;
-  let toolCallSequence = 0;
+  let totalCreditsUsed = isResume && resumeState ? resumeState.totalCreditsUsed : 0;
+  let totalInputTokens = isResume && resumeState ? resumeState.totalInputTokens : 0;
+  let totalOutputTokens = isResume && resumeState ? resumeState.totalOutputTokens : 0;
+  let totalIterations = isResume && resumeState ? resumeState.totalIterations : 0;
+  let totalToolCalls = isResume && resumeState ? resumeState.totalToolCalls : 0;
+  let toolCallSequence = isResume && resumeState ? resumeState.toolCallSequence : 0;
+  /** Accumulated time spent waiting for user answers — excluded from session timeout */
+  let pausedMs = isResume && resumeState ? resumeState.pausedMs : 0;
 
   // Route to initial worker
   // If repoUrl is attached, always route to coder (repo analysis requires workspace + coder tools)
-  const initialWorker = request.workerType
-    || (request.repoUrl ? "coder" as CursorWorkerType : routeToWorker(message));
+  const initialWorker = isResume && resumeState
+    ? resumeState.currentWorker
+    : (request.workerType
+      || (request.repoUrl ? "coder" as CursorWorkerType : routeToWorker(message, { hasWorkflowContext: !!request.workflowContext })));
 
   slog.info(
-    { initialWorker, message: message.slice(0, 100) },
-    "🤖 Worker stream started",
+    { initialWorker, message: message.slice(0, 100), isResume },
+    isResume ? "🔄 Worker stream resumed" : "🤖 Worker stream started",
   );
 
   // Get bridge connection (may be null for assistant-only tasks)
@@ -1468,41 +2019,62 @@ export async function* runWorkerStream(
   const client = bridge?.client ?? null;
   const workspaceId = bridge?.workspaceId;
 
-  // Persist session to database
-  agentSessionService.createSession({
-    id: sessionId,
-    userId,
-    organizationId: organizationId ?? undefined,
-    workspaceId: workspaceId ?? "none",
-    model: getModelForWorker(initialWorker, request.modelId),
-    prompt: `[worker:${initialWorker}] ${message.slice(0, 500)}`,
-  });
+  // Persist session to database (skip for resumed sessions — already exists)
+  if (!isResume) {
+    agentSessionService.createSession({
+      id: sessionId,
+      userId,
+      organizationId: organizationId ?? undefined,
+      workspaceId: workspaceId ?? "none",
+      model: getModelForWorker(initialWorker, request.modelId, false),
+      prompt: `[worker:${initialWorker}] ${message.slice(0, 500)}`,
+    });
+  }
 
   // Mutable state that persists across worker hand-offs
-  const writtenFiles: Record<string, string> = {};
+  const writtenFiles: Record<string, string> = isResume && resumeState
+    ? { ...resumeState.writtenFiles }
+    : {};
+
+  // Initialize file action tracking for undo support
+  initFileTracking(sessionId);
 
   // Repo analysis state (populated when repoUrl is provided)
-  let repoAnalysis: RepoAnalysis | undefined;
-  let repoCloneDir: string | undefined;
+  let repoAnalysis: RepoAnalysis | undefined = isResume && resumeState?.repoAnalysis
+    ? resumeState.repoAnalysis as RepoAnalysis
+    : undefined;
+  let repoCloneDir: string | undefined = isResume && resumeState?.repoCloneDir
+    ? resumeState.repoCloneDir
+    : undefined;
 
   // If pluginSlug/mode weren't provided by the frontend, try to extract from message.
   // This enables direct-to-coder routing ("edit my echo-bot") to get edit-mode prompts.
-  let pluginSlug = request.pluginSlug;
-  let pluginName = request.pluginName;
-  let pluginMode = request.mode;
-  if (!pluginSlug || !pluginMode) {
+  let pluginSlug = isResume && resumeState?.pluginSlug ? resumeState.pluginSlug : request.pluginSlug;
+  let pluginName = isResume && resumeState?.pluginName ? resumeState.pluginName : request.pluginName;
+  let pluginMode = isResume && resumeState?.pluginMode ? resumeState.pluginMode : request.mode;
+  if (!isResume && (!pluginSlug || !pluginMode)) {
     const extracted = extractPluginContext(message);
     if (!pluginSlug && extracted.slug) pluginSlug = extracted.slug;
     if (!pluginName && extracted.name) pluginName = extracted.name;
     if (!pluginMode && extracted.mode) pluginMode = extracted.mode;
   }
 
-  let pluginDir = pluginSlug ? `plugins/${pluginSlug}` : "plugins";
-  let pluginId: string | undefined;
+  let pluginDir = isResume && resumeState?.pluginDir
+    ? resumeState.pluginDir
+    : (pluginSlug ? `plugins/${pluginSlug}` : "plugins");
+  let pluginId: string | undefined = isResume && resumeState?.pluginId
+    ? resumeState.pluginId
+    : undefined;
   let finishSummary: string | undefined;
+  let lastAssistantText: string | undefined = isResume && resumeState?.lastAssistantText
+    ? resumeState.lastAssistantText
+    : undefined;
 
-  // ── Repo Analysis: Clone & Analyze (if repoUrl provided) ──
-  if (request.repoUrl && !client) {
+  /** Set when the session is suspended (ask_user) — prevents finally cleanup */
+  let sessionSuspended = false;
+
+  // ── Repo Analysis: Clone & Analyze (if repoUrl provided, skip on resume) ──
+  if (!isResume && request.repoUrl && !client) {
     // Workspace required for repo clone — fail early with clear message
     yield {
       type: "error" as const,
@@ -1513,7 +2085,7 @@ export async function* runWorkerStream(
     return;
   }
 
-  if (request.repoUrl && client) {
+  if (!isResume && request.repoUrl && client) {
     // Force coder mode for repo analysis
     if (!pluginMode) pluginMode = "create";
 
@@ -1552,7 +2124,7 @@ export async function* runWorkerStream(
 
       // Lazy import to avoid circular deps
       const { analyzeRepo } = await import("./repo-analyzer.service");
-      const result = await analyzeRepo(client, repoCloneDir, userId);
+      const result = await analyzeRepo(client, repoCloneDir, userId, request.repoUrl, request.modelId);
       repoAnalysis = result.analysis;
       totalCreditsUsed += result.creditsUsed;
 
@@ -1587,9 +2159,23 @@ export async function* runWorkerStream(
 
   // Worker hand-off loop
   let currentWorker = initialWorker;
-  let handOffContext: string | undefined;
-  let handOffCount = 0;
+  let handOffContext: string | undefined = isResume && resumeState?.handOffContext
+    ? resumeState.handOffContext
+    : undefined;
+  let handOffCount = isResume && resumeState ? resumeState.handOffCount : 0;
   const MAX_HAND_OFFS = 4; // Safety limit
+
+  // On resume: inject the user's answer into the saved messages and skip prompt building
+  let resumeMessagesReady: TextGenerationMessage[] | undefined;
+  if (isResume && resumeMessages) {
+    resumeMessagesReady = [
+      ...resumeMessages,
+      {
+        role: "user" as const,
+        content: `[✅ TOOL RESULT: ask_user]\nUser answered: ${message}`,
+      },
+    ];
+  }
 
   try {
     while (handOffCount <= MAX_HAND_OFFS) {
@@ -1649,6 +2235,18 @@ export async function* runWorkerStream(
         }
         // N2: Adapt session limits based on user plan
         workerMeta = getAdaptiveWorkerMeta(currentWorker, userState.plan);
+
+        // Repo analysis sessions need a higher credit budget:
+        // AI analysis + multi-file plugin generation is inherently expensive
+        const effectiveRepoUrl = isResume && resumeState?.repoUrl ? resumeState.repoUrl : request.repoUrl;
+        if (effectiveRepoUrl && request.mode === "analyze-repo") {
+          workerMeta = {
+            ...workerMeta,
+            maxCreditsPerSession: Math.max(workerMeta.maxCreditsPerSession, 200),
+            maxIterations: Math.max(workerMeta.maxIterations, 40),
+            sessionTimeoutMs: Math.max(workerMeta.sessionTimeoutMs, 480_000), // 8 min
+          };
+        }
       } catch {
         // Non-critical — proceed without user state
       }
@@ -1666,14 +2264,48 @@ export async function* runWorkerStream(
         repoAnalysis,
         repoCloneDir,
         priorSessionSummaries,
+        workflowContext: request.workflowContext,
       };
 
-      const systemPrompt = currentWorker === "assistant"
+      let systemPrompt = currentWorker === "assistant"
         ? buildAssistantSystemPrompt(promptCtx)
         : buildCoderSystemPrompt(promptCtx);
 
+      // ── Studio mode prompt adjustments ─────────────────
+      if (request.studioMode === "ask") {
+        systemPrompt += `\n\n## Mode: Ask
+You are in ASK mode. The user wants a clear, helpful answer to their question.
+- You have READ-ONLY diagnostic tools available — USE THEM to investigate before answering
+- When the user asks about errors, failures, or problems: check logs, workspace status, and gateway status FIRST
+- When the user asks about credits, billing, or usage: call the relevant check tool
+- When the user asks about their bot/workflow: look up the gateway status, plugin config, and workspace logs
+- Do NOT make changes — never create, update, delete, or restart anything
+- Provide thorough, well-structured answers with SPECIFIC data from the tools you called
+- If you find an issue, explain what's wrong and suggest what the user should do (they can switch to Agent mode to fix it)
+- Reference specific features, tools, or concepts relevant to 2Bot
+- If the user asks about their workflow/bot, use the workflow context above to give a specific answer`;
+      } else if (request.studioMode === "plan") {
+        systemPrompt += `\n\n## Mode: Plan
+You are in PLAN mode. The user wants a step-by-step plan for changes.
+- Do NOT execute any mutations — only READ data if needed to inform the plan
+- Produce a numbered step-by-step plan describing exactly what changes to make
+- For each step, explain WHAT it does, WHY it's needed, and WHICH tool/action would be used
+- If the workflow context is available, reference specific steps by name/order
+- End with a summary of expected outcome
+- The user can switch to Agent mode to execute the plan`;
+      }
+
       // ── Build tool definitions ─────────────────────────
-      const workerTools = getWorkerTools(currentWorker);
+      const effectiveStudioMode = isResume && resumeState?.studioMode
+        ? resumeState.studioMode
+        : request.studioMode;
+      const effectiveHasWorkflowContext = isResume && resumeState
+        ? resumeState.hasWorkflowContext
+        : !!request.workflowContext;
+      const workerTools = getWorkerTools(currentWorker, {
+        hasWorkflowContext: effectiveHasWorkflowContext,
+        studioMode: effectiveStudioMode,
+      });
       const toolDefs: ToolDefinition[] = workerTools.map((t) => ({
         name: t.name,
         description: t.description,
@@ -1681,16 +2313,25 @@ export async function* runWorkerStream(
       }));
 
       // ── Initialize messages ────────────────────────────
-      // Enrich user message with attached repo URL if present (so the LLM knows about it)
-      let userMessage = message;
-      if (request.repoUrl && handOffCount === 0) {
-        userMessage = `${message}\n\n[Attached repository: ${request.repoUrl}]`;
-      }
+      let messages: TextGenerationMessage[];
 
-      const messages: TextGenerationMessage[] = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: handOffContext ? `${handOffContext}\n\nOriginal user message: ${userMessage}` : userMessage },
-      ];
+      if (resumeMessagesReady) {
+        // On resume: use saved messages with user's answer already injected
+        messages = resumeMessagesReady;
+        resumeMessagesReady = undefined; // Only use for first iteration after resume
+      } else {
+        // Normal path: build from scratch
+        // Enrich user message with attached repo URL if present (so the LLM knows about it)
+        let userMessage = message;
+        if (request.repoUrl && handOffCount === 0) {
+          userMessage = `${message}\n\n[Attached repository: ${request.repoUrl}]`;
+        }
+
+        messages = [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: handOffContext ? `${handOffContext}\n\nOriginal user message: ${userMessage}` : userMessage },
+        ];
+      }
 
       // If coder + no bridge, warn early
       if (currentWorker === "coder" && !client) {
@@ -1723,13 +2364,16 @@ export async function* runWorkerStream(
       let handOff: ToolExecResult["handOff"] | undefined;
       let consecutiveErrors = 0;
       const MAX_CONSECUTIVE_ERRORS = 3;
+      // Track whether last response was tool-only (no substantial text) for smart model routing
+      let lastResponseWasToolOnly = false;
 
       for (let turn = 0; turn < workerMeta.maxIterations; turn++) {
-        // Safety: session limits
+        // Safety: session limits (exclude time spent waiting for user answers)
+        const effectiveStart = new Date(startedAt.getTime() + pausedMs);
         const limitError = checkSessionLimits(
           totalIterations,
           totalCreditsUsed,
-          startedAt,
+          effectiveStart,
           {
             maxIterations: workerMeta.maxIterations,
             maxCreditsPerSession: workerMeta.maxCreditsPerSession,
@@ -1777,10 +2421,15 @@ export async function* runWorkerStream(
         };
 
         try {
+          // Prune old messages to cap context window growth
+          if (totalIterations > PRUNE_AFTER_ITERATION) {
+            messages = pruneMessages(messages);
+          }
+
           const response = await withRetry(
             () => twoBotAIProvider.textGeneration({
               messages,
-              model: getModelForWorker(currentWorker, request.modelId),
+              model: getModelForWorker(currentWorker, resumeState?.modelId || request.modelId, lastResponseWasToolOnly),
               temperature: currentWorker === "coder" ? 0.2 : 0.4,
               maxTokens: 4096,
               stream: false,
@@ -1804,8 +2453,20 @@ export async function* runWorkerStream(
           const assistantContent = response.content || "";
           const toolCalls = response.toolCalls;
 
+          // Smart model routing: detect if this was a tool-routing-only response
+          // If AI just called tools with minimal/no text, next iteration can use cheap model
+          // If AI produced substantial text or called write_file (code generation), use full model
+          const hasSubstantialText = assistantContent.length > 200;
+          const hasWriteCall = toolCalls?.some((tc) =>
+            tc.name === "write_file" || tc.name === "edit_file" || tc.name === "finish"
+          );
+          lastResponseWasToolOnly = !!(toolCalls && toolCalls.length > 0 && !hasSubstantialText && !hasWriteCall);
+
           if (assistantContent) {
             yield { type: "thinking" as const, text: assistantContent };
+            if (currentWorker === "assistant") {
+              lastAssistantText = assistantContent;
+            }
           }
 
           // Text-only response (no tool calls) = worker is done talking
@@ -1830,6 +2491,7 @@ export async function* runWorkerStream(
             "check_credits", "check_billing", "check_usage",
             "check_gateway_status", "list_templates",
             "view_plugin_logs", "explain_error",
+            "list_available_plugins",
           ]);
           const CONTROL_FLOW_TOOLS = new Set([
             "ask_user", "finish", "hand_off_to_coder", "hand_off_to_assistant",
@@ -1866,7 +2528,7 @@ export async function* runWorkerStream(
                   currentWorker,
                   tc.name,
                   tc.arguments as Record<string, unknown>,
-                  { userId, organizationId, client, pluginDir, writtenFiles },
+                  { userId, organizationId, client, pluginDir, writtenFiles, workflowContext: resumeState?.workflowContext || request.workflowContext, sessionId },
                 )
               ),
             );
@@ -1913,45 +2575,72 @@ export async function* runWorkerStream(
           for (const tc of toolCalls) {
             const toolArgs = tc.arguments as Record<string, unknown>;
 
-            // ── ask_user: pause stream, wait for answer ──
+            // ── ask_user: suspend session, close stream ──
+            // Instead of blocking with a Promise, we save full state to DB
+            // and close the SSE stream. The user can answer minutes/hours/days
+            // later, and a new stream will resume from the saved state.
             if (tc.name === "ask_user") {
               const question = (toolArgs.question as string) || "Could you clarify?";
               const sensitive = !!(toolArgs.sensitive as boolean);
+              const options = Array.isArray(toolArgs.options)
+                ? (toolArgs.options as Array<{ label: string; value: string }>)
+                : undefined;
 
-              yield {
-                type: "ask_user" as const,
-                question,
-                sensitive,
-                sessionId,
+              // Build suspended state blob
+              const suspendState: SuspendedSessionState = {
+                currentWorker,
+                handOffCount,
+                handOffContext,
+                pluginSlug,
+                pluginName,
+                pluginMode: pluginMode as "create" | "edit" | undefined,
+                pluginDir,
+                pluginId,
+                repoAnalysis,
+                repoCloneDir,
+                totalIterations,
+                totalToolCalls,
+                totalCreditsUsed,
+                totalInputTokens,
+                totalOutputTokens,
+                toolCallSequence,
+                pausedMs,
+                writtenFiles,
+                lastAssistantText,
+                studioMode: request.studioMode,
+                hasWorkflowContext: !!request.workflowContext,
+                workflowContext: request.workflowContext,
+                modelId: request.modelId,
+                repoUrl: request.repoUrl,
               };
 
-              // Pause and wait for user answer
-              let answer: string;
-              try {
-                answer = await waitForUserAnswer(sessionId, userId);
-              } catch {
-                // Timeout or cancelled
-                messages.push({
-                  role: "user",
-                  content: `[TOOL RESULT: ask_user]\nUser did not respond. Please proceed with a reasonable default or ask a different way.`,
-                });
-                continue;
-              }
-
-              messages.push({
-                role: "user",
-                content: `[✅ TOOL RESULT: ask_user]\nUser answered: ${answer}`,
+              // Save state to DB
+              await agentSessionService.suspendSession({
+                id: sessionId,
+                messages,
+                suspendedState: suspendState as unknown as Record<string, unknown>,
+                iterationCount: totalIterations,
+                toolCallCount: totalToolCalls,
+                totalCreditsUsed,
+                inputTokens: totalInputTokens,
+                outputTokens: totalOutputTokens,
               });
 
-              agentSessionService.recordToolCall(
+              // Yield suspended event (frontend stores this + shows question UI)
+              yield {
+                type: "suspended" as const,
                 sessionId,
-                { toolCallId: tc.id ?? `tc-${toolCallSequence}`, toolName: "ask_user", output: answer, isError: false, durationMs: 0 },
-                toolArgs,
-                toolCallSequence,
+                question,
+                sensitive,
+                options,
+              };
+
+              sessionSuspended = true;
+              slog.info(
+                { question: question.slice(0, 100), hasOptions: !!options },
+                "Session suspended — waiting for user answer",
               );
-              toolCallSequence++;
-              totalToolCalls++;
-              continue;
+              return; // End the generator — stream closes cleanly
             }
 
             // ── Destructive action approval ──────────────
@@ -1966,15 +2655,18 @@ export async function* runWorkerStream(
               };
 
               let approval: string;
+              const approvalWaitStart = Date.now();
               try {
                 approval = await waitForUserAnswer(sessionId, userId);
               } catch {
+                pausedMs += Date.now() - approvalWaitStart;
                 messages.push({
                   role: "user",
                   content: `[TOOL RESULT: ${tc.name}]\nUser did not confirm. Action cancelled.`,
                 });
                 continue;
               }
+              pausedMs += Date.now() - approvalWaitStart;
 
               const approved = /^(y|yes|ok|confirm|proceed|sure|do it)/i.test(approval.trim());
               if (!approved) {
@@ -2004,7 +2696,7 @@ export async function* runWorkerStream(
               currentWorker,
               tc.name,
               toolArgs,
-              { userId, organizationId, client, pluginDir, writtenFiles },
+              { userId, organizationId, client, pluginDir, writtenFiles, workflowContext: resumeState?.workflowContext || request.workflowContext, sessionId },
             );
             const toolDurationMs = Date.now() - toolStartTs;
 
@@ -2030,6 +2722,26 @@ export async function* runWorkerStream(
                 file: relativePath,
                 preview: content.slice(0, 500),
                 totalBytes: content.length,
+              };
+            }
+
+            // Emit file_action for undo support (write_file, delete_file)
+            if ((tc.name === "write_file" || tc.name === "delete_file") && !isError) {
+              const filePath = (toolArgs.path as string) || "";
+              const content = (toolArgs.content as string) || "";
+              const relativePath = filePath.startsWith(pluginDir + "/")
+                ? filePath.slice(pluginDir.length + 1)
+                : filePath;
+              yield {
+                type: "file_action" as const,
+                action: {
+                  id: `${tc.name}:${relativePath}`,
+                  type: tc.name === "delete_file" ? "deleted" as const : (writtenFiles[relativePath] ? "modified" as const : "created" as const),
+                  path: filePath,
+                  originalPreview: null,
+                  newPreview: tc.name === "write_file" ? content.slice(0, 500) : null,
+                  toolCallId: tc.id ?? `tc-${toolCallSequence}`,
+                },
               };
             }
 
@@ -2169,64 +2881,77 @@ export async function* runWorkerStream(
       break;
     }
   } finally {
-    // Cancel any pending ask_user
+    // Cancel any pending ask_user (destructive-action approvals still use in-memory Promise)
     cancelPendingAnswer(sessionId);
 
-    // Cleanup cloned repo directory if it was created
-    if (repoCloneDir && client) {
-      try {
-        await client.fileDelete(repoCloneDir);
-        slog.debug({ repoCloneDir }, "Cleaned up cloned repo directory");
-      } catch {
-        slog.warn({ repoCloneDir }, "Failed to cleanup cloned repo directory");
+    if (sessionSuspended) {
+      // Session was suspended (ask_user) — don't clean up, don't mark complete.
+      // State is saved to DB; the user will resume later.
+      slog.info(
+        { iterations: totalIterations, creditsUsed: totalCreditsUsed },
+        "⏸️ Worker stream suspended (state saved to DB)",
+      );
+    } else {
+      // Normal completion — cleanup and persist
+
+      // Cleanup cloned repo directory if it was created
+      if (repoCloneDir && client) {
+        try {
+          await client.fileDelete(repoCloneDir);
+          slog.debug({ repoCloneDir }, "Cleaned up cloned repo directory");
+        } catch {
+          slog.warn({ repoCloneDir }, "Failed to cleanup cloned repo directory");
+        }
       }
-    }
 
-    // Persist session completion
-    const durationMs = Date.now() - startedAt.getTime();
-    const status = finishSummary ? "completed" : (Object.keys(writtenFiles).length > 0 ? "completed" : "cancelled");
+      // Persist session completion
+      const durationMs = Date.now() - startedAt.getTime();
+      const status = finishSummary ? "completed" : (Object.keys(writtenFiles).length > 0 ? "completed" : "cancelled");
 
-    agentSessionService.completeSession({
-      id: sessionId,
-      status,
-      iterationCount: totalIterations,
-      toolCallCount: totalToolCalls,
-      totalCreditsUsed,
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      finalResponse: finishSummary,
-      durationMs,
-    });
-
-    slog.info(
-      {
-        iterations: totalIterations,
-        toolCalls: totalToolCalls,
-        creditsUsed: totalCreditsUsed,
-        handOffs: handOffCount,
+      agentSessionService.completeSession({
+        id: sessionId,
+        status,
+        iterationCount: totalIterations,
+        toolCallCount: totalToolCalls,
+        totalCreditsUsed,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        finalResponse: finishSummary,
         durationMs,
-        filesWritten: Object.keys(writtenFiles).length,
-      },
-      "✅ Worker stream completed",
-    );
+      });
+
+      slog.info(
+        {
+          iterations: totalIterations,
+          toolCalls: totalToolCalls,
+          creditsUsed: totalCreditsUsed,
+          handOffs: handOffCount,
+          durationMs,
+          filesWritten: Object.keys(writtenFiles).length,
+        },
+        "✅ Worker stream completed",
+      );
+    }
   }
 
-  // ── Emit final event ─────────────────────────────────
-  const durationMs = Date.now() - startedAt.getTime();
-  const hasFiles = Object.keys(writtenFiles).length > 0;
+  // ── Emit final event (only for non-suspended sessions) ─
+  if (!sessionSuspended) {
+    const durationMs = Date.now() - startedAt.getTime();
+    const hasFiles = Object.keys(writtenFiles).length > 0;
 
-  yield {
-    type: "done" as const,
-    success: true,
-    sessionId,
-    pluginName: pluginName || "",
-    pluginSlug: pluginSlug || "",
-    pluginId,
-    summary: finishSummary || (hasFiles ? "Files created/updated" : "Done"),
-    fileCount: Object.keys(writtenFiles).length,
-    filesWritten: Object.keys(writtenFiles),
-    creditsUsed: totalCreditsUsed,
-    durationMs,
-    entry: "index.js",
-  };
+    yield {
+      type: "done" as const,
+      success: true,
+      sessionId,
+      pluginName: pluginName || "",
+      pluginSlug: pluginSlug || "",
+      pluginId,
+      summary: finishSummary || lastAssistantText || (hasFiles ? "Files created/updated" : "Done"),
+      fileCount: Object.keys(writtenFiles).length,
+      filesWritten: Object.keys(writtenFiles),
+      creditsUsed: totalCreditsUsed,
+      durationMs,
+      entry: "index.js",
+    };
+  }
 }

@@ -13,14 +13,15 @@
 
 import { logger } from "@/lib/logger";
 import OpenAI from "openai";
+import { setProviderValidated } from "../provider-config";
 import type {
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    TextGenerationRequest,
-    TextGenerationResponse,
-    TextGenerationStreamChunk,
-    ToolCallResult,
-    ToolDefinition,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  TextGenerationRequest,
+  TextGenerationResponse,
+  TextGenerationStreamChunk,
+  ToolCallResult,
+  ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -351,6 +352,7 @@ function mapFireworksError(error: unknown): TwoBotAIError {
       return new TwoBotAIError("Rate limit exceeded. Please try again later.", "RATE_LIMITED", 429);
     }
     if (status === 401 || status === 403) {
+      setProviderValidated("fireworks", false);
       return new TwoBotAIError("Fireworks AI authentication failed. Check API key.", "PROVIDER_ERROR", 401);
     }
     if (status === 404) {

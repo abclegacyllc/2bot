@@ -1,11 +1,14 @@
 /**
- * 2Bot AI Assistant Widget - Model Selector
+ * Model Selector
  *
  * Dropdown to select AI model for chat.
  * Shows Auto mode + real model names with price multipliers.
  * Compact primary list with expandable "Other Models" section.
  *
- * @module components/2bot-ai-assistant/model-selector
+ * Shared component used by Cursor panel, bot-studio config forms,
+ * and plugin config modals.
+ *
+ * @module components/shared/model-selector
  */
 
 "use client";
@@ -80,7 +83,7 @@ export interface TwoBotAIModelOption {
   displayName: string;
   description: string;
   capability: string;
-  tier: "lite" | "pro" | "ultra";
+  tier: "lite" | "pro" | "premium";
   tierInfo: TwoBotAITierInfo;
   maxContextTokens: number;
   maxOutputTokens: number;
@@ -104,12 +107,14 @@ export interface RealModelOption {
   /** Unit label for non-text display */
   creditUnit: string;
   /** Cost tier */
-  tier: "free" | "lite" | "pro" | "ultra";
+  tier: "lite" | "pro" | "premium";
   providers: string[];
   isPreview?: boolean;
   deprecated?: boolean;
   /** Whether the model is currently healthy (not auto-disabled due to repeated failures) */
   isHealthy?: boolean;
+  /** Whether the model supports function/tool calling */
+  functionCalling?: boolean;
 }
 
 /**
@@ -159,12 +164,11 @@ function formatCredits(input: number, output: number | undefined, unit: string):
   return `${fmtNum(input)}/${unit}`;
 }
 
-const TIER_ORDER = ["free", "lite", "pro", "ultra"] as const;
+const TIER_ORDER = ["lite", "pro", "premium"] as const;
 const TIER_META: Record<string, { label: string; color: string }> = {
-  free:  { label: "Free",  color: "text-emerald-400" },
   lite:  { label: "Lite",  color: "text-foreground/60" },
   pro:   { label: "Pro",   color: "text-blue-400" },
-  ultra: { label: "Ultra", color: "text-amber-400" },
+  premium: { label: "Premium", color: "text-amber-400" },
 };
 
 /**
@@ -255,7 +259,7 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
   const filteredRealModels = useMemo(() => {
     if (!realModels) return [];
     // Filter out unhealthy models (auto-disabled due to repeated failures)
-    const healthy = realModels.filter((m) => m.isHealthy !== false);
+    const healthy = realModels.filter((m) => m.isHealthy === true);
     const q = search.toLowerCase().trim();
     if (!q) return healthy;
     return healthy.filter((m) =>

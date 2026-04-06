@@ -899,7 +899,7 @@ function NoWorkspaceState({
 // Main Workspace Page
 // ===========================================
 
-export default function WorkspacePage() {
+export function WorkspaceContent() {
   const { context } = useAuth();
   const ws = useWorkspace();
   const searchParams = useSearchParams();
@@ -1305,4 +1305,8 @@ export default function WorkspacePage() {
       ) : null}
     </div>
   );
+}
+
+export default function WorkspacePage() {
+  return <WorkspaceContent />;
 }

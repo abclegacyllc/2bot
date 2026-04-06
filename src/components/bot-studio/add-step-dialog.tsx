@@ -14,15 +14,15 @@ import { useCallback, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
+    Card,
+    CardContent,
 } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useWorkflowPlugins } from "@/hooks/use-workflow-plugins";
@@ -95,7 +95,7 @@ export function AddStepDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-emerald-500" />
-            Add Workflow Step
+            Add Plugin
           </DialogTitle>
           <DialogDescription>
             Choose a plugin to add as a step in your workflow pipeline.
@@ -186,7 +186,7 @@ export function AddStepDialog({
             disabled={!selectedId}
             className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
           >
-            <Plus className="h-4 w-4" /> Add Step
+            <Plus className="h-4 w-4" /> Add Plugin
           </Button>
         </div>
       </DialogContent>

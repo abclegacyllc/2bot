@@ -45,7 +45,11 @@ interface InstalledPlugin {
   createdAt: string;
 }
 
-export default function InstalledPluginsPage() {
+export interface InstalledContentProps {
+  basePath?: string;
+}
+
+export function InstalledPluginsContent({ basePath = "/marketplace" }: InstalledContentProps) {
   const { token } = useAuth();
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -169,7 +173,7 @@ export default function InstalledPluginsPage() {
             Manage plugins installed on your bots
           </p>
         </div>
-        <Link href="/marketplace">
+        <Link href={basePath}>
           <Button variant="outline" size="sm">
             <ArrowLeft className="h-4 w-4 mr-2" />
             Browse Marketplace
@@ -182,7 +186,7 @@ export default function InstalledPluginsPage() {
           <CardContent className="py-12 text-center">
             <Package className="h-12 w-12 mx-auto text-muted-foreground/40 mb-4" />
             <p className="text-muted-foreground">No plugins installed yet.</p>
-            <Link href="/marketplace" className="text-sm text-emerald-600 hover:underline mt-2 inline-block">
+            <Link href={basePath} className="text-sm text-emerald-600 hover:underline mt-2 inline-block">
               Browse the marketplace
             </Link>
           </CardContent>
@@ -261,4 +265,8 @@ export default function InstalledPluginsPage() {
       )}
     </div>
   );
+}
+
+export default function InstalledPluginsPage() {
+  return <InstalledPluginsContent />;
 }

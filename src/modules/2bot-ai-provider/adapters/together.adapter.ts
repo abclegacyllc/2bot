@@ -10,14 +10,15 @@
 
 import { logger } from "@/lib/logger";
 import Together from "together-ai";
+import { setProviderValidated } from "../provider-config";
 import type {
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    TextGenerationRequest,
-    TextGenerationResponse,
-    TextGenerationStreamChunk,
-    ToolCallResult,
-    ToolDefinition,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  TextGenerationRequest,
+  TextGenerationResponse,
+  TextGenerationStreamChunk,
+  ToolCallResult,
+  ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -385,6 +386,7 @@ function mapTogetherError(error: unknown): TwoBotAIError {
 
     // Auth
     if (message.includes("auth") || message.includes("401") || message.includes("unauthorized") || message.includes("invalid_api_key")) {
+      setProviderValidated("together", false);
       return new TwoBotAIError(
         "Together AI authentication failed. Check API key.",
         "PROVIDER_ERROR",

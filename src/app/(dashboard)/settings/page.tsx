@@ -43,7 +43,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-function SettingsContent() {
+export function SettingsContent() {
   const router = useRouter();
   const { user, context, isLoading, token, refreshUser, availableOrgs } = useAuth();
 

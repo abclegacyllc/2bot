@@ -125,7 +125,11 @@ function BillingSkeleton() {
   );
 }
 
-function BillingContent() {
+export interface BillingContentProps {
+  basePath?: string;
+}
+
+export function BillingContent({ basePath = "/billing" }: BillingContentProps) {
   const { context, isLoading: authLoading, token } = useAuth();
 
   // Get plan limits from centralized constants based on user's current plan
@@ -350,7 +354,7 @@ function BillingContent() {
 
               <div className="flex flex-col gap-2">
                 <div className="flex gap-3">
-                  <Link href="/billing/upgrade">
+                  <Link href={`${basePath}/upgrade`}>
                     <Button className={currentPlan === "FREE" ? "bg-purple-600 hover:bg-purple-700" : "border-border text-foreground hover:bg-muted"} variant={currentPlan === "FREE" ? "default" : "outline"}>
                       {currentPlan === "FREE" ? (
                         <>
@@ -455,7 +459,7 @@ function BillingContent() {
                   <span className="mx-1.5">·</span>
                   <span>{planLimits.workspace.storageMb >= 1024 ? `${(planLimits.workspace.storageMb / 1024).toFixed(0)} GB` : `${planLimits.workspace.storageMb} MB`} storage</span>
                 </div>
-                <Link href="/billing/workspace">
+                <Link href={`${basePath}/workspace`}>
                   <Button variant="outline" size="sm" className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10">
                     <Server className="mr-2 h-4 w-4" />
                     Manage
@@ -483,7 +487,7 @@ function BillingContent() {
                   <p className="text-sm text-muted-foreground mt-1 mb-4">
                     Your plan uses serverless execution with {planLimits.workflowRunsPerMonth?.toLocaleString()} monthly workflow runs.
                   </p>
-                  <Link href="/billing/workspace">
+                  <Link href={`${basePath}/workspace`}>
                     <Button className="bg-purple-600 hover:bg-purple-700">
                       <Sparkles className="mr-2 h-4 w-4" />
                       Get Unlimited Executions
@@ -512,7 +516,7 @@ function BillingContent() {
                     execution limits.
                   </p>
                 </div>
-                <Link href="/billing/upgrade">
+                <Link href={`${basePath}/upgrade`}>
                   <Button className="bg-purple-600 hover:bg-purple-700">
                     View Plans
                   </Button>

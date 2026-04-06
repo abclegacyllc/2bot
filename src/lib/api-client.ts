@@ -574,6 +574,13 @@ export interface WorkflowStepItem {
   condition?: { if: string };
   onError: string;
   maxRetries: number;
+  // Unified Engine fields
+  entryFile?: string;
+  userPluginId?: string;
+  storageQuotaMb?: number;
+  executionCount?: number;
+  lastExecutedAt?: string;
+  lastError?: string;
 }
 
 export function getWorkflows(
@@ -581,7 +588,7 @@ export function getWorkflows(
   token?: string
 ): Promise<ApiResponse<WorkflowListItem[]>> {
   const params = new URLSearchParams();
-  if (opts.gatewayId) params.set("gatewayId", opts.gatewayId);
+  if (opts.gatewayId && opts.gatewayId !== "undefined") params.set("gatewayId", opts.gatewayId);
   const qs = params.toString();
   return apiRequest<WorkflowListItem[]>(`/workflows${qs ? `?${qs}` : ""}`, {
     method: "GET",
@@ -659,6 +666,35 @@ export function addWorkflowStep(
       ? { "x-organization-id": opts.organizationId }
       : undefined,
   });
+}
+
+/**
+ * Install a marketplace plugin as a workflow step (unified operation).
+ * Deploys to container + creates step in one call.
+ */
+export function installPluginStep(
+  workflowId: string,
+  data: {
+    slug: string;
+    order: number;
+    name?: string;
+    config?: Record<string, unknown>;
+    gatewayId?: string;
+  },
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowStepItem>> {
+  return apiRequest<WorkflowStepItem>(
+    `/workflows/${workflowId}/steps/install-plugin`,
+    {
+      method: "POST",
+      body: data,
+      token,
+      headers: opts.organizationId
+        ? { "x-organization-id": opts.organizationId }
+        : undefined,
+    }
+  );
 }
 
 export function updateWorkflowStep(

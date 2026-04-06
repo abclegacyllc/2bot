@@ -30,21 +30,21 @@ describe('autoGenerateProviderOptions', () => {
       expect(options.length).toBeLessThanOrEqual(8);
     });
 
-    it('includes Anthropic models with priority 1', () => {
+    it('includes Anthropic models with priority 2', () => {
       const options = autoGenerateProviderOptions('2bot-ai-text-lite');
       const anthropicOptions = options.filter((o) => o.provider === 'anthropic');
       expect(anthropicOptions.length).toBeGreaterThan(0);
       for (const opt of anthropicOptions) {
-        expect(opt.priority).toBe(1);
+        expect(opt.priority).toBe(2);
       }
     });
 
-    it('includes Together models with priority 2', () => {
+    it('includes Together models with priority 3', () => {
       const options = autoGenerateProviderOptions('2bot-ai-text-lite');
       const togetherOptions = options.filter((o) => o.provider === 'together');
       expect(togetherOptions.length).toBeGreaterThan(0);
       for (const opt of togetherOptions) {
-        expect(opt.priority).toBe(2);
+        expect(opt.priority).toBe(3);
       }
     });
 
@@ -72,12 +72,12 @@ describe('autoGenerateProviderOptions', () => {
 
   describe('text-ultra tier', () => {
     it('generates options within ultra cost range', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-text-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-text-premium');
       expect(options.length).toBeGreaterThan(0);
     });
 
     it('includes Claude Opus 4.6 (primary premium model)', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-text-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-text-premium');
       const hasOpus46 = options.some(
         (o) => o.provider === 'anthropic' && o.modelId === 'claude-opus-4-6'
       );
@@ -94,12 +94,12 @@ describe('autoGenerateProviderOptions', () => {
     });
 
     it('generates reasoning-ultra options', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-reasoning-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-reasoning-premium');
       expect(options.length).toBeGreaterThan(0);
     });
 
     it('reasoning-ultra includes high-cost reasoning models', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-reasoning-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-reasoning-premium');
       // Should include models like o1, o1-pro, deepseek-r1
       const providers = new Set(options.map((o) => o.provider));
       expect(providers.size).toBeGreaterThanOrEqual(2);
@@ -113,12 +113,12 @@ describe('autoGenerateProviderOptions', () => {
     });
 
     it('generates image-ultra options with premium costs', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-image-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-image-premium');
       expect(options.length).toBeGreaterThan(0);
     });
 
     it('image-ultra includes dall-e-3 with HD providerConfig', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-image-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-image-premium');
       const dalle3HD = options.find(
         (o) => o.provider === 'openai' && o.modelId === 'dall-e-3' && o.providerConfig?.quality === 'hd'
       );
@@ -126,7 +126,7 @@ describe('autoGenerateProviderOptions', () => {
     });
 
     it('image-ultra excludes standard dall-e-3', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-image-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-image-premium');
       const standardDalle3 = options.find(
         (o) => o.provider === 'openai' && o.modelId === 'dall-e-3' && !o.providerConfig
       );
@@ -141,7 +141,7 @@ describe('autoGenerateProviderOptions', () => {
     });
 
     it('returns empty array for voice-ultra (manual only)', () => {
-      const options = autoGenerateProviderOptions('2bot-ai-voice-ultra');
+      const options = autoGenerateProviderOptions('2bot-ai-voice-premium');
       expect(options).toEqual([]);
     });
 
@@ -162,7 +162,7 @@ describe('autoGenerateProviderOptions', () => {
     });
 
     it('does not include dall-e-3-hd (non-API model ID)', () => {
-      const imageModels: TwoBotAIModelId[] = ['2bot-ai-image-pro', '2bot-ai-image-ultra'];
+      const imageModels: TwoBotAIModelId[] = ['2bot-ai-image-pro', '2bot-ai-image-premium'];
       for (const modelId of imageModels) {
         const options = autoGenerateProviderOptions(modelId);
         const hasDalle3HD = options.some((o) => o.modelId === 'dall-e-3-hd');
@@ -215,7 +215,7 @@ describe('autoGenerateProviderOptions', () => {
 describe('autoGenerateMapping', () => {
   it('returns undefined for manual-only models', () => {
     expect(autoGenerateMapping('2bot-ai-voice-pro')).toBeUndefined();
-    expect(autoGenerateMapping('2bot-ai-voice-ultra')).toBeUndefined();
+    expect(autoGenerateMapping('2bot-ai-voice-premium')).toBeUndefined();
     expect(autoGenerateMapping('2bot-ai-transcribe-lite')).toBeUndefined();
   });
 
@@ -259,7 +259,7 @@ describe('refreshAllTierAssignments', () => {
   it('does not include manual-only models', () => {
     const mappings = refreshAllTierAssignments();
     expect(mappings['2bot-ai-voice-pro']).toBeUndefined();
-    expect(mappings['2bot-ai-voice-ultra']).toBeUndefined();
+    expect(mappings['2bot-ai-voice-premium']).toBeUndefined();
     expect(mappings['2bot-ai-transcribe-lite']).toBeUndefined();
   });
 
@@ -314,13 +314,13 @@ describe('TIER_CURATION_RULES', () => {
 
   it('voice and transcribe are manual-only', () => {
     expect(TIER_CURATION_RULES['2bot-ai-voice-pro']?.manualOnly).toBe(true);
-    expect(TIER_CURATION_RULES['2bot-ai-voice-ultra']?.manualOnly).toBe(true);
+    expect(TIER_CURATION_RULES['2bot-ai-voice-premium']?.manualOnly).toBe(true);
     expect(TIER_CURATION_RULES['2bot-ai-transcribe-lite']?.manualOnly).toBe(true);
   });
 
   it('reasoning models require reasoning capability', () => {
     expect(TIER_CURATION_RULES['2bot-ai-reasoning-pro']?.requireReasoning).toBe(true);
-    expect(TIER_CURATION_RULES['2bot-ai-reasoning-ultra']?.requireReasoning).toBe(true);
+    expect(TIER_CURATION_RULES['2bot-ai-reasoning-premium']?.requireReasoning).toBe(true);
   });
 });
 

@@ -78,7 +78,11 @@ interface GatewayOption {
   type: string;
 }
 
-export default function MarketplaceItemDetailPage() {
+export interface MarketplaceDetailContentProps {
+  basePath?: string;
+}
+
+export function MarketplaceDetailContent({ basePath = "/marketplace" }: MarketplaceDetailContentProps) {
   const params = useParams();
   const router = useRouter();
   const { token } = useAuth();
@@ -342,7 +346,7 @@ export default function MarketplaceItemDetailPage() {
     <div className="space-y-6 max-w-3xl mx-auto">
       {/* Back link */}
       <Link
-        href="/marketplace"
+        href={basePath}
         className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-4 w-4 mr-1" />
@@ -728,4 +732,8 @@ export default function MarketplaceItemDetailPage() {
       </Card>
     </div>
   );
+}
+
+export default function MarketplaceItemDetailPage() {
+  return <MarketplaceDetailContent />;
 }

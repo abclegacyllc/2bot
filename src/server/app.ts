@@ -113,8 +113,10 @@ export function startServer(app: Express): ReturnType<Express['listen']> {
       registerPlugin(slug, reg.handler);
     }
 
-    // Initialize AI provider health checks (async, non-blocking)
-    initializeProviderHealth().catch((err) => {
+    // Initialize AI provider health checks (blocks model serving until complete)
+    initializeProviderHealth().then(() => {
+      serverLogger.info("AI provider health checks complete — models ready to serve");
+    }).catch((err) => {
       serverLogger.error({ err }, "Failed to initialize AI provider health checks");
     });
 

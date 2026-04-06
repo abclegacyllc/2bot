@@ -11,6 +11,8 @@ import { Prisma } from "@prisma/client";
 
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { marketplaceLoader } from "@/modules/marketplace/marketplace-loader.service";
+import { getPluginEntryPath, pluginDeployService } from "@/modules/plugin/plugin-deploy.service";
 import {
     ConflictError,
     ForbiddenError,
@@ -267,6 +269,16 @@ async function addStep(
   if (!workflow) throw new NotFoundError("Workflow not found");
   verifyOwner(workflow, owner);
 
+  // Resolve plugin slug for entry file path
+  const plugin = await prisma.plugin.findUnique({
+    where: { id: data.pluginId },
+    select: { slug: true },
+  });
+  const effectiveGatewayId = data.gatewayId ?? workflow.gatewayId;
+  const entryFile = plugin
+    ? getPluginEntryPath(effectiveGatewayId, plugin.slug)
+    : null;
+
   // Shift existing steps at or after the target order to make room
   await prisma.workflowStep.updateMany({
     where: {
@@ -291,6 +303,7 @@ async function addStep(
       condition: data.condition ? (data.condition as object) : undefined,
       onError: data.onError ?? "stop",
       maxRetries: data.maxRetries ?? 0,
+      entryFile,
     },
     include: { plugin: true },
   });
@@ -737,6 +750,12 @@ function toWorkflowDefinition(workflow: {
     condition: unknown;
     onError: string;
     maxRetries: number;
+    entryFile?: string | null;
+    userPluginId?: string | null;
+    storageQuotaMb?: number;
+    executionCount?: number;
+    lastExecutedAt?: Date | null;
+    lastError?: string | null;
     plugin: { slug: string; name: string };
   }>;
 }): WorkflowDefinition {
@@ -772,6 +791,12 @@ function toStepDefinition(step: {
   condition: unknown;
   onError: string;
   maxRetries: number;
+  entryFile?: string | null;
+  userPluginId?: string | null;
+  storageQuotaMb?: number;
+  executionCount?: number;
+  lastExecutedAt?: Date | null;
+  lastError?: string | null;
   plugin: { slug: string; name: string };
 }): WorkflowStepDefinition {
   return {
@@ -790,6 +815,12 @@ function toStepDefinition(step: {
       : undefined,
     onError: step.onError as StepErrorHandler,
     maxRetries: step.maxRetries,
+    entryFile: step.entryFile ?? undefined,
+    userPluginId: step.userPluginId ?? undefined,
+    storageQuotaMb: step.storageQuotaMb,
+    executionCount: step.executionCount,
+    lastExecutedAt: step.lastExecutedAt ?? undefined,
+    lastError: step.lastError ?? undefined,
   };
 }
 
@@ -874,6 +905,138 @@ async function cleanupOrphanedRuns(): Promise<number> {
 }
 
 // ===========================================
+// Install Plugin as Step (Unified Engine)
+// ===========================================
+
+/**
+ * Install a marketplace plugin as a workflow step in one operation.
+ * 1. Resolves plugin from slug
+ * 2. Ensures workspace container is running
+ * 3. Deploys plugin template to container
+ * 4. Creates WorkflowStep with entryFile set
+ * 5. Creates/reuses UserPlugin for backward compat
+ */
+async function installPluginStep(
+  owner: WorkflowOwnerFilter,
+  workflowId: string,
+  data: {
+    slug: string;
+    order: number;
+    name?: string;
+    config?: Record<string, unknown>;
+    gatewayId?: string;
+  }
+): Promise<WorkflowStepDefinition> {
+  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
+  if (!workflow) throw new NotFoundError("Workflow not found");
+  verifyOwner(workflow, owner);
+
+  // Resolve plugin from slug
+  const plugin = await prisma.plugin.findUnique({ where: { slug: data.slug } });
+  if (!plugin || !plugin.isActive) {
+    throw new NotFoundError(`Plugin not found or inactive: ${data.slug}`);
+  }
+
+  const effectiveGatewayId = data.gatewayId ?? workflow.gatewayId;
+
+  // Resolve entry file path — directory plugins use {slug}/{entry}, single-file use {slug}.js
+  const bundle = marketplaceLoader.getBundleCode(plugin.slug);
+  const entryFile = bundle?.layout === "directory"
+    ? (() => {
+        const entry = bundle.entryFile || "index.js";
+        if (effectiveGatewayId) {
+          return `bots/${effectiveGatewayId}/plugins/${plugin.slug}/${entry}`;
+        }
+        return `plugins/${plugin.slug}/${entry}`;
+      })()
+    : getPluginEntryPath(effectiveGatewayId, plugin.slug);
+
+  // Ensure UserPlugin exists (for backward compat with IPC/bridge)
+  let userPlugin = await prisma.userPlugin.findFirst({
+    where: {
+      pluginId: plugin.id,
+      userId: owner.userId,
+      organizationId: owner.organizationId ?? null,
+      gatewayId: effectiveGatewayId ?? null,
+    },
+  });
+
+  if (!userPlugin) {
+    userPlugin = await prisma.userPlugin.create({
+      data: {
+        userId: owner.userId,
+        pluginId: plugin.id,
+        organizationId: owner.organizationId ?? null,
+        gatewayId: effectiveGatewayId ?? null,
+        config: data.config ? (data.config as object) : {},
+        isEnabled: true,
+        entryFile,
+      },
+    });
+
+    // Increment catalog install count
+    await prisma.plugin.update({
+      where: { id: plugin.id },
+      data: { installCount: { increment: 1 } },
+    });
+  }
+
+  // Deploy plugin code to workspace container (best-effort)
+  const env: Record<string, string> = { PLUGIN_USER_ID: owner.userId };
+  if (owner.organizationId) env.PLUGIN_ORG_ID = owner.organizationId;
+  if (effectiveGatewayId) env.PLUGIN_GATEWAY_ID = effectiveGatewayId;
+
+  try {
+    if (bundle?.layout === "directory" && bundle.files) {
+      // Directory plugin — write all files via writeDirectoryToContainer
+      const manifestJson = JSON.stringify({
+        slug: plugin.slug,
+        name: plugin.name,
+        entryFile: bundle.entryFile || "index.js",
+        layout: "directory",
+      });
+      await pluginDeployService.writeDirectoryToContainer(
+        owner.userId,
+        owner.organizationId ?? null,
+        plugin.slug,
+        bundle.files,
+        manifestJson,
+        bundle.entryFile || "index.js",
+        env,
+        effectiveGatewayId,
+      );
+    } else {
+      // Single-file plugin — use marketplace code, fallback to codeBundle
+      const templateCode = bundle?.code ?? (plugin.codeBundle as string | null);
+      if (templateCode) {
+        await pluginDeployService.writeTemplateToContainer(
+          owner.userId,
+          owner.organizationId ?? null,
+          plugin.slug,
+          templateCode,
+          env,
+          effectiveGatewayId,
+        );
+      }
+    }
+  } catch (err) {
+    workflowLogger.warn(
+      { slug: data.slug, error: (err as Error).message },
+      "Plugin template deploy failed during install-plugin-step"
+    );
+  }
+
+  // Create the workflow step
+  return addStep(owner, workflowId, {
+    order: data.order,
+    name: data.name ?? plugin.name,
+    pluginId: plugin.id,
+    config: data.config,
+    gatewayId: data.gatewayId,
+  });
+}
+
+// ===========================================
 // Exported service object
 // ===========================================
 
@@ -889,6 +1052,7 @@ export const workflowService = {
   addStep,
   updateStep,
   deleteStep,
+  installPluginStep,
 
   // Runs
   listRuns,

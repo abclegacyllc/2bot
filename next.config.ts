@@ -7,6 +7,16 @@ const nextConfig: NextConfig = {
   
   // Production standalone output for Docker
   output: "standalone",
+
+  // Allow external images for bot avatars
+  images: {
+    remotePatterns: [
+      { protocol: "https", hostname: "api.telegram.org" },
+      { protocol: "https", hostname: "cdn.discordapp.com" },
+      { protocol: "https", hostname: "**.fbcdn.net" },
+      { protocol: "https", hostname: "**.whatsapp.net" },
+    ],
+  },
   
   // Security headers
   async headers() {

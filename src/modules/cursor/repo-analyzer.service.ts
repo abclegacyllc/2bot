@@ -12,9 +12,11 @@
  */
 
 import { logger } from "@/lib/logger";
+import { redis } from "@/lib/redis";
 import { twoBotAIProvider } from "@/modules/2bot-ai-provider";
 import type { TextGenerationMessage } from "@/modules/2bot-ai-provider/types";
 import type { BridgeClient } from "@/modules/workspace/bridge-client.service";
+import crypto from "crypto";
 
 const analyzerLog = logger.child({ module: "cursor", capability: "repo-analyzer" });
 
@@ -80,7 +82,13 @@ const MAX_FILE_SIZE = 100_000;
 const MAX_TOTAL_CONTENT = 200_000;
 
 /** Max number of source files to read beyond manifests */
-const MAX_SOURCE_FILES = 8;
+const MAX_SOURCE_FILES = 15;
+
+/** Redis key prefix for repo analysis cache */
+const REPO_CACHE_PREFIX = "2bot:cursor:repo-analysis";
+
+/** Cache TTL: 24 hours */
+const REPO_CACHE_TTL = 86_400;
 
 /** Files to prioritize reading (order matters) */
 const PRIORITY_FILES = [
@@ -140,14 +148,32 @@ const SOURCE_EXTENSIONS = new Set([
  * @param client - Bridge client connected to the user's workspace container
  * @param cloneDir - Directory where repo was cloned (relative to workspace root)
  * @param userId - User ID for AI billing
+ * @param repoUrl - Original repo URL (used as cache key)
  * @returns Structured analysis of the repository
  */
 export async function analyzeRepo(
   client: BridgeClient,
   cloneDir: string,
   userId: string,
+  repoUrl?: string,
+  modelId?: string,
 ): Promise<{ analysis: RepoAnalysis; creditsUsed: number }> {
-  analyzerLog.info({ cloneDir }, "Starting repo analysis");
+  analyzerLog.info({ cloneDir, repoUrl }, "Starting repo analysis");
+
+  // Check cache — same repo URL = same analysis (24h TTL)
+  if (repoUrl) {
+    const cacheKey = `${REPO_CACHE_PREFIX}:${crypto.createHash("sha256").update(repoUrl).digest("hex").slice(0, 16)}`;
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        const analysis = JSON.parse(cached) as RepoAnalysis;
+        analyzerLog.info({ cloneDir, repoUrl, language: analysis.language }, "Repo analysis cache hit");
+        return { analysis, creditsUsed: 0 };
+      }
+    } catch {
+      // Cache miss or parse error — continue with fresh analysis
+    }
+  }
 
   // Step 1: Get full file tree
   const fileTree = await getFileTree(client, cloneDir);
@@ -161,15 +187,29 @@ export async function analyzeRepo(
   );
 
   // Step 3: Send to AI for analysis
-  const { analysis, creditsUsed } = await aiAnalyze(cloneDir, fileTree, keyFiles, userId);
+  const { analysis, creditsUsed } = await aiAnalyze(cloneDir, fileTree, keyFiles, userId, modelId);
   analyzerLog.info(
     { cloneDir, language: analysis.language, complexity: analysis.complexity, creditsUsed },
     "Repo analysis complete",
   );
 
-  // Attach raw data for coder reference
+  // Attach raw data for coder reference (file tree for navigation, key files for read_file tool)
   analysis.fileTree = fileTree;
   analysis.keyFileContents = keyFiles;
+
+  // Store in cache for future imports of the same repo
+  // Exclude keyFileContents from cache — the coder reads files via read_file tool anyway,
+  // and storing 200KB of source code in Redis is wasteful
+  if (repoUrl) {
+    const cacheKey = `${REPO_CACHE_PREFIX}:${crypto.createHash("sha256").update(repoUrl).digest("hex").slice(0, 16)}`;
+    try {
+      const { keyFileContents: _excluded, ...cacheableAnalysis } = analysis;
+      await redis.set(cacheKey, JSON.stringify(cacheableAnalysis), "EX", REPO_CACHE_TTL);
+      analyzerLog.debug({ repoUrl }, "Repo analysis cached (24h TTL)");
+    } catch {
+      // Non-critical — continue without caching
+    }
+  }
 
   return { analysis, creditsUsed };
 }
@@ -335,6 +375,7 @@ async function aiAnalyze(
   fileTree: string[],
   keyFiles: Record<string, string>,
   userId: string,
+  modelId?: string,
 ): Promise<{ analysis: RepoAnalysis; creditsUsed: number }> {
   // Build the prompt with all file contents
   const fileContentsSection = Object.entries(keyFiles)
@@ -367,9 +408,9 @@ Respond with a JSON object matching the RepoAnalysis schema. No markdown wrappin
 
   const response = await twoBotAIProvider.textGeneration({
     messages,
-    model: "auto",
+    model: modelId || "auto",
     temperature: 0.1,
-    maxTokens: 4096,
+    maxTokens: 8192,
     stream: false,
     userId,
     feature: "cursor",

@@ -47,7 +47,12 @@ interface MarketplaceItem {
   isFeatured: boolean;
 }
 
-export default function MarketplaceBrowsePage() {
+export interface MarketplaceContentProps {
+  /** Base path for marketplace links (default: "/marketplace") */
+  basePath?: string;
+}
+
+export function MarketplaceContent({ basePath = "/marketplace" }: MarketplaceContentProps) {
   const { token } = useAuth();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [featured, setFeatured] = useState<MarketplaceItem[]>([]);
@@ -166,7 +171,7 @@ export default function MarketplaceBrowsePage() {
             Discover and install plugins to extend your bots
           </p>
         </div>
-        <Link href="/marketplace/installed">
+        <Link href={`${basePath}/installed`}>
           <Button variant="outline" size="sm" className="gap-2">
             <Download className="h-4 w-4" />
             My Installed
@@ -210,7 +215,7 @@ export default function MarketplaceBrowsePage() {
           </h2>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {featured.map((item) => (
-              <Link key={item.slug} href={`/marketplace/${item.slug}`}>
+              <Link key={item.slug} href={`${basePath}/${item.slug}`}>
                 <Card className="h-full hover:bg-muted/50 transition-colors cursor-pointer border-yellow-200/50 dark:border-yellow-900/30">
                   <CardHeader className="pb-3">
                     <div className="flex items-start gap-3">
@@ -280,7 +285,7 @@ export default function MarketplaceBrowsePage() {
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {gridItems.map((item) => (
-              <Link key={item.slug} href={`/marketplace/${item.slug}`}>
+              <Link key={item.slug} href={`${basePath}/${item.slug}`}>
                 <Card className="h-full hover:bg-muted/50 transition-colors cursor-pointer">
                   <CardHeader className="pb-3">
                     <div className="flex items-start gap-3">
@@ -351,4 +356,8 @@ export default function MarketplaceBrowsePage() {
       )}
     </div>
   );
+}
+
+export default function MarketplaceBrowsePage() {
+  return <MarketplaceContent />;
 }
