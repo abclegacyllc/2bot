@@ -33,12 +33,14 @@ import type {
     WorkflowStepRunDetail,
 } from "@/lib/api-client";
 import { getWorkflowRunDetail, getWorkflowRuns } from "@/lib/api-client";
+import { parseStackFiles } from "@/lib/stack-trace-parser";
 import {
     AlertCircle,
     CheckCircle2,
     ChevronDown,
     ChevronRight,
     Clock,
+    FileCode,
     Loader2,
     Play,
     RefreshCw,
@@ -126,7 +128,32 @@ function friendlyTriggerSource(raw: string): string {
 // Step Run Row
 // ===========================================
 
-function StepRunRow({ stepRun }: { stepRun: WorkflowStepRunDetail }) {
+/**
+ * A single captured plugin log line. Stored in
+ * `WorkflowRun.output._stepLogs[stepOrder]` by the executor when running in
+ * Standard / Deep test modes. Optional fields keep older runs compatible.
+ */
+interface CapturedLogLine {
+  ts?: string;
+  level?: "info" | "warn" | "error" | "debug" | string;
+  message?: string;
+  source?: "stdout" | "stderr" | string;
+}
+
+const LOG_LEVEL_COLORS: Record<string, string> = {
+  error: "text-red-400",
+  warn: "text-amber-400",
+  info: "text-zinc-300",
+  debug: "text-zinc-500",
+};
+
+function StepRunRow({
+  stepRun,
+  logs,
+}: {
+  stepRun: WorkflowStepRunDetail;
+  logs?: CapturedLogLine[];
+}) {
   const cfg = STEP_STATUS_CONFIG[stepRun.status] ?? { icon: Clock, color: "text-zinc-400" };
   const Icon = cfg.icon;
   const [showDetail, setShowDetail] = useState(false);
@@ -146,7 +173,7 @@ function StepRunRow({ stepRun }: { stepRun: WorkflowStepRunDetail }) {
             {formatDuration(stepRun.durationMs)}
           </span>
         ) : null}
-        {(stepRun.output !== undefined && stepRun.output !== null) || stepRun.error || (stepRun.input !== undefined && stepRun.input !== null) ? (
+        {(stepRun.output !== undefined && stepRun.output !== null) || stepRun.error || (stepRun.input !== undefined && stepRun.input !== null) || (logs && logs.length > 0) ? (
           showDetail
             ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
             : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -156,8 +183,37 @@ function StepRunRow({ stepRun }: { stepRun: WorkflowStepRunDetail }) {
       {showDetail ? (
         <div className="ml-5 mt-1 space-y-1.5 pb-1.5">
           {stepRun.error ? (
-            <div className="text-[10px] text-red-400 bg-red-500/10 rounded px-2 py-1 font-mono break-all">
-              {stepRun.error}
+            <div className="space-y-1">
+              <div className="text-[10px] text-red-400 bg-red-500/10 rounded px-2 py-1 font-mono break-all">
+                {stepRun.error}
+              </div>
+              {(() => {
+                const refs = parseStackFiles(stepRun.error);
+                if (refs.length === 0) return null;
+                return (
+                  <div className="rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5">
+                    <p className="text-[10px] text-red-400/80 font-medium mb-1 flex items-center gap-1">
+                      <FileCode className="h-3 w-3" />
+                      Failed in {refs.length === 1 ? "file" : "files"}:
+                    </p>
+                    <ul className="space-y-0.5">
+                      {refs.map((r, i) => (
+                        <li
+                          key={i}
+                          className="text-[10px] font-mono text-red-300 flex items-center gap-1"
+                        >
+                          <XCircle className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">
+                            {r.file}
+                            {r.line !== undefined ? `:${r.line}` : ""}
+                            {r.column !== undefined ? `:${r.column}` : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
             </div>
           ) : null}
           {stepRun.input !== undefined && stepRun.input !== null ? (
@@ -173,6 +229,32 @@ function StepRunRow({ stepRun }: { stepRun: WorkflowStepRunDetail }) {
               <p className="text-[10px] text-muted-foreground font-medium mb-0.5">Output:</p>
               <div className="bg-muted/50 rounded px-2 py-1">
                 <JsonTreeView data={stepRun.output} defaultExpandDepth={2} />
+              </div>
+            </div>
+          ) : null}
+          {logs && logs.length > 0 ? (
+            <div>
+              <p className="text-[10px] text-muted-foreground font-medium mb-0.5">
+                Console <span className="text-muted-foreground/70">({logs.length} line{logs.length !== 1 ? "s" : ""})</span>
+              </p>
+              <div className="bg-zinc-950 rounded px-2 py-1 max-h-60 overflow-auto font-mono text-[10px] leading-relaxed">
+                {logs.map((line, idx) => {
+                  const level = (line.level ?? "info").toLowerCase();
+                  const color = LOG_LEVEL_COLORS[level] ?? "text-zinc-300";
+                  return (
+                    <div key={idx} className="flex gap-2 whitespace-pre-wrap break-all">
+                      {line.ts ? (
+                        <span className="text-zinc-600 shrink-0">
+                          {new Date(line.ts).toLocaleTimeString(undefined, { hour12: false })}
+                        </span>
+                      ) : null}
+                      <span className={`shrink-0 uppercase ${color}`}>
+                        {level.padEnd(5).slice(0, 5)}
+                      </span>
+                      <span className={color}>{line.message ?? ""}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -324,11 +406,25 @@ function RunRow({
               ) : null}
 
               {/* Step runs */}
-              {detail.stepRuns
-                .sort((a, b) => a.stepOrder - b.stepOrder)
-                .map((stepRun) => (
-                  <StepRunRow key={stepRun.id} stepRun={stepRun} />
-                ))}
+              {(() => {
+                // Step logs are stored as `output._stepLogs[stepOrder]` by the
+                // executor when captureLogs is enabled (Standard / Deep test
+                // modes). We coerce defensively because `output` is `unknown`.
+                const out = detail.output;
+                const stepLogs =
+                  out && typeof out === "object" && "_stepLogs" in out
+                    ? (out as { _stepLogs?: Record<string, CapturedLogLine[]> })._stepLogs
+                    : undefined;
+                return detail.stepRuns
+                  .sort((a, b) => a.stepOrder - b.stepOrder)
+                  .map((stepRun) => (
+                    <StepRunRow
+                      key={stepRun.id}
+                      stepRun={stepRun}
+                      logs={stepLogs?.[String(stepRun.stepOrder)]}
+                    />
+                  ));
+              })()}
 
               {detail.stepRuns.length === 0 && (
                 <p className="text-[10px] text-muted-foreground text-center py-2">

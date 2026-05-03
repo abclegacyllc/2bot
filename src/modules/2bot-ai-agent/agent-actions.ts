@@ -3,7 +3,7 @@
  *
  * Tracks all file modifications made by the AI agent within a session.
  * Stores before/after content for:
- *   - Diff display (GitHub Copilot–style before/after comparison)
+ *   - Diff display (before/after comparison)
  *   - One-click restore (undo individual files or entire session)
  *   - Conflict detection (if file changed after AI modified it)
  *

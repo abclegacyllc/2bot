@@ -1,4 +1,5 @@
 import { loggers } from "@/lib/logger";
+import { metricsHandler } from "@/lib/metrics";
 import { initializeProviderHealth } from "@/modules/2bot-ai-provider/provider-health.service";
 import { BUILTIN_PLUGINS } from "@/modules/plugin/handlers";
 import { registerPlugin } from "@/modules/plugin/plugin.executor";
@@ -6,13 +7,20 @@ import { workflowService } from "@/modules/workflow/workflow.service";
 import cors from "cors";
 import express, { type Express } from "express";
 import helmet from "helmet";
+import { initializeBridgeTokenRotationCron } from "./cron/bridge-token-rotation-cron";
 import { initializeCreditCron } from "./cron/credit-cron";
+import { initializeHealthMonitorCron } from "./cron/health-monitor-cron";
+import { initializePluginReconcileCron } from "./cron/plugin-reconcile-cron";
+import { initializePricingMonitorCron } from "./cron/pricing-monitor-cron";
+import { initializeRunRetentionCron } from "./cron/run-retention-cron";
 import { corsOptions } from "./middleware/cors";
 import { errorHandler } from "./middleware/error-handler";
+import { metricsMiddleware } from "./middleware/metrics";
 import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { pinoHttpMiddleware } from "./middleware/request-logger";
 import { router } from "./routes";
 import { internalRouter } from "./routes/internal";
+import { internalCostRouter } from "./routes/internal-cost";
 import stripeWebhookRouter from "./routes/stripe-webhook";
 
 const serverLogger = loggers.server;
@@ -20,7 +28,7 @@ const serverLogger = loggers.server;
 /**
  * API prefix for routes
  * 
- * Phase 6.9: Production-like development (no prefix)
+ * Production-like development (no prefix)
  * 
  * Both development and production use the same URL structure:
  * - Dev:  localhost:3001/user/gateways
@@ -58,15 +66,23 @@ export function createApp(): Express {
   // Request logging with Pino
   app.use(pinoHttpMiddleware);
 
+  // Prometheus metrics collection (must run for every request)
+  app.use(metricsMiddleware);
+
+  // Prometheus scrape endpoint. Mounted at root (no auth) — expose only on
+  // the internal scrape network via nginx in production.
+  app.get("/metrics", metricsHandler);
+
   // Rate limiting (apply early to protect all routes)
   app.use(rateLimitMiddleware());
 
   // Internal API routes (container → platform, no user auth)
   // Mounted before API routes so /internal/* is not caught by auth middleware.
   app.use("/internal", internalRouter);
+  app.use("/internal/cost", internalCostRouter);
 
   // API routes
-  // Phase 6.7.5.3: Support configurable prefix
+  // Support configurable prefix
   // When API_PREFIX="" (enterprise), routes are at root
   // When API_PREFIX="/api" (default), routes are at /api
   if (API_PREFIX) {
@@ -122,6 +138,21 @@ export function startServer(app: Express): ReturnType<Express['listen']> {
 
     // Initialize credit cron (monthly grants + daily claim resets)
     initializeCreditCron();
+
+    // Initialize pricing monitor cron (daily provider price audit by default)
+    initializePricingMonitorCron();
+
+    // Initialize health monitor cron (periodic DB/Redis health checks + Telegram alerts)
+    initializeHealthMonitorCron();
+
+    // Initialize plugin reconcile cron (workspace ↔ DB ↔ workflow drift repair)
+    initializePluginReconcileCron();
+
+    // Initialize workflow run retention cron (deletes runs older than per-plan window)
+    initializeRunRetentionCron();
+
+    // Initialize bridge token rotation cron (rotates BRIDGE_AUTH_TOKEN daily)
+    initializeBridgeTokenRotationCron();
 
     // Clean up workflow runs orphaned by previous server instance
     workflowService.cleanupOrphanedRuns().catch((err) => {

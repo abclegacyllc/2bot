@@ -58,6 +58,11 @@ function isClaudeModel(modelId: string): boolean {
   return modelId.startsWith("claude-");
 }
 
+/** Mistral models use rawPredict, not the OpenAI-compat endpoint */
+function isMistralVertexModel(modelId: string): boolean {
+  return modelId === "codestral-2" || modelId.startsWith("codestral-") || modelId.startsWith("mistral-");
+}
+
 // ===========================================
 // Configuration (read lazily to ensure dotenv has loaded)
 // ===========================================
@@ -184,11 +189,14 @@ const MODEL_REGION_MAP: Record<string, string> = {
   // Claude — uses Anthropic Messages API via global region
   "claude-sonnet-4-6": "global",
   "claude-opus-4-6": "global",
+  "claude-opus-4-7": "global",
   // Qwen — only in us-south1
   "qwen3-235b-a22b-instruct-2507-maas": "us-south1",
   "qwen3-coder-480b-a35b-instruct-maas": "us-south1",
   // DeepSeek V3.1 — only in us-west2
   "deepseek-v3.1-maas": "us-west2",
+  // DeepSeek R1 0528 — us-central1
+  "deepseek-r1-0528-maas": "us-central1",
   // Llama 3.3 — us-central1
   "llama-3.3-70b-instruct-maas": "us-central1",
   // E5 embeddings — us-central1
@@ -202,7 +210,14 @@ const MODEL_REGION_MAP: Record<string, string> = {
   "kimi-k2-thinking-maas": "global",
   "minimax-m2-maas": "global",
   "qwen3-next-80b-a3b-instruct-maas": "global",
+  "qwen3-next-80b-a3b-thinking-maas": "global",
   "gpt-oss-120b-maas": "global",
+  // Grok (xAI) — global endpoint
+  "grok-4.1-fast-non-reasoning": "global",
+  "grok-4.20-non-reasoning": "global",
+  "grok-4.1-fast-reasoning": "global",
+  // Codestral (Mistral) — europe-west4 or us-central1
+  "codestral-2": "europe-west4",
 };
 
 /** Resolve the Vertex AI region for a given model ID */
@@ -261,6 +276,7 @@ function toVertexModelId(modelId: string): string {
   if (modelId.startsWith("kimi-")) return `moonshotai/${modelId}`;
   if (modelId.startsWith("minimax-")) return `minimaxai/${modelId}`;
   if (modelId.startsWith("gpt-oss-")) return `openai/${modelId}`;
+  if (modelId.startsWith("grok-")) return `xai/${modelId}`;
   if (modelId.startsWith("multilingual-e5-")) return `intfloat/${modelId}`;
 
   // Fallback: pass through as-is
@@ -607,6 +623,106 @@ async function* claudeVertexTextGenerationStream(
 }
 
 // ===========================================
+// Mistral on Vertex AI (rawPredict with OpenAI-compatible body)
+// ===========================================
+
+/**
+ * Mistral models on Vertex AI use rawPredict endpoint.
+ * URL: https://{REGION}-aiplatform.googleapis.com/v1/projects/{PROJECT}/locations/{REGION}/publishers/mistralai/models/{MODEL}:rawPredict
+ * Body: Standard OpenAI chat completion format.
+ */
+async function mistralVertexTextGeneration(
+  request: TextGenerationRequest,
+): Promise<TextGenerationResponse> {
+  const log = logger.child({ adapter: "vertex-ai-mistral", model: request.model });
+
+  const project = getVertexProject();
+  if (!project) {
+    throw new TwoBotAIError("TWOBOT_VERTEX_AI_PROJECT not configured", "PROVIDER_ERROR", 500);
+  }
+
+  const token = await getAccessToken();
+  const region = getModelRegion(request.model);
+
+  // Mistral rawPredict URL
+  const baseHost = region === "global"
+    ? "aiplatform.googleapis.com"
+    : `${region}-aiplatform.googleapis.com`;
+  const url = `https://${baseHost}/v1/projects/${project}/locations/${region}/publishers/mistralai/models/${request.model}:rawPredict`;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const body: any = {
+    model: request.model,
+    messages: request.messages.map((m) => ({ role: m.role, content: m.content })),
+    temperature: request.temperature ?? 0.7,
+    max_tokens: request.maxTokens ?? 8192,
+    stream: false,
+  };
+
+  if (request.tools && request.tools.length > 0) {
+    body.tools = formatTools(request.tools);
+    const toolChoice = formatToolChoice(request.toolChoice);
+    if (toolChoice) body.tool_choice = toolChoice;
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    log.error({ status: response.status, error: errorText }, "Mistral Vertex AI error");
+    throw new TwoBotAIError(
+      `Mistral Vertex AI error: ${response.status} — ${errorText.slice(0, 200)}`,
+      "PROVIDER_ERROR",
+      response.status,
+    );
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = (await response.json()) as any;
+  const choice = result.choices?.[0];
+  const message = choice?.message;
+  const usage = result.usage;
+  const toolCalls = extractToolCalls(
+    message?.tool_calls as
+      | Array<{ id: string; function: { name: string; arguments: string } }>
+      | undefined,
+  );
+
+  log.info(
+    {
+      model: request.model,
+      inputTokens: usage?.prompt_tokens,
+      outputTokens: usage?.completion_tokens,
+      toolCallCount: toolCalls?.length ?? 0,
+    },
+    "Mistral Vertex AI text generation completed",
+  );
+
+  return {
+    id: result.id ?? `vertex-mistral-${Date.now()}`,
+    model: result.model ?? request.model,
+    content: (message?.content as string) || "",
+    finishReason: mapFinishReason(choice?.finish_reason as string | null | undefined),
+    usage: {
+      inputTokens: usage?.prompt_tokens || 0,
+      outputTokens: usage?.completion_tokens || 0,
+      totalTokens: usage?.total_tokens || 0,
+    },
+    toolCalls,
+    creditsUsed: 0,
+    newBalance: 0,
+  };
+}
+
+// ===========================================
 // Text Generation
 // ===========================================
 
@@ -621,6 +737,11 @@ export async function vertexTextGeneration(
   // Route Claude models to Anthropic Messages API via rawPredict
   if (isClaudeModel(request.model)) {
     return claudeVertexTextGeneration(request);
+  }
+
+  // Route Mistral/Codestral models to rawPredict endpoint
+  if (isMistralVertexModel(request.model)) {
+    return mistralVertexTextGeneration(request);
   }
 
   const log = logger.child({ adapter: "vertex-ai", model: request.model });
@@ -703,6 +824,17 @@ export async function* vertexTextGenerationStream(
   // Route Claude models to Anthropic Messages API via streamRawPredict
   if (isClaudeModel(request.model)) {
     return yield* claudeVertexTextGenerationStream(request);
+  }
+
+  // Mistral/Codestral: streaming not yet implemented via rawPredict — fall back to non-streaming
+  // TODO: Add Mistral streaming support when needed
+  if (isMistralVertexModel(request.model)) {
+    const response = await mistralVertexTextGeneration(request);
+    if (response.content) {
+      yield { id: response.id, delta: response.content, finishReason: null };
+    }
+    yield { id: response.id, delta: "", finishReason: response.finishReason || "stop" };
+    return { inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens };
   }
 
   const log = logger.child({ adapter: "vertex-ai", model: request.model });

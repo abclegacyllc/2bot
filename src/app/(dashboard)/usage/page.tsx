@@ -10,7 +10,7 @@ export const metadata: Metadata = {
  * User Usage Dashboard Page
  *
  * Displays the current user's resource usage, limits, and history.
- * Uses new hierarchical resource types (Phase 3 migration).
+ * Uses new hierarchical resource types (migration).
  * Server component that renders the client dashboard.
  */
 export default function UsagePage() {

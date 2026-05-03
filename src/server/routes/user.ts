@@ -107,7 +107,7 @@ userRouter.get(
  * Server-Sent Events (SSE) endpoint for real-time quota updates.
  * Sends initial quota immediately, then updates every 5 seconds.
  *
- * Phase 6.9: New endpoint to replace deprecated /api/quota/realtime
+ * New endpoint to replace deprecated /api/quota/realtime
  *
  * Usage:
  * ```javascript

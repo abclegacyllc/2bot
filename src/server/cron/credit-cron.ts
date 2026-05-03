@@ -13,12 +13,19 @@
 
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { withDistributedLock } from "@/lib/redis-lock";
 import { creditWalletService } from "@/modules/credits";
 
 const log = logger.child({ module: "credit-cron" });
 
 // Check interval: every 6 hours
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+// Distributed lock: only one replica runs each tick.
+// TTL must exceed expected job duration but be shorter than the interval so a
+// crashed replica's lock auto-expires before the next scheduled tick.
+const LOCK_KEY = "cron:credit-monthly";
+const LOCK_TTL_SECONDS = Math.floor((CHECK_INTERVAL_MS / 1000) * 0.9);
 
 let cronTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -81,19 +88,16 @@ async function processMonthlyCredits(): Promise<void> {
 export function initializeCreditCron(): void {
   log.info("Initializing credit cron service");
 
-  // Run initial check after a short delay (let server start up)
-  setTimeout(() => {
-    processMonthlyCredits().catch((err) => {
-      log.error({ err }, "Initial monthly credit processing failed");
+  const runWithLock = () =>
+    withDistributedLock(LOCK_KEY, LOCK_TTL_SECONDS, processMonthlyCredits).catch((err) => {
+      log.error({ err }, "Monthly credit processing failed");
     });
-  }, 10_000); // 10 second delay
 
-  // Schedule periodic checks
-  cronTimer = setInterval(() => {
-    processMonthlyCredits().catch((err) => {
-      log.error({ err }, "Periodic monthly credit processing failed");
-    });
-  }, CHECK_INTERVAL_MS);
+  // Run initial check after a short delay (let server start up)
+  setTimeout(() => void runWithLock(), 10_000);
+
+  // Schedule periodic checks (lock ensures only one replica runs)
+  cronTimer = setInterval(() => void runWithLock(), CHECK_INTERVAL_MS);
 
   log.info(
     { intervalMs: CHECK_INTERVAL_MS, intervalHours: CHECK_INTERVAL_MS / (60 * 60 * 1000) },

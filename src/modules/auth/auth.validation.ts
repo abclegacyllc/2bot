@@ -85,7 +85,7 @@ export const verifyEmailSchema = z.object({
 });
 
 /**
- * Context switching request validation (Phase 4)
+ * Context switching request validation
  */
 export const switchContextSchema = z
   .object({

@@ -3,7 +3,7 @@ import type { CorsOptions } from "cors";
 /**
  * Allowed origins for CORS
  * 
- * Phase 6.9.1.1: Dual-mode CORS support
+ * Dual-mode CORS support
  * - Production: Only production origins (subdomains)
  * - Development: Includes localhost origins
  * 

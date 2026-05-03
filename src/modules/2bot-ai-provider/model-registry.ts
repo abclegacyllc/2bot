@@ -333,7 +333,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 64000,
     contextWindow: 200000,
     providers: {
-      anthropic: { modelId: "claude-opus-4-5-20251101", inputPer1M: 10, outputPer1M: 50 },
+      anthropic: { modelId: "claude-opus-4-5-20251101", inputPer1M: 5, outputPer1M: 25 },
     },
   },
   {
@@ -351,6 +351,23 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       google: { modelId: "claude-opus-4-6", inputPer1M: 5, outputPer1M: 25 },
       anthropic: { modelId: "claude-opus-4-6", inputPer1M: 5, outputPer1M: 25 },
       openrouter: { modelId: "anthropic/claude-opus-4.6", inputPer1M: 5, outputPer1M: 25 },
+    },
+  },
+  {
+    id: "claude-opus-4-7",
+    displayName: "Claude Opus 4.7",
+    author: "Anthropic",
+    description: "Latest Opus — most intelligent Claude model",
+    capability: "text-generation",
+    tier: 3,
+    badge: "NEW",
+    capabilities: { ...VISION_CAPS, reasoning: "highest", speed: "medium", creativity: "highest" },
+    maxTokens: 128000,
+    contextWindow: 1000000,
+    providers: {
+      google: { modelId: "claude-opus-4-7", inputPer1M: 5, outputPer1M: 25 },
+      anthropic: { modelId: "claude-opus-4-7", inputPer1M: 5, outputPer1M: 25 },
+      openrouter: { modelId: "anthropic/claude-opus-4.7", inputPer1M: 5, outputPer1M: 25 },
     },
   },
   // --- Multi-Provider ---
@@ -419,7 +436,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       google: { modelId: "llama-3.3-70b-instruct-maas", inputPer1M: 0.15, outputPer1M: 0.4 },
       together: { modelId: "meta-llama/Llama-3.3-70B-Instruct-Turbo", inputPer1M: 0.18, outputPer1M: 0.59 },
       fireworks: { modelId: "accounts/fireworks/models/llama-v3p3-70b-instruct", inputPer1M: 0.18, outputPer1M: 0.18 },
-      openrouter: { modelId: "meta-llama/llama-3.3-70b-instruct", inputPer1M: 0.08, outputPer1M: 0.14 },
+      openrouter: { modelId: "meta-llama/llama-3.3-70b-instruct", inputPer1M: 0.12, outputPer1M: 0.38 },
     },
   },
   {
@@ -466,7 +483,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     providers: {
       together: { modelId: "moonshotai/Kimi-K2.5", inputPer1M: 0.5, outputPer1M: 2.8 },
       fireworks: { modelId: "accounts/fireworks/models/kimi-k2p5", inputPer1M: 0.5, outputPer1M: 2.8 },
-      openrouter: { modelId: "moonshotai/kimi-k2.5", inputPer1M: 0.45, outputPer1M: 2.2 },
+      openrouter: { modelId: "moonshotai/kimi-k2.5", inputPer1M: 0.38, outputPer1M: 1.72 },
     },
   },
   {
@@ -515,7 +532,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 196608,
     providers: {
       together: { modelId: "MiniMaxAI/MiniMax-M2.5", inputPer1M: 0.3, outputPer1M: 1.2 },
-      openrouter: { modelId: "minimax/minimax-m2.5", inputPer1M: 0.27, outputPer1M: 0.95 },
+      openrouter: { modelId: "minimax/minimax-m2.5", inputPer1M: 0.12, outputPer1M: 0.99 },
     },
   },
   {
@@ -549,23 +566,6 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       openrouter: { modelId: "qwen/qwen3.5-397b-a17b", inputPer1M: 0.39, outputPer1M: 2.34 },
     },
   },
-  // --- Together AI ---
-  {
-    id: "ServiceNow-AI/Apriel-1.6-15b-Thinker",
-    displayName: "Apriel 1.6 Thinker",
-    author: "ServiceNow",
-    description: "Free thinking model by ServiceNow",
-    capability: "text-generation",
-    tier: 1,
-    badge: "FREE",
-    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "medium", creativity: "medium" },
-    maxTokens: 4096,
-    contextWindow: 32768,
-    providers: {
-      together: { modelId: "ServiceNow-AI/Apriel-1.6-15b-Thinker", inputPer1M: 0, outputPer1M: 0 },
-    },
-  },
-
   {
     id: "google/gemma-3n-E4B-it",
     displayName: "Gemma 3n E4B",
@@ -662,7 +662,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       google: { modelId: "glm-4.7-maas", inputPer1M: 0.38, outputPer1M: 1.5 },
       together: { modelId: "zai-org/GLM-4.7", inputPer1M: 0.45, outputPer1M: 2 },
       fireworks: { modelId: "accounts/fireworks/models/glm-4p7", inputPer1M: 0.45, outputPer1M: 2 },
-      openrouter: { modelId: "z-ai/glm-4.7", inputPer1M: 0.38, outputPer1M: 1.98 },
+      openrouter: { modelId: "z-ai/glm-4.7", inputPer1M: 0.39, outputPer1M: 1.75 },
     },
   },
   {
@@ -692,6 +692,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 131072,
     providers: {
+      google: { modelId: "qwen3-next-80b-a3b-thinking-maas", inputPer1M: 0.15, outputPer1M: 1.5 },
       together: { modelId: "Qwen/Qwen3-Next-80B-A3B-Thinking", inputPer1M: 0.15, outputPer1M: 1.5 },
     },
   },
@@ -757,7 +758,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     providers: {
       google: { modelId: "kimi-k2-thinking-maas", inputPer1M: 0.6, outputPer1M: 2.5 },
       together: { modelId: "moonshotai/Kimi-K2-Thinking", inputPer1M: 1.2, outputPer1M: 4 },
-      openrouter: { modelId: "moonshotai/kimi-k2-thinking", inputPer1M: 0.47, outputPer1M: 2 },
+      openrouter: { modelId: "moonshotai/kimi-k2-thinking", inputPer1M: 0.6, outputPer1M: 2.5 },
     },
   },
 
@@ -790,12 +791,13 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 128000,
     contextWindow: 2000000,
     providers: {
+      google: { modelId: "grok-4.20-non-reasoning", inputPer1M: 2, outputPer1M: 6 },
       openrouter: { modelId: "x-ai/grok-4.20-beta", inputPer1M: 2, outputPer1M: 6 },
     },
   },
   {
     id: "grok-4-fast",
-    displayName: "Grok 4 Fast",
+    displayName: "Grok 4.1 Fast",
     author: "xAI",
     description: "Fast Grok 4 variant with 2M context",
     capability: "text-generation",
@@ -805,7 +807,23 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 128000,
     contextWindow: 2000000,
     providers: {
+      google: { modelId: "grok-4.1-fast-non-reasoning", inputPer1M: 0.2, outputPer1M: 0.5 },
       openrouter: { modelId: "x-ai/grok-4.1-fast", inputPer1M: 0.2, outputPer1M: 0.5 },
+    },
+  },
+  {
+    id: "grok-4.1-fast-reasoning",
+    displayName: "Grok 4.1 Fast Reasoning",
+    author: "xAI",
+    description: "Grok 4.1 Fast with extended reasoning — thinks before answering",
+    capability: "text-generation",
+    tier: 2,
+    badge: "REASONING",
+    capabilities: { ...CHAT_CAPS, reasoning: "highest", speed: "high", creativity: "high" },
+    maxTokens: 128000,
+    contextWindow: 2000000,
+    providers: {
+      google: { modelId: "grok-4.1-fast-reasoning", inputPer1M: 0.4, outputPer1M: 1.5 },
     },
   },
   {
@@ -856,8 +874,24 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
   },
   // --- Mistral (new) ---
   {
+    id: "codestral-2",
+    displayName: "Codestral 2",
+    author: "Mistral AI",
+    description: "Mistral's latest coding model — major upgrade with 256K context",
+    capability: "text-generation",
+    tier: 2,
+    badge: "CODE",
+    deprecated: true, // 400 FAILED_PRECONDITION on Vertex AI, no other providers
+    capabilities: { ...CHAT_CAPS, reasoning: "high", speed: "high", creativity: "medium" },
+    maxTokens: 16384,
+    contextWindow: 256000,
+    providers: {
+      google: { modelId: "codestral-2", inputPer1M: 0.3, outputPer1M: 0.9 },
+    },
+  },
+  {
     id: "codestral-2508",
-    displayName: "Codestral",
+    displayName: "Codestral 25.08",
     author: "Mistral AI",
     description: "Mistral's dedicated coding model — 256K context",
     capability: "text-generation",
@@ -941,7 +975,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 32768,
     contextWindow: 32768,
     providers: {
-      openrouter: { modelId: "qwen/qwq-32b", inputPer1M: 0.15, outputPer1M: 0.4 },
+      openrouter: { modelId: "qwen/qwq-32b", inputPer1M: 0.15, outputPer1M: 0.58 },
     },
   },
 
@@ -957,7 +991,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     contextWindow: 163840,
     providers: {
       google: { modelId: "deepseek-v3.2-maas", inputPer1M: 0.3, outputPer1M: 0.5 },
-      openrouter: { modelId: "deepseek/deepseek-v3.2", inputPer1M: 0.26, outputPer1M: 0.38 },
+      openrouter: { modelId: "deepseek/deepseek-v3.2", inputPer1M: 0.26, outputPer1M: 0.42 },
     },
   },
   {
@@ -1003,7 +1037,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 8192,
     contextWindow: 1048576,
     providers: {
-      google: { modelId: "gemini-3-flash-preview", inputPer1M: 0.5, outputPer1M: 3 },
+      // google removed: 404 on Vertex AI (publisher model not found)
       openrouter: { modelId: "google/gemini-3-flash-preview", inputPer1M: 0.5, outputPer1M: 3 },
     },
   },
@@ -1062,7 +1096,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     maxTokens: 16384,
     contextWindow: 1048576,
     providers: {
-      google: { modelId: "gemini-3-pro-preview", inputPer1M: 2, outputPer1M: 12 },
+      // google removed: 404 on Vertex AI (publisher model not found)
       openrouter: { modelId: "google/gemini-3-pro-preview", inputPer1M: 2, outputPer1M: 12 },
     },
   },
@@ -1075,6 +1109,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     capability: "text-generation",
     tier: 3,
     badge: "NEW",
+    deprecated: true, // 404 on Vertex AI, no other providers
     capabilities: { ...VISION_CAPS, reasoning: "highest", speed: "medium", creativity: "highest" },
     maxTokens: 16384,
     contextWindow: 1048576,
@@ -1090,6 +1125,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     capability: "text-generation",
     tier: 1,
     badge: "BUDGET",
+    deprecated: true, // 404 on Vertex AI, no other providers
     capabilities: { ...VISION_CAPS, reasoning: "medium", speed: "highest", creativity: "medium" },
     maxTokens: 8192,
     contextWindow: 1048576,
@@ -1106,6 +1142,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     capability: "text-generation",
     tier: 3,
     badge: "IMAGE",
+    deprecated: true, // 404 on Vertex AI, no other providers
     capabilities: { ...CHAT_IMAGE_CAPS, reasoning: "highest", speed: "medium", creativity: "highest" },
     maxTokens: 8192,
     contextWindow: 1048576,
@@ -1121,6 +1158,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     capability: "text-generation",
     tier: 2,
     badge: "IMAGE",
+    deprecated: true, // 404 on Vertex AI, no other providers
     capabilities: { ...CHAT_IMAGE_CAPS, reasoning: "high", speed: "highest", creativity: "high" },
     maxTokens: 8192,
     contextWindow: 1048576,
@@ -1485,33 +1523,6 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
       openai: { modelId: "text-embedding-3-small", inputPer1M: 0.02 },
     },
   },
-  // --- Together AI ---
-  {
-    id: "BAAI/bge-base-en-v1.5",
-    displayName: "BGE Base EN",
-    author: "BAAI",
-    description: "BAAI general embedding model (base)",
-    capability: "text-embedding",
-    tier: 1,
-    badge: "FAST",
-    capabilities: { ...EMBEDDING_CAPS },
-    providers: {
-      together: { modelId: "BAAI/bge-base-en-v1.5", inputPer1M: 0.008 },
-    },
-  },
-
-  {
-    id: "BAAI/bge-large-en-v1.5",
-    displayName: "BGE Large EN",
-    author: "BAAI",
-    description: "BAAI general embedding model (large)",
-    capability: "text-embedding",
-    tier: 2,
-    capabilities: { ...EMBEDDING_CAPS },
-    providers: {
-      together: { modelId: "BAAI/bge-large-en-v1.5", inputPer1M: 0.016 },
-    },
-  },
   // --- Google (Vertex AI) ---
   {
     id: "intfloat/e5-large",
@@ -1520,6 +1531,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     description: "Multilingual embedding model via Vertex AI (1024 dim)",
     capability: "text-embedding",
     tier: 2,
+    deprecated: true, // 400 FAILED_PRECONDITION on Vertex AI
     capabilities: { ...EMBEDDING_CAPS },
     providers: {
       google: { modelId: "multilingual-e5-large-instruct-maas", inputPer1M: 0.1 },
@@ -1533,6 +1545,7 @@ export const MODEL_REGISTRY: readonly ModelRegistryEntry[] = [
     capability: "text-embedding",
     tier: 1,
     badge: "FAST",
+    deprecated: true, // 400 FAILED_PRECONDITION on Vertex AI
     capabilities: { ...EMBEDDING_CAPS },
     providers: {
       google: { modelId: "multilingual-e5-small-maas", inputPer1M: 0.05 },
@@ -1574,7 +1587,17 @@ for (const entry of MODEL_REGISTRY) {
 
 /** Get a single registry entry by canonical ID or provider model ID */
 export function getRegistryEntry(modelId: string): ModelRegistryEntry | undefined {
-  return _byId.get(modelId) ?? _byProviderModelId.get(modelId);
+  const direct = _byId.get(modelId) ?? _byProviderModelId.get(modelId);
+  if (direct) return direct;
+
+  // Vertex AI responses include publisher prefix (e.g. "deepseek-ai/deepseek-v3.2-maas")
+  // but the registry indexes only the plain model ID ("deepseek-v3.2-maas").
+  // Strip the publisher prefix and retry.
+  if (modelId.includes("/")) {
+    const plain = modelId.split("/").pop()!;
+    return _byProviderModelId.get(plain);
+  }
+  return undefined;
 }
 
 /** Get all registry entries for a provider, optionally filtered by capability */

@@ -2,10 +2,14 @@
   "slug": "blank",
   "name": "Blank Plugin",
   "version": "1.0.0",
-  "description": "A minimal starting point — empty plugin skeleton with SDK imports ready.",
+  "description": "A minimal starting point \u2014 empty plugin skeleton with SDK imports ready.",
   "category": "general",
   "requiredGateways": [],
-  "tags": ["starter", "blank", "minimal"],
+  "tags": [
+    "starter",
+    "blank",
+    "minimal"
+  ],
   "difficulty": "beginner",
   "configSchema": {},
   "entryFile": "code.js",
@@ -14,5 +18,23 @@
   "author": "2bot",
   "isBuiltin": true,
   "eventTypes": [],
-  "eventRole": "responder"
+  "eventRole": "responder",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "type": "object",
+        "title": "Data"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "type": "object",
+        "title": "Data"
+      }
+    }
+  }
 }

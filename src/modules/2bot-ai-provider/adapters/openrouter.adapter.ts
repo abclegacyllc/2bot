@@ -17,11 +17,11 @@ import { logger } from "@/lib/logger";
 import OpenAI from "openai";
 import { setProviderValidated } from "../provider-config";
 import type {
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk,
-  ToolCallResult,
-  ToolDefinition,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk,
+    ToolCallResult,
+    ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -165,6 +165,18 @@ export async function openrouterTextGeneration(
     const usage = response.usage;
     const toolCalls = extractToolCalls(choice?.message?.tool_calls);
 
+    // Extract reasoning: check for reasoning_content (o3-mini etc.) or <think> tags (Qwen, DeepSeek, Kimi)
+    const msg = choice?.message as Record<string, unknown> | undefined;
+    let rawContent = (msg?.content as string) || "";
+    let reasoning = (msg?.reasoning_content as string) || undefined;
+    if (!reasoning) {
+      const thinkMatch = rawContent.match(/^<think>([\s\S]*?)<\/think>\s*/i);
+      if (thinkMatch) {
+        reasoning = thinkMatch[1]!.trim() || undefined;
+        rawContent = rawContent.slice(thinkMatch[0].length);
+      }
+    }
+
     log.info(
       {
         model: request.model,
@@ -179,7 +191,7 @@ export async function openrouterTextGeneration(
     return {
       id: response.id,
       model: response.model,
-      content: choice?.message?.content || "",
+      content: rawContent,
       finishReason: mapFinishReason(choice?.finish_reason),
       usage: {
         inputTokens: usage?.prompt_tokens || 0,
@@ -189,6 +201,7 @@ export async function openrouterTextGeneration(
       creditsUsed: 0,
       newBalance: 0,
       toolCalls,
+      reasoning,
     };
   } catch (error) {
     log.error({ error, model: request.model, hasImages }, "OpenRouter chat error");

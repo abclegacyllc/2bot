@@ -10,18 +10,19 @@
 import { Prisma } from "@prisma/client";
 
 import { logger } from "@/lib/logger";
+import { workflowRunDurationMs, workflowRunsTotal } from "@/lib/metrics";
 import { prisma } from "@/lib/prisma";
 import { marketplaceLoader } from "@/modules/marketplace/marketplace-loader.service";
-import { getPluginEntryPath, pluginDeployService } from "@/modules/plugin/plugin-deploy.service";
+import { gatewayTypeToPlatform, getPluginEntryPath, isDirectoryLayout, pluginDeployService } from "@/modules/plugin/plugin-deploy.service";
 import {
     ConflictError,
     ForbiddenError,
-    NotFoundError,
-    ValidationError,
+    NotFoundError
 } from "@/shared/errors";
 
 import { pushWorkflowCache, removeWorkflowCache } from "./workflow-cache.service";
 import type {
+    CreateWorkflowEdgeRequest,
     CreateWorkflowRequest,
     CreateWorkflowStepRequest,
     InputMapping,
@@ -31,6 +32,7 @@ import type {
     UpdateWorkflowRequest,
     UpdateWorkflowStepRequest,
     WorkflowDefinition,
+    WorkflowEdgeDefinition,
     WorkflowRunDetail,
     WorkflowRunSummary,
     WorkflowStepDefinition,
@@ -76,23 +78,23 @@ async function createWorkflow(
     throw new ConflictError(`Workflow slug "${data.slug}" already exists`);
   }
 
-  // Validate gateway mode if gateway-bound
-  if (data.gatewayId) {
-    const gateway = await prisma.gateway.findUnique({
-      where: { id: data.gatewayId },
-      select: { mode: true },
+  // Wave 2: auto-attach to default project. Gated behind
+  // FEATURE_AUTO_ATTACH_PROJECT until the NOT NULL migration is applied.
+  let projectId: string | null = null;
+  if ((process.env.FEATURE_AUTO_ATTACH_PROJECT ?? "disabled").toLowerCase() === "enabled") {
+    const { ensureDefaultProject } = await import("@/modules/project/project.service");
+    const defaultProject = await ensureDefaultProject({
+      userId: owner.userId,
+      organizationId: owner.organizationId ?? null,
     });
-    if (gateway && gateway.mode !== "workflow") {
-      throw new ValidationError("Cannot create workflow on a plugin-mode bot", {
-        gatewayId: ["Switch bot to workflow mode first"],
-      });
-    }
+    projectId = defaultProject.id;
   }
 
   const workflow = await prisma.workflow.create({
     data: {
       userId: owner.userId,
       organizationId: owner.organizationId ?? null,
+      projectId,
       name: data.name,
       description: data.description,
       slug: data.slug,
@@ -154,6 +156,7 @@ async function listWorkflows(
       where,
       include: {
         steps: { orderBy: { order: "asc" }, include: { plugin: true } },
+        edges: true,
       },
       orderBy: { [opts.sortBy ?? "createdAt"]: opts.sortOrder ?? "desc" },
       skip,
@@ -179,6 +182,7 @@ async function getWorkflow(
     where: { id: workflowId },
     include: {
       steps: { orderBy: { order: "asc" }, include: { plugin: true } },
+      edges: true,
     },
   });
 
@@ -224,6 +228,7 @@ async function updateWorkflow(
     },
     include: {
       steps: { orderBy: { order: "asc" }, include: { plugin: true } },
+      edges: true,
     },
   });
 
@@ -272,12 +277,32 @@ async function addStep(
   // Resolve plugin slug for entry file path
   const plugin = await prisma.plugin.findUnique({
     where: { id: data.pluginId },
-    select: { slug: true },
+    select: { slug: true, authorType: true },
   });
   const effectiveGatewayId = data.gatewayId ?? workflow.gatewayId;
-  const entryFile = plugin
-    ? getPluginEntryPath(effectiveGatewayId, plugin.slug)
-    : null;
+
+  let entryFile: string | null = null;
+  if (plugin) {
+    // For USER plugins, prefer the stored UserPlugin.entryFile — isDirectoryLayout() only works
+    // for BUILTIN/MARKETPLACE bundles and always returns false for USER plugins.
+    if (plugin.authorType === 'USER') {
+      const existingUserPlugin = await prisma.userPlugin.findFirst({
+        where: { pluginId: data.pluginId, userId: owner.userId, organizationId: owner.organizationId ?? null },
+        select: { entryFile: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      entryFile = existingUserPlugin?.entryFile ?? null;
+    }
+    if (!entryFile) {
+      const isDirectoryPlugin = isDirectoryLayout(plugin.slug);
+      let platform: string | undefined;
+      if (effectiveGatewayId) {
+        const gw = await prisma.gateway.findUnique({ where: { id: effectiveGatewayId }, select: { type: true } });
+        if (gw) platform = gatewayTypeToPlatform(gw.type);
+      }
+      entryFile = getPluginEntryPath(effectiveGatewayId, plugin.slug, { platform, isDirectory: isDirectoryPlugin });
+    }
+  }
 
   // Shift existing steps at or after the target order to make room
   await prisma.workflowStep.updateMany({
@@ -304,6 +329,8 @@ async function addStep(
       onError: data.onError ?? "stop",
       maxRetries: data.maxRetries ?? 0,
       entryFile,
+      positionX: data.positionX ?? 0,
+      positionY: data.positionY ?? 0,
     },
     include: { plugin: true },
   });
@@ -389,6 +416,8 @@ async function updateStep(
   if (data.condition !== undefined) updateData.condition = data.condition ? (data.condition as object) : Prisma.JsonNull;
   if (data.onError !== undefined) updateData.onError = data.onError;
   if (data.maxRetries !== undefined) updateData.maxRetries = data.maxRetries;
+  if (data.positionX !== undefined) updateData.positionX = data.positionX;
+  if (data.positionY !== undefined) updateData.positionY = data.positionY;
 
   // Only run update if there are non-order fields to change
   const hasNonOrderUpdates = Object.keys(updateData).length > 0;
@@ -430,8 +459,161 @@ async function deleteStep(
   await prisma.workflowStep.delete({ where: { id: stepId } });
   workflowLogger.info({ workflowId, stepId }, "Workflow step deleted");
 
+  // Compact step ordering so there are no gaps (0, 1, 2, …).
+  // A gap is created whenever a step in the middle or start is deleted.
+  // We do this with a raw query to avoid N+1 updates — reassign order
+  // sequentially based on current sorted order in one transaction.
+  try {
+    const remaining = await prisma.workflowStep.findMany({
+      where: { workflowId },
+      select: { id: true },
+      orderBy: { order: "asc" },
+    });
+    if (remaining.length > 0) {
+      await prisma.$transaction(
+        remaining.map((s, idx) =>
+          prisma.workflowStep.update({
+            where: { id: s.id },
+            data: { order: idx },
+          })
+        )
+      );
+    }
+  } catch (compactErr) {
+    // Non-fatal — gaps are harmless; just log and continue
+    workflowLogger.warn({ workflowId, compactErr }, "Failed to compact step ordering after delete");
+  }
+
   // Push updated workflow cache (fire-and-forget)
   pushWorkflowCache(workflowId, owner.userId, owner.organizationId ?? null);
+}
+
+// ===========================================
+// Workflow Edge CRUD (Graph connections)
+// ===========================================
+
+/**
+ * Add an edge (connection) between two nodes in the workflow graph.
+ * sourceStepId=null means the edge originates from the trigger.
+ */
+async function addEdge(
+  owner: WorkflowOwnerFilter,
+  workflowId: string,
+  data: CreateWorkflowEdgeRequest
+): Promise<WorkflowEdgeDefinition> {
+  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
+  if (!workflow) throw new NotFoundError("Workflow not found");
+  verifyOwner(workflow, owner);
+
+  // Validate target step exists in this workflow
+  const targetStep = await prisma.workflowStep.findFirst({
+    where: { id: data.targetStepId, workflowId },
+  });
+  if (!targetStep) throw new NotFoundError("Target step not found in workflow");
+
+  // If source is a step (not trigger), validate it exists
+  if (data.sourceStepId) {
+    const sourceStep = await prisma.workflowStep.findFirst({
+      where: { id: data.sourceStepId, workflowId },
+    });
+    if (!sourceStep) throw new NotFoundError("Source step not found in workflow");
+  }
+
+  // Check for duplicate edge (same source→target→ports)
+  const existing = await prisma.workflowEdge.findFirst({
+    where: {
+      workflowId,
+      sourceStepId: data.sourceStepId ?? null,
+      targetStepId: data.targetStepId,
+      sourcePort: data.sourcePort ?? "output",
+      targetPort: data.targetPort ?? "input",
+    },
+  });
+  if (existing) {
+    // Return the existing edge instead of creating a duplicate
+    return toEdgeDefinition(existing);
+  }
+
+  const edge = await prisma.workflowEdge.create({
+    data: {
+      workflowId,
+      sourceStepId: data.sourceStepId ?? null,
+      targetStepId: data.targetStepId,
+      sourcePort: data.sourcePort ?? "output",
+      targetPort: data.targetPort ?? "input",
+    },
+  });
+
+  workflowLogger.info(
+    { workflowId, edgeId: edge.id, source: data.sourceStepId ?? "trigger", target: data.targetStepId },
+    "Workflow edge added"
+  );
+
+  pushWorkflowCache(workflowId, owner.userId, owner.organizationId ?? null);
+  return toEdgeDefinition(edge);
+}
+
+/**
+ * Delete an edge from the workflow graph.
+ */
+async function deleteEdge(
+  owner: WorkflowOwnerFilter,
+  workflowId: string,
+  edgeId: string
+): Promise<void> {
+  const edge = await prisma.workflowEdge.findUnique({
+    where: { id: edgeId },
+    include: { workflow: true },
+  });
+  if (!edge || edge.workflowId !== workflowId) {
+    throw new NotFoundError("Workflow edge not found");
+  }
+  verifyOwner(edge.workflow, owner);
+
+  await prisma.workflowEdge.delete({ where: { id: edgeId } });
+  workflowLogger.info({ workflowId, edgeId }, "Workflow edge deleted");
+
+  pushWorkflowCache(workflowId, owner.userId, owner.organizationId ?? null);
+}
+
+/**
+ * Bulk replace all edges for a workflow (used when canvas saves graph layout).
+ */
+async function replaceEdges(
+  owner: WorkflowOwnerFilter,
+  workflowId: string,
+  edges: CreateWorkflowEdgeRequest[]
+): Promise<WorkflowEdgeDefinition[]> {
+  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
+  if (!workflow) throw new NotFoundError("Workflow not found");
+  verifyOwner(workflow, owner);
+
+  // Atomic: delete all existing edges and create new ones
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.workflowEdge.deleteMany({ where: { workflowId } });
+    const created = await Promise.all(
+      edges.map((e) =>
+        tx.workflowEdge.create({
+          data: {
+            workflowId,
+            sourceStepId: e.sourceStepId ?? null,
+            targetStepId: e.targetStepId,
+            sourcePort: e.sourcePort ?? "output",
+            targetPort: e.targetPort ?? "input",
+          },
+        })
+      )
+    );
+    return created;
+  });
+
+  workflowLogger.info(
+    { workflowId, edgeCount: result.length },
+    "Workflow edges replaced"
+  );
+
+  pushWorkflowCache(workflowId, owner.userId, owner.organizationId ?? null);
+  return result.map(toEdgeDefinition);
 }
 
 // ===========================================
@@ -660,6 +842,9 @@ async function completeRun(
     },
   });
 
+  workflowRunsTotal.inc({ status: 'success', trigger: run.triggeredBy });
+  workflowRunDurationMs.observe({ status: 'success' }, durationMs);
+
   // Update workflow stats
   await prisma.workflow.update({
     where: { id: run.workflowId },
@@ -690,6 +875,9 @@ async function failRun(
       durationMs,
     },
   });
+
+  workflowRunsTotal.inc({ status: 'failure', trigger: run.triggeredBy });
+  workflowRunDurationMs.observe({ status: 'failure' }, durationMs);
 
   // Update workflow stats
   await prisma.workflow.update({
@@ -750,6 +938,8 @@ function toWorkflowDefinition(workflow: {
     condition: unknown;
     onError: string;
     maxRetries: number;
+    positionX?: number;
+    positionY?: number;
     entryFile?: string | null;
     userPluginId?: string | null;
     storageQuotaMb?: number;
@@ -757,6 +947,13 @@ function toWorkflowDefinition(workflow: {
     lastExecutedAt?: Date | null;
     lastError?: string | null;
     plugin: { slug: string; name: string };
+  }>;
+  edges?: Array<{
+    id: string;
+    sourceStepId: string | null;
+    targetStepId: string;
+    sourcePort: string;
+    targetPort: string;
   }>;
 }): WorkflowDefinition {
   return {
@@ -771,6 +968,7 @@ function toWorkflowDefinition(workflow: {
     status: workflow.status as WorkflowDefinition["status"],
     isEnabled: workflow.isEnabled,
     steps: workflow.steps.map(toStepDefinition),
+    edges: (workflow.edges ?? []).map(toEdgeDefinition),
     executionCount: workflow.executionCount,
     lastExecutedAt: workflow.lastExecutedAt ?? undefined,
     lastError: workflow.lastError ?? undefined,
@@ -791,6 +989,8 @@ function toStepDefinition(step: {
   condition: unknown;
   onError: string;
   maxRetries: number;
+  positionX?: number;
+  positionY?: number;
   entryFile?: string | null;
   userPluginId?: string | null;
   storageQuotaMb?: number;
@@ -815,12 +1015,30 @@ function toStepDefinition(step: {
       : undefined,
     onError: step.onError as StepErrorHandler,
     maxRetries: step.maxRetries,
+    positionX: step.positionX ?? 0,
+    positionY: step.positionY ?? 0,
     entryFile: step.entryFile ?? undefined,
     userPluginId: step.userPluginId ?? undefined,
     storageQuotaMb: step.storageQuotaMb,
     executionCount: step.executionCount,
     lastExecutedAt: step.lastExecutedAt ?? undefined,
     lastError: step.lastError ?? undefined,
+  };
+}
+
+function toEdgeDefinition(edge: {
+  id: string;
+  sourceStepId: string | null;
+  targetStepId: string;
+  sourcePort: string;
+  targetPort: string;
+}): WorkflowEdgeDefinition {
+  return {
+    id: edge.id,
+    sourceStepId: edge.sourceStepId,
+    targetStepId: edge.targetStepId,
+    sourcePort: edge.sourcePort,
+    targetPort: edge.targetPort,
   };
 }
 
@@ -941,15 +1159,13 @@ async function installPluginStep(
 
   // Resolve entry file path — directory plugins use {slug}/{entry}, single-file use {slug}.js
   const bundle = marketplaceLoader.getBundleCode(plugin.slug);
-  const entryFile = bundle?.layout === "directory"
-    ? (() => {
-        const entry = bundle.entryFile || "index.js";
-        if (effectiveGatewayId) {
-          return `bots/${effectiveGatewayId}/plugins/${plugin.slug}/${entry}`;
-        }
-        return `plugins/${plugin.slug}/${entry}`;
-      })()
-    : getPluginEntryPath(effectiveGatewayId, plugin.slug);
+  const isDirectoryPlugin = bundle?.layout === 'directory';
+  let platform: string | undefined;
+  if (effectiveGatewayId) {
+    const gw = await prisma.gateway.findUnique({ where: { id: effectiveGatewayId }, select: { type: true } });
+    if (gw) platform = gatewayTypeToPlatform(gw.type);
+  }
+  const entryFile = getPluginEntryPath(effectiveGatewayId, plugin.slug, { platform, isDirectory: isDirectoryPlugin });
 
   // Ensure UserPlugin exists (for backward compat with IPC/bridge)
   let userPlugin = await prisma.userPlugin.findFirst({
@@ -1004,6 +1220,7 @@ async function installPluginStep(
         bundle.entryFile || "index.js",
         env,
         effectiveGatewayId,
+        platform,
       );
     } else {
       // Single-file plugin — use marketplace code, fallback to codeBundle
@@ -1016,6 +1233,7 @@ async function installPluginStep(
           templateCode,
           env,
           effectiveGatewayId,
+          platform,
         );
       }
     }
@@ -1053,6 +1271,11 @@ export const workflowService = {
   updateStep,
   deleteStep,
   installPluginStep,
+
+  // Edge CRUD (graph connections)
+  addEdge,
+  deleteEdge,
+  replaceEdges,
 
   // Runs
   listRuns,

@@ -31,6 +31,14 @@ vi.mock('@/lib/prisma', () => ({
     organization: {
       findUnique: vi.fn(),
     },
+    workspaceContainer: {
+      findFirst: vi.fn(),
+    },
+    projectResource: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -62,6 +70,14 @@ const mockedPrisma = prisma as unknown as {
   organization: {
     findUnique: ReturnType<typeof vi.fn>;
   };
+  workspaceContainer: {
+    findFirst: ReturnType<typeof vi.fn>;
+  };
+  projectResource: {
+    findUnique: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+  };
+  $transaction: ReturnType<typeof vi.fn>;
 };
 
 beforeEach(() => {
@@ -69,6 +85,13 @@ beforeEach(() => {
   
   // Set default mock return values
   mockedPrisma.gateway.findMany.mockResolvedValue([]);
+  mockedPrisma.workspaceContainer.findFirst.mockResolvedValue(null);
+  mockedPrisma.projectResource.findUnique.mockResolvedValue(null);
+  mockedPrisma.projectResource.create.mockResolvedValue({ id: 'pr_test' });
+  // $transaction passes the mocked prisma itself as the tx client
+  mockedPrisma.$transaction.mockImplementation(
+    (fn: (tx: unknown) => Promise<unknown>) => fn(mockedPrisma),
+  );
 });
 
 afterEach(() => {

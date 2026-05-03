@@ -16,8 +16,9 @@
 
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { withIdempotency } from "@/lib/redis-lock";
 import { gatewayRegistry, gatewayService } from "@/modules/gateway";
-import { getPluginEntryPath } from "@/modules/plugin/plugin-deploy.service";
+import { gatewayTypeToPlatform, getPluginEntryPath, isDirectoryLayout } from "@/modules/plugin/plugin-deploy.service";
 import type {
     DiscordInteraction,
     DiscordMessageCreate,
@@ -37,6 +38,7 @@ import {
 import {
     createGatewayAccessor,
     createPluginStorage,
+    fetchPluginLogs,
     getPluginExecutor,
 } from "@/modules/plugin/plugin.executor";
 import type {
@@ -45,6 +47,7 @@ import type {
     WorkflowMetadata,
 } from "@/modules/plugin/plugin.interface";
 import { BadRequestError, NotFoundError, ServiceUnavailableError } from "@/shared/errors";
+import type { Prisma } from "@prisma/client";
 
 import {
     buildTemplateContext,
@@ -90,14 +93,47 @@ interface WorkflowRunCache {
  * @param workflowId - The workflow to run
  * @param triggeredBy - What triggered this (e.g. "telegram_message", "manual", "schedule")
  * @param triggerData - The raw trigger payload
+ * @param options - Optional execution options
+ * @param options.dryRun - If true, skip gateway calls and auto-reply (simulate execution)
+ * @param options.captureLogs - If true, capture per-step plugin stdout/stderr into the run record
+ * @param options.allowDraft - If true, allow execution of DRAFT/disabled workflows (Test mode)
  * @returns The workflow run ID
  */
 export async function executeWorkflow(
   workflowId: string,
   triggeredBy: string,
-  triggerData: unknown
+  triggerData: unknown,
+  options?: { dryRun?: boolean; captureLogs?: boolean; allowDraft?: boolean },
+  idempotencyKey?: string,
 ): Promise<string> {
-  // Load workflow with steps
+  // Idempotency guard: if the same trigger event fires twice (webhook retry,
+  // duplicate dispatch) within 24h, return the original run ID instead of
+  // creating a duplicate run. Skipped when no key is provided (manual runs).
+  if (idempotencyKey) {
+    const { value: runId, replayed } = await withIdempotency(
+      `wfrun:${idempotencyKey}`,
+      24 * 60 * 60, // 24h window
+      () => executeWorkflowInternal(workflowId, triggeredBy, triggerData, options, idempotencyKey),
+    );
+    if (replayed) {
+      execLogger.info(
+        { workflowId, runId, idempotencyKey },
+        "Workflow execution skipped — duplicate trigger (idempotency replay)",
+      );
+    }
+    return runId;
+  }
+  return executeWorkflowInternal(workflowId, triggeredBy, triggerData, options);
+}
+
+async function executeWorkflowInternal(
+  workflowId: string,
+  triggeredBy: string,
+  triggerData: unknown,
+  options?: { dryRun?: boolean; captureLogs?: boolean; allowDraft?: boolean },
+  idempotencyKey?: string,
+): Promise<string> {
+  // Load workflow with steps and edges
   const workflow = await prisma.workflow.findUnique({
     where: { id: workflowId },
     include: {
@@ -105,6 +141,7 @@ export async function executeWorkflow(
         orderBy: { order: "asc" },
         include: { plugin: true },
       },
+      edges: true,
     },
   });
 
@@ -112,7 +149,7 @@ export async function executeWorkflow(
     throw new NotFoundError(`Workflow not found: ${workflowId}`);
   }
 
-  if (!workflow.isEnabled || workflow.status !== "ACTIVE") {
+  if (!options?.allowDraft && (!workflow.isEnabled || workflow.status !== "ACTIVE")) {
     throw new BadRequestError(`Workflow is not active: ${workflowId}`);
   }
 
@@ -120,8 +157,9 @@ export async function executeWorkflow(
     throw new BadRequestError(`Workflow has no steps: ${workflowId}`);
   }
 
-  // Check that the bound gateway (if any) is connected
-  if (workflow.gatewayId) {
+  // Check that the bound gateway (if any) is connected.
+  // In dry-run mode we skip this check — no real gateway calls will be made.
+  if (workflow.gatewayId && !options?.dryRun) {
     const gw = await prisma.gateway.findUnique({
       where: { id: workflow.gatewayId },
       select: { status: true },
@@ -164,6 +202,11 @@ export async function executeWorkflow(
   // Per-run cache: avoids redundant DB queries across steps
   const runCache: WorkflowRunCache = { gateways: null, userPlugins: new Map() };
 
+  // Per-step plugin stdout/stderr capture (Test mode). Keyed by step order.
+  // Populated when options.captureLogs=true; flushed into WorkflowRun.output._stepLogs at end.
+  const stepLogsByOrder: Map<number, Array<{ level: string; message: string; ts?: string | number }>> =
+    new Map();
+
   // Build execution context
   const executionCtx: WorkflowExecutionContext = {
     workflowId,
@@ -179,204 +222,238 @@ export async function executeWorkflow(
     steps: {},
   };
 
-  // Execute steps sequentially
+  // Execute steps — graph-based (parallel layers) or linear fallback
   let lastOutput: unknown = undefined;
 
-  for (const step of workflow.steps) {
-    const stepStart = Date.now();
-    const stepRunId = await workflowService.createStepRun(runId, step.order);
+  // Build graph from edges: which steps depend on which
+  const hasEdges = workflow.edges.length > 0;
+  const executionLayers = hasEdges
+    ? buildExecutionLayers(workflow.steps, workflow.edges)
+    : [workflow.steps.map((s) => s.id)]; // Fallback: all in order
 
-    try {
-      // Skip disabled steps (n8n-style "Deactivated" node)
-      if (!step.isEnabled) {
-        await workflowService.skipStepRun(stepRunId);
-        executionCtx.steps[step.order] = {
-          input: null,
-          output: null,
-          status: "skipped",
-          durationMs: Date.now() - stepStart,
-        };
-        execLogger.debug(
-          { workflowId, runId, stepOrder: step.order },
-          "Step skipped (disabled)"
-        );
-        continue;
-      }
+  // Map step IDs to step objects
+  const stepMap = new Map(workflow.steps.map((s) => [s.id, s]));
+  // Track outputs per step ID (for graph-based input mapping)
+  const stepOutputs = new Map<string, unknown>();
 
-      // Build template context for this step
-      const templateCtx = buildTemplateContext(
-        triggerData,
-        executionCtx.steps,
-        step.order,
-        {
-          userId: workflow.userId,
-          organizationId: workflow.organizationId ?? undefined,
-          workflowId,
-          runId,
-        }
-      );
+  for (const layer of executionLayers) {
+    // Execute all steps in this layer in parallel
+    const layerResults = await Promise.allSettled(
+      layer.map(async (stepId) => {
+        const step = stepMap.get(stepId);
+        if (!step) return;
 
-      // Evaluate condition (skip step if condition not met)
-      if (step.condition) {
-        const condition = step.condition as unknown as StepCondition;
-        const shouldRun = evaluateCondition(condition.if, templateCtx);
-        if (!shouldRun) {
-          await workflowService.skipStepRun(stepRunId);
+        const stepStart = Date.now();
+        const stepRunId = await workflowService.createStepRun(runId, step.order);
+
+        try {
+          // Skip disabled steps
+          if (!step.isEnabled) {
+            await workflowService.skipStepRun(stepRunId);
+            executionCtx.steps[step.order] = {
+              input: null, output: null, status: "skipped",
+              durationMs: Date.now() - stepStart,
+            };
+            return;
+          }
+
+          // Build template context — graph-aware: include outputs from upstream steps
+          const templateCtx = buildTemplateContext(
+            triggerData,
+            executionCtx.steps,
+            step.order,
+            {
+              userId: workflow.userId,
+              organizationId: workflow.organizationId ?? undefined,
+              workflowId,
+              runId,
+            }
+          );
+
+          // Evaluate condition
+          if (step.condition) {
+            const condition = step.condition as unknown as StepCondition;
+            const shouldRun = evaluateCondition(condition.if, templateCtx);
+            if (!shouldRun) {
+              await workflowService.skipStepRun(stepRunId);
+              executionCtx.steps[step.order] = {
+                input: null, output: null, status: "skipped",
+                durationMs: Date.now() - stepStart,
+              };
+              return;
+            }
+          }
+
+          // Resolve input mapping
+          const inputMapping = (step.inputMapping ?? {}) as InputMapping;
+          const resolvedInput = resolveInputMapping(inputMapping, templateCtx);
+
+          // Orphan guard: if the plugin catalog row is missing, disable the
+          // step and emit an audit trail rather than crashing the run. This
+          // can happen if a plugin was deleted but the step wasn't cleaned up
+          // (FK misconfiguration, legacy data, or manual DB edits).
+          if (!step.plugin?.slug) {
+            execLogger.error(
+              {
+                runId,
+                workflowId,
+                stepId: step.id,
+                pluginId: step.pluginId,
+              },
+              "Workflow step references a missing plugin — auto-disabling step",
+            );
+            await prisma.workflowStep.update({
+              where: { id: step.id },
+              data: {
+                isEnabled: false,
+                lastError: `Plugin ${step.pluginId} not found in catalog (auto-disabled)`,
+              },
+            }).catch(() => {});
+            await workflowService.failStepRun(
+              stepRunId,
+              `Plugin ${step.pluginId} not found — step auto-disabled`,
+              Date.now() - stepStart,
+            );
+            executionCtx.steps[step.order] = {
+              input: null,
+              output: null,
+              status: "failed",
+              durationMs: Date.now() - stepStart,
+              error: `Plugin ${step.pluginId} not found`,
+            };
+            return;
+          }
+
+          // Build plugin context
+          const stepCfg = (step.config as Record<string, unknown>) ?? {};
+          const pluginContext = await buildPluginContext(
+            step.pluginId,
+            step.plugin.slug,
+            workflow.userId,
+            workflow.organizationId,
+            stepCfg,
+            step.gatewayId ?? workflow.gatewayId,
+            options?.dryRun ? false : stepCfg.gatewayActionsEnabled === true,
+            runCache,
+            {
+              entryFile: step.entryFile,
+              userPluginId: step.userPluginId,
+              idempotencyKey: idempotencyKey ? `${idempotencyKey}:step${step.order}` : undefined,
+            }
+          );
+
+          // Find the previous output for this step: use the output of its upstream step(s)
+          const incomingEdges = workflow.edges.filter((e) => e.targetStepId === stepId);
+          let previousOutput: unknown = lastOutput;
+          const firstIncoming = incomingEdges[0];
+          if (incomingEdges.length === 1 && firstIncoming?.sourceStepId) {
+            previousOutput = stepOutputs.get(firstIncoming.sourceStepId);
+          } else if (incomingEdges.length > 1) {
+            // Multiple inputs: merge outputs from all upstream steps
+            const merged: Record<string, unknown> = {};
+            for (const ie of incomingEdges) {
+              if (ie.sourceStepId) {
+                const srcStep = stepMap.get(ie.sourceStepId);
+                const key = srcStep?.plugin?.slug ?? ie.sourceStepId;
+                merged[key] = stepOutputs.get(ie.sourceStepId);
+              }
+            }
+            previousOutput = merged;
+          }
+
+          // Build plugin event
+          const pluginEvent = buildStepEvent(
+            triggerData, resolvedInput, previousOutput,
+            step.order, runId, workflow.gatewayId ?? undefined
+          );
+
+          // Execute with timeout and retry
+          const result = await executeStepWithRetry(
+            step.plugin.slug, pluginEvent, pluginContext,
+            step.onError as "stop" | "continue" | "retry",
+            step.maxRetries,
+            typeof stepCfg.timeoutMs === "number" ? stepCfg.timeoutMs : undefined
+          );
+
+          const stepDuration = Date.now() - stepStart;
+
+          // Capture plugin stdout/stderr if requested (Test mode).
+          // Best-effort — never blocks the run.
+          if (options?.captureLogs && step.entryFile) {
+            try {
+              const logs = await fetchPluginLogs(
+                workflow.userId,
+                workflow.organizationId,
+                step.entryFile,
+              );
+              if (logs.length > 0) {
+                // Trim very long logs to last 200 entries to bound DB size
+                stepLogsByOrder.set(step.order, logs.slice(-200));
+              }
+            } catch {
+              // Non-fatal — logs are diagnostic, not critical
+            }
+          }
+
+          if (result.success) {
+            await workflowService.completeStepRun(stepRunId, result.output, stepDuration);
+            stepOutputs.set(stepId, result.output);
+            lastOutput = result.output;
+            executionCtx.steps[step.order] = {
+              input: resolvedInput, output: result.output,
+              status: "completed", durationMs: stepDuration,
+            };
+            void prisma.workflowStep.update({
+              where: { id: step.id },
+              data: { executionCount: { increment: 1 }, lastExecutedAt: new Date(), lastError: null },
+            }).catch(() => {});
+          } else {
+            const stepDuration2 = Date.now() - stepStart;
+            await workflowService.failStepRun(stepRunId, result.error ?? "Unknown error", stepDuration2);
+            executionCtx.steps[step.order] = {
+              input: resolvedInput, output: null,
+              error: result.error ?? "Unknown error",
+              status: "failed", durationMs: stepDuration2,
+            };
+            void prisma.workflowStep.update({
+              where: { id: step.id },
+              data: { executionCount: { increment: 1 }, lastExecutedAt: new Date(), lastError: result.error ?? "Unknown error" },
+            }).catch(() => {});
+
+            if (step.onError !== "continue") {
+              throw new StepFailedError(step.order, result.error ?? "Step execution failed");
+            }
+          }
+        } catch (error) {
+          if (error instanceof StepFailedError) throw error;
+          const stepDuration = Date.now() - stepStart;
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          await workflowService.failStepRun(stepRunId, errorMsg, stepDuration);
           executionCtx.steps[step.order] = {
-            input: null,
-            output: null,
-            status: "skipped",
-            durationMs: Date.now() - stepStart,
+            input: null, output: null, error: errorMsg,
+            status: "failed", durationMs: stepDuration,
           };
-          execLogger.debug(
-            { workflowId, runId, stepOrder: step.order },
-            "Step skipped (condition not met)"
-          );
-          continue;
+          if (step.onError !== "continue") {
+            throw new StepFailedError(step.order, errorMsg);
+          }
         }
-      }
+      })
+    );
 
-      // Resolve input mapping
-      const inputMapping = (step.inputMapping ?? {}) as InputMapping;
-      const resolvedInput = resolveInputMapping(inputMapping, templateCtx);
-
-      // Build plugin context
-      const stepCfg = (step.config as Record<string, unknown>) ?? {};
-      const pluginContext = await buildPluginContext(
-        step.pluginId,
-        step.plugin.slug,
-        workflow.userId,
-        workflow.organizationId,
-        stepCfg,
-        step.gatewayId ?? workflow.gatewayId,
-        stepCfg.gatewayActionsEnabled === true,
-        runCache,
-        { entryFile: step.entryFile, userPluginId: step.userPluginId }
-      );
-
-      // Build plugin event — reconstruct platform event from raw trigger data
-      // so container plugins receive their expected event type (telegram.message, etc.)
-      const pluginEvent = buildStepEvent(
-        triggerData,
-        resolvedInput,
-        lastOutput,
-        step.order,
-        runId,
-        workflow.gatewayId ?? undefined
-      );
-
-      // Execute with timeout and retry
-      const result = await executeStepWithRetry(
-        step.plugin.slug,
-        pluginEvent,
-        pluginContext,
-        step.onError as "stop" | "continue" | "retry",
-        step.maxRetries,
-        typeof stepCfg.timeoutMs === "number" ? stepCfg.timeoutMs : undefined
-      );
-
-      const stepDuration = Date.now() - stepStart;
-
-      if (result.success) {
-        await workflowService.completeStepRun(stepRunId, result.output, stepDuration);
-        lastOutput = result.output;
-        executionCtx.steps[step.order] = {
-          input: resolvedInput,
-          output: result.output,
-          status: "completed",
-          durationMs: stepDuration,
-        };
-
-        // Update step-level execution stats
-        void prisma.workflowStep.update({
-          where: { id: step.id },
-          data: {
-            executionCount: { increment: 1 },
-            lastExecutedAt: new Date(),
-            lastError: null,
-          },
-        }).catch(() => { /* best-effort stats */ });
-
-        execLogger.debug(
-          { workflowId, runId, stepOrder: step.order, durationMs: stepDuration },
-          "Step completed"
-        );
-      } else {
-        // Step failed
-        const stepDuration2 = Date.now() - stepStart;
-        await workflowService.failStepRun(
-          stepRunId,
-          result.error ?? "Unknown error",
-          stepDuration2
-        );
-        executionCtx.steps[step.order] = {
-          input: resolvedInput,
-          output: null,
-          error: result.error ?? "Unknown error",
-          status: "failed",
-          durationMs: stepDuration2,
-        };
-
-        // Update step-level execution stats with error
-        void prisma.workflowStep.update({
-          where: { id: step.id },
-          data: {
-            executionCount: { increment: 1 },
-            lastExecutedAt: new Date(),
-            lastError: result.error ?? "Unknown error",
-          },
-        }).catch(() => { /* best-effort stats */ });
-
-        if (step.onError === "continue") {
-          execLogger.warn(
-            { workflowId, runId, stepOrder: step.order, error: result.error },
-            "Step failed, continuing to next step"
-          );
-          continue;
-        }
-
-        // onError === "stop" (default)
+    // Check if any step in this layer had a fatal failure
+    for (const result of layerResults) {
+      if (result.status === "rejected" && result.reason instanceof StepFailedError) {
         const totalDuration = Date.now() - startTime;
-        await workflowService.failRun(
-          runId,
-          result.error ?? "Step execution failed",
-          step.order,
-          totalDuration
-        );
+        await workflowService.failRun(runId, result.reason.message, result.reason.stepOrder, totalDuration);
         execLogger.error(
-          { workflowId, runId, stepOrder: step.order, error: result.error },
+          { workflowId, runId, stepOrder: result.reason.stepOrder, error: result.reason.message },
           "Workflow failed at step"
         );
+        if (options?.captureLogs && stepLogsByOrder.size > 0) {
+          await persistStepLogs(runId, stepLogsByOrder);
+        }
         return runId;
       }
-    } catch (error) {
-      const stepDuration = Date.now() - stepStart;
-      const errorMsg = error instanceof Error ? error.message : String(error);
-
-      await workflowService.failStepRun(stepRunId, errorMsg, stepDuration);
-      executionCtx.steps[step.order] = {
-        input: null,
-        output: null,
-        error: errorMsg,
-        status: "failed",
-        durationMs: stepDuration,
-      };
-
-      if (step.onError === "continue") {
-        execLogger.warn(
-          { workflowId, runId, stepOrder: step.order, error: errorMsg },
-          "Step threw error, continuing"
-        );
-        continue;
-      }
-
-      const totalDuration = Date.now() - startTime;
-      await workflowService.failRun(runId, errorMsg, step.order, totalDuration);
-      execLogger.error(
-        { workflowId, runId, stepOrder: step.order, error: errorMsg },
-        "Workflow failed at step (exception)"
-      );
-      return runId;
     }
   }
 
@@ -388,10 +465,19 @@ export async function executeWorkflow(
     "Workflow execution completed"
   );
 
+  // Flush captured plugin logs into the run record (Test mode only)
+  if (options?.captureLogs && stepLogsByOrder.size > 0) {
+    await persistStepLogs(runId, stepLogsByOrder);
+  }
+
   // ── Auto-reply for BOT_MESSAGE workflows ──────────────────────────
   // When a BOT_MESSAGE workflow completes, send the last step's output
   // back to the originating chat so the user gets a reply on Telegram/etc.
-  await sendAutoReply(workflow, runId, triggerData, lastOutput);
+  if (options?.dryRun) {
+    await appendRunLog(runId, "[DRY RUN] Auto-reply skipped — no real messages sent.");
+  } else {
+    await sendAutoReply(workflow, runId, triggerData, lastOutput);
+  }
 
   return runId;
 }
@@ -399,6 +485,76 @@ export async function executeWorkflow(
 // ===========================================
 // Internal helpers
 // ===========================================
+
+/** Error thrown when a step fails with onError="stop" — used to break out of parallel execution */
+class StepFailedError extends Error {
+  constructor(
+    public readonly stepOrder: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "StepFailedError";
+  }
+}
+
+/**
+ * Build execution layers from the workflow graph (topological sort).
+ * Each layer contains step IDs that can run in parallel (all their dependencies are in earlier layers).
+ *
+ * @param steps - All workflow steps
+ * @param edges - All workflow edges (source->target connections)
+ * @returns Array of layers, each layer is an array of step IDs
+ */
+function buildExecutionLayers(
+  steps: Array<{ id: string }>,
+  edges: Array<{ sourceStepId: string | null; targetStepId: string }>
+): string[][] {
+  const stepIds = new Set(steps.map((s) => s.id));
+  const inDegree = new Map<string, number>();
+  const dependents = new Map<string, string[]>(); // sourceId -> [targetIds]
+
+  // Initialize
+  for (const id of stepIds) {
+    inDegree.set(id, 0);
+    dependents.set(id, []);
+  }
+
+  // Build adjacency from edges
+  for (const edge of edges) {
+    if (!stepIds.has(edge.targetStepId)) continue;
+    if (edge.sourceStepId === null) {
+      // From trigger — no dependency, inDegree stays 0
+      continue;
+    }
+    if (!stepIds.has(edge.sourceStepId)) continue;
+    inDegree.set(edge.targetStepId, (inDegree.get(edge.targetStepId) ?? 0) + 1);
+    dependents.get(edge.sourceStepId)!.push(edge.targetStepId);
+  }
+
+  // Kahn's algorithm: BFS topological sort in layers
+  const layers: string[][] = [];
+  let queue = [...stepIds].filter((id) => inDegree.get(id) === 0);
+
+  while (queue.length > 0) {
+    layers.push([...queue]);
+    const nextQueue: string[] = [];
+    for (const id of queue) {
+      for (const dep of dependents.get(id) ?? []) {
+        const newDeg = (inDegree.get(dep) ?? 1) - 1;
+        inDegree.set(dep, newDeg);
+        if (newDeg === 0) nextQueue.push(dep);
+      }
+    }
+    queue = nextQueue;
+  }
+
+  // Safety: if there are orphan steps (not connected by any edge), add them as a final layer
+  const layeredSteps = new Set(layers.flat());
+  const orphans = [...stepIds].filter((id) => !layeredSteps.has(id));
+  if (orphans.length > 0) layers.push(orphans);
+
+  return layers;
+}
 
 /**
  * Build the PluginEvent for a workflow step.
@@ -597,11 +753,19 @@ async function buildPluginContext(
   gatewayId: string | null | undefined,
   gatewayActionsEnabled = false,
   runCache?: WorkflowRunCache,
-  stepOverrides?: { entryFile?: string | null; userPluginId?: string | null }
+  stepOverrides?: { entryFile?: string | null; userPluginId?: string | null; idempotencyKey?: string }
 ): Promise<PluginContext> {
   // Cache key for userPlugin: scoped to plugin + gateway
   const cacheKey = `${pluginId}:${gatewayId ?? "null"}`;
   let userPlugin = runCache?.userPlugins.get(cacheKey) ?? null;
+
+  // Resolve platform and directory layout for path construction
+  let platform: string | undefined;
+  if (gatewayId) {
+    const gw = await prisma.gateway.findUnique({ where: { id: gatewayId }, select: { type: true } });
+    if (gw) platform = gatewayTypeToPlatform(gw.type);
+  }
+  const isDirectoryPlugin = isDirectoryLayout(pluginSlug);
 
   if (!userPlugin) {
     // Prefer step-level userPluginId from the unified model
@@ -637,7 +801,7 @@ async function buildPluginContext(
             gatewayId: gatewayId ?? null,
             config: {},
             isEnabled: true,
-            entryFile: getPluginEntryPath(gatewayId, pluginSlug),
+            entryFile: getPluginEntryPath(gatewayId, pluginSlug, { platform, isDirectory: isDirectoryPlugin }),
           },
         });
         userPlugin = { id: created.id, isEnabled: true, config: created.config, entryFile: created.entryFile };
@@ -709,7 +873,7 @@ async function buildPluginContext(
   );
 
   // Entry file for the plugin (prefer step-level, then DB value, then computed bot-dir path)
-  const entryFile = stepOverrides?.entryFile ?? userPlugin.entryFile ?? getPluginEntryPath(gatewayId, pluginSlug);
+  const entryFile = stepOverrides?.entryFile ?? userPlugin.entryFile ?? getPluginEntryPath(gatewayId, pluginSlug, { platform, isDirectory: isDirectoryPlugin });
 
   return {
     userId,
@@ -720,6 +884,7 @@ async function buildPluginContext(
     gateways: gatewayAccessor,
     storage: createPluginStorage(userPluginId, userId),
     logger: logger.child({ plugin: pluginSlug, workflow: true }),
+    ...(stepOverrides?.idempotencyKey ? { idempotencyKey: stepOverrides.idempotencyKey } : {}),
   };
 }
 
@@ -874,6 +1039,42 @@ async function sendAutoReply(
       "Failed to send auto-reply"
     );
     await appendRunLog(runId, `Failed to send reply: ${errMsg}`);
+  }
+}
+
+/**
+ * Persist captured per-step plugin logs into the WorkflowRun.output JSON
+ * under the `_stepLogs` key (map of stepOrder → log lines).
+ *
+ * Best-effort — never throws, never blocks the run.
+ */
+async function persistStepLogs(
+  runId: string,
+  stepLogsByOrder: Map<number, Array<{ level: string; message: string; ts?: string | number }>>,
+): Promise<void> {
+  try {
+    const run = await prisma.workflowRun.findUnique({
+      where: { id: runId },
+      select: { output: true },
+    });
+    const raw = run?.output;
+    const existing = (typeof raw === "object" && raw !== null && !Array.isArray(raw))
+      ? (raw as Record<string, unknown>)
+      : { _output: raw };
+
+    const logsObj: Record<string, unknown> = {};
+    for (const [order, logs] of stepLogsByOrder.entries()) {
+      logsObj[String(order)] = logs;
+    }
+
+    const merged = { ...existing, _stepLogs: logsObj };
+
+    await prisma.workflowRun.update({
+      where: { id: runId },
+      data: { output: merged as Prisma.InputJsonValue },
+    });
+  } catch {
+    // best-effort
   }
 }
 

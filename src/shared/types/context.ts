@@ -27,7 +27,7 @@ export interface ServiceContext {
   userRole: UserRole;
   userPlan: PlanType;
 
-  // Active context type (Phase 4)
+  // Active context type
   contextType: 'personal' | 'organization';
 
   // Organization context (optional - null for personal context)
@@ -55,13 +55,13 @@ export interface ServiceContext {
 
 /**
  * Token payload shape for context creation
- * Phase 6.7: Simplified - activeContext is optional (derived from URL)
+ * Simplified - activeContext is optional (derived from URL)
  */
 export interface TokenPayloadForContext {
   userId: string;
   role: UserRole;
   plan: PlanType;
-  // Phase 6.7: activeContext is now optional - context derived from URL
+  // activeContext is now optional - context derived from URL
   activeContext?: {
     type: 'personal' | 'organization';
     organizationId?: string;
@@ -80,7 +80,7 @@ export interface RequestMetadata {
 }
 
 /**
- * Context options for Phase 6.7 URL-based routing
+ * Context options for URL-based routing
  * When activeContext is not in token, these can be provided separately
  */
 export interface ContextOptions {
@@ -93,14 +93,14 @@ export interface ContextOptions {
 
 /**
  * Create a ServiceContext from token payload and request metadata
- * Phase 6.7: Supports both token-based context (legacy) and URL-based context (new)
+ * Supports both token-based context (legacy) and URL-based context (new)
  */
 export function createServiceContext(
   tokenPayload: TokenPayloadForContext,
   requestMeta?: RequestMetadata,
   contextOptions?: ContextOptions
 ): ServiceContext {
-  // Phase 6.7: Use contextOptions if provided, otherwise fall back to activeContext in token
+  // Use contextOptions if provided, otherwise fall back to activeContext in token
   const activeContext = tokenPayload.activeContext;
   const contextType = contextOptions?.contextType ?? activeContext?.type ?? 'personal';
   const organizationId = contextOptions?.organizationId ?? activeContext?.organizationId;
@@ -361,7 +361,7 @@ export function createSystemTenantContext(
 }
 
 // ===========================================
-// Ownership Filter Helper (Phase 4)
+// Ownership Filter Helper
 // ===========================================
 
 /**

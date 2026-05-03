@@ -5,7 +5,7 @@
  *
  * Monaco-based code editor used ONLY in the plugin creation page for
  * writing initial plugin code. All subsequent editing happens in the
- * workspace IDE (Phase 5+).
+ * workspace IDE.
  *
  * This component is retained for the "Write code from scratch" flow
  * in the create page and for AI choreography automation.

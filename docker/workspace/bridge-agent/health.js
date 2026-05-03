@@ -16,7 +16,10 @@
 const { EventEmitter } = require('events');
 const os = require('os');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+
+const execAsync = promisify(exec);
 
 class HealthMonitor extends EventEmitter {
   constructor({ workspaceDir, log, checkIntervalMs = 30000 }) {
@@ -77,7 +80,7 @@ class HealthMonitor extends EventEmitter {
   /**
    * Collect all system stats
    */
-  _collectStats() {
+  async _collectStats() {
     const mem = process.memoryUsage();
 
     // Container-aware memory: read from cgroup (Docker sets memory limits via cgroups)
@@ -92,13 +95,14 @@ class HealthMonitor extends EventEmitter {
     // Container-aware CPU: read from cgroup (Docker sets CPU limits via cgroups)
     const cgroupCpu = this._getCgroupCpu();
 
-    // Disk usage for workspace directory
+    // Disk usage for workspace directory (async to avoid blocking event loop)
     let disk = { total: 0, used: 0, available: 0, percent: 0 };
     try {
-      const output = execSync(`df -B1 "${this.workspaceDir}" 2>/dev/null | tail -1`, {
+      const { stdout } = await execAsync(`df -B1 "${this.workspaceDir}" 2>/dev/null | tail -1`, {
         encoding: 'utf8',
         timeout: 5000,
-      }).trim();
+      });
+      const output = stdout.trim();
       const parts = output.split(/\s+/);
       if (parts.length >= 5) {
         disk = {
@@ -112,14 +116,14 @@ class HealthMonitor extends EventEmitter {
       // df not available or errored — skip disk stats
     }
 
-    // Workspace directory size
+    // Workspace directory size (async to avoid blocking event loop)
     let workspaceSize = 0;
     try {
-      const output = execSync(`du -sb "${this.workspaceDir}" 2>/dev/null | cut -f1`, {
+      const { stdout } = await execAsync(`du -sb "${this.workspaceDir}" 2>/dev/null | cut -f1`, {
         encoding: 'utf8',
         timeout: 10000,
-      }).trim();
-      workspaceSize = parseInt(output, 10) || 0;
+      });
+      workspaceSize = parseInt(stdout.trim(), 10) || 0;
     } catch {
       // du not available
     }
@@ -289,9 +293,9 @@ class HealthMonitor extends EventEmitter {
   /**
    * Periodic check — collect stats and emit warnings
    */
-  _check() {
+  async _check() {
     try {
-      const stats = this._collectStats();
+      const stats = await this._collectStats();
 
       // Check memory threshold
       if (stats.memory.system.percent >= this.thresholds.memoryPercent) {

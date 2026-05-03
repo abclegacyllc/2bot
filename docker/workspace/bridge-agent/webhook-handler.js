@@ -18,6 +18,69 @@
 const http = require('http');
 
 // ===========================================
+// Workflow Engine Forwarding
+// ===========================================
+
+/**
+ * Fire-and-forget HTTP forward to the platform's internal workflow trigger endpoint.
+ * Called after container-side standalone plugin dispatch so the platform workflow engine
+ * can process BOT_MESSAGE (and other) workflow triggers for this gateway.
+ *
+ * This is intentionally non-blocking — the bridge agent sends the 200 back to Telegram
+ * immediately regardless of whether the forward succeeds.
+ *
+ * @param {string} platform - e.g. 'telegram'
+ * @param {string} gatewayId
+ * @param {Buffer} body - Raw request body already collected
+ * @param {object} log - Pino logger
+ */
+function forwardToWorkflowEngine(platform, gatewayId, body, log) {
+  const bridgeToken = process.env.BRIDGE_AUTH_TOKEN;
+  if (!bridgeToken) {
+    log.warn({ gatewayId, platform }, 'No BRIDGE_AUTH_TOKEN — skipping workflow engine forward');
+    return;
+  }
+
+  const apiHost = process.env.CREDENTIAL_API_HOST || '172.17.0.1';
+  const apiPort = parseInt(process.env.CREDENTIAL_API_PORT || '3002', 10);
+  const bodyBuf = Buffer.isBuffer(body) ? body : Buffer.from(body);
+
+  const req = http.request(
+    {
+      hostname: apiHost,
+      port: apiPort,
+      path: `/internal/webhook-trigger/${platform}/${gatewayId}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': bodyBuf.length,
+        'X-Bridge-Token': bridgeToken,
+      },
+      timeout: 10000,
+    },
+    (res) => {
+      // Drain so the socket is released
+      res.resume();
+      if (res.statusCode !== 200) {
+        log.warn({ gatewayId, platform, statusCode: res.statusCode }, 'Workflow engine forward returned non-200');
+      }
+    },
+  );
+
+  req.on('error', (err) => {
+    log.warn({ gatewayId, platform, error: err.message }, 'Workflow engine forward failed');
+  });
+
+  req.on('timeout', () => {
+    req.destroy();
+    log.warn({ gatewayId, platform }, 'Workflow engine forward timed out');
+  });
+
+  req.write(bodyBuf);
+  req.end();
+}
+
+// ===========================================
 // Event Dedup + Claim Tracking
 // ===========================================
 
@@ -259,11 +322,11 @@ function detectWhatsAppEventType(payload) {
 /**
  * Create a webhook handler function.
  *
- * @param {{ pluginRunner: object, log: object, emitEvent: Function }} deps
+ * @param {{ log: object, emitEvent: Function }} deps
  * @returns {(req: import('http').IncomingMessage, res: import('http').ServerResponse) => Promise<boolean>}
  *   Returns true if the request was handled, false otherwise.
  */
-function createWebhookHandler({ pluginRunner, log, emitEvent }) {
+function createWebhookHandler({ pluginRunner: _pluginRunner, log, emitEvent }) {
   return async function handleWebhook(req, res) {
     const route = req.method === 'POST' ? matchWebhookRoute(req.url) : null;
     if (!route) return false;
@@ -282,22 +345,22 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
 
       // ── Telegram handling ──
       if (route.platform === 'telegram') {
-        return await handleTelegramWebhookEvent(route.gatewayId, payload, req, res, body, { pluginRunner, log, emitEvent });
+        return await handleTelegramWebhookEvent(route.gatewayId, payload, req, res, body, { log, emitEvent });
       }
 
       // ── Discord handling ──
       if (route.platform === 'discord') {
-        return await handleDiscordWebhookEvent(route.gatewayId, payload, req, res, body, { pluginRunner, log, emitEvent });
+        return await handleDiscordWebhookEvent(route.gatewayId, payload, req, res, body, { log, emitEvent });
       }
 
       // ── Slack handling ──
       if (route.platform === 'slack') {
-        return await handleSlackWebhookEvent(route.gatewayId, payload, req, res, body, { pluginRunner, log, emitEvent });
+        return await handleSlackWebhookEvent(route.gatewayId, payload, req, res, body, { log, emitEvent });
       }
 
       // ── WhatsApp handling ──
       if (route.platform === 'whatsapp') {
-        return await handleWhatsAppWebhookEvent(route.gatewayId, payload, req, res, body, { pluginRunner, log, emitEvent });
+        return await handleWhatsAppWebhookEvent(route.gatewayId, payload, req, res, body, { log, emitEvent });
       }
 
       return false;
@@ -314,7 +377,7 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
    * Handle a Telegram webhook event
    */
   async function handleTelegramWebhookEvent(gatewayId, update, req, res, body, deps) {
-    const { pluginRunner, log, emitEvent } = deps;
+    const { log, emitEvent } = deps;
 
     // 1. Validate Telegram secret token
     const expectedToken = await getWebhookSecretToken(gatewayId, log);
@@ -345,62 +408,32 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
 
     log.info({ gatewayId, updateId: update.update_id }, 'Telegram webhook received directly');
 
-    // 4. Determine event type
-    const eventType = detectTelegramEventType(update);
+    // 4. Acknowledge to Telegram immediately — before any plugin work.
+    //    Telegram retries if it doesn't get a 200 within ~1s; late responses cause
+    //    duplicate update delivery that the dedup map must catch. Responding first
+    //    eliminates that entire retry cascade.
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, data: { received: true } }));
 
-    // 5. Build event envelope
-    const event = {
-      type: eventType,
-      data: update,
-      gatewayId,
-    };
+    // 5. Forward to workflow engine asynchronously — single execution path.
+    (async () => {
+      // Forward to platform workflow engine
+      forwardToWorkflowEngine('telegram', gatewayId, body, log);
 
-    // 6. Sequential dispatch with event claiming
-    //    First plugin to return a truthy output "claims" the event.
-    //    Subsequent plugins receive event._claimed = true so they can skip responding.
-    const botDirPrefix = `bots/${gatewayId}/`;
-    const running = pluginRunner.list().filter(p =>
-      p.status === 'running' &&
-      (p.file.startsWith(botDirPrefix) || p.gatewayId === gatewayId)
-    );
-
-    let pushed = 0;
-    let claimed = false;
-    for (const proc of running) {
-      const enrichedEvent = claimed ? { ...event, _claimed: true } : event;
-      try {
-        const result = await pluginRunner.pushEvent(proc.file, enrichedEvent);
-        if (result.success) {
-          pushed++;
-          // If plugin returned a truthy output, it claimed the event
-          if (!claimed && result.output !== null && result.output !== undefined) {
-            claimed = true;
-          }
-        }
-      } catch (err) {
-        log.warn({ plugin: proc.file, error: err.message }, 'Plugin event dispatch failed');
-      }
-    }
-
-    log.info({ gatewayId, eventType, pushed, claimed, total: running.length }, 'Telegram webhook routed to plugins');
-
-    // Emit inbound traffic log to platform
-    emitEvent('traffic.inbound', {
-      timestamp: new Date().toISOString(),
-      domain: 'api.telegram.org',
-      url: req.url,
-      method: 'POST',
-      httpStatus: 200,
-      bytesTransferred: body.length,
-      sourceType: 'telegram',
-      gatewayId,
-      eventType,
-      pluginsDelivered: pushed,
+      emitEvent('traffic.inbound', {
+        timestamp: new Date().toISOString(),
+        domain: 'api.telegram.org',
+        url: req.url,
+        method: 'POST',
+        httpStatus: 200,
+        bytesTransferred: body.length,
+        sourceType: 'telegram',
+        gatewayId,
+      });
+    })().catch(err => {
+      log.error({ gatewayId, error: err.message }, 'Async Telegram webhook processing error');
     });
 
-    // Always 200 to Telegram
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, data: { received: true, pushed } }));
     return true;
   }
 
@@ -408,7 +441,7 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
    * Handle a Discord interaction webhook event
    */
   async function handleDiscordWebhookEvent(gatewayId, interaction, req, res, body, deps) {
-    const { pluginRunner, log, emitEvent } = deps;
+    const { log, emitEvent } = deps;
 
     // 1. Handle PING (type 1) — Discord URL verification
     if (interaction.type === 1) {
@@ -428,57 +461,8 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
       return true;
     }
 
-    // 2. Determine event type
-    const eventType = detectDiscordEventType(interaction);
-
-    // 3. Build event envelope
-    const event = {
-      type: eventType,
-      data: interaction,
-      gatewayId,
-    };
-
-    // 4. Sequential dispatch with event claiming
-    const botDirPrefix = `bots/${gatewayId}/`;
-    const running = pluginRunner.list().filter(p =>
-      p.status === 'running' &&
-      (p.file.startsWith(botDirPrefix) || p.gatewayId === gatewayId)
-    );
-
-    let pushed = 0;
-    let claimed = false;
-    for (const proc of running) {
-      const enrichedEvent = claimed ? { ...event, _claimed: true } : event;
-      try {
-        const result = await pluginRunner.pushEvent(proc.file, enrichedEvent);
-        if (result.success) {
-          pushed++;
-          if (!claimed && result.output !== null && result.output !== undefined) {
-            claimed = true;
-          }
-        }
-      } catch (err) {
-        log.warn({ plugin: proc.file, error: err.message }, 'Plugin event dispatch failed');
-      }
-    }
-
-    log.info({ gatewayId, eventType, pushed, claimed, total: running.length }, 'Discord interaction routed to plugins');
-
-    // Emit inbound traffic log
-    emitEvent('traffic.inbound', {
-      timestamp: new Date().toISOString(),
-      domain: 'discord.com',
-      url: req.url,
-      method: 'POST',
-      httpStatus: 200,
-      bytesTransferred: body.length,
-      sourceType: 'discord',
-      gatewayId,
-      eventType,
-      pluginsDelivered: pushed,
-    });
-
-    // Return DEFERRED response for commands/components, PONG for others
+    // 2. Acknowledge immediately — Discord requires a typed response within 3 seconds.
+    //    Commands/components (type 2/3) need DEFERRED (type 5); everything else gets a PONG (type 1).
     if (interaction.type === 2 || interaction.type === 3) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ type: 5 })); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
@@ -486,6 +470,28 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ type: 1 }));
     }
+
+    // 3. Forward to workflow engine asynchronously — single execution path.
+    (async () => {
+      const eventType = detectDiscordEventType(interaction);
+      // Forward to platform workflow engine (fire-and-forget)
+      forwardToWorkflowEngine('discord', gatewayId, body, log);
+
+      emitEvent('traffic.inbound', {
+        timestamp: new Date().toISOString(),
+        domain: 'discord.com',
+        url: req.url,
+        method: 'POST',
+        httpStatus: 200,
+        bytesTransferred: body.length,
+        sourceType: 'discord',
+        gatewayId,
+        eventType,
+      });
+    })().catch(err => {
+      log.error({ gatewayId, error: err.message }, 'Async Discord interaction processing error');
+    });
+
     return true;
   }
 
@@ -493,7 +499,7 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
    * Handle a Slack webhook event
    */
   async function handleSlackWebhookEvent(gatewayId, payload, req, res, body, deps) {
-    const { pluginRunner, log, emitEvent } = deps;
+    const { log, emitEvent } = deps;
 
     // 1. Handle url_verification challenge
     if (payload.type === 'url_verification') {
@@ -526,59 +532,31 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
       return true;
     }
 
-    // 2. Determine event type
-    const eventType = detectSlackEventType(eventPayload);
-
-    // 3. Build event envelope
-    const event = {
-      type: eventType,
-      data: eventPayload,
-      gatewayId,
-    };
-
-    // 4. Sequential dispatch with event claiming
-    const botDirPrefix = `bots/${gatewayId}/`;
-    const running = pluginRunner.list().filter(p =>
-      p.status === 'running' &&
-      (p.file.startsWith(botDirPrefix) || p.gatewayId === gatewayId)
-    );
-
-    let pushed = 0;
-    let claimed = false;
-    for (const proc of running) {
-      const enrichedEvent = claimed ? { ...event, _claimed: true } : event;
-      try {
-        const result = await pluginRunner.pushEvent(proc.file, enrichedEvent);
-        if (result.success) {
-          pushed++;
-          if (!claimed && result.output !== null && result.output !== undefined) {
-            claimed = true;
-          }
-        }
-      } catch (err) {
-        log.warn({ plugin: proc.file, error: err.message }, 'Plugin event dispatch failed');
-      }
-    }
-
-    log.info({ gatewayId, eventType, pushed, claimed, total: running.length }, 'Slack webhook routed to plugins');
-
-    // Emit inbound traffic log
-    emitEvent('traffic.inbound', {
-      timestamp: new Date().toISOString(),
-      domain: 'slack.com',
-      url: req.url,
-      method: 'POST',
-      httpStatus: 200,
-      bytesTransferred: body.length,
-      sourceType: 'slack',
-      gatewayId,
-      eventType,
-      pluginsDelivered: pushed,
-    });
-
-    // Return 200 immediately — Slack requires fast responses
+    // 2. Acknowledge immediately — Slack requires a 200 within 3 seconds.
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
+
+    // 3. Forward to workflow engine asynchronously — single execution path.
+    (async () => {
+      const eventType = detectSlackEventType(eventPayload);
+      // Forward to platform workflow engine (fire-and-forget)
+      forwardToWorkflowEngine('slack', gatewayId, body, log);
+
+      emitEvent('traffic.inbound', {
+        timestamp: new Date().toISOString(),
+        domain: 'slack.com',
+        url: req.url,
+        method: 'POST',
+        httpStatus: 200,
+        bytesTransferred: body.length,
+        sourceType: 'slack',
+        gatewayId,
+        eventType,
+      });
+    })().catch(err => {
+      log.error({ gatewayId, error: err.message }, 'Async Slack webhook processing error');
+    });
+
     return true;
   }
 
@@ -586,7 +564,7 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
    * Handle a WhatsApp Cloud API webhook event
    */
   async function handleWhatsAppWebhookEvent(gatewayId, payload, req, res, body, deps) {
-    const { pluginRunner, log, emitEvent } = deps;
+    const { log, emitEvent } = deps;
 
     log.info({ gatewayId, object: payload.object }, 'WhatsApp webhook received directly');
 
@@ -607,59 +585,31 @@ function createWebhookHandler({ pluginRunner, log, emitEvent }) {
       return true;
     }
 
-    // 1. Determine event type
-    const eventType = detectWhatsAppEventType(payload);
-
-    // 2. Build event envelope
-    const event = {
-      type: eventType,
-      data: payload,
-      gatewayId,
-    };
-
-    // 3. Sequential dispatch with event claiming
-    const botDirPrefix = `bots/${gatewayId}/`;
-    const running = pluginRunner.list().filter(p =>
-      p.status === 'running' &&
-      (p.file.startsWith(botDirPrefix) || p.gatewayId === gatewayId)
-    );
-
-    let pushed = 0;
-    let claimed = false;
-    for (const proc of running) {
-      const enrichedEvent = claimed ? { ...event, _claimed: true } : event;
-      try {
-        const result = await pluginRunner.pushEvent(proc.file, enrichedEvent);
-        if (result.success) {
-          pushed++;
-          if (!claimed && result.output !== null && result.output !== undefined) {
-            claimed = true;
-          }
-        }
-      } catch (err) {
-        log.warn({ plugin: proc.file, error: err.message }, 'Plugin event dispatch failed');
-      }
-    }
-
-    log.info({ gatewayId, eventType, pushed, claimed, total: running.length }, 'WhatsApp webhook routed to plugins');
-
-    // Emit inbound traffic log
-    emitEvent('traffic.inbound', {
-      timestamp: new Date().toISOString(),
-      domain: 'graph.facebook.com',
-      url: req.url,
-      method: 'POST',
-      httpStatus: 200,
-      bytesTransferred: body.length,
-      sourceType: 'whatsapp',
-      gatewayId,
-      eventType,
-      pluginsDelivered: pushed,
-    });
-
-    // Return 200 immediately — Meta requires fast responses
+    // 1. Acknowledge immediately — Meta requires a 200 within a few seconds.
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
+
+    // 2. Forward to workflow engine asynchronously — single execution path.
+    (async () => {
+      const eventType = detectWhatsAppEventType(payload);
+      // Forward to platform workflow engine (fire-and-forget)
+      forwardToWorkflowEngine('whatsapp', gatewayId, body, log);
+
+      emitEvent('traffic.inbound', {
+        timestamp: new Date().toISOString(),
+        domain: 'graph.facebook.com',
+        url: req.url,
+        method: 'POST',
+        httpStatus: 200,
+        bytesTransferred: body.length,
+        sourceType: 'whatsapp',
+        gatewayId,
+        eventType,
+      });
+    })().catch(err => {
+      log.error({ gatewayId, error: err.message }, 'Async WhatsApp webhook processing error');
+    });
+
     return true;
   }
 }

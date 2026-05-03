@@ -95,6 +95,12 @@ export interface UserPlugin {
   entryFile?: string | null;
   /** Runtime process status from bridge agent (e.g. "running", "stopped", "not_found") */
   processStatus?: string;
+  /** Catalog `Plugin.version` recorded at install time. */
+  installedVersion?: string | null;
+  /** True when the author has republished a newer bundle that the user hasn't pulled yet. */
+  needsUpdate?: boolean;
+  /** True when container was wiped and this marketplace plugin's files need to be reinstalled. */
+  needsRestore?: boolean;
 }
 
 // ===========================================
@@ -177,6 +183,17 @@ export interface PluginDefinition {
   reviewCount: number;
   /** Runtime permissions granted to this plugin */
   permissions?: PluginPermissions;
+  /** Workflow input port schema — what data the plugin accepts */
+  inputSchema?: ConfigSchema;
+  /** Workflow output port schema — what data the plugin produces */
+  outputSchema?: ConfigSchema;
+}
+
+/** All three schema types for a plugin, used for canvas I/O port rendering */
+export interface PluginSchemaSet {
+  configSchema?: ConfigSchema;
+  inputSchema?: ConfigSchema;
+  outputSchema?: ConfigSchema;
 }
 
 // ===========================================

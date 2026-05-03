@@ -28,11 +28,15 @@ export async function getBridgeClient(
     where: {
       userId,
       organizationId: organizationId ?? null,
-      status: "RUNNING",
+      status: { in: ["RUNNING", "PAUSED"] },
     },
     select: { id: true, bridgePort: true, bridgeAuthToken: true },
   });
   if (!container) return null;
+
+  // resume the container if it was auto-paused for idleness.
+  const { containerLifecycleService } = await import("@/modules/workspace/container-lifecycle.service");
+  await containerLifecycleService.ensureRunning(container.id);
 
   const existing = bridgeClientManager.getExistingClient(container.id);
   if (existing) return { client: existing, workspaceId: container.id };
@@ -40,10 +44,8 @@ export async function getBridgeClient(
   if (!container.bridgePort || !container.bridgeAuthToken) return null;
 
   try {
-    const { decrypt } = await import("@/lib/encryption");
-    const authToken = container.bridgeAuthToken.startsWith("v1:")
-      ? decrypt(container.bridgeAuthToken)
-      : container.bridgeAuthToken;
+    const { decryptIfEncrypted } = await import("@/lib/encryption");
+    const authToken = decryptIfEncrypted(container.bridgeAuthToken);
     const client = await bridgeClientManager.getClient(
       container.id,
       container.bridgePort,
@@ -59,8 +61,8 @@ export async function getBridgeClient(
 // Retry Helper
 // ===========================================
 
-const MAX_BRIDGE_RETRIES = 2;
-const BRIDGE_RETRY_DELAY_MS = 500;
+const MAX_BRIDGE_RETRIES = 3;
+const BRIDGE_RETRY_DELAY_MS = 600;
 
 /**
  * Retry a bridge operation for transient connection errors.

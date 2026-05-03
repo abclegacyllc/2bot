@@ -4,7 +4,7 @@
  * Tracks API calls for quota monitoring and usage analytics.
  * Should be placed after auth middleware to have access to user context.
  * 
- * Phase 6.7: Context is determined by URL path, not token.
+ * Context is determined by URL path, not token.
  * - /api/user/* → personal context
  * - /api/orgs/:orgId/* → organization context
  *
@@ -20,14 +20,14 @@ const log = logger.child({ module: 'usage-middleware' });
 
 /**
  * Build ServiceContext from Express Request
- * Phase 6.7: Context determined by URL path, not token
+ * Context determined by URL path, not token
  */
 function buildServiceContext(req: Request): Partial<ServiceContext> | null {
   if (!req.user || !req.tokenPayload) {
     return null;
   }
   
-  // Phase 6.7: Determine context from URL path
+  // Determine context from URL path
   const isOrgRoute = req.path.startsWith('/api/orgs/');
   let contextType: 'personal' | 'organization' = 'personal';
   let organizationId: string | undefined;

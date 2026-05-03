@@ -1,0 +1,1 @@
+ql -h localhost -U postgres -d 2bot_production -t -c SELECT\ column_name\ FROM\ information_schema.columns\ WHERE\ table_name\=\'gateways\'\ ORDER\ BY\ ordinal_position\;

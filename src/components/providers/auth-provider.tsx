@@ -6,12 +6,12 @@
  * Provides authentication state and methods to the application.
  * Handles token storage, auto-refresh, and session management.
  * 
- * Phase 6.7: Simplified authentication
+ * Simplified authentication
  * - Token only contains user identity (no context/orgs)
  * - Context is UI-only, determined by URL navigation
  * - Organizations fetched via /user/organizations
  *
- * Phase 6.9: Enterprise subdomain architecture
+ * Enterprise subdomain architecture
  * - Uses apiUrl() for direct API calls (no Next.js proxy)
  * - Dev: localhost:3001, Prod: api.2bot.org
  */
@@ -55,7 +55,7 @@ interface User {
   aiRoutingPreference?: string;
 }
 
-// Active context type (Phase 4)
+// Active context type
 interface ActiveContext {
   type: "personal" | "organization";
   organizationId?: string;
@@ -80,7 +80,7 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  // Context switching (Phase 4)
+  // Context switching
   context: ActiveContext;
   availableOrgs: AvailableOrg[];
   switchContext: (type: "personal" | "organization", orgId?: string) => Promise<void>;
@@ -138,7 +138,7 @@ function decodeTokenPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-// Phase 6.7: Extract user plan from token (context no longer in token)
+// Extract user plan from token (context no longer in token)
 function getUserPlanFromToken(token: string | null): UserPlanType {
   if (!token) return "FREE";
   const payload = decodeTokenPayload(token);
@@ -160,7 +160,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     contextRef.current = context;
   }, [context]);
 
-  // Phase 6.7: Detect context from current URL pathname
+  // Detect context from current URL pathname
   const detectContextFromUrl = useCallback((pathname: string, orgs: AvailableOrg[], currentUser: User | null): ActiveContext => {
     // Check if we're on an organization route: /organizations/:slug/*
     const orgMatch = pathname.match(/^\/organizations\/([^/]+)/);
@@ -189,7 +189,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
   }, []);
 
-  // Phase 6.7: Fetch available organizations from API
+  // Fetch available organizations from API
   const fetchAvailableOrgs = useCallback(async (): Promise<AvailableOrg[]> => {
     const token = getStoredToken();
     if (!token) return [];
@@ -267,7 +267,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setAvailableOrgs(orgs);
         }
         
-        // Phase 6.7: Set context based on current URL, not default personal
+        // Set context based on current URL, not default personal
         const urlContext = detectContextFromUrl(window.location.pathname, orgs, userData);
         setContext(urlContext);
       } finally {
@@ -312,7 +312,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (result.data?.token) {
         storeToken(result.data.token);
-        // Phase 6.7: Set default personal context with user's plan
+        // Set default personal context with user's plan
         const userPlan = getUserPlanFromToken(result.data.token);
         setContext({ type: "personal", plan: userPlan });
       }
@@ -368,7 +368,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (result.data?.token) {
         storeToken(result.data.token);
-        // Phase 6.7: Set default personal context with user's plan
+        // Set default personal context with user's plan
         const userPlan = getUserPlanFromToken(result.data.token);
         setContext({ type: "personal", plan: userPlan });
       }
@@ -382,7 +382,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     []
   );
 
-  // Switch context (Phase 6.7 - UI-only navigation)
+  // Switch context (- UI-only navigation)
   // Context switching is now handled via URL navigation instead of token switching.
   // Personal resources: /dashboard/* uses /api/user/*
   // Organization resources: /organizations/:orgId/* uses /api/orgs/:orgId/*
@@ -393,7 +393,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         throw new Error("Not authenticated");
       }
 
-      // Phase 6.7: UI-only context switching via navigation
+      // UI-only context switching via navigation
       // Set context state BEFORE navigation to prevent race conditions.
       // Without this, the target page may mount with stale context and redirect back.
       if (type === "personal") {

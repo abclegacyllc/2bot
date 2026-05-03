@@ -1,9 +1,9 @@
 /**
  * Rate Limit Configurations
  *
- * Phase 0: Per-IP general protection only
- * Phase 1: Auth endpoint overrides (login brute-force)
- * Phase 1+: Per-User limits after auth exists
+ * Per-IP general protection only
+ * Auth endpoint overrides (login brute-force)
+ * Per-User limits after auth exists
  *
  * @module shared/constants/rate-limits
  */
@@ -124,7 +124,7 @@ export const IP_RATE_LIMITS: Record<string, RateLimitConfig> = {
 
 /**
  * Add endpoint-specific rate limits
- * Used by Phase 1+ to add auth endpoint limits
+ * Used to add auth endpoint limits
  *
  * @example
  * addEndpointRateLimit('POST:/api/auth/login', {

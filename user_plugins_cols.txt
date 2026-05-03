@@ -1,0 +1,19 @@
+ id
+ user_id
+ plugin_id
+ organization_id
+ config
+ gateway_id
+ is_enabled
+ execution_count
+ last_executed_at
+ last_error
+ created_at
+ updated_at
+ entry_file
+ storage_quota_mb
+ is_standalone
+ installed_version
+ needs_update
+ needs_restore
+

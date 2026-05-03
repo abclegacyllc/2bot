@@ -739,7 +739,7 @@ export const agentService = {
  * This is appended to the messages array as a "user" message since the
  * non-streaming textGeneration API doesn't support tool result messages directly.
  *
- * Once provider adapters support native tool result messages (Phase 4+),
+ * Once provider adapters support native tool result messages,
  * this can be updated to use the proper "tool" role.
  */
 function formatToolResultForAI(result: AgentToolResult): string {

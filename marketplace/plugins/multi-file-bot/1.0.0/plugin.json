@@ -4,8 +4,16 @@
   "version": "1.0.0",
   "description": "A structured Telegram bot split into handlers, utils, and a main entry point. Shows best practices for larger plugins.",
   "category": "messaging",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["telegram", "multi-file", "directory", "structured", "bot"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "telegram",
+    "multi-file",
+    "directory",
+    "structured",
+    "bot"
+  ],
   "difficulty": "intermediate",
   "configSchema": {},
   "entryFile": "index.js",
@@ -13,7 +21,37 @@
   "icon": "folder-tree",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message", "telegram.callback"],
+  "eventTypes": [
+    "telegram.message",
+    "telegram.callback"
+  ],
   "eventRole": "responder",
-  "files": ["index.js", "handlers/message.js", "handlers/callback.js", "utils/formatter.js"]
+  "files": [
+    "index.js",
+    "handlers/message.js",
+    "handlers/callback.js",
+    "utils/formatter.js"
+  ],
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      },
+      "chatId": {
+        "type": "string",
+        "title": "Chat ID"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "string",
+        "title": "Response"
+      }
+    }
+  }
 }

@@ -2,7 +2,7 @@
  * Resource Components Index
  * 
  * UI components for displaying hierarchical resource status
- * using the new resource type system from Phase 2.
+ * using the new resource type system 
  * 
  * @module components/resources
  */

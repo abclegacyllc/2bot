@@ -62,7 +62,7 @@ export default function OrganizationOverviewPage() {
     setError(null);
 
     try {
-      // Using URL-based routes (Phase 6.7) - /orgs/:orgId for org resources
+      // Using URL-based routes - /orgs/:orgId for org resources
       const res = await fetch(apiUrl(`/orgs/${orgId}`), {
         headers: { Authorization: `Bearer ${token}` },
       });

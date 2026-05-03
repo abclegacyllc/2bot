@@ -1,7 +1,7 @@
 /**
  * Workspace Types
  * 
- * Types for the Docker-based workspace system (Phase 13).
+ * Types for the Docker-based workspace system.
  * Supports both PERSONAL and ORGANIZATION workspaces.
  * 
  * ============================================================
@@ -367,11 +367,17 @@ export type BridgeAction =
   | 'system.stats'
   | 'system.health'
   | 'system.logs'
+  | 'system.rotate-token'
   // Storage operations (platform-initiated)
   | 'storage.stats'
   | 'storage.clearPlugin'
   | 'storage.deletePluginDb'
-  | 'storage.setQuota';
+  | 'storage.setQuota'
+  // MCP operations (MCP Integration)
+  | 'mcp.spawn'
+  | 'mcp.listTools'
+  | 'mcp.call'
+  | 'mcp.kill';
 
 /** Response from bridge agent to platform */
 export interface BridgeResponse {

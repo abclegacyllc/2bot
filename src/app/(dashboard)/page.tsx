@@ -5,7 +5,7 @@
  *
  * Main dashboard showing stats cards, quick actions, and gateway status.
  * Layout provides sidebar, header, and auth protection.
- * Uses new hierarchical resource types (Phase 3 migration).
+ * Uses new hierarchical resource types (migration).
  */
 
 import { useAuth } from "@/components/providers/auth-provider";
@@ -228,6 +228,50 @@ function UpgradeBanner() {
 }
 
 // ===========================================
+// Build-with-AI CTA (chat-first)
+// ===========================================
+
+const FEATURE_CHAT_FIRST_ENABLED =
+  (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() === "enabled";
+
+function BuildWithAiCta() {
+  if (!FEATURE_CHAT_FIRST_ENABLED) return null;
+  return (
+    <Card className="border-blue-500/30 bg-gradient-to-r from-blue-900/20 to-cyan-900/10">
+      <CardContent className="py-6">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-full bg-blue-600/20 flex items-center justify-center">
+              <Sparkles className="h-6 w-6 text-blue-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Build with AI</h3>
+              <p className="text-muted-foreground text-sm">
+                Describe what you want and let the builder agent draft a project for you.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link href="/projects">
+              <Button variant="outline">
+                View Projects
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </Link>
+            <Link href="/chat?agent=builder">
+              <Button className="bg-blue-600 hover:bg-blue-700">
+                Start a build
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===========================================
 // Quick Actions
 // ===========================================
 
@@ -379,6 +423,9 @@ function DashboardContent() {
 
       {/* Upgrade Banner for FREE users */}
       {showUpgradeBanner ? <UpgradeBanner /> : null}
+
+      {/* Chat-first CTA — flag-gated */}
+      <BuildWithAiCta />
 
         {/* Stats Cards */}
         {isLoading ? (

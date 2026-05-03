@@ -12,9 +12,12 @@
  * @module modules/workspace/container-lifecycle.service
  */
 
-import { decrypt } from '@/lib/encryption';
+import crypto from 'crypto';
+
+import { decryptIfEncrypted } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
+import { redis } from '@/lib/redis';
 
 import { pluginDeployService } from '@/modules/plugin/plugin-deploy.service';
 import { pushAllWorkflowCaches } from '@/modules/workflow/workflow-cache.service';
@@ -39,6 +42,7 @@ const log = logger.child({ module: 'workspace:lifecycle' });
 class ContainerLifecycleService {
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
   private idleCheckInterval: ReturnType<typeof setInterval> | null = null;
+  private suspendCheckInterval: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
   // Track last restart time per container to enforce cooldown
@@ -84,6 +88,14 @@ class ContainerLifecycleService {
         log.error({ error: err.message }, 'Idle check cycle failed');
       });
     }, IDLE_CHECK_INTERVAL);
+
+    // Idle/auto-suspend checks (Docker pause). Runs more often
+    // than the idle-stop loop because suspend is a faster, lighter action.
+    this.suspendCheckInterval = setInterval(() => {
+      this.runSuspendChecks().catch(err => {
+        log.error({ error: err.message }, 'Suspend check cycle failed');
+      });
+    }, IDLE_CHECK_INTERVAL);
   }
 
   /**
@@ -99,6 +111,10 @@ class ContainerLifecycleService {
     if (this.idleCheckInterval) {
       clearInterval(this.idleCheckInterval);
       this.idleCheckInterval = null;
+    }
+    if (this.suspendCheckInterval) {
+      clearInterval(this.suspendCheckInterval);
+      this.suspendCheckInterval = null;
     }
 
     log.info('Container lifecycle service stopped');
@@ -215,9 +231,7 @@ class ContainerLifecycleService {
       // this server won't try to connect (prevents dev+prod connection storm).
       if (!client && !bridgeClientManager.hasClient(container.id) && container.bridgePort && container.bridgeAuthToken) {
         try {
-          const authToken = container.bridgeAuthToken.startsWith('v1:')
-            ? decrypt(container.bridgeAuthToken)
-            : container.bridgeAuthToken;
+          const authToken = decryptIfEncrypted(container.bridgeAuthToken);
           client = await bridgeClientManager.getClient(container.id, container.bridgePort, authToken);
         } catch (err) {
           log.debug({ containerDbId: container.id, error: (err as Error).message }, 'Health check: bridge reconnect attempt failed');
@@ -596,6 +610,115 @@ class ContainerLifecycleService {
   }
 
   // ===========================================
+  // Idle Suspend (Docker Pause)
+  // ===========================================
+
+  /**
+   * Sweep RUNNING containers and pause any that have been idle longer than
+   * `autoSuspendMinutes`. Pause is a freezer-cgroup SIGSTOP — instant to
+   * apply, instant to resume, preserves memory state. The existing
+   * runIdleChecks() still handles the harder STOPPED transition for
+   * containers idle far longer.
+   */
+  async runSuspendChecks(): Promise<void> {
+    const containers = await prisma.workspaceContainer.findMany({
+      where: {
+        status: 'RUNNING',
+        autoSuspendMinutes: { not: null },
+      },
+      select: {
+        id: true,
+        containerId: true,
+        containerName: true,
+        lastActivityAt: true,
+        autoSuspendMinutes: true,
+      },
+    });
+
+    if (containers.length === 0) return;
+
+    const now = Date.now();
+    for (const c of containers) {
+      try {
+        const lastActivity = c.lastActivityAt?.getTime() || 0;
+        const idleMs = now - lastActivity;
+        const idleMinutes = Math.floor(idleMs / 60_000);
+        const threshold = c.autoSuspendMinutes ?? 0;
+
+        if (idleMinutes < threshold) continue;
+        if (!c.containerId) continue;
+
+        log.info({
+          containerDbId: c.id,
+          idleMinutes,
+          autoSuspendMinutes: threshold,
+        }, 'Auto-suspending idle container');
+
+        await dockerService.pauseContainer(c.containerId);
+
+        await prisma.workspaceContainer.update({
+          where: { id: c.id },
+          data: { status: 'PAUSED' },
+        });
+
+        workspaceAuditService.log({
+          containerId: c.id,
+          containerName: c.containerName,
+          action: 'AUTO_SUSPEND',
+          metadata: { reason: 'idle', idleMinutes },
+        });
+      } catch (err) {
+        log.error({
+          containerDbId: c.id,
+          error: (err as Error).message,
+        }, 'Auto-suspend failed for container');
+      }
+    }
+  }
+
+  /**
+   * Resume a PAUSED container. Idempotent: safe to call when already
+   * RUNNING. Used as a chokepoint by callers about to dispatch a bridge
+   * action to make sure the container is not frozen.
+   *
+   * Returns the container's status after the call.
+   */
+  async ensureRunning(containerDbId: string): Promise<'RUNNING' | 'PAUSED' | 'OTHER'> {
+    const container = await prisma.workspaceContainer.findUnique({
+      where: { id: containerDbId },
+      select: { id: true, containerId: true, status: true, containerName: true },
+    });
+    if (!container) return 'OTHER';
+    if (container.status === 'RUNNING') return 'RUNNING';
+    if (container.status !== 'PAUSED') return 'OTHER';
+    if (!container.containerId) return 'OTHER';
+
+    try {
+      await dockerService.unpauseContainer(container.containerId);
+      await prisma.workspaceContainer.update({
+        where: { id: container.id },
+        data: { status: 'RUNNING', lastActivityAt: new Date() },
+      });
+
+      workspaceAuditService.log({
+        containerId: container.id,
+        containerName: container.containerName,
+        action: 'AUTO_RESUME',
+        metadata: { reason: 'dispatch' },
+      });
+
+      log.info({ containerDbId: container.id }, 'Container auto-resumed from pause');
+      return 'RUNNING';
+    } catch (err) {
+      log.error({
+        containerDbId: container.id,
+        error: (err as Error).message,
+      }, 'Auto-resume failed');
+      return 'PAUSED';
+    }
+  }
+
+  // ===========================================
   // Platform Restart Recovery
   // ===========================================
 
@@ -644,6 +767,13 @@ class ContainerLifecycleService {
               errorMessage: 'Container was not running after platform restart',
             },
           });
+          // Remove stale Redis bridge auth cache entry
+          if (container.bridgeAuthToken) {
+            try {
+              const plain = decryptIfEncrypted(container.bridgeAuthToken);
+              redis.del(`bridge:auth:${crypto.createHash('sha256').update(plain).digest('hex')}`).catch(() => {});
+            } catch { /* ignore */ }
+          }
           stopped++;
           log.warn({ containerDbId: container.id, containerName: container.containerName }, 'Container not running in Docker — marked STOPPED');
           continue;
@@ -663,9 +793,7 @@ class ContainerLifecycleService {
         // Reconnect bridge client
         if (container.bridgePort && container.bridgeAuthToken) {
           // Decrypt the token — supports both encrypted (v1:...) and legacy plaintext tokens
-          const authToken = container.bridgeAuthToken.startsWith('v1:')
-            ? decrypt(container.bridgeAuthToken)
-            : container.bridgeAuthToken;
+          const authToken = decryptIfEncrypted(container.bridgeAuthToken);
 
           await bridgeClientManager.getClient(
             container.id,
@@ -674,6 +802,14 @@ class ContainerLifecycleService {
           );
           reconnected++;
           log.info({ containerDbId: container.id, containerName: container.containerName }, 'Bridge client reconnected');
+
+          // Re-populate Redis bridge auth cache (may be empty after a fresh server restart)
+          redis.set(
+            `bridge:auth:${crypto.createHash('sha256').update(authToken).digest('hex')}`,
+            JSON.stringify({ id: container.id, userId: container.userId, organizationId: container.organizationId }),
+            'EX',
+            86400,
+          ).catch(() => {});
 
           // Mark as synced so health check doesn't re-trigger startAllForUser
           this.syncedContainers.add(container.id);
@@ -724,6 +860,13 @@ class ContainerLifecycleService {
             errorMessage: `Platform restart recovery failed: ${msg}`,
           },
         });
+        // Remove stale Redis bridge auth cache entry
+        if (container.bridgeAuthToken) {
+          try {
+            const plain = decryptIfEncrypted(container.bridgeAuthToken);
+            redis.del(`bridge:auth:${crypto.createHash('sha256').update(plain).digest('hex')}`).catch(() => {});
+          } catch { /* ignore */ }
+        }
         stopped++;
       }
     }

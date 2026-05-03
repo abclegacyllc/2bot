@@ -24,6 +24,18 @@ vi.mock('@/lib/prisma', () => ({
       delete: vi.fn(),
       count: vi.fn(),
     },
+    workspaceContainer: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    userPlugin: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    workflow: {
+      findMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
     subscription: {
       findUnique: vi.fn(),
     },
@@ -66,6 +78,18 @@ const mockedPrisma = prisma as unknown as {
     delete: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
   };
+  workspaceContainer: {
+    findUnique: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+  };
+  userPlugin: {
+    findMany: ReturnType<typeof vi.fn>;
+    deleteMany: ReturnType<typeof vi.fn>;
+  };
+  workflow: {
+    findMany: ReturnType<typeof vi.fn>;
+  };
+  $transaction: ReturnType<typeof vi.fn>;
   subscription: {
     findUnique: ReturnType<typeof vi.fn>;
   };
@@ -130,6 +154,31 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default: no duplicate gateways
   mockedPrisma.gateway.findMany.mockResolvedValue([]);
+  // Default: no workspace container found
+  mockedPrisma.workspaceContainer.findUnique.mockResolvedValue(null);
+  mockedPrisma.workspaceContainer.findFirst.mockResolvedValue(null);
+  // Default: no bound plugins
+  mockedPrisma.userPlugin.findMany.mockResolvedValue([]);
+  mockedPrisma.userPlugin.deleteMany.mockResolvedValue({ count: 0 });
+  // Default: no bound workflows
+  mockedPrisma.workflow.findMany.mockResolvedValue([]);
+  // Default: $transaction executes callback with a mock tx
+  mockedPrisma.$transaction.mockImplementation(
+    (fn: (tx: Record<string, Record<string, ReturnType<typeof vi.fn>>>) => Promise<unknown>) =>
+      fn({
+        workflowStep: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        workflow: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        userPlugin: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        gateway: {
+          create: mockedPrisma.gateway.create,
+          delete: mockedPrisma.gateway.delete,
+        },
+        projectResource: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          create: vi.fn().mockResolvedValue({ id: 'pr_test' }),
+        },
+      })
+  );
 });
 
 afterEach(() => {
@@ -260,8 +309,8 @@ describe('gatewayService.findById', () => {
 describe('gatewayService.findByUser', () => {
   it('returns user gateways in personal context', async () => {
     mockedPrisma.gateway.findMany.mockResolvedValue([
-      { id: 'gw-1', name: 'Bot 1', type: 'TELEGRAM_BOT', status: 'CONNECTED' },
-      { id: 'gw-2', name: 'Bot 2', type: 'DISCORD_BOT', status: 'DISCONNECTED' },
+      { id: 'gw-1', name: 'Bot 1', type: 'TELEGRAM_BOT', status: 'CONNECTED', workflows: [] },
+      { id: 'gw-2', name: 'Bot 2', type: 'DISCORD_BOT', status: 'DISCONNECTED', workflows: [] },
     ]);
 
     const ctx = createTestContext();
@@ -276,7 +325,7 @@ describe('gatewayService.findByUser', () => {
   });
 
   it('returns org gateways in organization context', async () => {
-    mockedPrisma.gateway.findMany.mockResolvedValue([mockOrgGateway]);
+    mockedPrisma.gateway.findMany.mockResolvedValue([{ ...mockOrgGateway, workflows: [] }]);
 
     const ctx = createTestContext({ organizationId: 'org-123' });
     const result = await gatewayService.findByUser(ctx);

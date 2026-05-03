@@ -4,7 +4,7 @@
  * URL-based routes for organization alert management.
  * Mounted at /api/orgs/:orgId/alerts/*
  *
- * Phase 6.9: New URL-based routes to replace deprecated /api/alerts/*
+ * New URL-based routes to replace deprecated /api/alerts/*
  *
  * Endpoints:
  * - GET  /api/orgs/:orgId/alerts/config         - Get alert configuration

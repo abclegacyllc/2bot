@@ -5,7 +5,7 @@
  *
  * Displays current organization subscription plan, status, and usage limits.
  * Allows org admins to upgrade or manage their subscription.
- * Uses new hierarchical resource types (Phase 3 migration).
+ * Uses new hierarchical resource types (migration).
  *
  * @module app/(dashboard)/organizations/[orgSlug]/billing/page
  */

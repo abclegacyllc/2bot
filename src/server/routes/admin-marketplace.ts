@@ -255,6 +255,8 @@ adminMarketplaceRouter.post(
       isBuiltin: true,
       eventTypes: manifest.eventTypes || [],
       eventRole: manifest.eventRole || "responder",
+      inputSchema: manifest.inputSchema || null,
+      outputSchema: manifest.outputSchema || null,
     };
 
     // Write plugin.json manifest
@@ -334,6 +336,8 @@ adminMarketplaceRouter.put(
       difficulty?: string;
       isFeatured?: boolean;
       isActive?: boolean;
+      inputSchema?: Record<string, unknown> | null;
+      outputSchema?: Record<string, unknown> | null;
     };
 
     const dbPlugin = await prisma.plugin.findFirst({
@@ -379,6 +383,10 @@ adminMarketplaceRouter.put(
         if (updates.icon !== undefined) existing.icon = updates.icon;
         if (updates.difficulty !== undefined)
           existing.difficulty = updates.difficulty;
+        if (updates.inputSchema !== undefined)
+          existing.inputSchema = updates.inputSchema;
+        if (updates.outputSchema !== undefined)
+          existing.outputSchema = updates.outputSchema;
         fs.writeFileSync(manifestPath, JSON.stringify(existing, null, 2));
       }
     }

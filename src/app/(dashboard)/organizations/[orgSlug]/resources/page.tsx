@@ -5,7 +5,7 @@
  *
  * Overview of organization resource usage across all departments.
  * Shows org-wide usage, department breakdown, and quick actions.
- * Uses new hierarchical resource types (Phase 3 migration).
+ * Uses new hierarchical resource types (migration).
  *
  * Access: Organization Owner only
  *

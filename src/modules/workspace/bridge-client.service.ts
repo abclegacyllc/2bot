@@ -55,6 +55,15 @@ export class BridgeClient extends EventEmitter {
   private static readonly PING_INTERVAL_MS = 30_000;
   private static readonly PONG_TIMEOUT_MS = 60_000;
 
+  // Backpressure: bound the in-flight request map. A misbehaving caller
+  // (or a wedged bridge that stops responding) should not drive the platform
+  // to OOM. When this cap is hit, new requests are rejected immediately
+  // rather than queuing up indefinitely. Tuneable via BRIDGE_MAX_PENDING.
+  private static readonly MAX_PENDING_REQUESTS = parseInt(
+    process.env.BRIDGE_MAX_PENDING || "1000",
+    10,
+  );
+
   // Request queue — serializes WebSocket operations to prevent interleaving
   // concurrency: 5 allows parallel plugin executions while still bounding load
   private readonly requestQueue = new PQueue({ concurrency: 5 });
@@ -253,6 +262,23 @@ export class BridgeClient extends EventEmitter {
       throw new Error(`Bridge not connected for container ${this.containerDbId}`);
     }
 
+    // Backpressure: reject when in-flight requests exceed the cap rather than
+    // letting an unbounded Map grow until OOM.
+    if (this.pendingRequests.size >= BridgeClient.MAX_PENDING_REQUESTS) {
+      log.warn(
+        {
+          containerDbId: this.containerDbId,
+          action,
+          pending: this.pendingRequests.size,
+          cap: BridgeClient.MAX_PENDING_REQUESTS,
+        },
+        "Bridge backpressure: rejecting request (too many in-flight)",
+      );
+      throw new Error(
+        `Bridge overloaded for container ${this.containerDbId} — ${this.pendingRequests.size} requests in flight。Try again shortly.`,
+      );
+    }
+
     const id = crypto.randomUUID();
     const timeout = LONG_RUNNING_ACTIONS.has(action)
       ? BRIDGE_LONG_REQUEST_TIMEOUT
@@ -279,7 +305,14 @@ export class BridgeClient extends EventEmitter {
 
       // Send request
       if (this.ws) {
-        this.ws.send(JSON.stringify(request));
+        try {
+          this.ws.send(JSON.stringify(request));
+        } catch (sendErr) {
+          this.pendingRequests.delete(id);
+          clearTimeout(timeoutHandle);
+          reject(new Error(`Bridge send failed: ${(sendErr as Error).message}`));
+          return;
+        }
       }
 
       log.debug({ containerDbId: this.containerDbId, action, id }, 'Bridge request sent');
@@ -581,7 +614,7 @@ export class BridgeClient extends EventEmitter {
       return;
     }
 
-    const delay = WS_RECONNECT_BASE_DELAY * Math.pow(2, this.reconnectAttempts);
+    const delay = Math.min(WS_RECONNECT_BASE_DELAY * Math.pow(2, this.reconnectAttempts), 60_000);
     this.reconnectAttempts++;
 
     log.info({ containerDbId: this.containerDbId, delay, attempt: this.reconnectAttempts }, 'Scheduling bridge reconnect');

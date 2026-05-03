@@ -20,6 +20,20 @@ import type { WorkflowContext } from "./cursor-worker-runner";
 
 const wfLog = logger.child({ module: "cursor", capability: "workflow-tools" });
 
+/**
+ * Extract config field names from a plugin's configSchema for compact display.
+ * Returns null if no schema or empty schema.
+ */
+function formatConfigFields(configSchema: unknown): string | null {
+  if (!configSchema || typeof configSchema !== "object") return null;
+  const schema = configSchema as Record<string, unknown>;
+  const props = schema.properties as Record<string, unknown> | undefined;
+  if (!props || Object.keys(props).length === 0) return null;
+  const fields = Object.keys(props).slice(0, 8);
+  const suffix = Object.keys(props).length > 8 ? ", ..." : "";
+  return fields.join(", ") + suffix;
+}
+
 interface ToolExecResult {
   result: string;
 }
@@ -53,6 +67,18 @@ export async function executeWorkflowTool(
       if (order === undefined) return { result: "Error: order is required" };
 
       try {
+        // Dedup check: if this plugin is already a step in the workflow, don't add a duplicate.
+        const existing = await prisma.workflowStep.findFirst({
+          where: { workflowId: wfId, pluginId },
+          select: { id: true, name: true, order: true },
+        });
+        if (existing) {
+          wfLog.info({ wfId, pluginId, stepId: existing.id }, "Plugin already a step in workflow — skipping duplicate insert");
+          return {
+            result: `Plugin is already in this workflow as step "${existing.name || "Untitled"}" (ID: ${existing.id}, Order: ${existing.order}). No duplicate step added.`,
+          };
+        }
+
         const step = await workflowService.addStep(owner, wfId, {
           pluginId,
           order,
@@ -171,6 +197,7 @@ export async function executeWorkflowTool(
                 slug: true,
                 description: true,
                 category: true,
+                configSchema: true,
               },
             },
           },
@@ -185,6 +212,7 @@ export async function executeWorkflowTool(
             slug: up.plugin.slug,
             description: up.plugin.description || "",
             category: up.plugin.category || "general",
+            configFields: formatConfigFields(up.plugin.configSchema),
           }));
 
         // Filter by query if provided
@@ -203,7 +231,10 @@ export async function executeWorkflowTool(
         }
 
         const list = plugins
-          .map((p) => `- ${p.name} (slug: ${p.slug}, id: ${p.id}) — ${p.description || p.category}`)
+          .map((p) => {
+            const cfg = p.configFields ? ` [config: ${p.configFields}]` : "";
+            return `- ${p.name} (slug: ${p.slug}, id: ${p.id}) — ${p.description || p.category}${cfg}`;
+          })
           .join("\n");
 
         return { result: `Available plugins (${plugins.length}):\n${list}` };
@@ -215,13 +246,108 @@ export async function executeWorkflowTool(
     case "test_workflow": {
       try {
         const params = (args.params as Record<string, unknown>) || {};
-        const runId = await executeWorkflow(wfId, "manual", params);
-        wfLog.info({ wfId, runId }, "Workflow test triggered via Cursor");
+        const dryRun = args.dryRun === true;
+        const runId = await executeWorkflow(wfId, "manual", params, { dryRun });
+        wfLog.info({ wfId, runId, dryRun }, "Workflow test triggered via Cursor");
         return {
-          result: `Workflow test triggered successfully. Run ID: ${runId}. Check the run history for results.`,
+          result: dryRun
+            ? `Workflow dry-run completed. Run ID: ${runId}. No real messages were sent. Check the run history for simulated results.`
+            : `Workflow test triggered successfully. Run ID: ${runId}. Check the run history for results.`,
         };
       } catch (err) {
         return { result: `Error triggering test: ${(err as Error).message}` };
+      }
+    }
+
+    case "validate_workflow": {
+      try {
+        const errors: string[] = [];
+        const warnings: string[] = [];
+
+        // Load workflow with steps from DB for fresh state
+        const workflow = await prisma.workflow.findUnique({
+          where: { id: wfId },
+          include: {
+            steps: { orderBy: { order: "asc" }, include: { plugin: { select: { id: true, slug: true, name: true } } } },
+          },
+        });
+
+        if (!workflow) return { result: "Error: workflow not found in database" };
+
+        // Check 1: Has at least 1 step
+        if (workflow.steps.length === 0) {
+          errors.push("Workflow has no steps — add at least one plugin step");
+        }
+
+        // Check 2: Trigger is configured
+        const triggerConfig = workflow.triggerConfig as Record<string, unknown> | null;
+        if (!triggerConfig || Object.keys(triggerConfig).length === 0) {
+          errors.push("Trigger has no configuration — set trigger settings");
+        }
+
+        // Check 3: Gateway bound for triggers that require one
+        const gatewayTriggers = ["TELEGRAM_MESSAGE", "TELEGRAM_CALLBACK", "DISCORD_MESSAGE", "DISCORD_COMMAND", "SLACK_MESSAGE", "SLACK_COMMAND", "WHATSAPP_MESSAGE", "BOT_MESSAGE"];
+        if (gatewayTriggers.includes(workflow.triggerType) && !workflow.gatewayId) {
+          errors.push(`Trigger type "${workflow.triggerType}" requires a gateway — bind a gateway to this workflow`);
+        }
+
+        // Check 4: All steps reference valid plugins
+        const userPluginIds = new Set(
+          (await prisma.userPlugin.findMany({
+            where: { userId: ctx.userId, isEnabled: true },
+            select: { pluginId: true },
+          })).map((up) => up.pluginId),
+        );
+
+        for (const step of workflow.steps) {
+          if (!step.plugin) {
+            errors.push(`Step ${step.order}: plugin ID "${step.pluginId}" not found in database`);
+          } else if (!userPluginIds.has(step.pluginId)) {
+            warnings.push(`Step ${step.order} ("${step.plugin.name}"): plugin not in your installed plugins — may not execute`);
+          }
+        }
+
+        // Check 5: Step ordering (no gaps)
+        if (workflow.steps.length > 0) {
+          const orders = workflow.steps.map((s) => s.order);
+          for (let i = 0; i < orders.length; i++) {
+            if (orders[i] !== i) {
+              warnings.push(`Step ordering has gaps — expected order ${i} but found ${orders[i]}`);
+              break;
+            }
+          }
+        }
+
+        // Check 6: Disabled steps between enabled ones
+        if (workflow.steps.length > 1) {
+          let foundDisabled = false;
+          for (const step of workflow.steps) {
+            if (!step.isEnabled) {
+              foundDisabled = true;
+            } else if (foundDisabled) {
+              warnings.push("There are disabled steps between enabled ones — this may cause unexpected behavior");
+              break;
+            }
+          }
+        }
+
+        // Build result
+        if (errors.length === 0 && warnings.length === 0) {
+          return { result: `✅ Workflow validation passed — ${workflow.steps.length} step(s), trigger: ${workflow.triggerType}, no issues found.` };
+        }
+
+        const parts: string[] = [];
+        if (errors.length > 0) {
+          parts.push(`❌ Errors (${errors.length}):\n${errors.map((e) => `  - ${e}`).join("\n")}`);
+        }
+        if (warnings.length > 0) {
+          parts.push(`⚠️ Warnings (${warnings.length}):\n${warnings.map((w) => `  - ${w}`).join("\n")}`);
+        }
+        parts.push(`\nSummary: ${workflow.steps.length} step(s), trigger: ${workflow.triggerType}, gateway: ${workflow.gatewayId ? "bound" : "NOT bound"}`);
+
+        return { result: parts.join("\n") };
+      } catch (err) {
+        return { result: `Error validating workflow: ${(err as Error).message}` };
       }
     }
 

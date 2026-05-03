@@ -1,7 +1,7 @@
 /**
  * Tier Auto-Curator
  *
- * Phase 3 (Option C): Automatically generates provider option arrays for each
+ * (Option C): Automatically generates provider option arrays for each
  * 2Bot model by reading pricing tables and filtering models by tier cost ranges.
  *
  * This replaces manually curated arrays in model-mappings.ts for text, reasoning,
@@ -12,16 +12,16 @@
  */
 
 import {
-    getAllImageGenPricing,
-    getAllTextGenPricing,
+  getAllImageGenPricing,
+  getAllTextGenPricing,
 } from '../model-pricing';
 import type { TwoBotAIProvider } from '../types';
 import type {
-    ModelSelectionStrategy,
-    ProviderModelOption,
-    TwoBotAIModelId,
-    TwoBotAIModelMapping,
-    TwoBotAIModelTier,
+  ModelSelectionStrategy,
+  ProviderModelOption,
+  TwoBotAIModelId,
+  TwoBotAIModelMapping,
+  TwoBotAIModelTier,
 } from './model-catalog.types';
 import { TWOBOT_AI_MODEL_TIERS } from './model-catalog.types';
 import { TWOBOT_AI_MODELS } from './twobot-models';
@@ -57,22 +57,27 @@ const PROVIDER_DEFAULTS: Record<TwoBotAIProvider, { priority: number; weight: nu
  * Models known to have extended thinking / reasoning capabilities.
  * Used to filter reasoning-suitable models for 2bot-ai-reasoning-* models.
  */
-const REASONING_MODELS = new Set<string>([
+export const REASONING_MODELS = new Set<string>([
   // OpenAI
   'o3-mini',
   // Anthropic — Claude 4+ supports extended thinking via API
+  'claude-opus-4-7',
   'claude-opus-4-6',
   'claude-sonnet-4-6',
   // Together AI
-  'Qwen/Qwen3-Next-80B-A3B-Thinking',
   'Qwen/Qwen3-235B-A22B-Thinking-2507',
   'moonshotai/Kimi-K2-Thinking',
   'deepseek-ai/DeepSeek-R1',
+  // Google (GenLang)
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
   // OpenRouter
-  'google/gemini-2.5-flash-preview',
+  'google/gemini-2.5-flash',
   'google/gemini-2.5-pro-preview',
-  'google/gemini-3-pro-preview',
   'qwen/qwq-32b',
+  'x-ai/grok-3-mini',
+  // Vertex AI (Google)
+  'grok-4.1-fast-reasoning',
 ]);
 
 // ============================================================================
@@ -91,62 +96,130 @@ const REASONING_MODELS = new Set<string>([
  * 2. Provider adapter MUST implement tool-use (Together, OpenRouter, Anthropic, OpenAI — NOT Fireworks)
  * 3. One model per family (best performance/price ratio kept)
  *
- * Last audited: 2026-02
+ * Last audited: 2026-04
  */
-const CODE_GENERATION_MODELS = new Set<string>([
-  // --- Free tier (cost 0–0.00005) ---
-  // Gemma 3n — free model with tool calling support (Together)
-  'google/gemma-3n-E4B-it',
-
-  // --- Lite tier (cost 0.00005–0.0005) ---
-  // GPT-OSS 20B — small, fast, tools ✅ (Together + OpenRouter)
-  'openai/gpt-oss-20b',
-  // Qwen3 8B — small code model, tools ✅ (Together)
-  'Qwen/Qwen3-8B',
-  // Llama 3.1 8B — small code-capable, tools ✅ (Together)
-  'meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo',
-  // Qwen2.5 Coder 32B — dedicated coding model, tools ✅ (Together)
-  'Qwen/Qwen2.5-Coder-32B-Instruct',
+export const CODE_GENERATION_MODELS = new Set<string>([
+  // =====================================================================
+  // Lite tier — cheap models good enough for code generation
+  // =====================================================================
+  // GPT-4.1 Nano — cheapest GPT-4.1, tools ✅ (OpenRouter)
+  'openai/gpt-4.1-nano',
   // GPT-5 Nano — lightweight GPT-5, tools ✅ (OpenRouter)
   'openai/gpt-5-nano',
-  // Llama 3.3 70B — strong medium code model, tools ✅ (Together)
-  'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  // DeepSeek V3.2 — excellent code, tools ✅ (OpenRouter)
+  // QwQ 32B — cheap reasoning model, tools ✅ (OpenRouter)
+  'qwen/qwq-32b',
+  // Qwen2.5 Coder 32B — dedicated coding model, tools ✅ (Together)
+  'Qwen/Qwen2.5-Coder-32B-Instruct',
+  // DeepSeek V3.2 — excellent code, tools ✅ (OpenRouter + Vertex)
   'deepseek/deepseek-v3.2',
+  'deepseek-v3.2-maas',
+  // Llama 3.3 70B — strong code model, tools ✅ (Together + Fireworks + Vertex + OpenRouter)
+  'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+  'accounts/fireworks/models/llama-v3p3-70b-instruct',
+  'llama-3.3-70b-instruct-maas',
+  'meta-llama/llama-3.3-70b-instruct',
+  // Llama 4 Scout — efficient MoE, tools ✅ (Together + Vertex + OpenRouter)
+  'meta-llama/Llama-4-Scout-17B-16E-Instruct',
+  'llama-4-scout-17b-16e-instruct-maas',
+  'meta-llama/llama-4-scout',
 
-  // --- Pro tier (cost 0.0005–0.003) ---
-  // Qwen3 Coder — dedicated coding model, tools ✅ (Together)
-  'Qwen/Qwen3-Coder-Next-FP8',
+  // =====================================================================
+  // Pro tier — strong models for reliable code generation
+  // =====================================================================
+  // GPT-4.1 Mini — strong mid-tier GPT-4.1, tools ✅ (OpenRouter)
+  'openai/gpt-4.1-mini',
   // GPT-5 Mini — strong code, tools ✅ (OpenRouter)
   'openai/gpt-5-mini',
-  // DeepSeek V3.1 — excellent code generation, tools ✅ (Together + Fireworks)
+  // Mistral Medium 3.1 — balanced mid-range, tools ✅ (OpenRouter)
+  'mistralai/mistral-medium-3.1',
+  // Codestral 25.08 — dedicated Mistral coder, tools ✅ (OpenRouter)
+  'mistralai/codestral-2508',
+  // Codestral 2 — latest Mistral coder, tools ✅ (Vertex rawPredict)
+  'codestral-2',
+  // Grok 4.1 Fast NR — xAI fast code, tools ✅ (Vertex + OpenRouter)
+  'grok-4.1-fast-non-reasoning',
+  'x-ai/grok-4.1-fast',
+  // Grok 4.1 Fast Reasoning — reasoning + code, tools ✅ (Vertex)
+  'grok-4.1-fast-reasoning',
+  // Grok Code — xAI dedicated code model, tools ✅ (OpenRouter)
+  'x-ai/grok-code-fast-1',
+  // Grok 3 Mini — cheap reasoning, tools ✅ (OpenRouter)
+  'x-ai/grok-3-mini',
+  // Qwen3 Coder Next — dedicated coding model, tools ✅ (Together)
+  'Qwen/Qwen3-Coder-Next-FP8',
+  // DeepSeek V3.1 — excellent code generation, tools ✅ (Together + Fireworks + Vertex)
   'deepseek-ai/DeepSeek-V3.1',
   'accounts/fireworks/models/deepseek-v3p1',
-  // GLM 4.7 — strong code generation, tools ✅ (Together + Fireworks + OpenRouter)
+  'deepseek-v3.1-maas',
+  // GLM 4.7 — strong code generation, tools ✅ (Together + Fireworks + Vertex + OpenRouter)
   'zai-org/GLM-4.7',
   'accounts/fireworks/models/glm-4p7',
-  // Gemini 2.5 Flash — fast & capable code, tools ✅ (OpenRouter)
-  'google/gemini-2.5-flash-preview',
-  // Kimi K2.5 — top code generation model, tools ✅ (Together + Fireworks + OpenRouter)
+  'glm-4.7-maas',
+  'z-ai/glm-4.7',
+  // Kimi K2 Thinking — reasoning + code, tools ✅ (Google + Together + OpenRouter)
+  'kimi-k2-thinking-maas',
+  'moonshotai/Kimi-K2-Thinking',
+  'moonshotai/kimi-k2-thinking',
+  // Kimi K2.5 — top code generation, tools ✅ (Together + Fireworks + OpenRouter)
   'moonshotai/Kimi-K2.5',
   'accounts/fireworks/models/kimi-k2p5',
-  // Gemini 3 Flash Preview — latest Gemini fast code, tools ✅ (OpenRouter)
-  'google/gemini-3-flash-preview',
-  // Qwen3 235B Instruct — large code-capable, tools ✅ (Together)
-  'Qwen/Qwen3-235B-A22B-Instruct-2507-tput',
-  // Kimi K2 Instruct — high-capability coding, tools ✅ (Together + Fireworks)
-  'moonshotai/Kimi-K2-Instruct-0905',
+  'moonshotai/kimi-k2.5',
+  // Kimi K2 Instruct — high-capability coding, tools ✅ (Fireworks + OpenRouter)
   'accounts/fireworks/models/kimi-k2-instruct-0905',
+  'moonshotai/kimi-k2-0905',
+  // Gemini 2.5 Flash — fast code, tools ✅, reasoning ✅ (Vertex AI + OpenRouter)
+  // NOTE: 'gemini-2.5-flash' is Vertex AI (NOT GenLang) — safe for high-volume use
+  'gemini-2.5-flash',
+  'google/gemini-2.5-flash',
+  // Gemini 3 Flash — tools ✅ (OpenRouter only — GenLang ID excluded due to low quotas)
+  // 'gemini-3-flash-preview' REMOVED — GenLang-only, low RPM limits cause rate-limit errors
+  'google/gemini-3-flash-preview',
+  // o3-mini — strong reasoning + tools ✅ (OpenAI)
+  'o3-mini',
+  // Llama 4 Maverick — strong MoE model, tools ✅ (Together + Vertex + OpenRouter)
+  'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+  'llama-4-maverick-17b-128e-instruct-maas',
+  'meta-llama/llama-4-maverick',
+  // Qwen3 235B Instruct — large code-capable, tools ✅ (Together + Vertex + OpenRouter)
+  'Qwen/Qwen3-235B-A22B-Instruct-2507-tput',
+  'qwen3-235b-a22b-instruct-2507-maas',
+  'qwen/qwen3-235b-a22b-instruct',
 
-  // --- Ultra tier (cost 0.003+) ---
+  // =====================================================================
+  // Ultra tier — premium / flagship code models
+  // =====================================================================
+  // GPT-4.1 — premium GPT, tools ✅ (OpenRouter)
+  'openai/gpt-4.1',
   // GPT-5 — top-tier code generation, tools ✅ (OpenRouter)
   'openai/gpt-5',
-  // Gemini 3 Pro Preview — latest Gemini Pro, tools ✅ (OpenRouter)
-  'google/gemini-3-pro-preview',
-  // Claude Sonnet 4.6 — latest balanced, tools ✅ (Anthropic)
+  // Gemini 2.5 Pro — strong reasoning + code, tools ✅ (Vertex AI + OpenRouter)
+  // NOTE: 'gemini-2.5-pro' is Vertex AI (NOT GenLang) — safe for high-volume use
+  'gemini-2.5-pro',
+  'google/gemini-2.5-pro-preview',
+  // 'gemini-3.1-pro-preview' REMOVED — GenLang-only, low RPM limits cause rate-limit errors
+  // Claude Sonnet 4.6 — latest balanced, tools ✅, reasoning ✅ (Anthropic + Vertex)
   'claude-sonnet-4-6',
-  // Claude Opus 4.6 — best-in-class code, tools ✅ (Anthropic)
+  // Claude Opus 4.6 — best-in-class code, tools ✅, reasoning ✅ (Anthropic + Vertex)
   'claude-opus-4-6',
+  // Claude Opus 4.7 — latest Opus, tools ✅, reasoning ✅ (Anthropic + Vertex)
+  'claude-opus-4-7',
+  // Mistral Large — Mistral flagship, tools ✅ (OpenRouter)
+  'mistralai/mistral-large-2411',
+  // GLM 5 — ZAI flagship, tools ✅ (Together + Fireworks + Vertex + OpenRouter)
+  'zai-org/GLM-5',
+  'accounts/fireworks/models/glm-5',
+  'glm-5-maas',
+  'z-ai/glm-5',
+  // Qwen3 Coder 480B — massive code-specialized, tools ✅ (Vertex)
+  'qwen3-coder-480b-a35b-instruct-maas',
+  // Qwen3.5 397B — Qwen flagship, tools ✅ (Together + OpenRouter)
+  'Qwen/Qwen3.5-397B-A17B',
+  'qwen/qwen3.5-397b-a17b',
+  // Grok 4.20 — powerful xAI model, tools ✅ (Vertex + OpenRouter)
+  'grok-4.20-non-reasoning',
+  'x-ai/grok-4.20-beta',
+  // Grok 4 — xAI ultra tier, tools ✅ (OpenRouter)
+  'x-ai/grok-4',
 ]);
 
 // ============================================================================

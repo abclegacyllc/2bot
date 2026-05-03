@@ -424,12 +424,17 @@ class CreditWalletService {
     description: string,
     metadata?: Record<string, unknown>
   ): Promise<{ newBalance: number; transactionId: string }> {
+    // purchase / grant / bonus all contribute to lifetime earned credits.
+    // refund restores balance but doesn't change lifetime (it was already spent).
+    // allocation is a system set — doesn't affect lifetime.
+    const updatesLifetime = type === "purchase" || type === "grant" || type === "bonus";
+
     const result = await prisma.$transaction(async (tx) => {
       const wallet = await tx.creditWallet.update({
         where: { id: walletId },
         data: {
           balance: { increment: amount },
-          lifetime: type === "purchase" ? { increment: amount } : undefined,
+          lifetime: updatesLifetime ? { increment: amount } : undefined,
         },
       });
 

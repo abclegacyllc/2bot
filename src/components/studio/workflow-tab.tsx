@@ -22,8 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 
-import type { GatewayOption, WorkflowListItem, WorkflowStepItem } from "@/lib/api-client";
-import type { ConfigSchema, PluginListItem, UserPlugin } from "@/shared/types/plugin";
+import type { GatewayOption, PreflightReport, WorkflowListItem, WorkflowStepItem } from "@/lib/api-client";
+import type { ConfigSchema, PluginListItem, PluginSchemaSet, UserPlugin } from "@/shared/types/plugin";
 
 import {
     ChevronRight,
@@ -59,9 +59,12 @@ interface WorkflowTabProps {
   selectedStep: WorkflowStepItem | null;
   showTriggerEditor: boolean;
   viewMode: "canvas" | "list";
-  stepRunStatuses: Record<string, { status: string; durationMs?: number }>;
+  stepRunStatuses: Record<string, { status: string; durationMs?: number; error?: string }>;
   isTestingWorkflow: boolean;
+  /** Preflight report from the most recent Quick / Standard / Deep test */
+  preflightReport?: PreflightReport | null;
   stepConfigSchema: ConfigSchema | null;
+  allPluginSchemas?: Record<string, PluginSchemaSet>;
   showAddStep: boolean;
   gatewayPlugins: UserPlugin[];
   token: string | null;
@@ -85,6 +88,9 @@ interface WorkflowTabProps {
   onSetSelectedStepId: (id: string | null) => void;
   onSetViewMode: (mode: "canvas" | "list") => void;
   fetchWorkflow: () => void;
+  onSaveNodePosition?: (stepId: string, positionX: number, positionY: number) => Promise<void>;
+  onAddEdge?: (sourceStepId: string | null, targetStepId: string) => Promise<void>;
+  onDeleteEdge?: (edgeId: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -101,7 +107,9 @@ export function WorkflowTab({
   viewMode,
   stepRunStatuses,
   isTestingWorkflow,
+  preflightReport,
   stepConfigSchema,
+  allPluginSchemas,
   showAddStep,
   gatewayPlugins: _gatewayPlugins,
   token,
@@ -125,6 +133,9 @@ export function WorkflowTab({
   onSetSelectedStepId,
   onSetViewMode,
   fetchWorkflow,
+  onSaveNodePosition,
+  onAddEdge,
+  onDeleteEdge,
 }: WorkflowTabProps) {
   const [showPluginSidebar, setShowPluginSidebar] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
@@ -274,11 +285,14 @@ export function WorkflowTab({
 
           {viewMode === "canvas" ? (
             <WorkflowCanvas
+              workflowId={workflow.id}
               steps={workflow.steps}
+              edges={workflow.edges ?? []}
               selectedStepId={selectedStepId}
               triggerType={workflow.triggerType}
               triggerConfig={workflow.triggerConfig}
               stepRunStatuses={stepRunStatuses}
+              preflightReport={preflightReport}
               onSelectStep={onSelectStep}
               onAddStep={onAddStep}
               onDeleteStep={onDeleteStep}
@@ -287,6 +301,11 @@ export function WorkflowTab({
               onDuplicateStep={onDuplicateStep}
               onToggleStepEnabled={onToggleStepEnabled}
               onClickTrigger={onClickTrigger}
+              pluginSchemas={allPluginSchemas}
+              onSaveStep={onSaveStep}
+              onSaveNodePosition={onSaveNodePosition}
+              onAddEdge={onAddEdge}
+              onDeleteEdge={onDeleteEdge}
             />
           ) : null}
 

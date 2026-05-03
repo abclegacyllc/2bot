@@ -22,8 +22,10 @@ class LogCollector extends EventEmitter {
     this.workspaceDir = workspaceDir;
     this.maxEntries = maxEntries;
 
-    /** @type {Array<LogEntry>} Ring buffer of recent log entries */
-    this.entries = [];
+    /** Circular buffer for recent log entries (O(1) push, no shift) */
+    this._buffer = new Array(maxEntries);
+    this._head = 0;   // Next write position
+    this._count = 0;  // Number of entries currently stored
 
     /** Counter for unique log IDs */
     this.nextId = 1;
@@ -59,11 +61,10 @@ class LogCollector extends EventEmitter {
       ...(meta ? { meta } : {}),
     };
 
-    // Add to ring buffer
-    this.entries.push(entry);
-    if (this.entries.length > this.maxEntries) {
-      this.entries.shift();
-    }
+    // Add to circular buffer (O(1), no array shifting)
+    this._buffer[this._head] = entry;
+    this._head = (this._head + 1) % this.maxEntries;
+    if (this._count < this.maxEntries) this._count++;
 
     // Write to log file if configured
     if (this.logStream && !this.logStream.destroyed) {
@@ -91,6 +92,20 @@ class LogCollector extends EventEmitter {
   error(source, message, meta) { this.log('error', source, message, meta); }
 
   /**
+   * Return entries in chronological order from the circular buffer.
+   * @returns {Array<LogEntry>}
+   */
+  _entries() {
+    if (this._count === 0) return [];
+    if (this._count < this.maxEntries) {
+      // Buffer not yet full — entries are 0..count-1
+      return this._buffer.slice(0, this._count);
+    }
+    // Buffer is full — oldest is at _head, newest is at _head-1
+    return this._buffer.slice(this._head).concat(this._buffer.slice(0, this._head));
+  }
+
+  /**
    * Query log entries with optional filters
    * @param {Object} options
    * @param {string} [options.level] - Filter by level
@@ -101,7 +116,7 @@ class LogCollector extends EventEmitter {
    * @returns {Array<LogEntry>}
    */
   query({ level, source, limit = 100, since, search } = {}) {
-    let results = this.entries;
+    let results = this._entries();
 
     if (since) {
       results = results.filter(e => e.id > since);
@@ -134,16 +149,17 @@ class LogCollector extends EventEmitter {
    * Get log stats
    */
   stats() {
+    const entries = this._entries();
     const counts = { debug: 0, info: 0, warn: 0, error: 0 };
-    for (const entry of this.entries) {
+    for (const entry of entries) {
       counts[entry.level] = (counts[entry.level] || 0) + 1;
     }
     return {
-      totalEntries: this.entries.length,
+      totalEntries: this._count,
       maxEntries: this.maxEntries,
       counts,
-      oldestId: this.entries[0]?.id || null,
-      newestId: this.entries[this.entries.length - 1]?.id || null,
+      oldestId: entries[0]?.id || null,
+      newestId: entries[entries.length - 1]?.id || null,
     };
   }
 
@@ -151,7 +167,9 @@ class LogCollector extends EventEmitter {
    * Clear all log entries
    */
   clear() {
-    this.entries = [];
+    this._buffer = new Array(this.maxEntries);
+    this._head = 0;
+    this._count = 0;
   }
 
   /**

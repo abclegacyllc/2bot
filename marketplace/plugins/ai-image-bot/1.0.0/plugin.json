@@ -4,8 +4,17 @@
   "version": "1.0.0",
   "description": "Generate images from text descriptions with /imagine. Users describe what they want and get AI-generated images.",
   "category": "messaging",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["ai", "image", "telegram", "bot", "dalle", "generation"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "ai",
+    "image",
+    "telegram",
+    "bot",
+    "dalle",
+    "generation"
+  ],
   "difficulty": "intermediate",
   "configSchema": {
     "type": "object",
@@ -30,6 +39,34 @@
   "icon": "image",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "responder"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "responder",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      },
+      "chatId": {
+        "type": "string",
+        "title": "Chat ID"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "imageUrl": {
+        "type": "string",
+        "title": "Image URL"
+      },
+      "response": {
+        "type": "string",
+        "title": "Response"
+      }
+    }
+  }
 }

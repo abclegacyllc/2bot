@@ -12,13 +12,13 @@ import { logger } from "@/lib/logger";
 import Together from "together-ai";
 import { setProviderValidated } from "../provider-config";
 import type {
-  ImageGenerationRequest,
-  ImageGenerationResponse,
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk,
-  ToolCallResult,
-  ToolDefinition,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk,
+    ToolCallResult,
+    ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -149,6 +149,13 @@ export async function togetherTextGeneration(
       if (toolChoice) createParams.tool_choice = toolChoice;
     }
 
+    // Enable thinking for reasoning models so Together AI returns
+    // reasoning_content in the response (required for thinking extraction)
+    const modelLower = (request.model || "").toLowerCase();
+    if (modelLower.includes("thinking") || modelLower.includes("deepseek-r1")) {
+      createParams.enable_thinking = true;
+    }
+
     const response = await client.chat.completions.create(createParams);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -160,6 +167,17 @@ export async function togetherTextGeneration(
       message?.tool_calls as
         Array<{ id: string; function: { name: string; arguments: string } }> | undefined
     );
+
+    // Extract reasoning: check for reasoning_content or <think> tags (Qwen3-Thinking, Kimi-K2-Thinking, etc.)
+    let rawContent = (message?.content as string) || "";
+    let reasoning = (message?.reasoning_content as string) || undefined;
+    if (!reasoning) {
+      const thinkMatch = rawContent.match(/^<think>([\s\S]*?)<\/think>\s*/i);
+      if (thinkMatch) {
+        reasoning = thinkMatch[1]!.trim() || undefined;
+        rawContent = rawContent.slice(thinkMatch[0].length);
+      }
+    }
 
     log.info(
       {
@@ -175,7 +193,7 @@ export async function togetherTextGeneration(
     return {
       id: result.id,
       model: result.model,
-      content: (message?.content as string) || "",
+      content: rawContent,
       finishReason: mapFinishReason(choice?.finish_reason as string | null | undefined),
       usage: {
         inputTokens: usage?.prompt_tokens || 0,
@@ -185,6 +203,7 @@ export async function togetherTextGeneration(
       creditsUsed: 0,
       newBalance: 0,
       toolCalls,
+      reasoning,
     };
   } catch (error) {
     log.error({ error, model: request.model, hasImages }, "Together AI chat error");
@@ -219,6 +238,12 @@ export async function* togetherTextGenerationStream(
       createParams.tools = formatToolsForTogether(request.tools);
       const toolChoice = formatToolChoiceForTogether(request.toolChoice);
       if (toolChoice) createParams.tool_choice = toolChoice;
+    }
+
+    // Enable thinking for reasoning models (streaming)
+    const modelLower = (request.model || "").toLowerCase();
+    if (modelLower.includes("thinking") || modelLower.includes("deepseek-r1")) {
+      createParams.enable_thinking = true;
     }
 
     const stream = await client.chat.completions.create(createParams) as unknown as AsyncIterable<{ id: string; choices: Array<{ delta: Record<string, unknown>; finish_reason: string | null }>; usage?: { prompt_tokens: number; completion_tokens: number } }>;

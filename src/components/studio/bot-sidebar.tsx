@@ -273,7 +273,7 @@ export function BotSidebar() {
             <SidebarIconButton
               icon={MessageSquare}
               label="Messages"
-              href="/2bot-ai"
+              href="/studio"
               collapsed={sidebarCollapsed}
             />
             <SidebarIconButton

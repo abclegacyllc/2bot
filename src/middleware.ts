@@ -1,7 +1,7 @@
 /**
  * Next.js Middleware for Subdomain Routing
  * 
- * Phase 6.9: Enterprise subdomain architecture
+ * Enterprise subdomain architecture
  * 
  * Routes requests based on subdomain:
  * - www.{ROOT_DOMAIN} → Landing page (/)

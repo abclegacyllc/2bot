@@ -14,34 +14,34 @@ import { decryptJson } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
-import { getPluginEntryPath } from "./plugin-deploy.service";
+import { gatewayTypeToPlatform, getPluginEntryPath, isDirectoryLayout } from "./plugin-deploy.service";
 
 import {
-  createGatewayAccessor,
-  createPluginStorage,
-  getPluginExecutor,
-  registerPlugin,
+    createGatewayAccessor,
+    createPluginStorage,
+    getPluginExecutor,
+    registerPlugin,
 } from "./plugin.executor";
 import type {
-  DiscordGuildMemberEventData,
-  DiscordInteractionEventData,
-  DiscordMessageEventData,
-  PluginContext,
-  PluginEvent,
-  PluginExecutionResult,
-  SlackAppMentionEventData,
-  SlackInteractionEventData,
-  SlackMessageEventData,
-  SlackReactionEventData,
-  TelegramCallbackEventData,
-  TelegramChatMemberUpdatedEventData,
-  TelegramChosenInlineResultEventData,
-  TelegramInlineQueryEventData,
-  TelegramMessageEventData,
-  TelegramPollAnswerEventData,
-  TelegramPollEventData,
-  WhatsAppMessageEventData,
-  WhatsAppStatusEventData,
+    DiscordGuildMemberEventData,
+    DiscordInteractionEventData,
+    DiscordMessageEventData,
+    PluginContext,
+    PluginEvent,
+    PluginExecutionResult,
+    SlackAppMentionEventData,
+    SlackInteractionEventData,
+    SlackMessageEventData,
+    SlackReactionEventData,
+    TelegramCallbackEventData,
+    TelegramChatMemberUpdatedEventData,
+    TelegramChosenInlineResultEventData,
+    TelegramInlineQueryEventData,
+    TelegramMessageEventData,
+    TelegramPollAnswerEventData,
+    TelegramPollEventData,
+    WhatsAppMessageEventData,
+    WhatsAppStatusEventData,
 } from "./plugin.interface";
 
 const eventLogger = logger.child({ module: "plugin-events" });
@@ -446,6 +446,8 @@ interface UserPluginWithPlugin {
     slug: string;
     name: string;
     requiredGateways: GatewayType[];
+    codeBundle: string | null;
+    bundlePath: string | null;
   };
 }
 
@@ -473,16 +475,33 @@ async function findTargetPlugins(
   // Extract gatewayId from event (if present)
   const eventGatewayId = "gatewayId" in event ? event.gatewayId : null;
 
-  // Find all enabled standalone user plugins scoped to the correct tenant
-  // Unified engine: only fire plugins marked as standalone (not managed by workflow steps)
+  // Find all enabled user plugins scoped to the correct tenant,
+  // excluding any whose catalog plugin is already handled by an active workflow step
+  // on this gateway (those execute via the workflow engine to avoid double execution).
   const userPlugins = await prisma.userPlugin.findMany({
     where: {
       userId,
       isEnabled: true,
-      isStandalone: true,
       organizationId: organizationId ?? null,
       // Filter by specific gateway when event originates from one
       ...(eventGatewayId ? { gatewayId: eventGatewayId } : {}),
+      // Skip plugins managed by an active workflow step → they run via the workflow engine
+      NOT: {
+        plugin: {
+          workflowSteps: {
+            some: {
+              isEnabled: true,
+              workflow: {
+                status: 'ACTIVE',
+                isEnabled: true,
+                userId,
+                organizationId: organizationId ?? null,
+                ...(eventGatewayId ? { gatewayId: eventGatewayId } : {}),
+              },
+            },
+          },
+        },
+      },
     },
     include: {
       plugin: {
@@ -491,6 +510,8 @@ async function findTargetPlugins(
           slug: true,
           name: true,
           requiredGateways: true,
+          codeBundle: true,
+          bundlePath: true,
         },
       },
     },
@@ -584,7 +605,12 @@ async function createPluginContext(
     organizationId: userPlugin.organizationId ?? undefined,
     config,
     userPluginId: userPlugin.id,
-    entryFile: userPlugin.entryFile ?? getPluginEntryPath(userPlugin.gatewayId, userPlugin.plugin.slug),
+    entryFile: userPlugin.entryFile ?? (() => {
+      const isDir = isDirectoryLayout(userPlugin.plugin.slug);
+      const gw = userPlugin.gatewayId ? gateways.find((g) => g.id === userPlugin.gatewayId) : undefined;
+      const platform = gw ? gatewayTypeToPlatform(gw.type as GatewayType) : undefined;
+      return getPluginEntryPath(userPlugin.gatewayId, userPlugin.plugin.slug, { platform, isDirectory: isDir });
+    })(),
     gateways: createGatewayAccessor(userPlugin.userId, gateways, executeGateway),
     storage: createPluginStorage(userPlugin.id, userPlugin.userId),
     logger: logger.child({
@@ -810,6 +836,8 @@ export async function triggerPluginManually(
           slug: true,
           name: true,
           requiredGateways: true,
+          codeBundle: true,
+          bundlePath: true,
         },
       },
     },

@@ -596,7 +596,7 @@ export function getUpgradePlansForDisplay(): PlanDisplayData[] {
 }
 
 // ===========================================
-// Stripe Price IDs (Phase 5: Billing)
+// Stripe Price IDs (Billing)
 // ===========================================
 
 /**

@@ -391,6 +391,28 @@ html:not(.disable-transitions) * {
   animation: none;
 }
 
+/* Side mode: disable all floating/glow/shimmer animations */
+.studio-bar-island.is-side-mode {
+  animation: none;
+  transform: none;
+}
+.studio-bar-island.is-side-mode:hover {
+  transform: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+.studio-bar-island.is-side-mode .studio-bar-glow-layer {
+  animation: none;
+  opacity: 0.3;
+  filter: blur(10px);
+}
+.studio-bar-island.is-side-mode .studio-bar-gradient-border {
+  animation: none;
+}
+.studio-bar-island.is-side-mode .studio-bar-shimmer {
+  animation: none;
+  opacity: 0;
+}
+
 .studio-bar-glow-layer {
   animation: studio-bar-glow-breathe 3s ease-in-out infinite;
 }
@@ -439,4 +461,35 @@ html:not(.disable-transitions) * {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Themed scrollbars — used across the cursor chat panels (.cursor-scroll).
+ * Picks up the active theme via `--cursor-primary` / `border` CSS variables
+ * so it looks consistent in both light and dark modes.
+ * ────────────────────────────────────────────────────────────────────────── */
+.cursor-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--cursor-primary, var(--muted-foreground)) 35%, transparent) transparent;
+}
+.cursor-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.cursor-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cursor-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--cursor-primary, var(--muted-foreground)) 25%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.cursor-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--cursor-primary, var(--muted-foreground)) 55%, transparent);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+.cursor-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }

@@ -5,7 +5,7 @@
  * chat, image, video, audio, embedding, transcribe, moderation, rerank.
  *
  * 1. Calls each registered ProviderFetcher to get live model data
- * 2. Compares against our model-pricing.ts entries (all pricing maps)
+ * 2. Compares against our model-registry.ts entries (USD prices directly)
  * 3. Generates a PricingAuditReport with mismatches, new models, removed models
  *
  * Pricing units supported:
@@ -17,20 +17,8 @@
  * @module modules/2bot-ai-provider/pricing-monitor/pricing-monitor.service
  */
 
-import {
-    ANTHROPIC_TEXT_GENERATION_PRICING,
-    FIREWORKS_IMAGE_GENERATION_PRICING,
-    FIREWORKS_TEXT_GENERATION_PRICING,
-    OPENAI_IMAGE_GENERATION_PRICING,
-    OPENAI_SPEECH_RECOGNITION_PRICING,
-    OPENAI_SPEECH_SYNTHESIS_PRICING,
-    OPENAI_TEXT_EMBEDDING_PRICING,
-    OPENAI_TEXT_GENERATION_PRICING,
-    OPENROUTER_TEXT_GENERATION_PRICING,
-    TOGETHER_IMAGE_GENERATION_PRICING,
-    TOGETHER_TEXT_EMBEDDING_PRICING,
-    TOGETHER_TEXT_GENERATION_PRICING,
-} from "../model-pricing";
+import { MODEL_REGISTRY } from "../model-registry";
+import type { AICapability } from "../types";
 
 import type {
     ModelType,
@@ -78,6 +66,9 @@ const PROVIDER_FETCHERS: ProviderFetcher[] = [
   new OpenRouterFetcher(),
 ];
 
+const DEFAULT_AUTO_CHECK_ENABLED = process.env.PRICING_MONITOR_AUTO_RUN !== "false";
+const DEFAULT_AUTO_CHECK_INTERVAL_MS = Math.max(1, Number(process.env.PRICING_MONITOR_INTERVAL_HOURS || "24")) * 60 * 60 * 1000;
+
 // ===========================================
 // Our Pricing Registry (what we compare against)
 // ===========================================
@@ -99,131 +90,93 @@ interface OurModelEntry {
 }
 
 /**
- * Build a flat list of ALL models in our model-pricing.ts
- * covering every pricing map: text gen, image gen, speech, embedding.
+ * Map AICapability → ModelType used by the pricing monitor.
+ */
+function capabilityToModelType(cap: AICapability): ModelType {
+  switch (cap) {
+    case "text-generation":
+    case "code-generation":
+      return "chat";
+    case "image-generation":
+      return "image";
+    case "text-embedding":
+      return "embedding";
+    case "speech-synthesis":
+    case "speech-recognition":
+      return "audio";
+    case "video-generation":
+      return "video";
+    case "moderation":
+      return "moderation";
+    case "rerank":
+      return "rerank";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * Map registry provider names to fetcher provider IDs.
+ * Only difference: registry uses "together", fetcher uses "together-ai".
+ */
+const REGISTRY_TO_FETCHER_PROVIDER: Record<string, string> = {
+  together: "together-ai",
+};
+
+/**
+ * Build a flat list of ALL models from model-registry.ts.
  *
- * Credits formula: creditsPerToken = $/MTok × 300 / 1,000,000
- * Reverse:         $/MTok = creditsPerToken × 1,000,000 / 300
- *
- * Image:    creditsPerImage = $/image × 300
- * Reverse:  $/image = creditsPerImage / 300
- *
- * Char:     creditsPerChar = $/char × 300
- * Reverse:  $/char = creditsPerChar / 300
- *
- * Minute:   creditsPerMinute = $/minute × 300
- * Reverse:  $/minute = creditsPerMinute / 300
+ * Reads USD prices directly from the registry — no credit conversion needed.
+ * Covers every provider and every capability (text-gen, code-gen, image-gen,
+ * speech, embedding, etc.) automatically.
  */
 function getOurModels(): OurModelEntry[] {
   const entries: OurModelEntry[] = [];
-  const CREDITS_TO_DOLLARS_MTOK = 1_000_000 / 300;  // For per-token pricing
-  const CREDITS_TO_DOLLARS = 1 / 300;                // For per-image, per-char, per-minute
 
-  // ── Text Generation (per_mtok) ──
+  for (const entry of MODEL_REGISTRY) {
+    if (entry.deprecated) continue;
 
-  for (const [modelId, pricing] of Object.entries(OPENAI_TEXT_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "openai", type: "chat", pricingUnit: "per_mtok",
-      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
-      outputPerMTok: pricing.creditsPerOutputToken * CREDITS_TO_DOLLARS_MTOK,
-    });
-  }
+    const type = capabilityToModelType(entry.capability);
 
-  for (const [modelId, pricing] of Object.entries(ANTHROPIC_TEXT_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "anthropic", type: "chat", pricingUnit: "per_mtok",
-      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
-      outputPerMTok: pricing.creditsPerOutputToken * CREDITS_TO_DOLLARS_MTOK,
-    });
-  }
+    for (const [provider, cost] of Object.entries(entry.providers)) {
+      if (!cost) continue;
+      const providerId = REGISTRY_TO_FETCHER_PROVIDER[provider] || provider;
 
-  for (const [modelId, pricing] of Object.entries(TOGETHER_TEXT_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "together-ai", type: "chat", pricingUnit: "per_mtok",
-      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
-      outputPerMTok: pricing.creditsPerOutputToken * CREDITS_TO_DOLLARS_MTOK,
-    });
-  }
-
-  // ── Image Generation (per_image) ──
-
-  for (const [modelId, pricing] of Object.entries(OPENAI_IMAGE_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "openai", type: "image", pricingUnit: "per_image",
-      perImage: pricing.creditsPerImage * CREDITS_TO_DOLLARS,
-    });
-  }
-
-  for (const [modelId, pricing] of Object.entries(TOGETHER_IMAGE_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "together-ai", type: "image", pricingUnit: "per_image",
-      perImage: pricing.creditsPerImage * CREDITS_TO_DOLLARS,
-    });
-  }
-
-  // ── Speech Synthesis (per_char) ──
-
-  for (const [modelId, pricing] of Object.entries(OPENAI_SPEECH_SYNTHESIS_PRICING)) {
-    entries.push({
-      modelId, providerId: "openai", type: "audio", pricingUnit: "per_char",
-      perChar: pricing.creditsPerChar * CREDITS_TO_DOLLARS,
-    });
-  }
-
-  // ── Speech Recognition (per_minute) ──
-
-  for (const [modelId, pricing] of Object.entries(OPENAI_SPEECH_RECOGNITION_PRICING)) {
-    entries.push({
-      modelId, providerId: "openai", type: "audio", pricingUnit: "per_minute",
-      perMinute: pricing.creditsPerMinute * CREDITS_TO_DOLLARS,
-    });
-  }
-
-  // ── Text Embedding (per_mtok) ──
-
-  for (const [modelId, pricing] of Object.entries(OPENAI_TEXT_EMBEDDING_PRICING)) {
-    entries.push({
-      modelId, providerId: "openai", type: "embedding", pricingUnit: "per_mtok",
-      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
-      outputPerMTok: 0,
-    });
-  }
-
-  for (const [modelId, pricing] of Object.entries(TOGETHER_TEXT_EMBEDDING_PRICING)) {
-    entries.push({
-      modelId, providerId: "together-ai", type: "embedding", pricingUnit: "per_mtok",
-      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
-      outputPerMTok: 0,
-    });
-  }
-
-  // ── Fireworks AI Text Generation (per_mtok) ──
-
-  for (const [modelId, pricing] of Object.entries(FIREWORKS_TEXT_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "fireworks", type: "chat", pricingUnit: "per_mtok",
-      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
-      outputPerMTok: pricing.creditsPerOutputToken * CREDITS_TO_DOLLARS_MTOK,
-    });
-  }
-
-  // ── Fireworks AI Image Generation (per_image) ──
-
-  for (const [modelId, pricing] of Object.entries(FIREWORKS_IMAGE_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "fireworks", type: "image", pricingUnit: "per_image",
-      perImage: pricing.creditsPerImage * CREDITS_TO_DOLLARS,
-    });
-  }
-
-  // ── OpenRouter Text Generation (per_mtok) ──
-
-  for (const [modelId, pricing] of Object.entries(OPENROUTER_TEXT_GENERATION_PRICING)) {
-    entries.push({
-      modelId, providerId: "openrouter", type: "chat", pricingUnit: "per_mtok",
-      inputPerMTok: pricing.creditsPerInputToken * CREDITS_TO_DOLLARS_MTOK,
-      outputPerMTok: pricing.creditsPerOutputToken * CREDITS_TO_DOLLARS_MTOK,
-    });
+      if (cost.inputPer1M !== undefined) {
+        entries.push({
+          modelId: cost.modelId,
+          providerId,
+          type,
+          pricingUnit: "per_mtok",
+          inputPerMTok: cost.inputPer1M,
+          outputPerMTok: cost.outputPer1M || 0,
+        });
+      } else if (cost.perImage !== undefined) {
+        entries.push({
+          modelId: cost.modelId,
+          providerId,
+          type: "image",
+          pricingUnit: "per_image",
+          perImage: cost.perImage,
+        });
+      } else if (cost.perCharM !== undefined) {
+        entries.push({
+          modelId: cost.modelId,
+          providerId,
+          type: "audio",
+          pricingUnit: "per_char",
+          perChar: cost.perCharM / 1_000_000,
+        });
+      } else if (cost.perMinute !== undefined) {
+        entries.push({
+          modelId: cost.modelId,
+          providerId,
+          type: "audio",
+          pricingUnit: "per_minute",
+          perMinute: cost.perMinute,
+        });
+      }
+    }
   }
 
   return entries;
@@ -335,6 +288,8 @@ type CompareResult =
   | { status: 'mismatch'; mismatch: PriceMismatch }
   | { status: 'no_provider_data'; reason: string };
 
+type AuditRunType = 'manual' | 'scheduled';
+
 /**
  * Compare pricing between our model and the provider's model.
  * Handles different pricing units: per_mtok, per_image, per_char, per_minute.
@@ -419,6 +374,51 @@ function comparePricing(
 
 function round6(n: number): number {
   return Math.round(n * 1_000_000) / 1_000_000;
+}
+
+function didAuditChange(
+  previousReport: PricingAuditReport | null,
+  providers: ProviderAuditResult[],
+  summary: PricingAuditReport['summary'],
+  status: PricingAuditReport['status']
+): boolean {
+  if (!previousReport) return false;
+
+  if (previousReport.status !== status) return true;
+
+  const prevSummary = previousReport.summary;
+  if (
+    prevSummary.totalProviders !== summary.totalProviders ||
+    prevSummary.totalModelsChecked !== summary.totalModelsChecked ||
+    prevSummary.priceMismatches !== summary.priceMismatches ||
+    prevSummary.newModels !== summary.newModels ||
+    prevSummary.removedModels !== summary.removedModels ||
+    prevSummary.errors !== summary.errors
+  ) {
+    return true;
+  }
+
+  const previousProviders = previousReport.providers.map((p) => ({
+    id: p.providerId,
+    status: p.status,
+    mismatches: p.priceMismatches.length,
+    newModels: p.newModels.length,
+    removedModels: p.removedModels.length,
+    verified: p.verifiedModels.length,
+    unverifiable: p.unverifiableModels.length,
+  }));
+
+  const nextProviders = providers.map((p) => ({
+    id: p.providerId,
+    status: p.status,
+    mismatches: p.priceMismatches.length,
+    newModels: p.newModels.length,
+    removedModels: p.removedModels.length,
+    verified: p.verifiedModels.length,
+    unverifiable: p.unverifiableModels.length,
+  }));
+
+  return JSON.stringify(previousProviders) !== JSON.stringify(nextProviders);
 }
 
 /**
@@ -859,7 +859,15 @@ let lastAuditReport: PricingAuditReport | null = null;
  * For Fireworks AI: also scrapes fireworks.ai/pricing for pricing data,
  * since the Fireworks API does not return pricing information.
  */
-export async function runPricingAudit(): Promise<PricingAuditReport> {
+export async function runPricingAudit(options?: {
+  runType?: AuditRunType;
+  autoCheckEnabled?: boolean;
+  autoCheckIntervalMs?: number;
+  telegramNotificationsEnabled?: boolean;
+  telegramChatConfigured?: boolean;
+}): Promise<PricingAuditReport> {
+  const previousReport = lastAuditReport;
+
   // Run API audits + web scrapes in parallel
   const [providerResults, webPricesResult, fireworksWebPricesResult] = await Promise.all([
     Promise.allSettled(PROVIDER_FETCHERS.map((fetcher) => auditProvider(fetcher))),
@@ -933,16 +941,27 @@ export async function runPricingAudit(): Promise<PricingAuditReport> {
   if (totalMismatches > 0) status = "critical";
   else if (totalNew > 0 || totalRemoved > 0 || totalErrors > 0) status = "warnings";
 
+  const summary = {
+    totalProviders: providers.length,
+    totalModelsChecked: totalModels,
+    priceMismatches: totalMismatches,
+    newModels: totalNew,
+    removedModels: totalRemoved,
+    errors: totalErrors,
+  };
+
   const report: PricingAuditReport = {
     timestamp: new Date().toISOString(),
     status,
-    summary: {
-      totalProviders: providers.length,
-      totalModelsChecked: totalModels,
-      priceMismatches: totalMismatches,
-      newModels: totalNew,
-      removedModels: totalRemoved,
-      errors: totalErrors,
+    summary,
+    meta: {
+      runType: options?.runType ?? 'manual',
+      autoCheckEnabled: options?.autoCheckEnabled ?? DEFAULT_AUTO_CHECK_ENABLED,
+      autoCheckIntervalMs: options?.autoCheckIntervalMs ?? DEFAULT_AUTO_CHECK_INTERVAL_MS,
+      changesDetectedFromPreviousRun: didAuditChange(previousReport, providers, summary, status),
+      previousTimestamp: previousReport?.timestamp,
+      telegramNotificationsEnabled: options?.telegramNotificationsEnabled,
+      telegramChatConfigured: options?.telegramChatConfigured,
     },
     newModelsByType,
     providers,

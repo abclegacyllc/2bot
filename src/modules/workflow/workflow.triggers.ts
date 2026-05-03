@@ -12,13 +12,13 @@ import { prisma } from "@/lib/prisma";
 
 import { executeWorkflow } from "./workflow.executor";
 import type {
-  DiscordCommandTriggerConfig,
-  DiscordMessageTriggerConfig,
-  SlackCommandTriggerConfig,
-  SlackMessageTriggerConfig,
-  TelegramCallbackTriggerConfig,
-  TelegramMessageTriggerConfig,
-  WhatsAppMessageTriggerConfig,
+    DiscordCommandTriggerConfig,
+    DiscordMessageTriggerConfig,
+    SlackCommandTriggerConfig,
+    SlackMessageTriggerConfig,
+    TelegramCallbackTriggerConfig,
+    TelegramMessageTriggerConfig,
+    WhatsAppMessageTriggerConfig,
 } from "./workflow.types";
 
 const triggerLogger = logger.child({ module: "workflow-triggers" });
@@ -79,12 +79,26 @@ export async function checkBotMessageTrigger(
         "Bot message matched workflow trigger"
       );
 
+      // Derive a stable idempotency key from the platform-specific unique event ID.
+      // This prevents the same event from executing the same workflow step twice
+      // (e.g., if checkBotMessageTrigger is called from multiple code paths).
+      const rawUpdateObj = rawUpdate as Record<string, unknown> | null | undefined;
+      const updateUniqueId =
+        rawUpdateObj?.['update_id']                                        // Telegram
+        ?? rawUpdateObj?.['id']                                            // Discord interaction
+        ?? rawUpdateObj?.['event_id']                                      // Slack
+        ?? (rawUpdateObj?.['entry'] as Array<{ id?: string }>)?.[0]?.id   // WhatsApp
+        ?? null;
+      const runIdempotencyKey = updateUniqueId !== null
+        ? `${workflow.id}:${gatewayId}:${updateUniqueId}`
+        : undefined;
+
       executeWorkflow(workflow.id, `bot_message_${eventSource}`, {
         message: messageData,
         gatewayId,
         source: eventSource,
         rawUpdate,
-      }).catch((err) => {
+      }, undefined, runIdempotencyKey).catch((err) => {
         triggerLogger.error(
           { workflowId: workflow.id, error: err instanceof Error ? err.message : String(err) },
           "Workflow execution failed from bot message trigger"

@@ -181,6 +181,39 @@ export interface ManualTriggerEventData {
 }
 
 // ===========================================
+// HTTP Request Event Data (Path C)
+// ===========================================
+
+/**
+ * HTTP request event delivered to a Module that handles a ProjectResource
+ * of kind HTTP_ROUTE. The bridge HTTP listener populates
+ * this from the inbound request; the route's matched path params land in
+ * `pathParams` (e.g. `/api/users/:id` → `{ id: "42" }`).
+ */
+export interface HttpRequestEventData {
+  /** Resource id of the matching ProjectResource (kind=HTTP_ROUTE). */
+  resourceId: string;
+  /** HTTP method, normalized to uppercase. */
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS" | "HEAD";
+  /** Full request path including query (e.g. /api/users/42?expand=true). */
+  path: string;
+  /** Path-parameter map extracted from the route pattern. */
+  pathParams: Record<string, string>;
+  /** Query-string parameters. */
+  query: Record<string, string | string[]>;
+  /** Request headers (lowercased keys). */
+  headers: Record<string, string>;
+  /** Parsed body (JSON object/array, string, or null when no body). */
+  body: unknown;
+  /** Raw body buffer base64-encoded (only present when authMode=HMAC). */
+  rawBodyBase64?: string;
+  /** Source IP from X-Forwarded-For (when present). */
+  remoteIp?: string;
+  /** Subdomain that received the request (e.g. "myapp"). */
+  subdomain?: string;
+}
+
+// ===========================================
 // Discord Event Data Types
 // ===========================================
 
@@ -421,6 +454,7 @@ export type PluginEvent = (
   | { type: "whatsapp.status"; data: WhatsAppStatusEventData; gatewayId: string }
   | { type: "schedule.trigger"; data: ScheduleTriggerEventData }
   | { type: "manual.trigger"; data: ManualTriggerEventData }
+  | { type: "http.request"; data: HttpRequestEventData }
   | { type: "workflow.step"; data: { input: unknown; previousOutput?: unknown; gatewayId?: string; trigger?: { type: string; data: unknown } } }
 ) & { _workflow?: WorkflowMetadata };
 
@@ -449,6 +483,7 @@ export const PLUGIN_EVENT_TYPES = {
   WHATSAPP_STATUS: "whatsapp.status",
   SCHEDULE_TRIGGER: "schedule.trigger",
   MANUAL_TRIGGER: "manual.trigger",
+  HTTP_REQUEST: "http.request",
   WORKFLOW_STEP: "workflow.step",
 } as const;
 
@@ -545,6 +580,17 @@ export interface PluginContext {
 
   /** Abort signal for cancellation */
   signal?: AbortSignal;
+
+  /**
+   * Optional idempotency key for this execution. If set, the executor will
+   * short-circuit any second `execute()` call with the same key within a
+   * short TTL and return the cached result.
+   *
+   * Typically the caller derives this from the originating webhook event id,
+   * e.g. `${pluginId}:${userId}:${telegramUpdateId}`. Safe to omit — when
+   * undefined, no deduplication happens.
+   */
+  idempotencyKey?: string;
 }
 
 // ===========================================

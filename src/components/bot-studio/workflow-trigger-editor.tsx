@@ -82,6 +82,16 @@ export function WorkflowTriggerEditor({
       if (type === "SCHEDULE" && cronExpr.trim()) config.cron = cronExpr.trim();
       else delete config.cron;
 
+      // For bot-message triggers with no filters, store a sentinel so the
+      // preflight check knows this is intentional ("match all messages"),
+      // not a misconfigured trigger.
+      const isBotMsg = type === "BOT_MESSAGE" || type.endsWith("_MESSAGE") || type.endsWith("_COMMAND");
+      if (isBotMsg && !config.textPattern && !config.commandPrefix) {
+        config.matchAll = true;
+      } else {
+        delete config.matchAll;
+      }
+
       await onSave({ triggerType: type, triggerConfig: config });
     } finally {
       setIsSaving(false);

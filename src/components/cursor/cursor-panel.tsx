@@ -21,15 +21,19 @@
 
 "use client";
 
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { apiUrl } from "@/shared/config/urls";
 import {
     ChevronDown,
+    Code,
     Github,
     GripVertical,
     History,
     Loader2,
     Palette,
+    Plus,
+    RotateCcw,
     Send,
     Square,
     Trash2,
@@ -40,14 +44,16 @@ import {
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ModelSelector, type RealModelOption } from "@/components/shared/model-selector";
+import { ModelSelector } from "@/components/shared/model-selector";
 import type { CursorAgentEvent } from "@/modules/cursor/cursor-agent.types";
-import type { CursorWorkerType } from "@/modules/cursor/cursor-workers";
 import { describeAgentEvent, mapAgentEventToActions } from "./agent-event-mapper";
 import { CursorAvatar, TypingIndicator, type CursorExpression } from "./cursor-avatar";
+import { formatRepoUrl, isValidRepoUrl } from "./cursor-helpers";
 import { CursorHistoryPanel } from "./cursor-history-panel";
 import { useCursorOptional } from "./cursor-provider";
-import { addEvent, completeSession, createSession } from "./cursor-session-store";
+import { addEvent, completeSession, createSession, markSessionRetried } from "./cursor-session-store";
+import { CursorSettings } from "./cursor-settings";
+import { EditableUserMessage, MarkdownContent, MessageBlocks } from "./cursor-shared-blocks";
 import { isSoundEnabled, playError, playStart, playSuccess, setSoundEnabled, setSoundProfile } from "./cursor-sounds";
 import {
     CURSOR_THEMES,
@@ -58,6 +64,8 @@ import {
     type CursorThemeConfig,
 } from "./cursor-theme";
 import type { UIAction } from "./cursor.types";
+import { useCursorStream } from "./hooks/use-cursor-stream";
+import type { CursorChatMessage } from "./types/cursor-chat.types";
 
 // Lazy-loaded worker stream functions — only fetched when first command is executed
 async function loadWorkerBrain() {
@@ -65,18 +73,10 @@ async function loadWorkerBrain() {
   return { streamWorker: mod.streamWorker, sendWorkerAnswer: mod.sendWorkerAnswer };
 }
 
-// ===========================================
-// Types
-// ===========================================
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  /** Extra structured detail from API (e.g., gateway name, plugin slug) */
-  detail?: string;
-  status?: "thinking" | "working" | "success" | "error";
-  timestamp: Date;
+/** lazy AI Builder helpers (avoid bundling on every page). */
+async function loadAiBuilder() {
+  const mod = await import("@/lib/api-client");
+  return { applyBuildSpec: mod.applyBuildSpec };
 }
 
 // ===========================================
@@ -84,42 +84,7 @@ interface ChatMessage {
 // ===========================================
 
 const STORAGE_KEY = "cursor-position";
-const MESSAGES_STORAGE_KEY = "cursor-messages";
-
-function loadMessages(): ChatMessage[] {
-  try {
-    const raw = localStorage.getItem(MESSAGES_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Array<{
-      id: string;
-      role: string;
-      content: string;
-      detail?: string;
-      status?: string;
-      timestamp: string;
-    }>;
-    return parsed
-      .filter((m) => m.id && m.content && m.status !== "thinking" && m.status !== "working")
-      .slice(0, 30)
-      .map((m) => ({
-        ...m,
-        role: m.role as "user" | "assistant" | "system",
-        status: m.status as ChatMessage["status"],
-        timestamp: new Date(m.timestamp),
-      }));
-  } catch { /* ignore */ }
-  return [];
-}
-
-function saveMessages(items: ChatMessage[]) {
-  try {
-    const serialisable = items
-      .filter((m) => m.status !== "thinking" && m.status !== "working")
-      .slice(0, 30)
-      .map((m) => ({ ...m, timestamp: m.timestamp.toISOString() }));
-    localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(serialisable));
-  } catch { /* ignore */ }
-}
+const ACTIVE_SESSION_KEY = "cursor-active-session";
 
 function loadPosition(): { x: number; y: number } | null {
   try {
@@ -155,7 +120,7 @@ const EXPAND_CHAR_THRESHOLD = 180;
 /** Number of CSS line-clamp lines when collapsed */
 const EXPAND_LINE_CLAMP = 3;
 
-function ExpandableText({ text }: { text: string }) {
+function ExpandableText({ text, onClick }: { text: string; onClick?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [needsClamp, setNeedsClamp] = useState(false);
   const textRef = useRef<HTMLSpanElement>(null);
@@ -170,7 +135,15 @@ function ExpandableText({ text }: { text: string }) {
 
   // Short text — render plain, no button
   if (text.length < EXPAND_CHAR_THRESHOLD) {
-    return <span>{text}</span>;
+    return (
+      <span
+        className={onClick ? "cursor-pointer" : undefined}
+        onClick={onClick}
+        title={onClick ? "Click to edit" : undefined}
+      >
+        {text}
+      </span>
+    );
   }
 
   return (
@@ -213,7 +186,7 @@ function ExpandableText({ text }: { text: string }) {
 // Cursor expression derived from chat state
 // ===========================================
 
-function deriveExpression(messages: ChatMessage[], isRunning: boolean): CursorExpression {
+function deriveExpression(messages: CursorChatMessage[], isRunning: boolean): CursorExpression {
   if (!isRunning && messages.length === 0) return "idle";
 
   const latest = messages[messages.length - 1];
@@ -232,10 +205,6 @@ function deriveExpression(messages: ChatMessage[], isRunning: boolean): CursorEx
 export function CursorPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
-  const [repoUrl, setRepoUrl] = useState("");
-  const [showRepoInput, setShowRepoInput] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages());
   const [secretPending, setSecretPending] = useState<{
     secretId: string;
     label: string;
@@ -245,9 +214,11 @@ export function CursorPanel() {
     sensitive?: boolean;
   } | null>(null);
   const [secretValue, setSecretValue] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const secretResolveRef = useRef<((v: string) => void) | null>(null);
+  const [attachedImages, setAttachedImages] = useState<Array<{ url: string; mimeType: string }>>([]);
+  const MAX_PANEL_IMAGES = 4;
 
   // Theme — toggleable between available themes
   const [theme, setTheme] = useState<CursorThemeConfig>(() => {
@@ -276,51 +247,242 @@ export function CursorPanel() {
     setTheme(resolveTheme(nextId));
   }, [theme.id]);
 
-  // Multi-worker state
-  const [activeWorker, setActiveWorker] = useState<{ type: CursorWorkerType; displayName: string } | null>(null);
-  /** When set, the next input submission sends an answer to the worker instead of a new command */
-  const [askUserPending, setAskUserPending] = useState<{
-    sessionId: string;
-    sensitive: boolean;
-  } | null>(null);
-  /** Ref to the current worker SSE cleanup function (for cancel) */
-  const workerCleanupRef = useRef<(() => void) | null>(null);
-  /** Tracks the current assistant message ID for updating with streaming progress */
-  const assistantMsgIdRef = useRef<string | null>(null);
+  // ── Panel-only state (defined before hook so callback can reference them) ──
+
+  // Feedback — tracks which sessions have been rated
+  const [feedbackSent, setFeedbackSent] = useState<Record<string, "positive" | "negative">>({});
+  const lastDoneSessionRef = useRef<string | null>(null);
+  /** Current running session ID (for mid-stream corrections) */
+  const runningSessionIdRef = useRef<string | null>(null);
+  /** Last SSE event ID received (for reconnect) */
+  const lastEventIdRef = useRef<number>(0);
+
+  /** Structured plan / TODO items (shown as collapsible checklist) */
+  const [planItems, setPlanItems] = useState<Array<{ id: string; title: string; status: "pending" | "in_progress" | "done" }>>([]);
+  /** Markdown plan body produced by the Plan agent (passed via update_plan(summary)) */
+  const [planMarkdown, setPlanMarkdown] = useState<string | null>(null);
+  /** Whether the View Plan modal is open */
+  const [planModalOpen, setPlanModalOpen] = useState(false);
+  /** File actions tracked for Keep/Undo (accumulated during session) */
+  const [fileActions, setFileActions] = useState<Array<{
+    id: string; type: "created" | "modified" | "deleted"; path: string;
+    originalPreview: string | null; newPreview: string | null; toolCallId: string;
+  }>>([]);
+  /** Files the user has undone (paths) */
+  const [revertedFiles, setRevertedFiles] = useState<Set<string>>(new Set());
 
   // View mode — chat or session history
   const [panelView, setPanelView] = useState<"chat" | "history">("chat");
 
-  // Model selection — persisted in localStorage
-  const CURSOR_MODEL_KEY = "cursor-model-preference";
-  const [selectedModel, setSelectedModel] = useState<string>(() => {
-    try { return localStorage.getItem(CURSOR_MODEL_KEY) || "auto"; } catch { return "auto"; }
-  });
-  const [realModels, setRealModels] = useState<RealModelOption[]>([]);
+  const cursor = useCursorOptional();
 
-  // Persist model preference
-  const handleModelChange = useCallback((modelId: string) => {
-    setSelectedModel(modelId);
-    try { localStorage.setItem(CURSOR_MODEL_KEY, modelId); } catch { /* ignore */ }
-  }, []);
+  // ── Shared streaming hook ──
+  const stream = useCursorStream({
+    storageKey: "cursor-messages",
+    modelStorageKey: "cursor-model-preference",
+    suspendedStorageKey: "cursor-suspended-panel",
+    messageLimit: 30,
+    idPrefix: "msg",
+    token: localStorage.getItem("token") ?? "",
+    onWorkerEvent: useCallback((event: CursorAgentEvent, msgId: string | null) => {
+      // ── Track active session for reconnect on page change / refresh ──
+      const sseEventId = (event as unknown as { _eventId?: number })._eventId;
+      if (sseEventId) lastEventIdRef.current = sseEventId;
 
-  // Fetch real models for selector (text-generation only, cursor uses text)
-  useEffect(() => {
-    const token = localStorage.getItem("token") || "";
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-    fetch(apiUrl("/2bot-ai/real-models?capability=text-generation"), {
-      credentials: "include",
-      headers,
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.data?.models) {
-          // Only show models that support function calling (agent requires tools)
-          setRealModels(data.data.models.filter((m: { functionCalling?: boolean }) => m.functionCalling !== false));
+      if (event.type === "session_start") {
+        try {
+          localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify({
+            sessionId: event.sessionId,
+            lastEventId: lastEventIdRef.current,
+            startedAt: Date.now(),
+          }));
+        } catch { /* ignore */ }
+      } else if (event.type === "done" || event.type === "error") {
+        try { localStorage.removeItem(ACTIVE_SESSION_KEY); } catch { /* ignore */ }
+      } else {
+        if (sseEventId) {
+          try {
+            const raw = localStorage.getItem(ACTIVE_SESSION_KEY);
+            if (raw) {
+              const saved = JSON.parse(raw) as { sessionId: string; lastEventId: number; startedAt: number };
+              saved.lastEventId = sseEventId;
+              localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(saved));
+            }
+          } catch { /* ignore */ }
         }
-      })
-      .catch(() => { /* ignore */ });
-  }, []);
+      }
+
+      // ── Record event into session history ──
+      const eventDesc = describeAgentEvent(event);
+      addEvent(event, eventDesc ?? undefined);
+
+      // ── Panel-specific side-effects ──
+      switch (event.type) {
+        case "worker_start": {
+          const actions = event.uiActions?.length ? event.uiActions : mapAgentEventToActions(event);
+          for (const a of actions) cursor?.enqueue(a);
+          break;
+        }
+        case "worker_switch": {
+          const actions = mapAgentEventToActions(event);
+          for (const a of actions) cursor?.enqueue(a);
+          break;
+        }
+        case "ask_user": {
+          if (event.sensitive) {
+            setSecretPending({
+              secretId: "ask_user",
+              label: event.question,
+              field: "answer",
+              sensitive: true,
+            });
+            setSecretValue("");
+            secretResolveRef.current = (value: string) => {
+              const tk = localStorage.getItem("token") || "";
+              void loadWorkerBrain().then((b) => b.sendWorkerAnswer(event.sessionId, value, tk));
+              // addMessage is not available yet when this ref is called,
+              // but it will be available via the stream hook — left as-is for now
+              setSecretPending(null);
+              setSecretValue("");
+            };
+          }
+          break;
+        }
+        case "thinking": {
+          // Reasoning is handled by the shared hook (saves event.reasoning to message)
+          break;
+        }
+        case "tool_result": {
+          cursor?.releaseGate();
+          const resultActions = mapAgentEventToActions(event);
+          for (const a of resultActions) {
+            if (a.action === "done") continue;
+            cursor?.enqueue(a);
+          }
+          break;
+        }
+        case "diff_preview": {
+          const diffActions = mapAgentEventToActions(event);
+          for (const a of diffActions) cursor?.enqueue(a);
+          break;
+        }
+        case "tool_start":
+        case "code_preview":
+        case "status":
+        case "iteration_start": {
+          const uiDirect = "uiActions" in event && Array.isArray((event as { uiActions?: unknown }).uiActions)
+            ? (event as { uiActions: UIAction[] }).uiActions
+            : null;
+          const actions = uiDirect?.length ? uiDirect : mapAgentEventToActions(event);
+          for (const a of actions) {
+            if (a.action === "done") continue;
+            cursor?.enqueue(a);
+          }
+          break;
+        }
+        case "session_start": {
+          runningSessionIdRef.current = event.sessionId;
+          setPlanItems([]);
+          setPlanMarkdown(null);
+          setFileActions([]);
+          setRevertedFiles(new Set());
+          const actions = mapAgentEventToActions(event);
+          for (const a of actions) {
+            if (a.action === "done") continue;
+            cursor?.enqueue(a);
+          }
+          break;
+        }
+        case "todo_update": {
+          setPlanItems(event.items);
+          if (event.planMarkdown) setPlanMarkdown(event.planMarkdown);
+          break;
+        }
+        case "file_action": {
+          setFileActions((prev) => [...prev, event.action]);
+          break;
+        }
+        case "done": {
+          playSuccess();
+          completeSession("completed", event.summary || "Done!");
+          lastDoneSessionRef.current = event.sessionId;
+          runningSessionIdRef.current = null;
+          break;
+        }
+        case "error": {
+          playError();
+          completeSession("error", event.message || "Something went wrong.");
+          runningSessionIdRef.current = null;
+          break;
+        }
+      }
+    }, [cursor]),
+  });
+  const {
+    messages, isStreaming: isRunning, askUserPending,
+    activityLog, creditsUsed, currentIteration, creditBudget,
+    activeWorker, selectedModel, realModels, handleModelChange,
+    repoUrl, setRepoUrl, showRepoInput, setShowRepoInput,
+    showImportCode, setShowImportCode,
+    addMessage, updateMessage, clearMessages,
+    executeStream, submitAnswer, cancelStream, sendCorrection,
+    retryFromMessage, editAndResend,
+    replayEvents,
+    resolveConfirmBlock,
+    resolveAskBlock,
+    updateBuildSpecBlock,
+    conversationSnapshots, fileActionCount,
+  } = stream;
+
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+
+  /**
+   * drive the BuildSpec apply lifecycle from a chat block.
+   * idle → applying → applied | rolled-back | error.
+   */
+  const handleApplyBuildSpec = useCallback(
+    async (block: { id: string; spec: unknown }) => {
+      updateBuildSpecBlock(block.id, { status: "applying", error: undefined });
+      try {
+        const tk =
+          (typeof window !== "undefined" ? localStorage.getItem("token") : null) || undefined;
+        const { applyBuildSpec } = await loadAiBuilder();
+        const res = await applyBuildSpec(block.spec, {}, tk);
+        if (!res.success || !res.data) {
+          updateBuildSpecBlock(block.id, {
+            status: "error",
+            error: res.error?.message || "Apply failed",
+          });
+          return;
+        }
+        const data = res.data;
+        const status: "applied" | "rolled-back" | "error" =
+          data.status === "applied"
+            ? "applied"
+            : data.status === "rolled-back"
+              ? "rolled-back"
+              : "error";
+        updateBuildSpecBlock(block.id, {
+          status,
+          result: data,
+          error:
+            status === "error"
+              ? data.rollbackReason ||
+                (data.validationErrors
+                  ? Object.values(data.validationErrors).flat()[0]
+                  : undefined) ||
+                "Validation failed"
+              : undefined,
+        });
+      } catch (err) {
+        updateBuildSpecBlock(block.id, {
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [updateBuildSpecBlock],
+  );
 
   // Drag state
   const [position, setPosition] = useState<{ x: number; y: number } | null>(() => loadPosition());
@@ -344,25 +506,119 @@ export function CursorPanel() {
     }
   }, [askUserPending]);
 
-  // Restore suspended session from localStorage on mount
-  const restoredSuspendedRef = useRef(false);
+  // ── Reconnect to an interrupted session on mount (page change / refresh) ──
+  const reconnectAttemptedRef = useRef(false);
   useEffect(() => {
-    if (restoredSuspendedRef.current) return;
+    if (reconnectAttemptedRef.current || isRunning) return;
+    reconnectAttemptedRef.current = true;
+
     try {
-      const raw = localStorage.getItem(`cursor-suspended-panel`);
-      if (raw) {
-        const pending = JSON.parse(raw) as { sessionId: string; sensitive: boolean };
-        if (pending.sessionId) {
-          restoredSuspendedRef.current = true;
-          queueMicrotask(() => {
-            setAskUserPending(pending);
-          });
-        }
+      const raw = localStorage.getItem(ACTIVE_SESSION_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { sessionId: string; lastEventId: number; startedAt: number };
+      // Only attempt reconnect for sessions started within the last 10 minutes
+      if (Date.now() - saved.startedAt > 10 * 60 * 1000) {
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
+        return;
       }
-    } catch { /* ignore */ }
+
+      const token = localStorage.getItem("token") || "";
+      if (!token) return;
+
+      // Show reconnecting state
+      const msgId = addMessage({ role: "assistant", content: "Reconnecting to session…", status: "thinking" });
+
+      void (async () => {
+        try {
+          const res = await fetch(
+            apiUrl(`/cursor/worker-resume?sessionId=${encodeURIComponent(saved.sessionId)}&lastEventId=${saved.lastEventId}`),
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              credentials: "include",
+            },
+          );
+          if (!res.ok) {
+            updateMessage(msgId, { content: "Session expired", status: "error" });
+            localStorage.removeItem(ACTIVE_SESSION_KEY);
+            return;
+          }
+          const data = (await res.json()) as {
+            success: boolean;
+            data: {
+              events: Array<Record<string, unknown>>;
+              complete: boolean;
+            };
+          };
+
+          const { events, complete } = data.data;
+          if (events.length === 0 && complete) {
+            // Session already ended but we missed the done event
+            updateMessage(msgId, { content: "Session completed while away", status: "success" });
+            localStorage.removeItem(ACTIVE_SESSION_KEY);
+            return;
+          }
+
+          if (events.length === 0 && !complete) {
+            // Worker is still running but no new events yet — session is in progress
+            updateMessage(msgId, { content: "Session still in progress — waiting for results…", status: "working" });
+            // Poll a few times for completion
+            let pollCount = 0;
+            const pollInterval = setInterval(async () => {
+              pollCount++;
+              if (pollCount > 20) { // Stop after ~60s
+                clearInterval(pollInterval);
+                updateMessage(msgId, { content: "Session may still be running — check back shortly", status: "success" });
+                localStorage.removeItem(ACTIVE_SESSION_KEY);
+                return;
+              }
+              try {
+                const pollRes = await fetch(
+                  apiUrl(`/cursor/worker-resume?sessionId=${encodeURIComponent(saved.sessionId)}&lastEventId=${saved.lastEventId}`),
+                  { headers: { Authorization: `Bearer ${token}` }, credentials: "include" },
+                );
+                if (!pollRes.ok) { clearInterval(pollInterval); return; }
+                const pollData = (await pollRes.json()) as typeof data;
+                if (pollData.data.events.length > 0 || pollData.data.complete) {
+                  clearInterval(pollInterval);
+                  // Replay missed events
+                  replayEvents(pollData.data.events, msgId);
+                  if (pollData.data.complete) {
+                    localStorage.removeItem(ACTIVE_SESSION_KEY);
+                  } else {
+                    // Update lastEventId for next poll
+                    const lastEvt = pollData.data.events[pollData.data.events.length - 1];
+                    if (lastEvt?.id) saved.lastEventId = lastEvt.id as number;
+                  }
+                }
+              } catch { /* ignore poll errors */ }
+            }, 3000);
+            return;
+          }
+
+          // Replay missed events
+          replayEvents(events, msgId);
+
+          if (complete) {
+            localStorage.removeItem(ACTIVE_SESSION_KEY);
+          } else {
+            // Still running — update the saved lastEventId
+            const lastEvt = events[events.length - 1];
+            if (lastEvt?.id) {
+              saved.lastEventId = lastEvt.id as number;
+              localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(saved));
+            }
+          }
+        } catch {
+          updateMessage(msgId, { content: "Could not reconnect", status: "error" });
+          localStorage.removeItem(ACTIVE_SESSION_KEY);
+        }
+      })();
+    } catch {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const cursor = useCursorOptional();
   const pathname = usePathname();
   const expression = deriveExpression(messages, isRunning);
 
@@ -389,9 +645,7 @@ export function CursorPanel() {
         if (askUserPending) {
           e.preventDefault();
           // Cancel the ask — send empty answer to unblock the stream
-          const token = localStorage.getItem("token") || "";
-          void loadWorkerBrain().then((b) => b.sendWorkerAnswer(askUserPending.sessionId, "", token));
-          setAskUserPending(null);
+          void submitAnswer("", askUserPending.sessionId);
           return;
         }
         if (secretPending && secretResolveRef.current) {
@@ -411,7 +665,7 @@ export function CursorPanel() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, secretPending, askUserPending]);
+  }, [isOpen, secretPending, askUserPending, submitAnswer]);
 
   // ===========================================
   // Drag Logic (pointer events)
@@ -470,32 +724,6 @@ export function CursorPanel() {
   }, [position]);
 
   // ===========================================
-  // Message Helpers
-  // ===========================================
-
-  const addMessage = useCallback((msg: Omit<ChatMessage, "id" | "timestamp">) => {
-    const newMsg: ChatMessage = {
-      ...msg,
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      timestamp: new Date(),
-    };
-    setMessages((prev) => {
-      const updated = [...prev, newMsg].slice(-30);
-      saveMessages(updated);
-      return updated;
-    });
-    return newMsg.id;
-  }, []);
-
-  const updateMessage = useCallback((id: string, updates: Partial<ChatMessage>) => {
-    setMessages((prev) => {
-      const updated = prev.map((m) => (m.id === id ? { ...m, ...updates } : m));
-      saveMessages(updated);
-      return updated;
-    });
-  }, []);
-
-  // ===========================================
   // Secret Collection (used for sensitive ask_user events)
   // ===========================================
 
@@ -508,278 +736,80 @@ export function CursorPanel() {
   }, [secretValue]);
 
   // ===========================================
-  // Command Execution — Multi-Worker Stream
+  // Command Execution — via shared hook
   // ===========================================
 
-  /**
-   * Process a single SSE event from the multi-worker stream.
-   * Maps events to UI updates, animations, and ask_user handling.
-   */
-  const handleWorkerEvent = useCallback(
-    (rawEvent: Record<string, unknown>) => {
-      const event = rawEvent as unknown as CursorAgentEvent;
-      const msgId = assistantMsgIdRef.current;
-
-      // ── Record event into session history ──
-      const eventDesc = describeAgentEvent(event);
-      addEvent(event, eventDesc ?? undefined);
-
-      switch (event.type) {
-        case "worker_start": {
-          setActiveWorker({ type: event.worker, displayName: event.displayName });
-          // Prefer backend-driven uiActions, fall back to mapper
-          const actions = event.uiActions?.length ? event.uiActions : mapAgentEventToActions(event);
-          for (const a of actions) cursor?.enqueue(a);
-          if (msgId) {
-            updateMessage(msgId, { content: `${event.displayName} is on it...`, status: "working" });
-          }
-          break;
-        }
-
-        case "worker_switch": {
-          setActiveWorker({ type: event.toWorker, displayName: event.toDisplayName });
-          addMessage({ role: "system", content: `Passing to ${event.toDisplayName}...` });
-          const actions = mapAgentEventToActions(event);
-          for (const a of actions) cursor?.enqueue(a);
-          break;
-        }
-
-        case "ask_user": {
-          // Show the question and enable input for the user to answer
-          addMessage({ role: "assistant", content: event.question, status: "success" });
-          setAskUserPending({ sessionId: event.sessionId, sensitive: event.sensitive });
-          if (event.sensitive) {
-            setSecretPending({
-              secretId: "ask_user",
-              label: event.question,
-              field: "answer",
-              sensitive: true,
-            });
-            setSecretValue("");
-            secretResolveRef.current = (value: string) => {
-              const token = localStorage.getItem("token") || "";
-              void loadWorkerBrain().then((b) => b.sendWorkerAnswer(event.sessionId, value, token));
-              addMessage({ role: "user", content: "••••••" });
-              setAskUserPending(null);
-              setSecretPending(null);
-              setSecretValue("");
-            };
-          }
-          // Non-sensitive: input bar is re-enabled via askUserPending check
-          break;
-        }
-
-        case "suspended": {
-          // Session suspended — the stream is closing. Save pending question to localStorage.
-          addMessage({ role: "assistant", content: event.question, status: "success" });
-          const pending = { sessionId: event.sessionId, sensitive: event.sensitive ?? false };
-          setAskUserPending(pending);
-          try {
-            localStorage.setItem(
-              `cursor-suspended-panel`,
-              JSON.stringify(pending),
-            );
-          } catch { /* ignore */ }
-          break;
-        }
-
-        case "thinking": {
-          if (msgId) {
-            updateMessage(msgId, { content: event.text.slice(0, 200), status: "thinking" });
-          }
-          break;
-        }
-
-        case "tool_result": {
-          // Release the event gate so the gated highlight animation ends
-          cursor?.releaseGate();
-
-          // Map to UI actions (usually empty for success, warning toast for errors)
-          const resultActions = mapAgentEventToActions(event);
-          for (const a of resultActions) {
-            if (a.action === "done") continue;
-            cursor?.enqueue(a);
-          }
-          const resultDesc = describeAgentEvent(event);
-          if (resultDesc && msgId) {
-            updateMessage(msgId, { content: resultDesc, status: "working" });
-          }
-          break;
-        }
-
-        case "tool_start":
-        case "code_preview":
-        case "status":
-        case "iteration_start":
-        case "session_start": {
-          // Prefer backend-driven uiActions when present
-          const uiDirect = "uiActions" in event && Array.isArray((event as { uiActions?: unknown }).uiActions)
-            ? (event as { uiActions: UIAction[] }).uiActions
-            : null;
-          const actions = uiDirect?.length ? uiDirect : mapAgentEventToActions(event);
-          for (const a of actions) {
-            if (a.action === "done") continue;
-            cursor?.enqueue(a);
-          }
-          const desc = describeAgentEvent(event);
-          if (desc && msgId) {
-            updateMessage(msgId, { content: desc, status: "working" });
-          }
-          break;
-        }
-
-        case "done": {
-          playSuccess();
-          completeSession("completed", event.summary || "Done!");
-          if (msgId) {
-            const detail = event.fileCount
-              ? `Files: ${event.fileCount} · ${((event.durationMs) / 1000).toFixed(1)}s`
-              : undefined;
-            updateMessage(msgId, {
-              content: event.summary || "Done!",
-              detail,
-              status: "success",
-            });
-          }
-          setActiveWorker(null);
-          break;
-        }
-
-        case "error": {
-          playError();
-          completeSession("error", event.message || "Something went wrong.");
-          if (msgId) {
-            updateMessage(msgId, { content: event.message || "Something went wrong.", status: "error" });
-          }
-          setActiveWorker(null);
-          break;
-        }
-      }
-    },
-    [cursor, addMessage, updateMessage],
-  );
+  /** Submit thumbs up/down feedback for the last completed session */
+  const submitFeedback = useCallback(async (rating: "positive" | "negative") => {
+    const sid = lastDoneSessionRef.current;
+    if (!sid || feedbackSent[sid]) return;
+    setFeedbackSent((prev) => ({ ...prev, [sid]: rating }));
+    try {
+      await fetch(apiUrl(`/cursor/sessions/${encodeURIComponent(sid)}/feedback`), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating }),
+      });
+    } catch {
+      // Non-critical — feedback is best-effort
+    }
+  }, [feedbackSent]);
 
   /**
-   * Execute a user command via the multi-worker stream.
-   * Replaces the old 17-path executeSingleCommand with a single SSE call.
+   * Execute a user command via the shared streaming hook.
    */
   const executeCommand = useCallback(
     async (command: string) => {
       if (!command.trim()) return;
 
-      // ── Ask-user answer: resume the suspended session via new stream ──
+      // ── Ask-user answer: resume the suspended session via hook ──
       if (askUserPending && !askUserPending.sensitive) {
         const text = command.trim();
         addMessage({ role: "user", content: text });
         setInput("");
         const savedSessionId = askUserPending.sessionId;
-        setAskUserPending(null);
-        try { localStorage.removeItem(`cursor-suspended-panel`); } catch { /* ignore */ }
-
-        // Resume via a new stream with resumeSessionId
-        setIsRunning(true);
-        const msgId = addMessage({ role: "assistant", content: "Resuming...", status: "thinking" });
-        assistantMsgIdRef.current = msgId;
-
-        try {
-          const token = localStorage.getItem("token") || "";
-          const brain = await loadWorkerBrain();
-          const cleanup = brain.streamWorker(
-            {
-              message: text,
-              resumeSessionId: savedSessionId,
-              modelId: selectedModel !== "auto" ? selectedModel : undefined,
-            },
-            token,
-            handleWorkerEvent,
-            () => {
-              assistantMsgIdRef.current = null;
-              workerCleanupRef.current = null;
-              setIsRunning(false);
-              setActiveWorker(null);
-            },
-            (errMsg) => {
-              playError();
-              if (assistantMsgIdRef.current) {
-                updateMessage(assistantMsgIdRef.current, { content: errMsg, status: "error" });
-              }
-              assistantMsgIdRef.current = null;
-              workerCleanupRef.current = null;
-              setIsRunning(false);
-              setActiveWorker(null);
-            },
-          );
-          workerCleanupRef.current = cleanup;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Unknown error";
-          updateMessage(msgId, { content: `Error: ${msg}`, status: "error" });
-          setIsRunning(false);
-        }
+        await submitAnswer(text, savedSessionId);
         return;
       }
 
-      if (isRunning) return;
+      // ── Mid-stream correction: send input as correction while agent is running ──
+      if (isRunning) {
+        const sid = runningSessionIdRef.current;
+        if (!sid) return;
+        const text = command.trim();
+        addMessage({ role: "user", content: `💬 ${text}` });
+        setInput("");
+        await sendCorrection(sid, text);
+        return;
+      }
       if (!cursor) {
         addMessage({ role: "system", content: "Cursor not available" });
         return;
       }
 
-      setIsRunning(true);
       setInput("");
-      setRepoUrl("");
       setShowRepoInput(false);
       playStart();
+
+      // Snapshot and clear attached images before send
+      const pendingImages = attachedImages.length > 0 ? attachedImages : undefined;
+      setAttachedImages([]);
 
       // ── Start a new session in history store ──
       createSession(command);
 
-      // Add user message + assistant thinking bubble
-      addMessage({ role: "user", content: command });
-      const msgId = addMessage({ role: "assistant", content: "Thinking...", status: "thinking" });
-      assistantMsgIdRef.current = msgId;
+      // Add user message
+      addMessage({ role: "user", content: command, ...(pendingImages ? { imageParts: pendingImages } : {}) });
 
-      try {
-        const token = localStorage.getItem("token") || "";
-        const brain = await loadWorkerBrain();
-
-        const cleanup = brain.streamWorker(
-          {
-            message: command,
-            modelId: selectedModel !== "auto" ? selectedModel : undefined,
-            ...(repoUrl.trim() ? { repoUrl: repoUrl.trim(), mode: "analyze-repo" as const } : {}),
-          },
-          token,
-          handleWorkerEvent,
-          () => {
-            // onDone — stream ended
-            assistantMsgIdRef.current = null;
-            workerCleanupRef.current = null;
-            setIsRunning(false);
-            setActiveWorker(null);
-          },
-          (errMsg) => {
-            // onError — stream-level error
-            playError();
-            if (assistantMsgIdRef.current) {
-              updateMessage(assistantMsgIdRef.current, { content: errMsg, status: "error" });
-            }
-            assistantMsgIdRef.current = null;
-            workerCleanupRef.current = null;
-            setIsRunning(false);
-            setActiveWorker(null);
-          },
-        );
-
-        workerCleanupRef.current = cleanup;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        playError();
-        completeSession("error", msg);
-        updateMessage(msgId, { content: `Oops — ${msg}`, status: "error" });
-        setIsRunning(false);
-      }
+      // Start the stream via shared hook
+      await executeStream({
+        message: command,
+        ...(repoUrl.trim() ? { repoUrl: repoUrl.trim(), mode: "analyze-repo" as const } : {}),
+        ...(pendingImages ? { imageParts: pendingImages } : {}),
+      });
     },
-    [cursor, isRunning, askUserPending, handleWorkerEvent, addMessage, updateMessage, selectedModel, repoUrl],
+    [cursor, isRunning, askUserPending, attachedImages, addMessage, submitAnswer, executeStream, sendCorrection, repoUrl, setShowRepoInput],
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -787,18 +817,30 @@ export function CursorPanel() {
     void executeCommand(input);
   };
 
+  const addPanelImagesFromFiles = useCallback((files: FileList | File[]) => {
+    Array.from(files).filter((f) => f.type.startsWith("image/")).slice(0, MAX_PANEL_IMAGES).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const url = ev.target?.result as string;
+        if (!url) return;
+        setAttachedImages((prev) => prev.length >= MAX_PANEL_IMAGES ? prev : [...prev, { url, mimeType: file.type }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  }, [MAX_PANEL_IMAGES]);
+
+  const handlePanelImagePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItems = Array.from(e.clipboardData.items).filter((item) => item.type.startsWith("image/"));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    imageItems.forEach((item) => { const f = item.getAsFile(); if (f) addPanelImagesFromFiles([f]); });
+  }, [addPanelImagesFromFiles]);
+
   const handleCancel = () => {
-    // Abort the active worker SSE stream
-    if (workerCleanupRef.current) {
-      workerCleanupRef.current();
-      workerCleanupRef.current = null;
-    }
+    cancelStream();
     completeSession("cancelled", "Cancelled by user.");
+    runningSessionIdRef.current = null;
     cursor?.cancel();
-    setIsRunning(false);
-    setActiveWorker(null);
-    setAskUserPending(null);
-    assistantMsgIdRef.current = null;
     addMessage({ role: "system", content: "Cancelled." });
     // Resolve any pending secret promise with empty string to unblock the flow
     if (secretResolveRef.current) {
@@ -914,7 +956,12 @@ export function CursorPanel() {
           {isRunning ? (
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              {askUserPending ? "Waiting for your answer..." : "Working..."}
+              {askUserPending ? "Waiting for your answer..." : (
+                <>
+                  Step {currentIteration || 1}
+                  {creditsUsed > 0 && <span className="text-[10px] opacity-60">· {creditsUsed.toFixed(1)}/{creditBudget} credits</span>}
+                </>
+              )}
             </span>
           ) : (
             <span className="text-xs text-muted-foreground block">Ask me anything</span>
@@ -928,6 +975,7 @@ export function CursorPanel() {
           compact
           showAutoMode
           realModels={realModels}
+          hasImages={attachedImages.length > 0}
         />
         <button
           onClick={() => setPanelView((v) => v === "chat" ? "history" : "chat")}
@@ -940,6 +988,13 @@ export function CursorPanel() {
         >
           <History className="h-4 w-4" />
         </button>
+        <CursorSettings
+          theme={theme}
+          onThemeChange={setTheme}
+          soundMuted={soundMuted}
+          onSoundToggle={toggleSound}
+        />
+
         <button
           onClick={toggleTheme}
           aria-label={`Switch theme (current: ${theme.name})`}
@@ -958,7 +1013,7 @@ export function CursorPanel() {
         </button>
         {messages.length > 0 && !isRunning ? (
           <button
-            onClick={() => { setMessages([]); saveMessages([]); }}
+            onClick={() => { clearMessages(); setRepoUrl(""); }}
             aria-label="Clear chat history"
             title="Clear Chat"
             className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-muted/50"
@@ -980,9 +1035,9 @@ export function CursorPanel() {
         <CursorHistoryPanel onCloseAction={() => setPanelView("chat")} />
       ) : (
       <>
-      {/* \u2500\u2500 Chat Messages Area \u2500\u2500 */}
+      {/* ── Chat Messages Area ── */}
       <div
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-[180px] max-h-[320px]"
+        className="cursor-scroll flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 space-y-3 min-h-[180px] max-h-[320px] min-w-0"
         role="log"
         aria-label="Chat messages"
         aria-live="polite"
@@ -1003,7 +1058,7 @@ export function CursorPanel() {
             <div
               key={msg.id}
               className={cn(
-                "flex gap-2.5",
+                "flex gap-2.5 group/msg relative min-w-0",
                 msg.role === "user" && "flex-row-reverse",
                 msg.role === "system" && "justify-center",
               )}
@@ -1039,7 +1094,7 @@ export function CursorPanel() {
               ) : (
                 <div
                   className={cn(
-                    "max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed",
+                    "max-w-[80%] min-w-0 overflow-hidden rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed break-words",
                     msg.role === "user"
                       ? "rounded-br-md"
                       : "rounded-bl-md",
@@ -1055,24 +1110,130 @@ export function CursorPanel() {
                     ...(msg.role === "assistant" && msg.status === "error" ? { borderColor: "var(--cursor-error)" } : {}),
                   }}
                 >
-                  {/* Thinking indicator */}
-                  {msg.role === "assistant" && (msg.status === "thinking" || msg.status === "working") ? (
+                  {/* Collapsible reasoning section (from reasoning models) */}
+                  {msg.reasoning && (
+                    <details className="mb-1.5 group/reasoning">
+                      <summary className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-purple-400/80 hover:text-purple-400 transition-colors list-none [&::-webkit-details-marker]:hidden">
+                        <svg className="h-3 w-3 shrink-0 transition-transform group-open/reasoning:rotate-90" viewBox="0 0 16 16" fill="currentColor"><path d="M6 4l4 4-4 4" /></svg>
+                        <span>Reasoning</span>
+                        <span className="text-[10px] text-muted-foreground/50">·</span>
+                        <span className="text-[10px] text-muted-foreground/50">{msg.reasoning.length > 1000 ? `${Math.round(msg.reasoning.length / 100) / 10}k chars` : `${msg.reasoning.length} chars`}</span>
+                      </summary>
+                      <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground/70 bg-purple-500/5 border-l-2 border-purple-500/20 pl-2.5 pr-2 py-1.5 rounded-sm max-h-[120px] overflow-y-auto whitespace-pre-wrap break-words">
+                        {msg.reasoning.length > 2000 ? msg.reasoning.slice(0, 2000) + "…" : msg.reasoning}
+                      </div>
+                    </details>
+                  )}
+
+                  {/* Thinking indicator — only when no blocks exist yet */}
+                  {msg.role === "assistant" && (msg.status === "thinking" || msg.status === "working") && !(msg.blocks && msg.blocks.length > 0) ? (
                     <div className="flex items-center gap-2">
                       <span>{msg.content}</span>
                       <TypingIndicator className="text-muted-foreground/60" />
                     </div>
                   ) : msg.role === "user" ? (
-                    <ExpandableText text={msg.content} />
+                    editingMessageId === msg.id ? (
+                      <EditableUserMessage
+                        initialContent={msg.content}
+                        onSubmit={(newContent) => {
+                          setEditingMessageId(null);
+                          void editAndResend(msg.id, newContent);
+                        }}
+                        onCancel={() => setEditingMessageId(null)}
+                        warnFileChanges={fileActionCount > 0}
+                      />
+                    ) : (
+                      <>
+                        {msg.imageParts && msg.imageParts.length > 0 ? (
+                          <div className="flex flex-wrap gap-1 mb-1.5">
+                            {msg.imageParts.map((img, i) => (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img key={i} src={img.url} alt={`Image ${i + 1}`} className="h-16 w-16 rounded-md object-cover border border-white/20" />
+                            ))}
+                          </div>
+                        ) : null}
+                        <ExpandableText text={msg.content} onClick={isRunning ? undefined : () => setEditingMessageId(msg.id)} />
+                      </>
+                    )
+                  ) : msg.blocks && msg.blocks.length > 0 ? (
+                    /* Block-based rendering (tools, terminal, text) */
+                    <MessageBlocks
+                      blocks={msg.blocks}
+                      isThinking={msg.status === "thinking" || msg.status === "working"}
+                      content={msg.content}
+                      hasTextBlock={msg.blocks?.some(b => b.kind === "text") ?? false}
+                      onResolveConfirm={(sessionId, approved) => resolveConfirmBlock(msg.id, sessionId, approved)}
+                      onResolveAsk={(sessionId, value, label) => {
+                        resolveAskBlock(sessionId, value, label);
+                        addMessage({ role: "user", content: label });
+                        const tk = (typeof window !== "undefined" ? localStorage.getItem("token") : null) || "";
+                        void loadWorkerBrain().then((b) => b.sendWorkerAnswer(sessionId, value, tk));
+                      }}
+                      onApplyBuildSpec={handleApplyBuildSpec}
+                    />
                   ) : (
                     <span>{msg.content}</span>
                   )}
 
                   {/* Detail badge */}
-                  {msg.detail ? (
-                    <div className="mt-1.5 text-[10px] font-mono opacity-70 bg-black/5 dark:bg-white/5 rounded px-2 py-0.5">
+                  {msg.detail && !(msg.blocks && msg.blocks.length > 0) ? (
+                    <div className="mt-1.5 text-[10px] font-mono opacity-70 bg-black/5 dark:bg-white/5 rounded px-2 py-0.5 whitespace-pre-wrap">
                       {msg.detail}
                     </div>
                   ) : null}
+
+                  {/* Model badge + Retry — shown on completed/errored assistant messages */}
+                  {msg.role === "assistant" && (msg.status === "success" || msg.status === "error") && (
+                    <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/50">
+                      {(msg.modelUsed || msg.creditsUsed != null) && (
+                        <span>
+                          {msg.modelUsed ? `· ${msg.modelUsed}` : "·"}
+                          {msg.creditsUsed != null ? ` | ${msg.creditsUsed.toFixed(1)} credits` : ""}
+                        </span>
+                      )}
+                      {!isRunning && (
+                        <button
+                          type="button"
+                          className="flex items-center rounded-md border bg-background/90 p-1 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                          onClick={() => {
+                            if (lastDoneSessionRef.current) markSessionRetried(lastDoneSessionRef.current);
+                            void retryFromMessage(msg.id);
+                          }}
+                          title="Retry"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Feedback buttons — show on the final success message */}
+                  {msg.role === "assistant" && msg.status === "success" && !isRunning && lastDoneSessionRef.current && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      {feedbackSent[lastDoneSessionRef.current] ? (
+                        <span className="text-[10px] text-muted-foreground/60">
+                          {feedbackSent[lastDoneSessionRef.current] === "positive" ? "👍" : "👎"} Thanks!
+                        </span>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => submitFeedback("positive")}
+                            className="text-[11px] px-2 py-0.5 rounded-md bg-muted/40 hover:bg-green-500/20 transition-colors"
+                            title="Good result"
+                          >
+                            👍
+                          </button>
+                          <button
+                            onClick={() => submitFeedback("negative")}
+                            className="text-[11px] px-2 py-0.5 rounded-md bg-muted/40 hover:bg-red-500/20 transition-colors"
+                            title="Bad result"
+                          >
+                            👎
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1082,6 +1243,27 @@ export function CursorPanel() {
         {/* Auto-scroll anchor */}
         <div ref={chatEndRef} />
       </div>
+
+      {/* ── Terminal Allow/Skip (command consent) ── */}
+      {/* Credit usage (inline) */}
+      {creditsUsed > 0 && !isRunning && (
+        <div className="mx-3 mt-1 mb-1 flex items-center gap-2 text-[10px] text-muted-foreground/60">
+          <div className="h-1 flex-1 rounded-full bg-muted/30 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(100, (creditsUsed / creditBudget) * 100)}%`,
+                background: creditsUsed > creditBudget * 0.8
+                  ? "var(--cursor-error, #ef4444)"
+                  : creditsUsed > creditBudget * 0.5
+                    ? "#f59e0b"
+                    : "var(--cursor-primary, #3b82f6)",
+              }}
+            />
+          </div>
+          <span className="font-mono shrink-0">{creditsUsed.toFixed(1)}/{creditBudget} credits</span>
+        </div>
+      )}
 
       {/* \u2500\u2500 Secret Dialog (only for sensitive inputs like API tokens) \u2500\u2500 */}
       {secretPending && secretPending.sensitive ? (
@@ -1117,6 +1299,130 @@ export function CursorPanel() {
         </div>
       ) : null}
 
+      {/* ── TODO Widget (plan tracker) ── */}
+      {planItems.length > 0 ? (
+        <details open className="mx-3 mb-2 rounded-lg border bg-muted/20 text-xs">
+          <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground hover:text-foreground flex items-center gap-2">
+            <span className="flex-1">
+              Todos ({planItems.filter((i) => i.status === "done").length}/{planItems.length})
+            </span>
+            {planMarkdown ? (
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPlanModalOpen(true); }}
+                className="rounded border bg-background px-2 py-0.5 text-[11px] font-normal text-foreground hover:bg-accent"
+              >
+                View Plan
+              </button>
+            ) : null}
+          </summary>
+          <ul className="px-3 pb-2 space-y-1">
+            {planItems.map((item) => (
+              <li key={item.id} className="flex items-center gap-2">
+                <span className="flex-shrink-0">
+                  {item.status === "done" ? "✅" : item.status === "in_progress" ? "🔵" : "⭕"}
+                </span>
+                <span className={cn(
+                  "truncate",
+                  item.status === "done" && "line-through text-muted-foreground/60",
+                  item.status === "in_progress" && "font-medium",
+                )}>
+                  {item.title}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {/* ── Plan Markdown Modal ── */}
+      {planModalOpen && planMarkdown ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Plan details"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setPlanModalOpen(false)}
+        >
+          <div
+            className="relative max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-lg border bg-background shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-4 py-2">
+              <h2 className="text-sm font-semibold">Plan</h2>
+              <button
+                type="button"
+                onClick={() => setPlanModalOpen(false)}
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label="Close plan"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="overflow-auto p-4" style={{ maxHeight: "calc(85vh - 3rem)" }}>
+              <MarkdownContent text={planMarkdown} className="text-sm leading-relaxed" />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── File Changes: shown during session with live count, Keep/Undo after done ── */}
+      {fileActions.length > 0 ? (
+        <details className="mx-3 mb-2 rounded-lg border bg-muted/20 text-xs">
+          <summary className="cursor-pointer select-none px-3 py-2 font-medium text-muted-foreground hover:text-foreground">
+            {fileActions.length} file{fileActions.length > 1 ? "s" : ""} changed
+            {isRunning && <Loader2 className="inline h-3 w-3 animate-spin ml-1.5" />}
+          </summary>
+          <ul className="px-3 pb-2 space-y-1">
+            {fileActions.map((fa) => {
+              const short = fa.path.split("/").slice(-2).join("/");
+              const isReverted = revertedFiles.has(fa.path);
+              return (
+                <li key={fa.id} className="flex items-center gap-2 justify-between">
+                  <span className={cn("truncate flex-1", isReverted && "line-through text-muted-foreground/50")}>
+                    {fa.type === "created" ? "📄" : fa.type === "modified" ? "✏️" : "🗑️"} {short}
+                  </span>
+                  {!isReverted && !isRunning ? (
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => setRevertedFiles((prev) => new Set(prev).add(fa.path))}
+                        className="rounded px-2 py-0.5 text-[10px] border text-muted-foreground hover:text-foreground"
+                      >
+                        Keep
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!fa.originalPreview && fa.type !== "deleted") {
+                            // New file — can't revert to "nothing" easily
+                            return;
+                          }
+                          try {
+                            const sid = lastDoneSessionRef.current;
+                            if (!sid) return;
+                            await fetch(apiUrl(`/cursor/sessions/${encodeURIComponent(sid)}/revert-file`), {
+                              method: "POST",
+                              credentials: "include",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ path: fa.path, originalContent: fa.originalPreview }),
+                            });
+                            setRevertedFiles((prev) => new Set(prev).add(fa.path));
+                          } catch { /* ignore */ }
+                        }}
+                        className="rounded px-2 py-0.5 text-[10px] border text-red-500/80 hover:text-red-600"
+                      >
+                        Undo
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground/50">reverted</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      ) : null}
+
       {/* ── Suggestion Chips ── */}
       {!isRunning && !secretPending ? (
         <div className="px-4 pb-2 flex flex-wrap gap-1.5">
@@ -1143,27 +1449,29 @@ export function CursorPanel() {
         </div>
       ) : null}
 
-      {/* \u2500\u2500 Repo URL Attachment \u2500\u2500 */}
-      {showRepoInput ? (
-        <div className="flex items-center gap-2 px-3 py-2 border-t bg-muted/30">
-          <Github className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-          <input
-            type="url"
-            value={repoUrl}
-            onChange={(e) => setRepoUrl(e.target.value)}
-            placeholder="https://github.com/user/repo"
-            className="flex-1 rounded-lg border bg-background px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[var(--cursor-primary)]/30"
-          />
-          <button
-            type="button"
-            onClick={() => { setShowRepoInput(false); setRepoUrl(""); }}
-            aria-label="Remove repo URL"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+      {/* ── Attached Repo Chip ── */}
+      {repoUrl ? (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-t bg-muted/30">
+          <div className="flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs">
+            <Github className="h-3 w-3 text-muted-foreground" />
+            <span className="max-w-[240px] truncate text-muted-foreground">
+              {formatRepoUrl(repoUrl)}
+            </span>
+            <button
+              type="button"
+              onClick={() => { setRepoUrl(""); }}
+              aria-label="Remove repo"
+              className="text-muted-foreground hover:text-foreground ml-0.5"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
         </div>
       ) : null}
+
+      {/* ── Ask-user options now render INSIDE the chat timeline (InlineAskBlock).
+          The previous floating row here duplicated the buttons and stayed visible
+          after answering. Removed to keep a single source of truth. ── */}
 
 
       {/* \u2500\u2500 Input Bar \u2500\u2500 */}
@@ -1172,48 +1480,163 @@ export function CursorPanel() {
         className="flex items-center gap-2 px-3 py-3 border-t"
         role="search"
       >
-        <button
-          type="button"
-          onClick={() => setShowRepoInput((v) => !v)}
-          aria-label="Attach GitHub repo URL"
-          title="Analyze a GitHub repo"
-          className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-xl transition-colors flex-shrink-0",
-            showRepoInput || repoUrl
-              ? "text-white"
-              : "text-muted-foreground hover:text-foreground border",
-          )}
-          style={showRepoInput || repoUrl ? { background: "var(--cursor-primary)" } : undefined}
-        >
-          <Github className="h-4 w-4" />
-        </button>
-        <input
+        {/* + Attach button with context menu popover */}
+        <Popover open={showRepoInput} onOpenChange={(open) => {
+          setShowRepoInput(open);
+          if (!open) setShowImportCode(false);
+        }}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label="Attach context"
+              title="Attach context"
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-xl transition-all flex-shrink-0",
+                showRepoInput
+                  ? "text-white rotate-45"
+                  : repoUrl
+                    ? "text-white"
+                    : "text-muted-foreground hover:text-foreground border",
+              )}
+              style={showRepoInput || repoUrl ? { background: "var(--cursor-primary)" } : undefined}
+            >
+              <Plus className="h-4 w-4 transition-transform" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            align="start"
+            sideOffset={8}
+            className="w-72 p-0"
+          >
+            {!showImportCode ? (
+              /* ── Step 1: Context menu ── */
+              <div className="py-1">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
+                  onClick={() => setShowImportCode(true)}
+                >
+                  <Code className="h-4 w-4 text-muted-foreground" />
+                  Import code
+                </button>
+              </div>
+            ) : (
+              /* ── Step 2: GitHub URL input ── */
+              <div className="p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowImportCode(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Back"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                  <h4 className="text-sm font-medium">Import code</h4>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Github className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <input
+                    type="url"
+                    value={repoUrl}
+                    onChange={(e) => setRepoUrl(e.target.value)}
+                    placeholder="https://github.com/user/repo"
+                    className="flex-1 rounded-lg border bg-background px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-[var(--cursor-primary)]/30"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && repoUrl.trim()) {
+                        e.preventDefault();
+                        if (!isValidRepoUrl(repoUrl)) return;
+                        setShowRepoInput(false);
+                        setShowImportCode(false);
+                        inputRef.current?.focus();
+                      }
+                    }}
+                  />
+                </div>
+                {repoUrl.trim() ? (
+                  <div className="flex flex-col gap-1.5">
+                    {!isValidRepoUrl(repoUrl) ? (
+                      <p className="text-[10px] text-destructive">Enter a valid GitHub, GitLab, or Bitbucket repo URL</p>
+                    ) : null}
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-muted-foreground truncate max-w-[160px]">
+                        {formatRepoUrl(repoUrl)}
+                      </p>
+                      <button
+                        type="button"
+                        className="text-xs font-medium px-2.5 py-1 rounded-md transition-colors text-white disabled:opacity-40"
+                        style={{ background: "var(--cursor-primary)" }}
+                        disabled={!isValidRepoUrl(repoUrl)}
+                        onClick={() => {
+                          setShowRepoInput(false);
+                          setShowImportCode(false);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        Attach
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
+        <textarea
           ref={inputRef}
-          type="text"
+          rows={1}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => {
+            setInput(e.target.value);
+            // Auto-resize
+            const el = e.target;
+            el.style.height = "auto";
+            el.style.height = Math.min(el.scrollHeight, 150) + "px";
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (input.trim()) handleSubmit(e as unknown as React.FormEvent);
+            }
+          }}
+          onPaste={handlePanelImagePaste}
           placeholder={
             askUserPending && !askUserPending.sensitive
               ? "Type your answer..."
               : isRunning
-                ? "Working on it..."
+                ? "Send a correction..."
                 : "Type a message..."
           }
-          disabled={(isRunning && !askUserPending) || !!secretPending}
+          disabled={!!secretPending}
           aria-label="Cursor chat input"
-          className="flex-1 rounded-xl border bg-background px-4 py-2.5 text-sm placeholder:text-muted-foreground/50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[var(--cursor-primary)]/30"
+          className="flex-1 rounded-xl border bg-background px-4 py-2.5 text-sm placeholder:text-muted-foreground/50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[var(--cursor-primary)]/30 resize-none"
+          style={{ minHeight: "2.5rem", maxHeight: "150px" }}
         />
         {isRunning && !askUserPending ? (
-          <button
-            type="button"
-            onClick={handleCancel}
-            aria-label="Cancel current action"
-            className="flex h-10 w-10 items-center justify-center rounded-xl text-white transition-colors"
-            style={{ background: "var(--cursor-error)" }}
-            title="Cancel"
-          >
-            <Square className="h-4 w-4" />
-          </button>
+          <>
+            <button
+              type="submit"
+              disabled={!input.trim()}
+              aria-label="Send correction"
+              className="flex h-10 w-10 items-center justify-center rounded-xl text-white transition-colors disabled:opacity-40"
+              style={{ background: "var(--cursor-primary)" }}
+              title="Send correction"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              aria-label="Cancel current action"
+              className="flex h-10 w-10 items-center justify-center rounded-xl text-white transition-colors"
+              style={{ background: "var(--cursor-error)" }}
+              title="Cancel"
+            >
+              <Square className="h-4 w-4" />
+            </button>
+          </>
         ) : (
           <button
             type="submit"
@@ -1229,6 +1652,9 @@ export function CursorPanel() {
       </form>
       </>
       )}
+
+      {/* ── Conversation History Modal ── */}
+
     </div>
   );
 }

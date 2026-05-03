@@ -529,6 +529,24 @@ pluginRouter.post(
   })
 );
 
+/**
+ * POST /api/plugins/installed/:id/update
+ *
+ * Pull the latest catalog `codeBundle` into this user's container and clear
+ * the `needsUpdate` flag. Called by the installer when they click the
+ * "Update available" badge in the UI.
+ */
+pluginRouter.post(
+  "/installed/:id/update",
+  requireAuth,
+  asyncHandler(async (req: Request, res: Response<ApiResponse<SafeUserPlugin>>) => {
+    const ctx = getPersonalContext(req);
+    const id = getPathParam(req, "id");
+    const userPlugin = await pluginService.updateInstalledPlugin(ctx, id);
+    res.json({ success: true, data: userPlugin });
+  })
+);
+
 // ===========================================
 // Analytics Plugin Data (Auth required)
 // ===========================================

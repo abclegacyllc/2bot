@@ -3,13 +3,13 @@
 // CORS configuration
 export { corsOptions } from "./cors";
 
-// Deprecation middleware for endpoint migration (Phase 6.7)
+// Deprecation middleware for endpoint migration
 export { ENDPOINT_MIGRATIONS, deprecated, getMigrationInfo } from "./deprecation";
 
 // Error handling
 export { asyncHandler, errorHandler, notFoundHandler } from "./error-handler";
 
-// URL-based org auth (Phase 6.7) - validates membership from URL params
+// URL-based org auth - validates membership from URL params
 export {
     requireOrgAdmin as requireOrgAdminUrl,
     requireOrgMember,
@@ -22,7 +22,7 @@ export { createRateLimiter, rateLimitMiddleware } from "./rate-limit";
 // Request logging
 export { pinoHttpMiddleware, requestLogger } from "./request-logger";
 
-// Legacy context-based role checks (Phase 4) - validates from JWT context
+// Legacy context-based role checks - validates from JWT context
 export {
     requireAdmin,
     requireAllPermissions,

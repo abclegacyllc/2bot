@@ -58,12 +58,9 @@ const EXTENSION_MAP: Record<string, SupportedLanguage> = {
   ".tsx": "typescript",
   ".mts": "typescript",
   ".cts": "typescript",
-  ".py": "javascript", // mapped to python below
+  ".py": "python",
+  ".pyw": "python",
 };
-
-// Fix: Python extension
-EXTENSION_MAP[".py"] = "python";
-EXTENSION_MAP[".pyw"] = "python";
 
 /**
  * Detect language from file extension.
@@ -542,6 +539,51 @@ export function extractImports(content: string, language: SupportedLanguage): Ex
 export function getFunction(content: string, language: SupportedLanguage, functionName: string): ExtractedFunction | null {
   const fns = extractFunctions(content, language);
   return fns.find((f) => f.name === functionName) ?? null;
+}
+
+// ===========================================
+// Code Chunking (for vector embeddings)
+// ===========================================
+
+/**
+ * A single code chunk produced by chunkByFunction().
+ * Each chunk is one function, method, or class body.
+ */
+export interface CodeChunk {
+  /** Full source text of the chunk */
+  text: string;
+  startLine: number;
+  endLine: number;
+  /** Human-readable label, e.g. "function handleRequest" or "AuthService.login" */
+  label: string;
+}
+
+/**
+ * Chunk a source file by top-level functions and class methods.
+ *
+ * Each extracted function/method becomes one CodeChunk.
+ * Used by workspace-embedding.service to create vector chunks
+ * that map naturally to semantic units of code.
+ *
+ * Returns an empty array if the language is unsupported or parsing fails.
+ */
+export function chunkByFunction(content: string, filePath: string): CodeChunk[] {
+  const lang = detectLanguage(filePath);
+  if (!lang) return [];
+
+  try {
+    const fns = extractFunctions(content, lang);
+    return fns.map((fn): CodeChunk => ({
+      text: fn.body,
+      startLine: fn.startLine,
+      endLine: fn.endLine,
+      label: fn.isMethod && fn.className
+        ? `${fn.className}.${fn.name}`
+        : `function ${fn.name}`,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**

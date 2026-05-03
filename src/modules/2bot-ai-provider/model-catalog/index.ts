@@ -65,7 +65,7 @@ export {
 } from './canonical-models';
 export type { CanonicalModel, CheapestProviderResult } from './canonical-models';
 
-// Tier Auto-Curator (Phase 3)
+// Tier Auto-Curator
 export {
     TIER_CURATION_RULES, autoGenerateMapping,
     autoGenerateProviderOptions,

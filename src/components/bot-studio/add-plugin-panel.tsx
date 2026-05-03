@@ -207,7 +207,7 @@ export function AddPluginPanel({
           return;
         }
 
-        // Phase 2: Installed (first check)
+        // Installed (first check)
         setInstallProgress({ slug, phase: "installed" });
 
         // Poll health for up to 5 seconds
@@ -230,11 +230,11 @@ export function AddPluginPanel({
           }
         }
 
-        // Phase 3: Running (second check)
+        // Running (second check)
         setInstallProgress({ slug, phase: "running" });
         await new Promise((r) => setTimeout(r, 800));
 
-        // Phase 4: Ready (third check + test it prompt)
+        // Ready (third check + test it prompt)
         setInstallProgress({ slug, phase: "ready" });
 
         const pluginName = plugins.find((p) => p.slug === slug)?.name ?? slug;
@@ -368,9 +368,11 @@ export function AddPluginPanel({
             if (event.success) {
               setAiProgressLog((prev) => [...prev, `Plugin created successfully!`]);
               toast.success("Plugin generated and added to your bot!");
+              const donePluginId = event.pluginId as string | undefined;
+              const donePluginName = (event.pluginName as string | undefined) ?? aiRepoUrl.split("/").pop() ?? "Plugin";
               setTimeout(() => {
                 setIsGenerating(false);
-                onInstalled();
+                onInstalled(donePluginId ? { pluginId: donePluginId, pluginName: donePluginName } : undefined);
               }, 1500);
             } else {
               setCreateError(event.summary as string || "Plugin generation failed");

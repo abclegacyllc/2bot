@@ -5,6 +5,9 @@
  * fail repeatedly within a time window. Models recover automatically
  * after a cooldown period.
  *
+ * Also feeds failures to the provider circuit breaker for provider-level
+ * health tracking and admin alerts.
+ *
  * Used by:
  * - `getAutoFallbackChain()` / `getAvailableModels()` to exclude unhealthy models
  * - `/real-models` endpoint to expose `isHealthy` per model
@@ -14,6 +17,8 @@
  */
 
 import { logger } from "@/lib/logger";
+import { recordProviderFailure, recordProviderSuccess } from "./provider-circuit-breaker";
+import type { TwoBotAIProvider } from "./types";
 
 const log = logger.child({ module: "model-health-tracker" });
 
@@ -27,8 +32,8 @@ const FAILURE_THRESHOLD = 3;
 /** Time window for counting failures (5 minutes) */
 const FAILURE_WINDOW_MS = 5 * 60 * 1000;
 
-/** How long a disabled model stays disabled before auto-recovery (15 minutes) */
-const COOLDOWN_MS = 15 * 60 * 1000;
+/** How long a disabled model stays disabled before auto-recovery (3 minutes) */
+const COOLDOWN_MS = 3 * 60 * 1000;
 
 // ===========================================
 // State
@@ -51,9 +56,13 @@ const healthRecords = new Map<string, ModelHealthRecord>();
 
 /**
  * Record a model failure. If failures exceed the threshold, the model
- * is temporarily disabled.
+ * is temporarily disabled. Also feeds the provider circuit breaker.
+ *
+ * @param modelId - The model that failed
+ * @param error - Error message
+ * @param provider - Optional provider override. If not given, attempts to look up via model cache.
  */
-export function recordModelFailure(modelId: string, error?: string): void {
+export function recordModelFailure(modelId: string, error?: string, provider?: TwoBotAIProvider): void {
   const now = Date.now();
   let record = healthRecords.get(modelId);
 
@@ -74,18 +83,37 @@ export function recordModelFailure(modelId: string, error?: string): void {
       `⛔ Model auto-disabled after ${FAILURE_THRESHOLD} failures in ${FAILURE_WINDOW_MS / 60000}min window`
     );
   }
+
+  // Feed provider circuit breaker (if provider is known)
+  if (provider && error) {
+    recordProviderFailure(provider, modelId, error);
+  } else if (error) {
+    // Try to resolve provider from model→provider mapping
+    // Lazy import to avoid circular dependency
+    const resolvedProvider = resolveModelProvider(modelId);
+    if (resolvedProvider) {
+      recordProviderFailure(resolvedProvider, modelId, error);
+    }
+  }
 }
 
 /**
  * Record a successful model call. Clears failure history for the model.
+ * Also notifies the provider circuit breaker.
  */
-export function recordModelSuccess(modelId: string): void {
+export function recordModelSuccess(modelId: string, provider?: TwoBotAIProvider): void {
   const record = healthRecords.get(modelId);
   if (record) {
     if (record.disabledAt) {
       log.info({ modelId }, "✅ Model re-enabled after successful call");
     }
     healthRecords.delete(modelId);
+  }
+
+  // Notify provider circuit breaker
+  const resolvedProvider = provider || resolveModelProvider(modelId);
+  if (resolvedProvider) {
+    recordProviderSuccess(resolvedProvider);
   }
 }
 
@@ -148,4 +176,39 @@ export function getModelHealthSummary(): Array<{
 export function clearModelHealthRecords(): void {
   healthRecords.clear();
   log.info("Model health records cleared");
+}
+
+// ===========================================
+// Internal Helpers
+// ===========================================
+
+/**
+ * Cache of model→provider mappings to avoid repeated lookups.
+ * Populated lazily as models are recorded.
+ */
+const modelProviderCache = new Map<string, TwoBotAIProvider>();
+
+/**
+ * Resolve a model ID to its provider. Uses a lazy cache + dynamic import
+ * of provider-config to avoid circular dependencies.
+ */
+function resolveModelProvider(modelId: string): TwoBotAIProvider | undefined {
+  const cached = modelProviderCache.get(modelId);
+  if (cached) return cached;
+
+  try {
+    // Dynamic require to break circular import chain
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getModelIfAvailable } = require("./provider-config") as {
+      getModelIfAvailable: (id: string) => { provider: TwoBotAIProvider } | undefined;
+    };
+    const model = getModelIfAvailable(modelId);
+    if (model) {
+      modelProviderCache.set(modelId, model.provider);
+      return model.provider;
+    }
+  } catch {
+    // provider-config not yet initialized — skip
+  }
+  return undefined;
 }

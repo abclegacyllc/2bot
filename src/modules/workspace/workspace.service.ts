@@ -17,9 +17,10 @@
 
 import crypto from 'crypto';
 
-import { decrypt, encrypt } from '@/lib/encryption';
+import { decryptIfEncrypted, encrypt } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
+import { redis } from '@/lib/redis';
 import {
     getIncludedOrgWorkspace,
     type OrgPlanType,
@@ -121,8 +122,8 @@ class WorkspaceService {
           where: { id: containerId },
           data: { lastActivityAt: timestamp },
         });
-      } catch {
-        // Non-critical — silently skip
+      } catch (err) {
+        log.warn({ containerId, error: (err as Error).message }, 'Activity flush failed');
       }
     }
   }
@@ -351,6 +352,17 @@ class WorkspaceService {
         },
       });
 
+      // Write bridge auth token to Redis for O(1) lookup in bridgeTokenAuth middleware.
+      // TTL 86400s — refreshed on each container start. Cleaned up on stop/destroy.
+      redis.set(
+        `bridge:auth:${crypto.createHash('sha256').update(bridgeAuthToken).digest('hex')}`,
+        JSON.stringify({ id: container.id, userId: ctx.userId, organizationId: options.organizationId ?? null }),
+        'EX',
+        86400,
+      ).catch((err: Error) => {
+        log.warn({ containerDbId: container.id, error: err.message }, 'Failed to cache bridge auth token in Redis');
+      });
+
       // 14. Establish bridge connection
       if (!bridgePort) {
         throw new Error('Bridge port not available after container start');
@@ -392,6 +404,12 @@ class WorkspaceService {
 
       // Push workflow caches to new container (non-blocking)
       void pushAllWorkflowCaches(ctx.userId, options.organizationId ?? null);
+
+      // Backfill workspaceContainerId on gateways that don't have it yet (non-blocking)
+      void prisma.gateway.updateMany({
+        where: { userId: ctx.userId, organizationId: ctx.organizationId ?? null, workspaceContainerId: null },
+        data: { workspaceContainerId: container.id },
+      }).catch(() => {});
 
       // Audit: successful creation
       workspaceAuditService.log({
@@ -519,8 +537,33 @@ class WorkspaceService {
         log.warn({ containerDbId, error: (err as Error).message }, 'Plugin start after workspace start failed (non-blocking)');
       });
 
+      // Discover any unregistered plugin directories and register them (non-blocking)
+      void (async () => {
+        try {
+          const bridgeClient = bridgeClientManager.getExistingClient(containerDbId);
+          if (bridgeClient) {
+            const { pluginWorkspaceSyncService } = await import('@/modules/plugin/plugin-workspace-sync.service');
+            const discovered = await pluginWorkspaceSyncService.discoverAndRegisterPlugins(
+              bridgeClient, ctx.userId, container.organizationId ?? null, log,
+            );
+            const newPlugins = discovered.filter(d => d.action === 'registered');
+            if (newPlugins.length > 0) {
+              log.info({ containerDbId, count: newPlugins.length, slugs: newPlugins.map(p => p.slug) }, 'Auto-registered discovered plugins');
+            }
+          }
+        } catch (err) {
+          log.debug({ containerDbId, error: (err as Error).message }, 'Plugin discovery on start failed (non-fatal)');
+        }
+      })();
+
       // Push workflow caches to container (non-blocking)
       void pushAllWorkflowCaches(ctx.userId, container.organizationId ?? null);
+
+      // Backfill workspaceContainerId on gateways that don't have it yet (non-blocking)
+      void prisma.gateway.updateMany({
+        where: { userId: ctx.userId, organizationId: container.organizationId ?? null, workspaceContainerId: null },
+        data: { workspaceContainerId: containerDbId },
+      }).catch(() => {});
 
       workspaceAuditService.log({ userId: ctx.userId, containerId: containerDbId, action: 'START', ipAddress: ctx.ipAddress, userAgent: ctx.userAgent });
       return { success: true, message: 'Workspace started', containerId: containerDbId, status: 'RUNNING' };
@@ -599,10 +642,16 @@ class WorkspaceService {
 
       // Reconnect bridge client
       if (bridgePort && container.bridgeAuthToken) {
-        const authToken = container.bridgeAuthToken.startsWith('v1:')
-          ? decrypt(container.bridgeAuthToken)
-          : container.bridgeAuthToken;
+        const authToken = decryptIfEncrypted(container.bridgeAuthToken);
         await bridgeClientManager.getClient(containerDbId, bridgePort, authToken);
+
+        // Re-populate Redis cache (may have expired or been evicted since last start)
+        redis.set(
+          `bridge:auth:${crypto.createHash('sha256').update(authToken).digest('hex')}`,
+          JSON.stringify({ id: containerDbId, userId: container.userId, organizationId: container.organizationId }),
+          'EX',
+          86400,
+        ).catch(() => {});
       }
 
       // Sync egress proxy ACLs for restarted container IP (non-blocking)
@@ -663,6 +712,14 @@ class WorkspaceService {
         where: { id: containerDbId },
         data: { status: 'STOPPED', stoppedAt: new Date() },
       });
+
+      // Invalidate Redis bridge auth cache for this container
+      if (container.bridgeAuthToken) {
+        try {
+          const plainToken = decryptIfEncrypted(container.bridgeAuthToken);
+          redis.del(`bridge:auth:${crypto.createHash('sha256').update(plainToken).digest('hex')}`).catch(() => {});
+        } catch { /* ignore decrypt errors */ }
+      }
 
       log.info({ containerDbId }, 'Workspace stopped');
       workspaceAuditService.log({ userId: ctx.userId, containerId: containerDbId, action: 'STOP', ipAddress: ctx.ipAddress, userAgent: ctx.userAgent });
@@ -733,6 +790,14 @@ class WorkspaceService {
       where: { id: containerDbId },
       data: { status: 'DESTROYED', stoppedAt: new Date() },
     });
+
+    // Invalidate Redis bridge auth cache for this container
+    if (container.bridgeAuthToken) {
+      try {
+        const plainToken = decryptIfEncrypted(container.bridgeAuthToken);
+        redis.del(`bridge:auth:${crypto.createHash('sha256').update(plainToken).digest('hex')}`).catch(() => {});
+      } catch { /* ignore decrypt errors */ }
+    }
 
     log.info({ containerDbId, deleteData: shouldDeleteData }, 'Workspace destroyed');
     workspaceAuditService.log({
@@ -954,6 +1019,38 @@ class WorkspaceService {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/not found|ENOENT|no such file/i.test(msg)) {
+        // Auto-recovery: if the missing path looks like a plugin entry file,
+        // attempt to restore it from the catalog template before giving up.
+        const isPluginPath =
+          /^plugins\//.test(path) ||
+          /^bots\/[^/]+\/[^/]+\/plugins\//.test(path) ||
+          /^bots\/[^/]+\/plugins\//.test(path);
+
+        if (isPluginPath) {
+          try {
+            // Look up the UserPlugin record by entryFile so we can pass the
+            // correct slug, userId, and orgId to ensureFileExists.
+            const userPlugin = await prisma.userPlugin.findFirst({
+              where: { entryFile: path },
+              include: { plugin: { select: { slug: true } } },
+            });
+            if (userPlugin) {
+              const recovered = await pluginDeployService.ensureFileExists(
+                containerDbId,
+                userPlugin.plugin.slug,
+                userPlugin.userId,
+                userPlugin.organizationId,
+                path,
+              );
+              if (recovered) {
+                return await client.fileRead(path);
+              }
+            }
+          } catch {
+            // Recovery failed — fall through to the NotFoundError below
+          }
+        }
+
         throw new NotFoundError(`File not found: ${path}`);
       }
       throw err;
@@ -984,6 +1081,13 @@ class WorkspaceService {
         // Non-critical — file save still succeeded
       }
     }
+
+    // Auto-register new plugin directories. Fires only when the written path
+    // looks like a plugin entry file (plugin.json or index.js) and no DB
+    // record exists yet. Non-blocking.
+    void pluginWorkspaceSyncService
+      .ensureRegisteredForPath(client, containerDbId, path)
+      .catch(() => {});
 
     return result;
   }
@@ -1440,6 +1544,12 @@ class WorkspaceService {
    * Get bridge client for a container (with auth check)
    */
   private async getBridgeClient(ctx: ServiceContext, containerDbId: string): Promise<BridgeClient> {
+    // if the container was auto-paused for idleness, resume it
+    // before attempting any bridge call. ensureRunning is a no-op for
+    // already-RUNNING containers (single fast DB read).
+    const { containerLifecycleService } = await import('./container-lifecycle.service');
+    await containerLifecycleService.ensureRunning(containerDbId);
+
     // Fast path: if bridge client already exists, use cached auth to skip DB query
     const existing = bridgeClientManager.getExistingClient(containerDbId);
     if (existing) {
@@ -1489,9 +1599,7 @@ class WorkspaceService {
     }
 
     // Decrypt the token — supports both encrypted (v1:...) and legacy plaintext tokens
-    const authToken = container.bridgeAuthToken.startsWith('v1:')
-      ? decrypt(container.bridgeAuthToken)
-      : container.bridgeAuthToken;
+    const authToken = decryptIfEncrypted(container.bridgeAuthToken);
 
     return bridgeClientManager.getClient(
       containerDbId,

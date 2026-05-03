@@ -14,11 +14,11 @@ import { decryptJson, encrypt } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { enforcePluginLimit } from "@/lib/plan-limits";
 import { prisma } from "@/lib/prisma";
-import { ForbiddenError, NotFoundError, ValidationError } from "@/shared/errors";
+import { BadRequestError, ForbiddenError, NotFoundError, ValidationError } from "@/shared/errors";
 import type { ServiceContext } from "@/shared/types/context";
 
 import { bridgeClientManager, workspaceService } from "@/modules/workspace";
-import { getPluginEntryPath, pluginDeployService } from "./plugin-deploy.service";
+import { gatewayTypeToPlatform, getPluginEntryPath, isDirectoryEntryPath, isDirectoryLayout, pluginDeployService } from "./plugin-deploy.service";
 import { pluginIpcService } from "./plugin-ipc.service";
 import type {
     ConflictResolution,
@@ -107,12 +107,21 @@ class PluginService {
       where = {
         OR: [
           { ...baseFilter, isBuiltin: true },
-          { ...baseFilter, isPublic: true },
+          // Security: USER-authored plugins must never appear in the public
+          // marketplace listing, regardless of their isPublic flag.
+          { ...baseFilter, isPublic: true, authorType: { not: "USER" } },
           { ...baseFilter, authorId: options.userId },
         ],
       };
     } else {
-      where = { ...baseFilter, OR: [{ isBuiltin: true }, { isPublic: true }] };
+      where = {
+        ...baseFilter,
+        OR: [
+          { isBuiltin: true },
+          // Security: exclude USER-authored plugins from public listing
+          { isPublic: true, authorType: { not: "USER" } },
+        ],
+      };
     }
 
     const plugins = await prisma.plugin.findMany({
@@ -267,6 +276,19 @@ class PluginService {
       throw new ValidationError("Plugin is not available for installation", {});
     }
 
+    // Security: USER-authored plugins are private to their author.
+    // They are never listed in the marketplace and must not be installable
+    // by any other user (even if they somehow know the plugin ID).
+    if (
+      plugin.authorType === "USER" &&
+      plugin.authorId !== ctx.userId &&
+      !ctx.isSuperAdmin()
+    ) {
+      throw new ForbiddenError(
+        "This plugin is private and can only be used by its author",
+      );
+    }
+
     // Check plan limits
     await enforcePluginLimit(ctx);
 
@@ -301,6 +323,7 @@ class PluginService {
     // Verify gateway if provided
     let conflictWarnings: string[] = [];
     let conflictResolutions: ConflictResolution[] = [];
+    let gatewayType: string | undefined;
     if (data.gatewayId) {
       const gateway = await prisma.gateway.findUnique({
         where: { id: data.gatewayId },
@@ -309,6 +332,7 @@ class PluginService {
       if (!gateway) {
         throw new NotFoundError("Gateway not found");
       }
+      gatewayType = gateway.type;
 
       // Check gateway ownership
       const isOwner = ctx.organizationId
@@ -371,15 +395,38 @@ class PluginService {
     const mergedConfig = { ...schemaDefaults, ...(data.config ?? {}) };
     const encryptedConfig = { _encrypted: encrypt(mergedConfig) };
     
+    // Determine if this is a directory plugin (multiple files, not single codeBundle)
+    const isDirectoryPlugin = isDirectoryLayout(plugin.slug);
+    const platform = gatewayType ? gatewayTypeToPlatform(gatewayType) : undefined;
+
+    // Wave 2: auto-attach to default project. Gated behind
+    // FEATURE_AUTO_ATTACH_PROJECT until the NOT NULL migration is applied.
+    let projectId: string | null = null;
+    if ((process.env.FEATURE_AUTO_ATTACH_PROJECT ?? "disabled").toLowerCase() === "enabled") {
+      const { ensureDefaultProject } = await import("@/modules/project/project.service");
+      const defaultProject = await ensureDefaultProject({
+        userId: ctx.userId,
+        organizationId: ctx.organizationId ?? null,
+      });
+      projectId = defaultProject.id;
+    }
+
     const userPlugin = await prisma.userPlugin.create({
       data: {
         userId: ctx.userId,
         pluginId: pluginId,
         organizationId: ctx.organizationId ?? null,
+        projectId,
         config: encryptedConfig,
         gatewayId: data.gatewayId ?? null,
         isEnabled: true,
-        entryFile: getPluginEntryPath(data.gatewayId, plugin.slug),
+        // Record the catalog version at install time so future republishes
+        // can flag this install as needing an update.
+        installedVersion: plugin.version,
+        entryFile: getPluginEntryPath(data.gatewayId, plugin.slug, {
+          platform,
+          isDirectory: isDirectoryPlugin,
+        }),
       },
       include: {
         plugin: true,
@@ -426,6 +473,7 @@ class PluginService {
           templateCode,
           env,
           data.gatewayId,
+          platform,
         );
       } catch (err) {
         pluginLogger.warn(
@@ -643,21 +691,19 @@ class PluginService {
     // Check ownership
     this.checkOwnership(ctx, userPlugin);
 
-    // Validate config against plugin schema
-    const configSchema = userPlugin.plugin.configSchema as Record<string, unknown>;
-    const validation = validateConfigAgainstSchema(data.config, configSchema);
-    if (!validation.valid) {
-      throw new ValidationError("Invalid plugin configuration", {
-        config: validation.errors ?? ["Configuration validation failed"],
-      });
-    }
+    // Validate and update config only when explicitly provided
+    const updateData: Prisma.UserPluginUpdateInput = {};
 
-    // Build update data
-    const encryptedConfig = { _encrypted: encrypt(data.config) };
-    
-    const updateData: Prisma.UserPluginUpdateInput = {
-      config: encryptedConfig,
-    };
+    if (data.config !== undefined) {
+      const configSchema = userPlugin.plugin.configSchema as Record<string, unknown>;
+      const validation = validateConfigAgainstSchema(data.config, configSchema);
+      if (!validation.valid) {
+        throw new ValidationError("Invalid plugin configuration", {
+          config: validation.errors ?? ["Configuration validation failed"],
+        });
+      }
+      updateData.config = { _encrypted: encrypt(data.config) };
+    }
 
     // Update storage quota if provided
     if (data.storageQuotaMb !== undefined) {
@@ -700,11 +746,30 @@ class PluginService {
           });
         }
 
+        // isDirectoryLayout() is bundle-based: always false for USER plugins.
+        // Fall back to inspecting the stored entryFile path instead.
+        const isDirectoryPlugin_ = isDirectoryLayout(userPlugin.plugin.slug) || isDirectoryEntryPath(userPlugin.entryFile ?? '');
+        const existingEntry = isDirectoryPlugin_
+          ? (userPlugin.entryFile?.split('/').pop() ?? 'index.js')
+          : undefined;
+        const newPlatform = gatewayTypeToPlatform(gateway.type);
+
         updateData.gateway = { connect: { id: data.gatewayId! } };
-        updateData.entryFile = getPluginEntryPath(data.gatewayId, userPlugin.plugin.slug);
+        updateData.entryFile = getPluginEntryPath(data.gatewayId, userPlugin.plugin.slug, {
+          platform: newPlatform,
+          isDirectory: isDirectoryPlugin_,
+          entry: existingEntry,
+        });
       } else {
         updateData.gateway = { disconnect: true };
-        updateData.entryFile = getPluginEntryPath(null, userPlugin.plugin.slug);
+        const isDirectoryPlugin_ = isDirectoryLayout(userPlugin.plugin.slug) || isDirectoryEntryPath(userPlugin.entryFile ?? '');
+        const existingEntry = isDirectoryPlugin_
+          ? (userPlugin.entryFile?.split('/').pop() ?? 'index.js')
+          : undefined;
+        updateData.entryFile = getPluginEntryPath(null, userPlugin.plugin.slug, {
+          isDirectory: isDirectoryPlugin_,
+          entry: existingEntry,
+        });
       }
     }
 
@@ -1011,7 +1076,7 @@ class PluginService {
   ): Promise<SafeUserPlugin> {
     pluginLogger.debug({ slug: data.slug }, "Creating custom plugin");
 
-    const isDirectory = !!data.files;
+    const isDirectory = !!data.files || !!data.isDirectory;
 
     // Check plan limits
     await enforcePluginLimit(ctx);
@@ -1050,10 +1115,12 @@ class PluginService {
       }
     }
 
-    // Verify gateway if provided
+    // Verify gateway if provided; capture platform for consistent path building below.
+    let gatewayPlatform: string | undefined;
     if (data.gatewayId) {
       const gateway = await prisma.gateway.findUnique({
         where: { id: data.gatewayId },
+        select: { userId: true, organizationId: true, type: true },
       });
       if (!gateway) {
         throw new NotFoundError("Gateway not found");
@@ -1064,19 +1131,47 @@ class PluginService {
       if (!isOwner && !ctx.isSuperAdmin()) {
         throw new ForbiddenError("You don't have access to this gateway");
       }
+      gatewayPlatform = gatewayTypeToPlatform(gateway.type);
     }
 
-    // Determine entry file path (bot-dir layout for gateway-bound plugins)
+    // Determine entry file path — use getPluginEntryPath for BOTH single-file and
+    // directory layouts so the platform prefix is always included for gateway-bound plugins.
     const entry = data.entry ?? 'index.js';
-    const entryFile = isDirectory
-      ? (data.gatewayId
-        ? `bots/${data.gatewayId}/plugins/${fullSlug}/${entry}`
-        : `plugins/${fullSlug}/${entry}`)
-      : getPluginEntryPath(data.gatewayId, fullSlug);
+    const entryFile = getPluginEntryPath(data.gatewayId, fullSlug, {
+      isDirectory,
+      entry,
+      platform: gatewayPlatform,
+    });
 
-    // For single-file plugins, store code in codeBundle for recovery.
-    // For directory plugins, codeBundle is not used (files live on container only).
-    const codeBundle = isDirectory ? null : (data.code ?? null);
+    // Storage model for USER-authored plugins (Phase D):
+    // The container filesystem is the single source of truth for user code.
+    // We store only catalog metadata (manifest) in the platform DB so that
+    // Studio/Marketplace can list/describe the plugin without holding any of
+    // the user's source code. codeBundle stays null for USER plugins — the
+    // reconcile cron + Studio on-workspace-start flow re-registers from FS.
+    const codeBundle: string | null = null;
+
+    const manifestObj: Record<string, unknown> = {
+      name: data.name,
+      slug: fullSlug,
+      version: "1.0.0",
+      entry,
+      description: data.description,
+      category: data.category ?? "general",
+      tags: data.tags ?? [],
+      requiredGateways: data.requiredGateways ?? [],
+      configSchema: data.configSchema ?? {},
+      eventTypes: data.eventTypes ?? [],
+      eventRole: data.eventRole ?? "responder",
+      conflictsWith: data.conflictsWith ?? [],
+    };
+    if (!isDirectory) {
+      // Single-file plugins still need to record a file list so the FS-read
+      // path knows what to look for when restoring / exporting.
+      manifestObj.files = [entry];
+    } else if (data.files) {
+      manifestObj.files = Object.keys(data.files);
+    }
 
     // Create Plugin catalog entry + UserPlugin installation in a transaction
     const customSchemaDefaults = extractSchemaDefaults(data.configSchema as JSONSchema | undefined);
@@ -1097,6 +1192,7 @@ class PluginService {
           isBuiltin: false,
           isActive: true,
           codeBundle,
+          manifest: manifestObj as Prisma.InputJsonValue,
           authorId: ctx.userId,
           authorType: "USER",
           isPublic: false,
@@ -1167,6 +1263,8 @@ class PluginService {
           manifestJson,
           entry,
           deployEnv,
+          data.gatewayId,
+          gatewayPlatform,
         );
       } else if (data.code) {
         // Single-file plugin: write single .js file
@@ -1177,6 +1275,7 @@ class PluginService {
           data.code,
           deployEnv,
           data.gatewayId,
+          gatewayPlatform,
         );
       }
     } catch (err) {
@@ -1622,6 +1721,16 @@ class PluginService {
       throw new ForbiddenError("Only the plugin author can update this plugin");
     }
 
+    // Security: USER-authored plugins can never be made publicly visible in
+    // the marketplace. isPublic is not part of UpdateCustomPluginRequest but
+    // this guard provides defense-in-depth against future refactoring.
+    if ((data as Record<string, unknown>).isPublic === true) {
+      throw new ForbiddenError(
+        "User-authored plugins cannot be published to the marketplace. " +
+        "All marketplace plugins must go through the admin review process.",
+      );
+    }
+
     // Build update data
     const updateData: Prisma.PluginUpdateInput = {};
     if (data.name !== undefined) updateData.name = data.name;
@@ -1631,8 +1740,13 @@ class PluginService {
     if (data.configSchema !== undefined) {
       updateData.configSchema = data.configSchema as Prisma.InputJsonValue;
     }
-    if (data.code !== undefined) {
+    // Phase D: USER plugin code normally lives only in the author's container.
+    // Only stamp it into the DB (and the catalog manifest file list) when the
+    // author explicitly publishes. Private edits are never persisted to the
+    // business DB — the container filesystem is the source of truth.
+    if (data.code !== undefined && data.publish === true) {
       updateData.codeBundle = data.code;
+      updateData.codeBundleUpdatedAt = new Date();
     }
 
     const updated = await prisma.plugin.update({
@@ -1641,34 +1755,112 @@ class PluginService {
     });
 
     pluginLogger.info(
-      { pluginId, pluginSlug: updated.slug, fieldsUpdated: Object.keys(updateData) },
+      { pluginId, pluginSlug: updated.slug, fieldsUpdated: Object.keys(updateData), publish: data.publish === true },
       "Custom plugin updated"
     );
 
-    // If code changed, write to all workspace containers that have this plugin installed
+    // Always push the author's latest code to their own container so they can
+    // iterate. On explicit publish, additionally flag other installs as
+    // needing an update so they can pull on their next interaction.
     if (data.code !== undefined) {
       const installations = await prisma.userPlugin.findMany({
         where: { pluginId },
-        select: { userId: true, organizationId: true },
+        select: { id: true, userId: true, organizationId: true, entryFile: true },
       });
 
-      for (const inst of installations) {
+      const authorInstalls = installations.filter((i) => i.userId === ctx.userId);
+      const otherInstalls = installations.filter((i) => i.userId !== ctx.userId);
+
+      // Author: always push to their container so the next execution picks up
+      // the edit immediately.
+      for (const inst of authorInstalls) {
         void pluginDeployService.writeCodeToContainer(
           inst.userId,
           inst.organizationId,
           updated.slug,
           data.code,
           true, // restart after write
+          inst.entryFile ?? undefined,
         ).catch((err) => {
           pluginLogger.warn(
             { pluginSlug: updated.slug, userId: inst.userId, error: (err as Error).message },
-            "Custom plugin code write failed (non-blocking)",
+            "Author plugin code write failed (non-blocking)",
           );
+        });
+        void prisma.userPlugin.update({
+          where: { id: inst.id },
+          data: { needsUpdate: false, installedVersion: updated.version },
+        }).catch(() => {});
+      }
+
+      // Others: only flag on explicit publish. Private edits stay with the author.
+      if (data.publish === true && otherInstalls.length > 0) {
+        await prisma.userPlugin.updateMany({
+          where: { id: { in: otherInstalls.map((i) => i.id) } },
+          data: { needsUpdate: true },
         });
       }
     }
 
     return toPluginDefinition(updated);
+  }
+
+  /**
+   * Pull the latest catalog `codeBundle` into this user's installation.
+   * Called by the installer after seeing a "Update available" badge in the UI.
+   *
+   * Writes fresh code to the container, restarts the plugin, and clears the
+   * `needsUpdate` flag + records the installed version.
+   */
+  async updateInstalledPlugin(
+    ctx: ServiceContext,
+    userPluginId: string,
+  ): Promise<SafeUserPlugin> {
+    const userPlugin = await prisma.userPlugin.findUnique({
+      where: { id: userPluginId },
+      include: { plugin: true },
+    });
+    if (!userPlugin) throw new NotFoundError("Plugin installation not found");
+
+    if (userPlugin.userId !== ctx.userId && !ctx.isSuperAdmin()) {
+      throw new ForbiddenError("Only the installer can update this plugin");
+    }
+
+    const plugin = userPlugin.plugin;
+    if (!plugin.codeBundle) {
+      throw new BadRequestError(
+        "No code bundle available to deploy for this plugin",
+      );
+    }
+
+    await pluginDeployService.writeCodeToContainer(
+      userPlugin.userId,
+      userPlugin.organizationId,
+      plugin.slug,
+      plugin.codeBundle,
+      true, // restart after write
+      userPlugin.entryFile ?? undefined,
+    );
+
+    const updated = await prisma.userPlugin.update({
+      where: { id: userPluginId },
+      data: {
+        needsUpdate: false,
+        installedVersion: plugin.version,
+      },
+    });
+
+    pluginLogger.info(
+      {
+        userPluginId,
+        pluginSlug: plugin.slug,
+        version: plugin.version,
+        userId: ctx.userId,
+      },
+      "Installed plugin updated to latest version",
+    );
+
+    return toSafeUserPlugin({ ...updated, plugin } as UserPluginWithPlugin);
   }
 
   /**

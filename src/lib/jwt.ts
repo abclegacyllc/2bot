@@ -88,7 +88,7 @@ export function verifyToken(token: string): TokenPayload | null {
       audience: JWT_AUDIENCE,
     }) as DecodedToken;
 
-    // Phase 6.7: Simplified token - only user identity fields
+    // Simplified token - only user identity fields
     // Context is determined by URL, not token
     return {
       userId: decoded.userId,

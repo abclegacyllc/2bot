@@ -4,8 +4,15 @@
   "version": "1.0.0",
   "description": "Send automated summary reports on a schedule. Get periodic stats and updates delivered to your chat.",
   "category": "analytics",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["telegram", "report", "schedule", "analytics"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "telegram",
+    "report",
+    "schedule",
+    "analytics"
+  ],
   "difficulty": "advanced",
   "configSchema": {
     "type": "object",
@@ -30,6 +37,26 @@
   "icon": "clock",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "observer"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "observer",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "schedule": {
+        "type": "string",
+        "title": "Schedule"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "report": {
+        "type": "string",
+        "title": "Report"
+      }
+    }
+  }
 }

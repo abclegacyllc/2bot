@@ -1,7 +1,7 @@
 /**
  * Workspace Module
  * 
- * Docker-based workspace system for plugin development and execution (Phase 13).
+ * Docker-based workspace system for plugin development and execution.
  * Provides each user with an isolated container for:
  * - File management (CRUD, upload/download)
  * - Plugin execution (start/stop/restart)

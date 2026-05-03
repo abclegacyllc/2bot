@@ -27,6 +27,7 @@ const { LogCollector } = require('./log-collector');
 const { HealthMonitor } = require('./health');
 const { LocalStore } = require('./local-store');
 const { createWebhookHandler } = require('./webhook-handler');
+const { MCPManager } = require('./mcp-manager');
 
 // ===========================================
 // Configuration
@@ -35,7 +36,9 @@ const { createWebhookHandler } = require('./webhook-handler');
 const PORT = parseInt(process.env.BRIDGE_PORT || '9000', 10);
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace';
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
-const AUTH_TOKEN = process.env.BRIDGE_AUTH_TOKEN || null; // Set by platform when creating container
+// Bridge auth token. Set by platform when creating container. Mutable: the
+// platform can rotate it via the `system.rotate-token` action (Phase 3.2).
+let AUTH_TOKEN = process.env.BRIDGE_AUTH_TOKEN || null;
 
 // ===========================================
 // Logger (lightweight, no dependencies)
@@ -62,6 +65,7 @@ const gitService = new GitService({ workspaceDir: WORKSPACE_DIR, log, logCollect
 const packageManager = new PackageManager({ workspaceDir: WORKSPACE_DIR, log, logCollector });
 const terminalService = new TerminalService({ workspaceDir: WORKSPACE_DIR, log });
 const healthMonitor = new HealthMonitor({ workspaceDir: WORKSPACE_DIR, log });
+const mcpManager = new MCPManager({ log });
 
 // Local SQLite storage for offline-capable plugin storage
 // Default quota configurable via STORAGE_QUOTA_MB env var (default: 50, 0 = unlimited)
@@ -370,7 +374,88 @@ const actionHandlers = {
     localStore.setQuota(payload.pluginFile, quotaMb);
     return { pluginFile: payload.pluginFile, quotaMb };
   },
+
+  // MCP operations (Phase 2: MCP Integration)
+  'mcp.spawn':     (payload) => mcpManager.spawn(payload),
+  'mcp.listTools': (payload) => mcpManager.listTools(payload),
+  'mcp.call':      (payload) => mcpManager.call(payload),
+  'mcp.kill':      (payload) => mcpManager.kill(payload),
+
+  // Cost-context RPC (Phase 6.5) — proxy to platform's /internal/cost/* endpoints.
+  // Plugins call these via the SDK to budget AI calls before dispatch.
+  'system.getCredits':  () => callInternalCost('GET', '/internal/cost/credits'),
+  'system.getPlan':     () => callInternalCost('GET', '/internal/cost/plan'),
+  'system.estimateCost': (payload) => callInternalCost('POST', '/internal/cost/estimate', payload || {}),
 };
+
+// ===========================================
+// Cost-Context Bridge RPC (Phase 6.5)
+// ===========================================
+
+/**
+ * Proxy an HTTP request to the platform's /internal/cost/* endpoint using
+ * BRIDGE_AUTH_TOKEN. Returns the parsed `data` field from the platform's
+ * { success, data, error } envelope, or throws an Error on failure.
+ *
+ * @param {'GET'|'POST'} method
+ * @param {string} path - URL path including leading slash
+ * @param {object} [body] - Optional JSON body for POST
+ * @returns {Promise<unknown>} The `data` field from the platform response
+ */
+function callInternalCost(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const bridgeToken = process.env.BRIDGE_AUTH_TOKEN || AUTH_TOKEN;
+    if (!bridgeToken) {
+      reject(new Error('No BRIDGE_AUTH_TOKEN — cannot call cost RPC'));
+      return;
+    }
+
+    const apiHost = process.env.CREDENTIAL_API_HOST || '172.17.0.1';
+    const apiPort = parseInt(process.env.CREDENTIAL_API_PORT || '3002', 10);
+    const bodyBuf = body ? Buffer.from(JSON.stringify(body)) : null;
+
+    const headers = {
+      'X-Bridge-Token': bridgeToken,
+      'Accept': 'application/json',
+    };
+    if (bodyBuf) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = bodyBuf.length;
+    }
+
+    const req = http.request(
+      { hostname: apiHost, port: apiPort, path, method, headers, timeout: 10000 },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          let parsed;
+          try {
+            parsed = JSON.parse(Buffer.concat(chunks).toString());
+          } catch {
+            reject(new Error(`Invalid JSON from ${path}`));
+            return;
+          }
+          if (parsed && parsed.success === true) {
+            resolve(parsed.data);
+          } else {
+            const msg = parsed && parsed.error ? parsed.error.message : `HTTP ${res.statusCode}`;
+            reject(new Error(`Cost RPC failed: ${msg}`));
+          }
+        });
+      },
+    );
+
+    req.on('error', (err) => reject(err));
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(`Cost RPC timed out: ${path}`));
+    });
+
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  });
+}
 
 // ===========================================
 // HTTP Server (health + webhook endpoints)
@@ -378,8 +463,18 @@ const actionHandlers = {
 
 const handleWebhook = createWebhookHandler({ pluginRunner, log, emitEvent });
 
+/** Tracks whether all services finished initializing */
+let bridgeReady = false;
+
 const httpServer = http.createServer(async (req, res) => {
-  // ── Health check ──
+  // ── Readiness probe (for orchestration: container is fully initialized) ──
+  if (req.url === '/ready' && req.method === 'GET') {
+    res.writeHead(bridgeReady ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ready: bridgeReady }));
+    return;
+  }
+
+  // ── Health check (liveness: process is running and responsive) ──
   if (req.url === '/health' && req.method === 'GET') {
     const health = healthMonitor.healthCheck();
     const isHealthy = health.status === 'healthy';
@@ -523,6 +618,21 @@ wss.on('connection', (ws, req) => {
 
     const { id, action, payload = {} } = msg;
 
+    // Phase 3.2: token rotation. Platform sends the new token over the
+    // already-authenticated channel; we swap it in memory. The platform
+    // updates the DB and reconnects with the new token.
+    if (action === 'system.rotate-token') {
+      const next = payload?.token;
+      if (typeof next !== 'string' || next.length < 32) {
+        ws.send(JSON.stringify({ id, success: false, error: 'Invalid token' }));
+        return;
+      }
+      AUTH_TOKEN = next;
+      log.info('Bridge auth token rotated');
+      ws.send(JSON.stringify({ id, success: true, data: { rotated: true } }));
+      return;
+    }
+
     // Check if this is an IPC response from the platform
     if (handleIpcResponse(msg)) {
       return;
@@ -606,9 +716,11 @@ wss.on('connection', (ws, req) => {
 // ===========================================
 
 httpServer.listen(PORT, '0.0.0.0', () => {
+  bridgeReady = true;
   log.info(`2Bot Bridge Agent started`);
   log.info(`  WebSocket: ws://0.0.0.0:${PORT}/ws`);
   log.info(`  Health:    http://0.0.0.0:${PORT}/health`);
+  log.info(`  Ready:     http://0.0.0.0:${PORT}/ready`);
   log.info(`  Workspace: ${WORKSPACE_DIR}`);
   log.info(`  Auth:      ${AUTH_TOKEN ? 'required' : 'disabled'}`);
 });

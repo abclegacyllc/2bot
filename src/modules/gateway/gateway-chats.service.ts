@@ -1,5 +1,5 @@
 /**
- * Gateway Chat Tracking Service (Phase 7)
+ * Gateway Chat Tracking Service
  *
  * Tracks which Telegram chats a bot has been added to / removed from.
  * Powered by the `my_chat_member` webhook event.

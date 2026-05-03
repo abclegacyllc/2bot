@@ -37,7 +37,7 @@ const checkoutSchema = z.object({
 
 /**
  * Helper to create ServiceContext from Express request
- * Phase 6.7: Token no longer contains activeContext - defaults to personal context
+ * Token no longer contains activeContext - defaults to personal context
  * This route is deprecated - use /api/user/billing or /api/orgs/:orgId/billing
  */
 function getServiceContext(req: Request) {
@@ -45,7 +45,7 @@ function getServiceContext(req: Request) {
     throw new BadRequestError('User not authenticated');
   }
 
-  // Phase 6.7: Token simplified - context determined by URL, not token
+  // Token simplified - context determined by URL, not token
   return createServiceContext(
     {
       userId: req.tokenPayload?.userId ?? req.user.id,

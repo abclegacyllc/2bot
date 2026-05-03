@@ -10,12 +10,12 @@
  */
 
 import {
-    creditPerChar,
-    creditPerImage,
-    creditPerInputToken,
-    creditPerMinute,
-    creditPerOutputToken,
-    getRegistryEntriesByProvider,
+  creditPerChar,
+  creditPerImage,
+  creditPerInputToken,
+  creditPerMinute,
+  creditPerOutputToken,
+  getRegistryEntriesByProvider,
 } from "./model-registry";
 import { getAllProviders } from "./provider-registry";
 import type { AICapability, TwoBotAIProvider } from "./types";
@@ -293,16 +293,26 @@ export const FALLBACK_PRICING_BY_CAPABILITY: Record<AICapability, ModelPricing> 
 };
 
 /**
- * Get pricing for a model by capability
- * Falls back to default pricing if model not found
+ * Get pricing for a model by capability.
+ *
+ * All text-based capabilities (text-generation, code-generation, tool-use, etc.)
+ * use the SAME models at the SAME API cost — the capability describes what the
+ * model does, not how much it costs. So they share a single pricing source:
+ *
+ *   1. Capability-specific override (e.g., future premium code-gen models)
+ *   2. Text-generation base pricing  ← single source of truth for all text models
+ *   3. Fallback (GPT-4-turbo-level, only for truly unknown models)
  */
 export function getModelPricingByCapability(capability: AICapability, modelId: string): ModelPricing {
   switch (capability) {
+    // ── Text-based capabilities: same models, same API cost ──
     case "text-generation":
     case "image-understanding":
-      return getTextGenerationPricing(modelId) || FALLBACK_PRICING_BY_CAPABILITY[capability];
     case "code-generation":
-      return getCodeGenerationPricing(modelId) || FALLBACK_PRICING_BY_CAPABILITY["code-generation"];
+      return getCodeGenerationPricing(modelId)
+          || getTextGenerationPricing(modelId)
+          || FALLBACK_PRICING_BY_CAPABILITY["text-generation"];
+    // ── Non-text capabilities: separate pricing sources ──
     case "image-generation":
       return getImageGenerationPricing(modelId) || FALLBACK_PRICING_BY_CAPABILITY["image-generation"];
     case "speech-synthesis":

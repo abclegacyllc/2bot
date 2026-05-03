@@ -167,7 +167,7 @@ export const auditActions = {
   }),
 
   /**
-   * Log context switch (Phase 4)
+   * Log context switch
    */
   contextSwitched: (ctx: AuditContext & {
     contextType: string;

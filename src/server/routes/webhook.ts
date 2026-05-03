@@ -15,11 +15,13 @@ import { decryptJson } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
+import { wasReplayed } from "@/lib/webhook-replay-cache";
 import { gatewayRegistry, gatewayService } from "@/modules/gateway";
 import { gatewayChatService } from "@/modules/gateway/gateway-chats.service";
 import type { DiscordBotCredentials, SlackBotCredentials, WhatsAppBotCredentials } from "@/modules/gateway/gateway.types";
 import type { DiscordInteraction } from "@/modules/plugin/plugin.events";
 import { handleDiscordWebhook, handleSlackWebhook, handleTelegramWebhook, handleWhatsAppWebhook } from "@/modules/plugin/plugin.events";
+import { recordV1Dispatch, shouldRunV1Dispatch } from "@/modules/workflow/v1-dispatch-telemetry";
 import { checkDiscordMessageTrigger, checkSlackMessageTrigger, checkTelegramCallbackTrigger, checkTelegramMessageTrigger, checkWhatsAppMessageTrigger, handleWebhookTrigger } from "@/modules/workflow/workflow.triggers";
 import type { ApiResponse } from "@/shared/types";
 
@@ -169,7 +171,7 @@ interface TelegramPollAnswer {
  * Covers all update types that Telegram can send:
  * - Messages (new, edited, channel posts)
  * - Callback queries (inline keyboard button presses)
- * - Chat member updates (bot added/removed from chats) — critical for Phase 7
+ * - Chat member updates (bot added/removed from chats)
  * - Inline queries and chosen inline results
  * - Polls and poll answers
  */
@@ -259,7 +261,6 @@ webhookRouter.post(
           config: true,
           userId: true,
           organizationId: true,
-          mode: true,
         },
       });
 
@@ -322,6 +323,14 @@ webhookRouter.post(
         });
       }
 
+      // Replay protection: Telegram update_id is unique per bot.
+      // Short TTL (10 min) so legitimate retries after a transient handler
+      // failure are still processed. ACK with 200 on replay.
+      if (await wasReplayed("telegram", `${gatewayId}:${update.update_id}`, 600)) {
+        webhookLogger.warn({ gatewayId, updateId: update.update_id }, "Telegram replay rejected");
+        return res.status(200).json({ success: true, data: { received: true } });
+      }
+
       // Log the update for processing
       const updateInfo = extractUpdateInfo(update);
       webhookLogger.info(
@@ -357,8 +366,8 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently.
-            // Workflows execute their pipeline; standalone plugins fire independently.
+            // Unified engine: run workflow triggers AND direct UserPlugin dispatch concurrently.
+            // Workflows execute their step pipeline; UserPlugins not managed by a workflow step fire independently.
             const dispatches: Promise<void>[] = [];
 
             // 1. Check workflow triggers (if any active workflows exist on this gateway)
@@ -426,23 +435,28 @@ webhookRouter.post(
               );
             }
 
-            // 2. Route to standalone plugins (isStandalone=true only)
-            dispatches.push(
-              handleTelegramWebhook(
-                gatewayId,
-                gateway.userId,
-                gateway.organizationId ?? null,
-                update,
-                executeGateway
-              ).then((result) => {
-                if (result.pluginsExecuted > 0) {
-                  webhookLogger.info(
-                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                    'Webhook routed to standalone plugins',
-                  );
-                }
-              }),
-            );
+            // 2. Route directly to UserPlugins not managed by an active workflow step (legacy V1 path, gated)
+            if (shouldRunV1Dispatch()) {
+              dispatches.push(
+                handleTelegramWebhook(
+                  gatewayId,
+                  gateway.userId,
+                  gateway.organizationId ?? null,
+                  update,
+                  executeGateway
+                ).then((result) => {
+                  recordV1Dispatch('telegram', result.pluginsExecuted);
+                  if (result.pluginsExecuted > 0) {
+                    webhookLogger.info(
+                      { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                      'Webhook routed to unmanaged UserPlugins',
+                    );
+                  }
+                }),
+              );
+            } else {
+              recordV1Dispatch('telegram', 0);
+            }
 
             await Promise.allSettled(dispatches);
           } catch (err) {
@@ -451,7 +465,7 @@ webhookRouter.post(
         })();
       }
 
-      // ── Phase 7: Track chat membership changes (fire-and-forget) ──
+      // ── Track chat membership changes (fire-and-forget) ──
       if (update.my_chat_member) {
         const mcm = update.my_chat_member;
         const newStatus = mcm.new_chat_member.status;
@@ -655,7 +669,6 @@ webhookRouter.post(
           config: true,
           userId: true,
           organizationId: true,
-          mode: true,
         },
       });
 
@@ -699,6 +712,13 @@ webhookRouter.post(
         return;
       }
 
+      // Replay protection: signature+timestamp pair is unique per request.
+      if (await wasReplayed("discord", `${gatewayId}:${timestamp}:${signature}`)) {
+        webhookLogger.warn({ gatewayId }, "Discord replay rejected");
+        res.status(409).json({ error: "Replay detected" });
+        return;
+      }
+
       const interaction = req.body as DiscordInteraction;
 
       // Handle PING (type 1) — Discord uses this to verify the endpoint
@@ -739,7 +759,7 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently
+            // Unified engine: run workflow triggers AND direct UserPlugin dispatch concurrently
             const dispatches: Promise<void>[] = [];
 
             // 1. Check workflow triggers
@@ -753,23 +773,28 @@ webhookRouter.post(
               ).then(() => {}),
             );
 
-            // 2. Route to standalone plugins
-            dispatches.push(
-              handleDiscordWebhook(
-                gatewayId,
-                gateway.userId,
-                gateway.organizationId ?? null,
-                interaction,
-                executeGateway,
-              ).then((result) => {
-                if (result.pluginsExecuted > 0) {
-                  webhookLogger.info(
-                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                    "Discord interaction routed to standalone plugins",
-                  );
-                }
-              }),
-            );
+            // 2. Route directly to UserPlugins not managed by an active workflow step (legacy V1 path, gated)
+            if (shouldRunV1Dispatch()) {
+              dispatches.push(
+                handleDiscordWebhook(
+                  gatewayId,
+                  gateway.userId,
+                  gateway.organizationId ?? null,
+                  interaction,
+                  executeGateway,
+                ).then((result) => {
+                  recordV1Dispatch('discord', result.pluginsExecuted);
+                  if (result.pluginsExecuted > 0) {
+                    webhookLogger.info(
+                      { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                      "Discord interaction routed to unmanaged UserPlugins",
+                    );
+                  }
+                }),
+              );
+            } else {
+              recordV1Dispatch('discord', 0);
+            }
 
             await Promise.allSettled(dispatches);
           } catch (err) {
@@ -943,7 +968,6 @@ webhookRouter.post(
           config: true,
           userId: true,
           organizationId: true,
-          mode: true,
         },
       });
 
@@ -1006,6 +1030,15 @@ webhookRouter.post(
         return;
       }
 
+      // Replay protection: Slack signature already covers timestamp + body,
+      // and verifySlackSignature enforces a 5-minute skew window, so a short
+      // TTL is sufficient and won't block legitimate Slack retries (max 3 within 60s).
+      if (await wasReplayed("slack", `${gatewayId}:${timestamp}:${signature}`, 600)) {
+        webhookLogger.warn({ gatewayId }, "Slack replay rejected");
+        res.status(200).json({ ok: true });
+        return;
+      }
+
       // Determine payload kind
       const isEventCallback = payload.type === "event_callback";
       const isInteraction = !!(payload.type && typeof payload.type === "string" &&
@@ -1047,7 +1080,7 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently
+            // Unified engine: run workflow triggers AND direct UserPlugin dispatch concurrently
             const dispatches: Promise<void>[] = [];
 
             // 1. Check workflow triggers
@@ -1061,23 +1094,28 @@ webhookRouter.post(
               ).then(() => {}),
             );
 
-            // 2. Route to standalone plugins
-            dispatches.push(
-              handleSlackWebhook(
-                gatewayId,
-                gateway.userId,
-                gateway.organizationId ?? null,
-                payload,
-                executeGateway,
-              ).then((result) => {
-                if (result.pluginsExecuted > 0) {
-                  webhookLogger.info(
-                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                    "Slack event routed to standalone plugins",
-                  );
-                }
-              }),
-            );
+            // 2. Route directly to UserPlugins not managed by an active workflow step (legacy V1 path, gated)
+            if (shouldRunV1Dispatch()) {
+              dispatches.push(
+                handleSlackWebhook(
+                  gatewayId,
+                  gateway.userId,
+                  gateway.organizationId ?? null,
+                  payload,
+                  executeGateway,
+                ).then((result) => {
+                  recordV1Dispatch('slack', result.pluginsExecuted);
+                  if (result.pluginsExecuted > 0) {
+                    webhookLogger.info(
+                      { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                      "Slack event routed to unmanaged UserPlugins",
+                    );
+                  }
+                }),
+              );
+            } else {
+              recordV1Dispatch('slack', 0);
+            }
 
             await Promise.allSettled(dispatches);
           } catch (err) {
@@ -1281,7 +1319,6 @@ webhookRouter.post(
           config: true,
           userId: true,
           organizationId: true,
-          mode: true,
         },
       });
 
@@ -1324,6 +1361,14 @@ webhookRouter.post(
         return;
       }
 
+      // Replay protection: WhatsApp signature is HMAC-SHA256 of the body,
+      // so the signature uniquely identifies a payload.
+      if (await wasReplayed("whatsapp", `${gatewayId}:${signature}`)) {
+        webhookLogger.warn({ gatewayId }, "WhatsApp replay rejected");
+        res.status(200).json({ ok: true });
+        return;
+      }
+
       const payload = req.body as Record<string, unknown>;
 
       // Validate this is a WhatsApp business account notification
@@ -1359,7 +1404,7 @@ webhookRouter.post(
 
         void (async () => {
           try {
-            // Unified engine: run BOTH workflow triggers AND standalone plugins concurrently
+            // Unified engine: run workflow triggers AND direct UserPlugin dispatch concurrently
             const dispatches: Promise<void>[] = [];
 
             // 1. Check workflow triggers for each message in the payload
@@ -1395,23 +1440,28 @@ webhookRouter.post(
               }
             }
 
-            // 2. Route to standalone plugins
-            dispatches.push(
-              handleWhatsAppWebhook(
-                gatewayId,
-                gateway.userId,
-                gateway.organizationId ?? null,
-                payload,
-                executeGateway,
-              ).then((result) => {
-                if (result.pluginsExecuted > 0) {
-                  webhookLogger.info(
-                    { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
-                    "WhatsApp event routed to standalone plugins",
-                  );
-                }
-              }),
-            );
+            // 2. Route directly to UserPlugins not managed by an active workflow step (legacy V1 path, gated)
+            if (shouldRunV1Dispatch()) {
+              dispatches.push(
+                handleWhatsAppWebhook(
+                  gatewayId,
+                  gateway.userId,
+                  gateway.organizationId ?? null,
+                  payload,
+                  executeGateway,
+                ).then((result) => {
+                  recordV1Dispatch('whatsapp', result.pluginsExecuted);
+                  if (result.pluginsExecuted > 0) {
+                    webhookLogger.info(
+                      { gatewayId, pluginsExecuted: result.pluginsExecuted, success: result.successCount, failures: result.failureCount },
+                      "WhatsApp event routed to unmanaged UserPlugins",
+                    );
+                  }
+                }),
+              );
+            } else {
+              recordV1Dispatch('whatsapp', 0);
+            }
 
             await Promise.allSettled(dispatches);
           } catch (err) {

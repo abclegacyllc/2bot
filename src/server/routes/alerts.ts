@@ -28,7 +28,7 @@ export const alertRouter = Router();
 
 /**
  * Helper to create ServiceContext from Express request
- * Phase 6.7: Token no longer contains activeContext - defaults to personal context
+ * Token no longer contains activeContext - defaults to personal context
  * This route is deprecated - use /api/user/alerts or /api/orgs/:orgId/alerts
  */
 function getServiceContext(req: Request) {
@@ -43,7 +43,7 @@ function getServiceContext(req: Request) {
     ? req.headers['x-request-id'][0]
     : req.headers['x-request-id'];
 
-  // Phase 6.7: Token simplified - context determined by URL, not token
+  // Token simplified - context determined by URL, not token
   return createServiceContext(
     {
       userId: req.tokenPayload?.userId ?? req.user.id,

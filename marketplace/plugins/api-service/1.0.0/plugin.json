@@ -4,8 +4,17 @@
   "version": "1.0.0",
   "description": "A command-routing service plugin with separate route handlers, status tracking, and a simple key-value data store. Great starting point for complex bots.",
   "category": "utilities",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["telegram", "multi-file", "directory", "api", "router", "crud"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "telegram",
+    "multi-file",
+    "directory",
+    "api",
+    "router",
+    "crud"
+  ],
   "difficulty": "advanced",
   "configSchema": {
     "type": "object",
@@ -23,7 +32,40 @@
   "icon": "server",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
+  "eventTypes": [
+    "telegram.message"
+  ],
   "eventRole": "responder",
-  "files": ["index.js", "router.js", "handlers/status.js", "handlers/data.js"]
+  "files": [
+    "index.js",
+    "router.js",
+    "handlers/status.js",
+    "handlers/data.js"
+  ],
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "request": {
+        "type": "object",
+        "title": "Request"
+      },
+      "method": {
+        "type": "string",
+        "title": "Method"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "object",
+        "title": "Response"
+      },
+      "statusCode": {
+        "type": "number",
+        "title": "Status Code"
+      }
+    }
+  }
 }

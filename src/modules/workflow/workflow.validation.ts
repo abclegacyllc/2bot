@@ -267,10 +267,28 @@ export const updateWorkflowSchema = z.object({
 });
 
 /**
+ * Test/Trigger mode for the manual /trigger endpoint:
+ *   - "quick"    : preflight only — no execution. Fastest. No side effects.
+ *   - "standard" : preflight + dry-run execution + log capture (default Test).
+ *                   Plugin code runs but no real gateway sends are made.
+ *   - "deep"     : preflight + LIVE execution + log capture. Real sends.
+ *                   Use with caution; identical to a production trigger.
+ *   - "ai"       : delegate to the Cursor AI agent for analysis (no execution).
+ */
+export const workflowTestModeSchema = z.enum(["quick", "standard", "deep", "ai"]).optional();
+
+/**
  * Manual trigger request schema
  */
 export const triggerWorkflowSchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
+  /** Test mode controls preflight, dry-run, and log capture */
+  mode: workflowTestModeSchema,
+  /**
+   * Direct dry-run override (legacy callers).
+   * When `mode` is set, that wins; otherwise this controls dry-run.
+   */
+  dryRun: z.boolean().optional(),
 });
 
 // ===========================================

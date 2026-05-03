@@ -214,7 +214,7 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
       // Update last activity
       connection.lastActivity = new Date();
 
-      // Phase 8: Record success metric (fire-and-forget)
+      // Record success metric (fire-and-forget)
       void gatewayMetricService.recordSuccess(gatewayId, action, durationMs);
 
       this.log.debug({ gatewayId, action }, "Action executed successfully");
@@ -234,7 +234,7 @@ export abstract class BaseGatewayProvider<TCredentials = unknown, TConfig = unkn
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       this.log.error({ gatewayId, action, error: errorMessage }, "Action execution failed");
 
-      // Phase 8: Record error metric (fire-and-forget)
+      // Record error metric (fire-and-forget)
       void gatewayMetricService.recordError(gatewayId, action, durationMs);
 
       throw error;

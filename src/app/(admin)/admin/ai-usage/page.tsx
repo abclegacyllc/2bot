@@ -20,12 +20,36 @@ import {
     Brain,
     Building2,
     Cpu,
+    DollarSign,
     Server,
     TrendingUp,
     Users,
     Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+
+// MARGIN = 200 (same as model-registry.ts: $1 = 100 credits, 2× markup)
+// Real cost = credits / MARGIN
+// Revenue (what users paid) = credits × $0.01 = credits / 100
+// Margin = Revenue - Cost = credits/100 - credits/200 = credits/200
+const MARGIN = 200;
+function creditsToUsd(credits: number): string {
+  const usd = credits / MARGIN;
+  if (usd < 0.01 && credits > 0) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+function creditsToRevenue(credits: number): string {
+  const usd = credits / 100; // 1 credit = $0.01
+  if (usd < 0.01 && credits > 0) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+function marginUsd(credits: number): string {
+  const revenue = credits / 100;
+  const cost = credits / MARGIN;
+  const margin = revenue - cost;
+  if (margin < 0.01 && credits > 0) return "<$0.01";
+  return `$${margin.toFixed(2)}`;
+}
 
 interface AIUsage {
   period: string;
@@ -156,7 +180,7 @@ export default function AdminAIUsagePage() {
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 border-blue-500/20">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -179,7 +203,7 @@ export default function AdminAIUsagePage() {
         <Card className="bg-gradient-to-br from-yellow-500/10 to-orange-500/10 border-yellow-500/20">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">
-              Total Credits
+              Credits Consumed
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -190,7 +214,64 @@ export default function AdminAIUsagePage() {
               <Zap className="h-5 w-5 text-yellow-500" />
             </div>
             <p className="text-sm text-muted-foreground mt-2">
-              Credits consumed
+              User credits billed
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 border-green-500/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Revenue (User Paid)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-baseline gap-2">
+              <div className="text-3xl font-bold text-foreground">
+                {creditsToRevenue(usage.totalCredits)}
+              </div>
+              <DollarSign className="h-5 w-5 text-green-500" />
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">
+              Credits × $0.01
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-red-500/10 to-orange-500/10 border-red-500/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Real API Cost
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-baseline gap-2">
+              <div className="text-3xl font-bold text-foreground">
+                {creditsToUsd(usage.totalCredits)}
+              </div>
+              <DollarSign className="h-5 w-5 text-red-400" />
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">
+              Estimated provider cost
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Margin Earned
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-baseline gap-2">
+              <div className="text-3xl font-bold text-foreground">
+                {marginUsd(usage.totalCredits)}
+              </div>
+              <TrendingUp className="h-5 w-5 text-purple-500" />
+            </div>
+            <p className="text-sm text-muted-foreground mt-2">
+              Revenue − API cost (2× markup)
             </p>
           </CardContent>
         </Card>
@@ -248,12 +329,12 @@ export default function AdminAIUsagePage() {
                         />
                       </div>
                     </div>
-                    <div className="text-right ml-4">
+                    <div className="text-right ml-4 min-w-[120px]">
                       <div className="font-semibold text-foreground">
-                        {cap.requests.toLocaleString()}
+                        {cap.requests.toLocaleString()} reqs
                       </div>
                       <div className="text-sm text-muted-foreground">
-                        {cap.credits.toLocaleString()} credits
+                        {cap.credits.toLocaleString()} credits · {creditsToUsd(cap.credits)}
                       </div>
                     </div>
                   </div>
@@ -286,6 +367,9 @@ export default function AdminAIUsagePage() {
                       <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
                         Credits
                       </th>
+                      <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                        Real Cost
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -304,6 +388,9 @@ export default function AdminAIUsagePage() {
                         </td>
                         <td className="py-3 px-4 text-right text-foreground font-semibold">
                           {model.credits.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-right text-green-400 font-semibold">
+                          {creditsToUsd(model.credits)}
                         </td>
                       </tr>
                     ))}
@@ -344,12 +431,12 @@ export default function AdminAIUsagePage() {
                             />
                           </div>
                         </div>
-                        <div className="text-right ml-4">
+                        <div className="text-right ml-4 min-w-[140px]">
                           <div className="font-semibold text-foreground">
-                            {prov.requests.toLocaleString()}
+                            {prov.requests.toLocaleString()} reqs
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {prov.credits.toLocaleString()} credits
+                            {prov.credits.toLocaleString()} credits · <span className="text-green-400">{creditsToUsd(prov.credits)}</span>
                           </div>
                         </div>
                       </div>

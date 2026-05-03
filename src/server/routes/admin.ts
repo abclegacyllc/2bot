@@ -25,6 +25,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
 import { requirePermission } from "../middleware/role";
+import { adminAIHealthRouter } from "./admin-ai-health";
 import { adminMarketplaceRouter } from "./admin-marketplace";
 
 export const adminRouter = Router();
@@ -35,17 +36,18 @@ adminRouter.use(requireAuth);
 
 // Mount admin sub-routers
 adminRouter.use("/marketplace", adminMarketplaceRouter);
+adminRouter.use("/ai-health", adminAIHealthRouter);
 
 /**
  * Helper to create ServiceContext from Express request
- * Phase 6.7: Token no longer contains activeContext - defaults to personal context
+ * Token no longer contains activeContext - defaults to personal context
  */
 function getServiceContext(req: Request) {
   if (!req.user) {
     throw new BadRequestError("User not authenticated");
   }
 
-  // Phase 6.7: Token simplified - context determined by URL, not token
+  // Token simplified - context determined by URL, not token
   // Admin routes always use personal context with admin privileges
   return createServiceContext(
     {
@@ -868,41 +870,46 @@ adminRouter.post(
       });
     }
 
-    // Find or create wallet
-    let wallet = await prisma.creditWallet.findFirst({
+    // Find or create wallet — always upsert so we never have a missing wallet
+    const existingWallet = await prisma.creditWallet.findFirst({
       where: userId ? { userId } : { organizationId },
+      select: { id: true },
     });
 
-    if (!wallet) {
-      wallet = await prisma.creditWallet.create({
+    const walletId = existingWallet
+      ? existingWallet.id
+      : (await prisma.creditWallet.create({
+          data: {
+            userId: userId || null,
+            organizationId: organizationId || null,
+            balance: 0,
+            lifetime: 0,
+          },
+          select: { id: true },
+        })).id;
+
+    // Atomic grant: increment balance/lifetime and create transaction in one DB transaction.
+    // Using { increment } instead of read-then-write prevents race conditions from
+    // concurrent grants landing on stale balance values.
+    const transaction = await prisma.$transaction(async (tx) => {
+      const updated = await tx.creditWallet.update({
+        where: { id: walletId },
         data: {
-          userId: userId || null,
-          organizationId: organizationId || null,
-          balance: 0,
-          lifetime: 0,
+          balance: { increment: amount },
+          lifetime: { increment: amount },
         },
       });
-    }
 
-    // Create transaction
-    const transaction = await prisma.creditTransaction.create({
-      data: {
-        creditWalletId: wallet.id,
-        type: 'grant',
-        amount: amount,
-        balanceAfter: wallet.balance + amount,
-        description: description || 'Admin credit grant',
-        metadata: { grantedBy: 'admin' },
-      },
-    });
-
-    // Update wallet
-    await prisma.creditWallet.update({
-      where: { id: wallet.id },
-      data: {
-        balance: wallet.balance + amount,
-        lifetime: wallet.lifetime + amount,
-      },
+      return tx.creditTransaction.create({
+        data: {
+          creditWalletId: walletId,
+          type: 'grant',
+          amount,
+          balanceAfter: updated.balance,
+          description: description || 'Admin credit grant',
+          metadata: { grantedBy: 'admin' },
+        },
+      });
     });
 
     return res.json({
@@ -946,25 +953,24 @@ adminRouter.post(
       });
     }
 
-    // Create refund transaction (reverse the amount)
-    const refundAmount = -originalTx.amount;
-    const transaction = await prisma.creditTransaction.create({
-      data: {
-        creditWalletId: originalTx.creditWalletId,
-        type: 'refund',
-        amount: refundAmount,
-        balanceAfter: originalTx.creditWallet.balance + refundAmount,
-        description: reason || `Refund of transaction ${transactionId}`,
-        metadata: { refundedTransactionId: transactionId, reason },
-      },
-    });
+    // Atomic refund: use increment/decrement to avoid stale-read race conditions.
+    const refundAmount = -originalTx.amount; // negative for usage → positive refund
+    const transaction = await prisma.$transaction(async (tx) => {
+      const updated = await tx.creditWallet.update({
+        where: { id: originalTx.creditWallet!.id },
+        data: { balance: { increment: refundAmount } },
+      });
 
-    // Update wallet
-    await prisma.creditWallet.update({
-      where: { id: originalTx.creditWallet.id },
-      data: {
-        balance: originalTx.creditWallet.balance + refundAmount,
-      },
+      return tx.creditTransaction.create({
+        data: {
+          creditWalletId: originalTx.creditWalletId,
+          type: 'refund',
+          amount: refundAmount,
+          balanceAfter: updated.balance,
+          description: reason || `Refund of transaction ${transactionId}`,
+          metadata: { refundedTransactionId: transactionId, reason },
+        },
+      });
     });
 
     return res.json({
@@ -2051,12 +2057,16 @@ adminRouter.post(
 );
 
 // GET /api/admin/workspaces/allowed-domains - View all user-allowed domains
+//   ?status=APPROVED|REJECTED|REVOKED   filter by review status
+//   ?addedBy=user|ai-agent              filter by provenance (AI-added audit list)
 adminRouter.get(
   "/workspaces/allowed-domains",
   requirePermission('admin:workspaces:read'),
   asyncHandler(async (req: Request, res: Response<ApiResponse>) => {
     const status = req.query.status as string | undefined;
-    const domains = await egressProxyService.getAllDomains(status);
+    const addedByRaw = req.query.addedBy as string | undefined;
+    const addedBy = addedByRaw === "user" || addedByRaw === "ai-agent" ? addedByRaw : undefined;
+    const domains = await egressProxyService.getAllDomains(status, addedBy);
     res.json({ success: true, data: domains });
   }),
 );
@@ -2110,3 +2120,20 @@ adminRouter.delete(
     res.json({ success: true });
   }),
 );
+
+// ===========================================
+// POST /api/admin/plugins/reconcile - Manually trigger the plugin
+// reconciliation cron pass. Returns the same stats payload that's logged
+// from the periodic run. Useful for clearing drift after bulk imports
+// or container restores without waiting for the next interval.
+// ===========================================
+adminRouter.post(
+  "/plugins/reconcile",
+  requirePermission('admin:marketplace:write'),
+  asyncHandler(async (_req: Request, res: Response<ApiResponse>) => {
+    const { runPluginReconcile } = await import("../cron/plugin-reconcile-cron");
+    const stats = await runPluginReconcile();
+    res.json({ success: true, data: stats });
+  }),
+);
+

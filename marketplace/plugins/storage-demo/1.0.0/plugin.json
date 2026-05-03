@@ -5,7 +5,12 @@
   "description": "Demonstrates all storage SDK operations: set, get, has, delete, increment, TTL. Great reference for stateful plugins.",
   "category": "utilities",
   "requiredGateways": [],
-  "tags": ["storage", "demo", "tutorial", "reference"],
+  "tags": [
+    "storage",
+    "demo",
+    "tutorial",
+    "reference"
+  ],
   "difficulty": "beginner",
   "configSchema": {},
   "entryFile": "code.js",
@@ -14,5 +19,27 @@
   "author": "2bot",
   "isBuiltin": true,
   "eventTypes": [],
-  "eventRole": "observer"
+  "eventRole": "observer",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "key": {
+        "type": "string",
+        "title": "Key"
+      },
+      "value": {
+        "type": "string",
+        "title": "Value"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "result": {
+        "type": "string",
+        "title": "Result"
+      }
+    }
+  }
 }

@@ -70,12 +70,33 @@ export interface WorkerPromptContext {
   repoCloneDir?: string;
   /** Summaries from recent prior sessions with this user */
   priorSessionSummaries?: string[];
+  /** Auto-gathered context: file tree + outlines pre-fetched before first LLM call */
+  autoContext?: {
+    /** List of files in the plugin directory */
+    fileTree: string[];
+    /** File outlines (function/class signatures) keyed by relative path */
+    outlines: Record<string, string>;
+    /** package.json content if present */
+    packageJson?: string;
+    /** Full file contents for small plugins (≤10 files) — richer than outlines */
+    fullFileContents?: Record<string, string>;
+    /** README.md content if present */
+    readme?: string;
+  };
+  /** Cross-session user preferences (coding style, patterns learned from prior sessions) */
+  userPreferences?: string;
+  /** Persistent agent memories — freeform notes the agent saved about this user's project */
+  agentMemories?: string;
+  /** Active chat plan — markdown body produced by the Plan agent via update_plan(summary) */
+  chatPlan?: string;
   /** Workflow context — present when user is in Studio and interacting with a workflow */
   workflowContext?: {
     workflowId: string;
     workflowName: string;
     triggerType: string;
     botName?: string;
+    /** Gateway ID of the bot currently open in the Studio */
+    gatewayId?: string;
     steps: Array<{
       id: string;
       order: number;
@@ -93,46 +114,37 @@ export interface WorkerPromptContext {
 export const WORKER_META: Record<CursorWorkerType, CursorWorkerMeta> = {
   assistant: {
     type: "assistant",
-    displayName: "Cursor Assistant",
+    // `displayName` here is logs-only. User-facing chip pulls
+    // displayName from `activeAgent.frontmatter.displayName` instead.
+    displayName: "assistant-runtime",
     description: "Platform guide — manages gateways, plugins, billing, navigation",
-    maxIterations: 10,
+    maxIterations: 100,     // High ceiling — credits are the real limit, not step count
     maxCreditsPerSession: 10,
-    sessionTimeoutMs: 60_000, // 1 minute (simple operations)
+    sessionTimeoutMs: 0,    // Unused — wall-clock timeout removed from checkSessionLimits
   },
   coder: {
     type: "coder",
-    displayName: "Cursor Coder",
+    // see note above. User chip uses the agent's displayName.
+    displayName: "coder-runtime",
     description: "Senior developer — creates, edits, tests, and deploys plugin code",
-    maxIterations: 25,
+    maxIterations: 100,     // High ceiling — credits are the real limit, not step count
     maxCreditsPerSession: 30,
-    sessionTimeoutMs: 180_000, // 3 minutes (complex coding tasks)
+    sessionTimeoutMs: 0,    // Unused — wall-clock timeout removed from checkSessionLimits
   },
 };
 
-// Plan-based multipliers for session limits
-const PLAN_MULTIPLIERS: Record<string, number> = {
-  FREE: 1,
-  PRO: 2,
-  BUSINESS: 3,
-};
-
 /**
- * Get worker meta with limits adjusted for the user's plan.
- * PRO users get 2× iterations/credits/timeout, BUSINESS gets 3×.
+ * Get worker meta for the given worker type.
+ * Plan-based iteration multipliers removed — credits already differentiate plans
+ * and a step count cap only blocks legitimate long-running tasks for free users
+ * without providing any additional cost protection.
  */
 export function getAdaptiveWorkerMeta(
   workerType: CursorWorkerType,
   plan?: string,
 ): CursorWorkerMeta {
-  const base = WORKER_META[workerType];
-  const multiplier = PLAN_MULTIPLIERS[plan ?? "FREE"] ?? 1;
-  if (multiplier === 1) return base;
-  return {
-    ...base,
-    maxIterations: base.maxIterations * multiplier,
-    maxCreditsPerSession: base.maxCreditsPerSession * multiplier,
-    sessionTimeoutMs: base.sessionTimeoutMs * multiplier,
-  };
+  void plan; // plan no longer affects iteration limits
+  return WORKER_META[workerType];
 }
 
 // ===========================================
@@ -198,6 +210,12 @@ import { composeWorkerPrompt } from "./cursor-skills";
 /**
  * Build the system prompt for Cursor Assistant.
  * Composed from modular skills defined in cursor-skills.ts.
+ *
+ * @deprecated the runner now resolves prompts via
+ * `renderAgentPrompt(activeAgent, ctx)` from `./agents`. The synthesized
+ * `legacy-assistant` agent (built from the same skill set) replaces this
+ * function. Kept exported for backwards compatibility with external
+ * callers; will be removed once no external imports remain.
  */
 export function buildAssistantSystemPrompt(ctx: WorkerPromptContext): string {
   return composeWorkerPrompt("assistant", ctx);
@@ -206,6 +224,9 @@ export function buildAssistantSystemPrompt(ctx: WorkerPromptContext): string {
 /**
  * Build the system prompt for Cursor Coder.
  * Composed from modular skills defined in cursor-skills.ts.
+ *
+ * @deprecated superseded by the declarative `agent` built-in
+ * resolved via `renderAgentPrompt`. See note on `buildAssistantSystemPrompt`.
  */
 export function buildCoderSystemPrompt(ctx: WorkerPromptContext): string {
   return composeWorkerPrompt("coder", ctx);
@@ -252,8 +273,20 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     "navigate_page",
     // Interaction
     "ask_user",
+    "request_domain_allowlist",
+    "list_allowed_domains",
     // Diagnostics
     "explain_error",
+    // Reasoning
+    "think",
+    // Plan tracking
+    "update_plan",
+    // Memory
+    "write_memory",
+    "read_memory",
+    "delete_memory",
+    // Web fetch
+    "fetch_url",
     // Hand-off
     "hand_off_to_coder",
   ],
@@ -267,10 +300,15 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     "delete_file",
     "run_command",
     "search_files",
+    "file_stat",
+    "workspace_summary",
     // AST-powered code intelligence tools
     "get_file_outline",
+    "get_outlines",
     "get_function",
     "search_symbols",
+    // Semantic codebase search
+    "search_codebase",
     // Platform query tools (needed to find gateways/plugins)
     "list_gateways",
     "list_user_plugins",
@@ -279,6 +317,10 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     "update_plugin_record",
     "restart_plugin",
     "clone_plugin",
+    "validate_plugin",
+    "ensure_dependencies",
+    "find_relevant_code",
+    "search_docs",
     // Plugin config
     "view_plugin_config",
     // Diagnostics
@@ -286,6 +328,18 @@ export const WORKER_TOOL_NAMES: Record<CursorWorkerType, string[]> = {
     "explain_error",
     // Interaction
     "ask_user",
+    "request_domain_allowlist",
+    "list_allowed_domains",
+    // Reasoning
+    "think",
+    // Plan tracking
+    "update_plan",
+    // Memory
+    "write_memory",
+    "read_memory",
+    "delete_memory",
+    // Web fetch
+    "fetch_url",
     // Hand-off
     "hand_off_to_assistant",
     // Completion
@@ -303,6 +357,7 @@ export const WORKFLOW_TOOL_NAMES: string[] = [
   "update_workflow_trigger",
   "list_available_plugins",
   "test_workflow",
+  "validate_workflow",
   "read_plugin_file",
   "write_plugin_file",
 ];
@@ -330,6 +385,14 @@ export const ASK_MODE_TOOL_NAMES: string[] = [
   // Workflow read-only (when context available)
   "list_available_plugins",
   "read_plugin_file",
+  "validate_workflow",
+  // File metadata (read-only)
+  "file_stat",
+  "workspace_summary",
+  // Semantic codebase search (read-only in ask mode)
+  "search_codebase",
   // Interaction
   "ask_user",
+  // Memory (read-only in ask mode)
+  "read_memory",
 ];

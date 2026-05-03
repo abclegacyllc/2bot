@@ -174,7 +174,7 @@ export async function completeSession(params: {
 }
 
 // ===========================================
-// Suspend / Resume (Copilot-style persistence)
+// Suspend / Resume (session persistence)
 // ===========================================
 
 /**
@@ -382,4 +382,29 @@ export async function getAgentUsageStats(
     avgDurationMs: Math.round(stats._avg.durationMs ?? 0),
     avgIterations: Math.round((stats._avg.iterationCount ?? 0) * 10) / 10,
   };
+}
+
+/**
+ * Submit user feedback for a completed session.
+ */
+export async function submitFeedback(
+  sessionId: string,
+  userId: string,
+  rating: "positive" | "negative",
+  comment?: string,
+) {
+  const session = await prisma.agentSession.findUnique({
+    where: { id: sessionId },
+    select: { userId: true, status: true },
+  });
+  if (!session || session.userId !== userId) {
+    throw new Error("Session not found");
+  }
+  await prisma.agentSession.update({
+    where: { id: sessionId },
+    data: {
+      feedback: rating,
+      feedbackComment: comment?.slice(0, 2000) || null,
+    },
+  });
 }

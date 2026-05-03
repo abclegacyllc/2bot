@@ -13,7 +13,7 @@
 import { useStudio } from "@/app/studio/layout";
 import { CreateBotWizard } from "@/components/bot-studio/create-bot-wizard";
 import { PlatformIcon } from "@/components/bot-studio/platform-icons";
-import { CursorStudioBar } from "@/components/cursor/cursor-studio-bar";
+import { useProvideStudioBarData } from "@/components/cursor/studio-bar-context";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,13 +23,16 @@ import { useState } from "react";
 
 export default function StudioHomePage() {
   const { gateways, isLoading, selectBot, refresh } = useStudio();
-  const { token, user, context } = useAuth();
+  const { token, context } = useAuth();
   const organizationId =
     context.type === "organization" ? context.organizationId : undefined;
   const [showCreateWizard, setShowCreateWizard] = useState(false);
 
+  // Tell the layout-level CursorStudioBar: no bot selected on home page
+  useProvideStudioBarData({ workflow: null });
+
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="max-w-lg w-full text-center space-y-6">
           {/* Hero */}
@@ -126,16 +129,6 @@ export default function StudioHomePage() {
             </span>
           </div>
         </div>
-      </div>
-
-      {/* Cursor Studio Bar */}
-      <div className="flex-shrink-0 relative">
-        <CursorStudioBar
-          token={token}
-          userId={user?.id}
-          organizationId={organizationId}
-          workflow={null}
-        />
       </div>
 
       <CreateBotWizard

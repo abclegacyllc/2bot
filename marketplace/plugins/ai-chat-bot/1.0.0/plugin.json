@@ -4,8 +4,17 @@
   "version": "1.0.0",
   "description": "AI-powered conversations with memory and custom personality. Your bot replies intelligently using configurable AI models.",
   "category": "messaging",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["ai", "chat", "telegram", "bot", "gpt", "llm"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "ai",
+    "chat",
+    "telegram",
+    "bot",
+    "gpt",
+    "llm"
+  ],
   "difficulty": "intermediate",
   "configSchema": {
     "type": "object",
@@ -38,6 +47,38 @@
   "icon": "bot",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "responder"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "responder",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      },
+      "chatId": {
+        "type": "string",
+        "title": "Chat ID"
+      },
+      "userId": {
+        "type": "string",
+        "title": "User ID"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "string",
+        "title": "Response"
+      },
+      "tokensUsed": {
+        "type": "number",
+        "title": "Tokens Used"
+      }
+    }
+  }
 }

@@ -19,6 +19,9 @@ vi.mock('@/lib/prisma', () => ({
       count: vi.fn(),
       findMany: vi.fn(),
     },
+    workspaceContainer: {
+      findFirst: vi.fn(),
+    },
     userPlugin: {
       create: vi.fn(),
       count: vi.fn(),
@@ -50,6 +53,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Mock findMany for duplicate credential check (returns empty = no duplicates)
   mockedPrisma.gateway.findMany.mockResolvedValue([]);
+  // Default: no workspace container found
+  mockedPrisma.workspaceContainer.findFirst.mockResolvedValue(null);
 });
 
 afterEach(() => {

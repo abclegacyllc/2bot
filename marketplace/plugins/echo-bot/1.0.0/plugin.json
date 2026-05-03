@@ -4,8 +4,15 @@
   "version": "1.0.0",
   "description": "Instantly replies to every message with a custom prefix. Perfect for auto-acknowledgment or fun echo responses.",
   "category": "messaging",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["telegram", "echo", "bot", "messaging"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "telegram",
+    "echo",
+    "bot",
+    "messaging"
+  ],
   "difficulty": "beginner",
   "configSchema": {
     "type": "object",
@@ -29,6 +36,26 @@
   "icon": "reply",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "responder"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "responder",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "string",
+        "title": "Response"
+      }
+    }
+  }
 }

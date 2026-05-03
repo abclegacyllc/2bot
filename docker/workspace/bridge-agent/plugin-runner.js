@@ -9,12 +9,79 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 'use strict';
 
-const { fork, execSync } = require('child_process');
+const { fork, spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 const Database = require('better-sqlite3');
 const { resolvePlugin, validateManifest } = require('./plugin-manifest');
+
+/**
+ * Whether `prlimit` is available on this image. Cached at module load.
+ * If absent (older images), we fall back to plain fork() and rely on the
+ * existing memory-poll watchdog plus container-level cgroups.
+ */
+let PRLIMIT_AVAILABLE = null;
+function prlimitAvailable() {
+  if (PRLIMIT_AVAILABLE !== null) return PRLIMIT_AVAILABLE;
+  try {
+    execSync('command -v prlimit', { stdio: 'pipe' });
+    PRLIMIT_AVAILABLE = true;
+  } catch {
+    PRLIMIT_AVAILABLE = false;
+  }
+  return PRLIMIT_AVAILABLE;
+}
+
+/**
+ * Build prlimit CLI args from env-configurable per-plugin RLIMITs. All limits
+ * apply to the child Node/tsx process and any descendants it forks (because
+ * RLIMITs are inherited via execve).
+ *
+ * Disabled by setting `PLUGIN_RLIMIT_ENABLED=false`.
+ */
+function buildPrlimitArgs() {
+  if (process.env.PLUGIN_RLIMIT_ENABLED === 'false') return null;
+  if (!prlimitAvailable()) return null;
+
+  const asMb = parseInt(process.env.PLUGIN_RLIMIT_AS_MB || '768', 10); // address-space cap
+  const nofile = parseInt(process.env.PLUGIN_RLIMIT_NOFILE || '512', 10);
+  const nproc = parseInt(process.env.PLUGIN_RLIMIT_NPROC || '64', 10);
+  const cpuSec = parseInt(process.env.PLUGIN_RLIMIT_CPU_SECONDS || '0', 10); // 0 = unlimited
+
+  const args = [
+    `--as=${asMb * 1024 * 1024}`,
+    `--nofile=${nofile}`,
+    `--nproc=${nproc}`,
+  ];
+  if (cpuSec > 0) args.push(`--cpu=${cpuSec}`);
+  return args;
+}
+
+/**
+ * Spawn a Node child under `prlimit` while preserving Node's IPC channel.
+ * Falls back to plain `fork()` if prlimit is unavailable.
+ *
+ * Node detects IPC via the `NODE_CHANNEL_FD` env var that fork() sets
+ * automatically when stdio includes 'ipc'. Because prlimit performs an
+ * execve into the target binary (rather than fork+exec), the IPC fd and
+ * `NODE_CHANNEL_FD` survive the wrapping.
+ *
+ * @param {string} command - 'node' or path to tsx bin
+ * @param {string[]} args  - Arguments to the command
+ * @param {object} options - { cwd, env, stdio }
+ * @returns {import('child_process').ChildProcess}
+ */
+function forkWithLimits(command, args, options) {
+  const limitArgs = buildPrlimitArgs();
+  if (!limitArgs) {
+    // No prlimit available or explicitly disabled — use plain fork().
+    // For tsx, args[0] is the entryFile; for node, args[0] would also be the script.
+    return fork(command, args, options);
+  }
+  // prlimit ... -- <command> <args...>
+  return spawn('prlimit', [...limitArgs, '--', command, ...args], options);
+}
 
 /**
  * Sanitize a plugin file path into a safe filename for per-plugin DBs.
@@ -137,7 +204,7 @@ class PluginRunner extends EventEmitter {
       // Strip bridge auth token from child env (security: plugins must not access it)
       const { BRIDGE_AUTH_TOKEN: _tsToken, ...safeEnvTs } = process.env;
       const tsxBin = path.join(__dirname, 'node_modules', '.bin', 'tsx');
-      child = fork(tsxBin, [entryFile], {
+      child = forkWithLimits(tsxBin, [entryFile], {
         cwd: childCwd,
         env: {
           ...safeEnvTs,
@@ -147,13 +214,20 @@ class PluginRunner extends EventEmitter {
           PLUGIN_SLUG: manifest.slug,
           PLUGIN_DIR: isDirectory ? pluginCwd : '',
           WORKSPACE_DIR: this.workspaceDir,
+          // Phase 5.2: per-plugin filesystem boundary. Loaded before any
+          // plugin code runs. NODE_OPTIONS is inherited by any sub-node
+          // the plugin spawns, so the boundary is transitive.
+          NODE_OPTIONS: [
+            safeEnvTs.NODE_OPTIONS || '',
+            `--require=${path.join(__dirname, 'plugin-fs-prelude.js')}`,
+          ].filter(Boolean).join(' '),
         },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       });
     } else {
       // Strip bridge auth token from child env (security: plugins must not access it)
       const { BRIDGE_AUTH_TOKEN: _jsToken, ...safeEnvJs } = process.env;
-      child = fork(entryFile, [], {
+      child = forkWithLimits(entryFile, [], {
         cwd: childCwd,
         env: {
           ...safeEnvJs,
@@ -163,9 +237,15 @@ class PluginRunner extends EventEmitter {
           PLUGIN_SLUG: manifest.slug,
           PLUGIN_DIR: isDirectory ? pluginCwd : '',
           WORKSPACE_DIR: this.workspaceDir,
+          // Phase 5.2: per-plugin filesystem boundary (see notes above).
+          NODE_OPTIONS: [
+            safeEnvJs.NODE_OPTIONS || '',
+            `--require=${path.join(__dirname, 'plugin-fs-prelude.js')}`,
+          ].filter(Boolean).join(' '),
         },
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-        // Resource limits are handled at the Docker container level
+        // Per-plugin RLIMITs applied via prlimit when available; container
+        // cgroups still bound aggregate usage.
       });
     }
 

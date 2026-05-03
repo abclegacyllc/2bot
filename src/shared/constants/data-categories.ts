@@ -60,7 +60,7 @@ export const TENANT_TABLES = [
   // Plugin System
   'UserPlugin',         // Installed plugins (tenant-specific)
 
-  // Workflow System (Phase 5+)
+  // Workflow System
   'Workflow',           // Workflow definitions
   'WorkflowStep',       // Workflow steps
   'WorkflowRun',        // Execution history

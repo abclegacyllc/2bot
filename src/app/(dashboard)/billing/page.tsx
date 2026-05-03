@@ -5,7 +5,7 @@
  *
  * Displays current subscription plan, status, and usage limits.
  * Allows users to upgrade or manage their subscription.
- * Uses new hierarchical resource types (Phase 3 migration).
+ * Uses new hierarchical resource types (migration).
  *
  * @module app/(dashboard)/billing/page
  */

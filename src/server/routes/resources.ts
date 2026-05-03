@@ -47,7 +47,7 @@ export const quotaRouter = resourcesRouter;
 
 /**
  * Helper to create ServiceContext from Express request
- * Phase 6.7: Token no longer contains activeContext - defaults to personal context
+ * Token no longer contains activeContext - defaults to personal context
  * This route is deprecated - use /api/user/quota or /api/orgs/:orgId/quota
  */
 function getServiceContext(req: Request, orgId?: string, deptId?: string) {
@@ -62,7 +62,7 @@ function getServiceContext(req: Request, orgId?: string, deptId?: string) {
     ? req.headers['x-request-id'][0]
     : req.headers['x-request-id'];
 
-  // Phase 6.7: Token simplified - context determined by URL, not token
+  // Token simplified - context determined by URL, not token
   // If orgId is provided, use organization context
   const contextType = orgId ? 'organization' : 'personal';
   

@@ -15,12 +15,12 @@
 
 import { Button } from "@/components/ui/button";
 import {
-    Popover,
-    PopoverContent,
-    PopoverTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Check, ChevronDown, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ImageOff, Search, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface ModelCapabilities {
@@ -115,6 +115,10 @@ export interface RealModelOption {
   isHealthy?: boolean;
   /** Whether the model supports function/tool calling */
   functionCalling?: boolean;
+  /** Whether the model supports extended thinking / reasoning */
+  reasoning?: boolean;
+  /** Whether the model can analyze images (vision / multimodal input) */
+  supportsVision?: boolean;
 }
 
 /**
@@ -139,6 +143,8 @@ interface ModelSelectorProps {
   showAutoMode?: boolean;
   /** Real models from /real-models endpoint */
   realModels?: RealModelOption[];
+  /** When true, dims non-vision models and warns if selected model doesn't support images */
+  hasImages?: boolean;
 }
 
 // Special value for Auto Mode
@@ -184,19 +190,24 @@ function getCreditColor(tier: string): string {
 function ModelRow({
   model,
   isSelected,
+  hasImages,
   onClick,
 }: {
   model: RealModelOption;
   isSelected: boolean;
+  hasImages?: boolean;
   onClick: () => void;
 }) {
+  const visionIncompatible = hasImages && model.supportsVision === false;
   return (
     <button
       type="button"
       onClick={onClick}
+      title={visionIncompatible ? "This model doesn't support image analysis" : undefined}
       className={cn(
         "w-full flex items-center justify-between px-3 py-1.5 text-sm hover:bg-accent/50 rounded-sm transition-colors",
-        isSelected && "bg-accent/30"
+        isSelected && "bg-accent/30",
+        visionIncompatible && "opacity-40",
       )}
     >
       <div className="flex items-center gap-2 min-w-0">
@@ -208,9 +219,15 @@ function ModelRow({
         <span className={cn("truncate", isSelected && "font-medium")}>
           {model.displayName}
         </span>
-        {model.isPreview && (
+        {model.reasoning ? (
+          <span className="text-[10px] font-medium text-purple-400 shrink-0">thinking</span>
+        ) : null}
+        {model.isPreview ? (
           <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
-        )}
+        ) : null}
+        {visionIncompatible ? (
+          <ImageOff className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+        ) : null}
       </div>
       <span className={cn("text-xs tabular-nums shrink-0 ml-2", getCreditColor(model.tier))}>
         {formatCredits(model.creditsInput, model.creditsOutput, model.creditUnit)}
@@ -219,7 +236,7 @@ function ModelRow({
   );
 }
 
-export function ModelSelector({ models, value, onChange, disabled, compact, showAutoMode, realModels }: ModelSelectorProps) {
+export function ModelSelector({ models, value, onChange, disabled, compact, showAutoMode, realModels, hasImages }: ModelSelectorProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -254,6 +271,10 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
   );
 
   const isAutoMode = value === AUTO_MODE_VALUE;
+
+  // Detect if the currently selected model is incompatible with attached images.
+  // Auto mode is always safe — the router picks vision-capable models for image messages.
+  const isVisionIncompatible = hasImages && !isAutoMode && selectedRealModel?.supportsVision === false;
 
   // Filter real models by search
   const filteredRealModels = useMemo(() => {
@@ -311,10 +332,13 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
           disabled={disabled}
           className={cn(
             "text-xs gap-1 px-2",
-            compact ? "h-7" : "h-8"
+            compact ? "h-7" : "h-8",
+            isVisionIncompatible && "text-amber-500 hover:text-amber-500",
           )}
+          title={isVisionIncompatible ? `${selectedRealModel?.displayName} doesn't support image analysis. Switch to a vision model or use Auto.` : undefined}
         >
-          {isAutoMode && <Sparkles className="h-3 w-3 text-green-500" />}
+          {isAutoMode ? <Sparkles className="h-3 w-3 text-green-500" /> : null}
+          {isVisionIncompatible ? <ImageOff className="h-3 w-3 shrink-0" /> : null}
           <span className="truncate max-w-[140px]">{triggerLabel}</span>
           <ChevronDown className="h-3 w-3 opacity-50" />
         </Button>
@@ -338,6 +362,13 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
         </div>
 
         <div className="max-h-[350px] overflow-y-auto py-1">
+          {/* Vision incompatibility notice */}
+          {hasImages ? (
+            <div className="px-3 py-2 text-[11px] text-amber-500/80 border-b border-border/30 flex items-center gap-1.5">
+              <ImageOff className="h-3 w-3 shrink-0" />
+              Image attached — dimmed models don&apos;t support vision
+            </div>
+          ) : null}
           {/* Auto Mode option */}
           {showAutoMode && !isSearching && (
             <button
@@ -369,6 +400,7 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
                   key={model.id}
                   model={model}
                   isSelected={value === model.id}
+                  hasImages={hasImages}
                   onClick={() => handleSelect(model.id)}
                 />
               ))
@@ -392,6 +424,7 @@ export function ModelSelector({ models, value, onChange, disabled, compact, show
                       key={model.id}
                       model={model}
                       isSelected={value === model.id}
+                      hasImages={hasImages}
                       onClick={() => handleSelect(model.id)}
                     />
                   ))}

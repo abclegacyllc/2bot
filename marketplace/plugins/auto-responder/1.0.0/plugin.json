@@ -4,8 +4,15 @@
   "version": "1.0.0",
   "description": "Automatically responds when messages match your keyword rules. Set up FAQ answers, greetings, or info replies.",
   "category": "automation",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["telegram", "auto-reply", "keyword", "automation"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "telegram",
+    "auto-reply",
+    "keyword",
+    "automation"
+  ],
   "difficulty": "intermediate",
   "configSchema": {
     "type": "object",
@@ -17,8 +24,16 @@
         "items": {
           "type": "object",
           "properties": {
-            "keyword": { "type": "string", "title": "Keyword", "description": "Keyword to match (case-insensitive)" },
-            "response": { "type": "string", "title": "Response", "description": "Reply text to send when keyword matches" }
+            "keyword": {
+              "type": "string",
+              "title": "Keyword",
+              "description": "Keyword to match (case-insensitive)"
+            },
+            "response": {
+              "type": "string",
+              "title": "Response",
+              "description": "Reply text to send when keyword matches"
+            }
           }
         }
       }
@@ -29,6 +44,30 @@
   "icon": "zap",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "responder"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "responder",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "string",
+        "title": "Response"
+      },
+      "matched": {
+        "type": "boolean",
+        "title": "Matched"
+      }
+    }
+  }
 }

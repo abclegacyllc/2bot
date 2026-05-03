@@ -438,6 +438,18 @@ async function getGatewayCredentials(gatewayId) {
     return cached.creds;
   }
 
+  // Phase 3A: check env-injected credentials (fastest path — no IPC/REST roundtrip)
+  const envKey = `GATEWAY_CREDS_${gatewayId}`;
+  if (process.env[envKey]) {
+    try {
+      const creds = JSON.parse(Buffer.from(process.env[envKey], 'base64').toString('utf8'));
+      credentialCache.set(gatewayId, { creds, fetchedAt: Date.now() });
+      return creds;
+    } catch {
+      // Malformed env var — fall through to IPC/REST
+    }
+  }
+
   // Try IPC first (primary path)
   try {
     const creds = await ipcRequest('gateway.getCredentials', { gatewayId });
@@ -1205,6 +1217,14 @@ const gateway = {
    * });
    */
   async execute(gatewayId, action, params) {
+    // If no gatewayId supplied (null/undefined), fall back to the env-injected default.
+    // This handles AI-generated plugins that omit the gatewayId or pass null.
+    const effectiveGatewayId = gatewayId || process.env.PLUGIN_GATEWAY_ID;
+    if (!effectiveGatewayId) {
+      throw new Error('gateway.execute requires "gatewayId" — pass event.gatewayId or ensure PLUGIN_GATEWAY_ID env is set');
+    }
+    gatewayId = effectiveGatewayId;
+
     // Circuit breaker — reject immediately if gateway is in OPEN state
     const circuit = circuitAllows(gatewayId);
     if (!circuit.allowed) {
@@ -1280,7 +1300,11 @@ const gateway = {
    * @returns {Promise<{ type: string, botToken?: string }>}
    */
   async getCredentials(gatewayId) {
-    return getGatewayCredentials(gatewayId);
+    const effectiveGatewayId = gatewayId || process.env.PLUGIN_GATEWAY_ID;
+    if (!effectiveGatewayId) {
+      throw new Error('gateway.getCredentials requires "gatewayId" — pass event.gatewayId or ensure PLUGIN_GATEWAY_ID env is set');
+    }
+    return getGatewayCredentials(effectiveGatewayId);
   },
 };
 

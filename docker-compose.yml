@@ -29,7 +29,7 @@ services:
   # Database Services (shared)
   # ===========================================
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: 2bot-postgres
     restart: unless-stopped
     environment:
@@ -71,38 +71,235 @@ services:
   # ===========================================
   # PgBouncer - Connection Pooling (Optional)
   # ===========================================
-  # Enable when scaling to multiple API instances
-  # To use: Change DATABASE_URL from postgres:5432 to pgbouncer:6432
+  # Enable for multi-replica deployments to bound total Postgres connections.
+  # Activate with: docker compose --profile scaling up -d pgbouncer
+  # Then set DATABASE_URL to: postgresql://USER:PASS@pgbouncer:6432/DB?pgbouncer=true
+  # Use transaction pooling mode (already configured below).
   # ===========================================
-  # pgbouncer:
-  #   image: edoburu/pgbouncer:1.21.0
-  #   container_name: 2bot-pgbouncer
-  #   restart: unless-stopped
-  #   ports:
-  #     - "6432:6432"
-  #   environment:
-  #     DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-  #     POOL_MODE: transaction
-  #     MAX_CLIENT_CONN: 200
-  #     DEFAULT_POOL_SIZE: 20
-  #     MIN_POOL_SIZE: 5
-  #     RESERVE_POOL_SIZE: 5
-  #     RESERVE_POOL_TIMEOUT: 3
-  #     AUTH_TYPE: plain
-  #     AUTH_FILE: /etc/pgbouncer/userlist.txt
-  #   volumes:
-  #     - ./scripts/docker/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   healthcheck:
-  #     test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 5s
-  #   networks:
-  #     - 2bot-network
+  pgbouncer:
+    image: edoburu/pgbouncer:1.21.0
+    container_name: 2bot-pgbouncer
+    restart: unless-stopped
+    profiles: ["scaling"]
+    ports:
+      - "127.0.0.1:6432:6432"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-2bot_production}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      MIN_POOL_SIZE: 5
+      RESERVE_POOL_SIZE: 5
+      RESERVE_POOL_TIMEOUT: 3
+      AUTH_TYPE: scram-sha-256
+      # Statement-level features must be disabled for transaction pooling
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,search_path
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # Postgres Read Replica (Phase 5.6, optional)
+  # ===========================================
+  # Asynchronous streaming-replication replica of `postgres`. Activated only
+  # under the `scaling` profile so the default `docker compose up` keeps a
+  # single primary node.
+  #
+  #   docker compose --profile scaling up -d postgres-replica
+  #
+  # IMPORTANT: First-time setup requires the primary to be configured for
+  # replication (a replication user, `wal_level=replica`, `max_wal_senders`,
+  # and a replication slot) and the replica's data directory to be seeded
+  # with `pg_basebackup`. The image below uses Bitnami's helper variables to
+  # automate that. Switch your application to use replicas by setting
+  # `DATABASE_URL_REPLICA=postgresql://...@postgres-replica:5432/2bot_production`.
+  # ===========================================
+  postgres-replica:
+    image: bitnami/postgresql:15
+    container_name: 2bot-postgres-replica
+    restart: unless-stopped
+    profiles: ["scaling"]
+    environment:
+      POSTGRESQL_REPLICATION_MODE: slave
+      POSTGRESQL_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
+      # NOTE: --profile scaling requires POSTGRES_REPLICATION_PASSWORD in .env
+      POSTGRESQL_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-}
+      POSTGRESQL_MASTER_HOST: postgres
+      POSTGRESQL_MASTER_PORT_NUMBER: 5432
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-2bot_production}
+    volumes:
+      - postgres_replica_data:/bitnami/postgresql
+    ports:
+      - "127.0.0.1:5433:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # Phase 5.7: Redis HA — Cluster mode (--profile scaling)
+  # ===========================================
+  # 6-node Redis Cluster (3 primaries + 3 replicas) using bitnami/redis-cluster.
+  # Bitnami's image bootstraps the cluster automatically when REDIS_CLUSTER_CREATOR=yes
+  # is set on one node. Application connects via REDIS_MODE=cluster +
+  # REDIS_CLUSTER_NODES="redis-cluster-1:6379,redis-cluster-2:6379,redis-cluster-3:6379".
+  #
+  # NOTE: Cluster mode and Sentinel mode are mutually exclusive — pick one.
+  # The default `redis` service above remains for single-node deployments.
+  # ===========================================
+  redis-cluster-1: &redis-cluster-node
+    image: bitnami/redis-cluster:7.2
+    container_name: 2bot-redis-cluster-1
+    restart: unless-stopped
+    profiles: ["scaling"]
+    environment:
+      # NOTE: --profile scaling requires REDIS_PASSWORD in .env
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_NODES: "redis-cluster-1 redis-cluster-2 redis-cluster-3 redis-cluster-4 redis-cluster-5 redis-cluster-6"
+    volumes:
+      - redis_cluster_1_data:/bitnami/redis/data
+    networks:
+      - 2bot-network
+
+  redis-cluster-2:
+    <<: *redis-cluster-node
+    container_name: 2bot-redis-cluster-2
+    volumes:
+      - redis_cluster_2_data:/bitnami/redis/data
+
+  redis-cluster-3:
+    <<: *redis-cluster-node
+    container_name: 2bot-redis-cluster-3
+    volumes:
+      - redis_cluster_3_data:/bitnami/redis/data
+
+  redis-cluster-4:
+    <<: *redis-cluster-node
+    container_name: 2bot-redis-cluster-4
+    volumes:
+      - redis_cluster_4_data:/bitnami/redis/data
+
+  redis-cluster-5:
+    <<: *redis-cluster-node
+    container_name: 2bot-redis-cluster-5
+    volumes:
+      - redis_cluster_5_data:/bitnami/redis/data
+
+  # The "creator" node performs the one-time `redis-cli --cluster create`
+  # bootstrap when the cluster is first started. Subsequent runs are no-ops.
+  redis-cluster-6:
+    image: bitnami/redis-cluster:7.2
+    container_name: 2bot-redis-cluster-6
+    restart: unless-stopped
+    profiles: ["scaling"]
+    depends_on:
+      - redis-cluster-1
+      - redis-cluster-2
+      - redis-cluster-3
+      - redis-cluster-4
+      - redis-cluster-5
+    environment:
+      # NOTE: --profile scaling requires REDIS_PASSWORD in .env
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_CLUSTER_REPLICAS: "1"
+      REDIS_NODES: "redis-cluster-1 redis-cluster-2 redis-cluster-3 redis-cluster-4 redis-cluster-5 redis-cluster-6"
+      REDIS_CLUSTER_CREATOR: "yes"
+    volumes:
+      - redis_cluster_6_data:/bitnami/redis/data
+    networks:
+      - 2bot-network
+
+  # ===========================================
+  # Phase 5.7: Redis HA — Sentinel mode (--profile scaling-sentinel)
+  # ===========================================
+  # 1 primary + 2 replicas + 3 sentinels for HA failover without sharding.
+  # Use this profile if cluster's multi-key constraints are inconvenient and
+  # you need HA without horizontal scaling. Configure app via:
+  #   REDIS_MODE=sentinel
+  #   REDIS_SENTINELS="redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379"
+  #   REDIS_SENTINEL_NAME=mymaster
+  # ===========================================
+  redis-primary:
+    image: bitnami/redis:7.2
+    container_name: 2bot-redis-primary
+    restart: unless-stopped
+    profiles: ["scaling-sentinel"]
+    environment:
+      REDIS_REPLICATION_MODE: master
+      # NOTE: --profile scaling-sentinel requires REDIS_PASSWORD in .env
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_primary_data:/bitnami/redis/data
+    networks:
+      - 2bot-network
+
+  redis-replica-1: &redis-replica-node
+    image: bitnami/redis:7.2
+    container_name: 2bot-redis-replica-1
+    restart: unless-stopped
+    profiles: ["scaling-sentinel"]
+    depends_on:
+      - redis-primary
+    environment:
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: redis-primary
+      REDIS_MASTER_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_replica_1_data:/bitnami/redis/data
+    networks:
+      - 2bot-network
+
+  redis-replica-2:
+    <<: *redis-replica-node
+    container_name: 2bot-redis-replica-2
+    volumes:
+      - redis_replica_2_data:/bitnami/redis/data
+
+  redis-sentinel-1: &redis-sentinel-node
+    image: bitnami/redis-sentinel:7.2
+    container_name: 2bot-redis-sentinel-1
+    restart: unless-stopped
+    profiles: ["scaling-sentinel"]
+    depends_on:
+      - redis-primary
+      - redis-replica-1
+      - redis-replica-2
+    environment:
+      REDIS_MASTER_HOST: redis-primary
+      REDIS_MASTER_SET: mymaster
+      REDIS_MASTER_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_SENTINEL_QUORUM: "2"
+    networks:
+      - 2bot-network
+
+  redis-sentinel-2:
+    <<: *redis-sentinel-node
+    container_name: 2bot-redis-sentinel-2
+
+  redis-sentinel-3:
+    <<: *redis-sentinel-node
+    container_name: 2bot-redis-sentinel-3
 
   # ===========================================
   # Main Website (www.2bot.org) - Port :3000
@@ -247,6 +444,55 @@ services:
       - 2bot-workspace-net
 
   # ===========================================
+  # Workflow Worker (Phase 5.5) - BullMQ consumer
+  # ===========================================
+  # Dedicated process(es) that pull workflow jobs from the BullMQ queue
+  # and run them through the executor. Scale horizontally with:
+  #
+  #   docker compose --profile worker up -d --scale workflow-worker=4
+  #
+  # Activated via the `worker` profile so default `docker compose up` is
+  # unchanged. Enable in your deployment when you flip trigger sites to
+  # `enqueueWorkflowRun()` or set WORKFLOW_QUEUE_ENABLED=true.
+  # ===========================================
+  workflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    profiles: ["worker"]
+    command: ["npm", "run", "worker:start:prod"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - workspace_data:/var/lib/2bot-workspaces
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB=0
+      - WORKFLOW_QUEUE_NAME=${WORKFLOW_QUEUE_NAME:-workflow-runs}
+      - WORKFLOW_WORKER_CONCURRENCY=${WORKFLOW_WORKER_CONCURRENCY:-5}
+      - WORKFLOW_QUEUE_ATTEMPTS=${WORKFLOW_QUEUE_ATTEMPTS:-3}
+      - WORKFLOW_QUEUE_BACKOFF_MS=${WORKFLOW_QUEUE_BACKOFF_MS:-5000}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - WORKSPACE_IMAGE=2bot-workspace:latest
+      - WORKSPACE_VOLUME_BASE=/var/lib/2bot-workspaces
+      - WORKSPACE_NETWORK=2bot-workspace-net
+      - SENTRY_DSN=${SENTRY_DSN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - 2bot-network
+      - 2bot-workspace-net
+
+  # ===========================================
   # Admin Panel (admin.2bot.org) - Port :3007
   # ===========================================
   # Platform administration (ADMIN role only)
@@ -336,6 +582,29 @@ volumes:
     driver: local
   # Phase 13: Persistent storage for workspace containers
   workspace_data:
+    driver: local
+  # Phase 5.6: Persistent storage for Postgres read replica (--profile scaling)
+  postgres_replica_data:
+    driver: local
+  # Phase 5.7: Redis Cluster node data (--profile scaling)
+  redis_cluster_1_data:
+    driver: local
+  redis_cluster_2_data:
+    driver: local
+  redis_cluster_3_data:
+    driver: local
+  redis_cluster_4_data:
+    driver: local
+  redis_cluster_5_data:
+    driver: local
+  redis_cluster_6_data:
+    driver: local
+  # Phase 5.7: Redis Sentinel-mode node data (--profile scaling-sentinel)
+  redis_primary_data:
+    driver: local
+  redis_replica_1_data:
+    driver: local
+  redis_replica_2_data:
     driver: local
 
 # ===========================================

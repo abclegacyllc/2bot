@@ -32,6 +32,50 @@ const REDACT_PATHS = [
 ];
 
 /**
+ * Build the production transport spec from environment.
+ *
+ * Supports a generic Pino transport target via `LOG_TRANSPORT_TARGET`, e.g.:
+ *   LOG_TRANSPORT_TARGET=pino-loki
+ *   LOG_TRANSPORT_OPTIONS='{"host":"http://loki:3100","labels":{"app":"2bot"}}'
+ *
+ * Or a multi-line `LOG_TRANSPORT_TARGETS` JSON array of `{target,options}`
+ * entries for ship-and-stdout fan-out.
+ *
+ * Returns `undefined` when no transport is configured (default: stdout JSON).
+ */
+function buildProductionTransport(): pino.TransportTargetOptions | pino.TransportMultiOptions | undefined {
+  const multi = process.env.LOG_TRANSPORT_TARGETS;
+  if (multi) {
+    try {
+      const targets = JSON.parse(multi) as pino.TransportTargetOptions[];
+      if (Array.isArray(targets) && targets.length > 0) {
+        return { targets };
+      }
+    } catch (err) {
+      // Fall through to single-target / stdout. Don't crash logging on bad config.
+
+      console.error("Invalid LOG_TRANSPORT_TARGETS JSON, falling back to stdout:", err);
+    }
+  }
+
+  const target = process.env.LOG_TRANSPORT_TARGET;
+  if (!target) return undefined;
+
+  let options: Record<string, unknown> = {};
+  if (process.env.LOG_TRANSPORT_OPTIONS) {
+    try {
+      options = JSON.parse(process.env.LOG_TRANSPORT_OPTIONS) as Record<string, unknown>;
+    } catch (err) {
+
+      console.error("Invalid LOG_TRANSPORT_OPTIONS JSON, ignoring:", err);
+    }
+  }
+  return { target, options };
+}
+
+const productionTransport = isProduction ? buildProductionTransport() : undefined;
+
+/**
  * Pino logger configuration
  */
 export const logger = pino({
@@ -56,6 +100,7 @@ export const logger = pino({
       level: (label) => ({ level: label }),
     },
     timestamp: pino.stdTimeFunctions.isoTime,
+    ...(productionTransport ? { transport: productionTransport } : {}),
   }),
   base: {
     env: process.env.NODE_ENV,

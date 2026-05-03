@@ -31,7 +31,7 @@ import {
     type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { AlertCircle, Code2, Eye, FileCode2, Folder, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Code2, Eye, FileCode2, Folder, Loader2, XCircle } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 import { buildCodeGraph, type CodeGraph, type CodeGraphNode } from "@/lib/code-graph-builder";
@@ -51,6 +51,13 @@ interface PluginCodeGraphProps {
   error?: string;
   /** Callback when user clicks a file node */
   onFileClick?: (filePath: string) => void;
+  /**
+   * Layer-2 (runtime) per-file status, keyed by the same relative path used
+   * in the `files` map.  When set, files render a small CheckCircle2 (green)
+   * or XCircle (red) badge in the top-right corner — the runtime mirror of
+   * the Layer-1 preflight per-file annotations.
+   */
+  fileStatuses?: Map<string, "ok" | "error">;
 }
 
 type FileNodeData = {
@@ -60,6 +67,7 @@ type FileNodeData = {
   importedByCount: number;
   filePath: string;
   onFileClick?: (filePath: string) => void;
+  status?: "ok" | "error";
 };
 
 type FolderNodeData = {
@@ -91,20 +99,40 @@ const GRID_GAP_Y = 120;
 // ===========================================
 
 function FileNode({ data }: NodeProps<Node<FileNodeData>>) {
+  // Layer-2 status decoration: green check for files that ran successfully,
+  // red cross for files that appeared in the failure stack trace.  Failure
+  // border takes precedence over the entry-file emerald border so users see
+  // the broken file even on the entry node.
+  const isFailed = data.status === "error";
+  const borderClass = isFailed
+    ? "border-red-500/60 bg-red-500/10 hover:bg-red-500/20"
+    : data.isEntry
+      ? "border-emerald-500/50 bg-emerald-500/10 hover:bg-emerald-500/20"
+      : "border-border bg-card hover:bg-muted/50";
   return (
     <div
-      className={`
-        rounded-lg border px-3 py-2 shadow-sm cursor-pointer transition-colors
-        ${data.isEntry
-          ? "border-emerald-500/50 bg-emerald-500/10 hover:bg-emerald-500/20"
-          : "border-border bg-card hover:bg-muted/50"}
-      `}
+      className={`relative rounded-lg border px-3 py-2 shadow-sm cursor-pointer transition-colors ${borderClass}`}
       style={{ width: NODE_WIDTH }}
       onClick={() => data.onFileClick?.(data.filePath)}
     >
+      {data.status === "ok" ? (
+        <span
+          className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center rounded-full bg-background"
+          title="Ran successfully in last test"
+        >
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+        </span>
+      ) : data.status === "error" ? (
+        <span
+          className="absolute -top-1.5 -right-1.5 inline-flex items-center justify-center rounded-full bg-background"
+          title="Failed in last test (see error stack)"
+        >
+          <XCircle className="h-3.5 w-3.5 text-red-500" />
+        </span>
+      ) : null}
       <Handle type="target" position={Position.Top} className="!w-1.5 !h-1.5 !bg-muted-foreground/40 !border-0 !min-w-0 !min-h-0" />
       <div className="flex items-center gap-2">
-        <FileCode2 className={`h-3.5 w-3.5 shrink-0 ${data.isEntry ? "text-emerald-500" : "text-muted-foreground"}`} />
+        <FileCode2 className={`h-3.5 w-3.5 shrink-0 ${isFailed ? "text-red-500" : data.isEntry ? "text-emerald-500" : "text-muted-foreground"}`} />
         <span className="text-xs font-medium truncate">{data.label}</span>
       </div>
       <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
@@ -346,6 +374,7 @@ export function PluginCodeGraph({
   isLoading,
   error,
   onFileClick,
+  fileStatuses,
 }: PluginCodeGraphProps) {
   const [viewMode, setViewMode] = useState<"overview" | "developer">("overview");
 
@@ -357,11 +386,16 @@ export function PluginCodeGraph({
   const flowNodes = useMemo(() => {
     if (!graph) return [];
     const nodes = layoutNodes(graph);
-    return nodes.map((n) => ({
-      ...n,
-      data: { ...n.data, onFileClick },
-    }));
-  }, [graph, onFileClick]);
+    return nodes.map((n) => {
+      if (n.type !== "file") return { ...n, data: { ...n.data, onFileClick } };
+      const fileData = n.data as FileNodeData;
+      const status = fileStatuses?.get(fileData.filePath);
+      return {
+        ...n,
+        data: { ...fileData, onFileClick, status },
+      };
+    });
+  }, [graph, onFileClick, fileStatuses]);
 
   const flowEdges = useMemo(() => {
     if (!graph) return [];

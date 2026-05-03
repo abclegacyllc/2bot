@@ -4,14 +4,14 @@
  * Executes plugins in their workspace containers via the bridge agent,
  * or in-process for built-in server-side plugins.
  *
- * All custom/user plugins run in WORKSPACE mode (Phase 4 simplification).
+ * All custom/user plugins run in WORKSPACE mode (simplification).
  * Built-in plugins registered via registerPlugin() run in-process.
  *
  * @module modules/plugin/plugin.executor
  */
 
 import { CircuitOpenError } from "@/lib/circuit-breaker";
-import { decrypt } from "@/lib/encryption";
+import { decryptIfEncrypted } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
@@ -19,7 +19,7 @@ import { bridgeClientManager } from "@/modules/workspace";
 
 import type { PluginPermissions } from "@/shared/types/plugin";
 
-import { getPluginEntryPath, pluginDeployService } from "./plugin-deploy.service";
+import { extractGatewayIdFromPath, gatewayTypeToPlatform, getPluginEntryPath, isDirectoryLayout, pluginDeployService } from "./plugin-deploy.service";
 
 import type { GatewayType } from "@prisma/client";
 
@@ -236,7 +236,7 @@ async function executeInProcess(
  * via the bridge agent's plugin.event action. If the plugin is not running,
  * ensures file exists and starts the process first.
  *
- * Cold start path (Phase 4): If the user's container is STOPPED, auto-starts
+ * Cold start path: If the user's container is STOPPED, auto-starts
  * it before executing — so events are never lost due to idle containers.
  */
 async function executeInWorkspace(
@@ -318,9 +318,7 @@ async function executeInWorkspace(
         pluginSlug
       );
     }
-    const authToken = container.bridgeAuthToken.startsWith('v1:')
-      ? decrypt(container.bridgeAuthToken)
-      : container.bridgeAuthToken;
+    const authToken = decryptIfEncrypted(container.bridgeAuthToken);
     try {
       client = await bridgeClientManager.getClient(
         container.id,
@@ -346,6 +344,10 @@ async function executeInWorkspace(
       context.entryFile,
     );
 
+    // Resolve gatewayId for env injection: prefer event field, fall back to entryFile path
+    const eventGatewayId = 'gatewayId' in event ? event.gatewayId : null;
+    const envGatewayId = eventGatewayId ?? (context.entryFile ? extractGatewayIdFromPath(context.entryFile) : null);
+
     // Ensure plugin process is running (start if not)
     await pluginDeployService.ensureRunning(
       container.id,
@@ -354,12 +356,21 @@ async function executeInWorkspace(
         PLUGIN_USER_ID: context.userId,
         ...(context.organizationId ? { PLUGIN_ORG_ID: context.organizationId } : {}),
         PLUGIN_CONFIG: JSON.stringify(context.config ?? {}),
+        ...(envGatewayId ? { PLUGIN_GATEWAY_ID: envGatewayId } : {}),
       },
       context.entryFile,
     );
-
-    const eventGatewayId = 'gatewayId' in event ? event.gatewayId : null;
-    const pluginFile = context.entryFile ?? getPluginEntryPath(eventGatewayId ?? null, pluginSlug);
+    let pluginFile = context.entryFile;
+    if (!pluginFile) {
+      const effectiveGwId = eventGatewayId ?? null;
+      let platform: string | undefined;
+      if (effectiveGwId) {
+        const gw = await prisma.gateway.findUnique({ where: { id: effectiveGwId }, select: { type: true } });
+        if (gw) platform = gatewayTypeToPlatform(gw.type);
+      }
+      const isDir = isDirectoryLayout(pluginSlug);
+      pluginFile = getPluginEntryPath(effectiveGwId, pluginSlug, { platform, isDirectory: isDir });
+    }
 
     // Push event to the running plugin via IPC
     // Convert to raw format so container plugins see standard API field names
@@ -420,15 +431,47 @@ async function executeInWorkspace(
 export class PluginExecutor {
   private config: ExecutorConfig;
 
+  /**
+   * Short-TTL in-memory cache keyed by caller-supplied `context.idempotencyKey`.
+   * Used to short-circuit duplicate `execute()` calls originating from the
+   * same webhook event (e.g. the standalone + workflow-step double path).
+   * Redis-backed idempotency dedup — survives server restarts and works across
+   * multiple server instances. Key: `plugin:dedup:{idempotencyKey}`, TTL 30s.
+   * Falls back to no-dedup if Redis is unavailable.
+   */
+  private static readonly IDEMPOTENCY_TTL_MS = 30_000;
+  private static readonly IDEMPOTENCY_REDIS_PREFIX = 'plugin:dedup:';
+
   constructor(config: Partial<ExecutorConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     executorLogger.info({ config: this.config }, "Plugin executor initialized");
   }
 
+  private async getIdempotent(key: string): Promise<PluginExecutionResult | null> {
+    try {
+      const raw = await redis.get(`${PluginExecutor.IDEMPOTENCY_REDIS_PREFIX}${key}`);
+      if (!raw) return null;
+      return JSON.parse(raw) as PluginExecutionResult;
+    } catch {
+      return null;
+    }
+  }
+
+  private setIdempotent(key: string, result: PluginExecutionResult): void {
+    redis
+      .set(
+        `${PluginExecutor.IDEMPOTENCY_REDIS_PREFIX}${key}`,
+        JSON.stringify(result),
+        'PX',
+        PluginExecutor.IDEMPOTENCY_TTL_MS,
+      )
+      .catch(() => {});
+  }
+
   /**
    * Execute a plugin event
    *
-   * Routing (Phase 4 simplification):
+   * Routing (simplification):
    *   - Built-in plugin registered in pluginRegistry → in-process
    *   - Everything else → workspace container via bridge agent
    */
@@ -438,6 +481,21 @@ export class PluginExecutor {
     context: PluginContext,
   ): Promise<PluginExecutionResult> {
     const startTime = Date.now();
+
+    // Idempotency short-circuit: if the caller supplied an `idempotencyKey`
+    // and we've executed this plugin with the same key in the last 30s,
+    // return the cached result. Protects against double-execution from
+    // parallel paths (standalone + workflow-step) firing on the same webhook.
+    if (context.idempotencyKey) {
+      const cached = await this.getIdempotent(context.idempotencyKey);
+      if (cached) {
+        executorLogger.info(
+          { pluginSlug, idempotencyKey: context.idempotencyKey, userId: context.userId },
+          "Plugin execution deduplicated via idempotency cache",
+        );
+        return cached;
+      }
+    }
 
     executorLogger.debug(
       { pluginSlug, eventType: event.type, userId: context.userId },
@@ -515,6 +573,11 @@ export class PluginExecutor {
         },
         "Plugin execution complete"
       );
+
+      // Cache successful results for idempotency short-circuit
+      if (context.idempotencyKey && result.success) {
+        this.setIdempotent(context.idempotencyKey, result);
+      }
 
       return result;
     } catch (error) {
@@ -775,6 +838,104 @@ export function createGatewayAccessor(
       }));
     },
   };
+}
+
+// ===========================================
+// Diagnostics helpers (used by Test/Preflight surfaces)
+// ===========================================
+
+/**
+ * Resolve a user's running workspace container and return a connected bridge client.
+ * Returns `null` when no usable container exists or the bridge is unreachable.
+ *
+ * Used by preflight + log-capture flows; never throws.
+ */
+async function getBridgeClientForUser(
+  userId: string,
+  organizationId: string | null | undefined,
+): Promise<{ client: Awaited<ReturnType<typeof bridgeClientManager.getClient>>; containerId: string } | null> {
+  const container = await prisma.workspaceContainer.findFirst({
+    where: {
+      userId,
+      ...(organizationId ? { organizationId } : {}),
+      status: { in: ['RUNNING'] },
+    },
+    select: { id: true, bridgePort: true, bridgeAuthToken: true },
+  }) ?? await prisma.workspaceContainer.findFirst({
+    where: { userId, status: { in: ['RUNNING'] } },
+    select: { id: true, bridgePort: true, bridgeAuthToken: true },
+  });
+
+  if (!container || !container.bridgePort || !container.bridgeAuthToken) return null;
+
+  try {
+    const authToken = decryptIfEncrypted(container.bridgeAuthToken);
+    const client = await bridgeClientManager.getClient(container.id, container.bridgePort, authToken);
+    return { client, containerId: container.id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch recent stdout/stderr logs for a plugin from its workspace container.
+ * Returns an empty array if the container is unavailable or the call fails.
+ */
+export async function fetchPluginLogs(
+  userId: string,
+  organizationId: string | null | undefined,
+  pluginFile: string,
+): Promise<Array<{ level: string; message: string; ts?: string | number }>> {
+  const handle = await getBridgeClientForUser(userId, organizationId);
+  if (!handle) return [];
+  try {
+    const result = await handle.client.pluginLogs(pluginFile) as {
+      logs?: Array<{ level: string; message: string; ts?: string | number; timestamp?: string | number }>;
+    };
+    const raw = Array.isArray(result?.logs) ? result.logs : [];
+    return raw.map((l) => ({
+      level: l.level ?? 'info',
+      message: l.message ?? '',
+      ts: l.ts ?? l.timestamp,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Run the bridge agent's static plugin validator (`node --check` + manifest + lint).
+ * Returns `{ valid, problems[] }`. When the bridge is unreachable, returns
+ * `{ valid: true, problems: [] }` so callers can fall through gracefully.
+ */
+export async function validatePluginInWorkspace(
+  userId: string,
+  organizationId: string | null | undefined,
+  pluginFile: string,
+): Promise<{
+  valid: boolean;
+  problems: Array<{ severity: 'error' | 'warning' | 'info'; message: string; line?: number; column?: number }>;
+  bridgeAvailable: boolean;
+}> {
+  const handle = await getBridgeClientForUser(userId, organizationId);
+  if (!handle) return { valid: true, problems: [], bridgeAvailable: false };
+  try {
+    const result = await handle.client.pluginValidate(pluginFile);
+    return {
+      valid: !!result.valid,
+      problems: Array.isArray(result.problems) ? result.problems : [],
+      bridgeAvailable: true,
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      problems: [{
+        severity: 'error',
+        message: `Bridge validation call failed: ${err instanceof Error ? err.message : String(err)}`,
+      }],
+      bridgeAvailable: true,
+    };
+  }
 }
 
 // ===========================================

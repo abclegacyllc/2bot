@@ -1,4 +1,4 @@
-// Billing Module - Phase 5: Billing System
+// Billing Module - Billing System
 // Exports: billingTypes, stripeService
 
 export const BILLING_MODULE = "billing" as const;

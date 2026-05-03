@@ -1,7 +1,7 @@
 /**
  * Workspace Constants
  * 
- * Configuration constants for the workspace module (Phase 13).
+ * Configuration constants for the workspace module.
  * 
  * @module modules/workspace/workspace.constants
  */

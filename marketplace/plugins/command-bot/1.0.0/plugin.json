@@ -4,8 +4,15 @@
   "version": "1.0.0",
   "description": "Responds to /start, /help, /stats and custom commands. Add interactive commands your users can discover and use.",
   "category": "messaging",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["telegram", "commands", "bot", "slash"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "telegram",
+    "commands",
+    "bot",
+    "slash"
+  ],
   "difficulty": "intermediate",
   "configSchema": {
     "type": "object",
@@ -14,7 +21,7 @@
         "type": "string",
         "title": "Welcome Message",
         "description": "Message sent when user runs /start",
-        "default": "Welcome! 🤖 Use /help to see available commands."
+        "default": "Welcome! \ud83e\udd16 Use /help to see available commands."
       }
     }
   },
@@ -23,6 +30,30 @@
   "icon": "terminal",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "responder"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "responder",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      },
+      "command": {
+        "type": "string",
+        "title": "Command"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "string",
+        "title": "Response"
+      }
+    }
+  }
 }

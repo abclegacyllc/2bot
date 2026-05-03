@@ -11,7 +11,7 @@
  * @module modules/workflow/workflow-cache
  */
 
-import { decrypt } from "@/lib/encryption";
+import { decryptIfEncrypted } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { bridgeClientManager } from "@/modules/workspace";
@@ -199,12 +199,16 @@ async function getContainerClient(
     where: {
       userId,
       organizationId: organizationId ?? null,
-      status: "RUNNING",
+      status: { in: ["RUNNING", "PAUSED"] },
     },
     select: { id: true, bridgePort: true, bridgeAuthToken: true },
   });
 
   if (!container) return null;
+
+  // resume the container if it was auto-paused for idleness.
+  const { containerLifecycleService } = await import("@/modules/workspace/container-lifecycle.service");
+  await containerLifecycleService.ensureRunning(container.id);
 
   const existing = bridgeClientManager.getExistingClient(container.id);
   if (existing) return existing;
@@ -212,9 +216,7 @@ async function getContainerClient(
   if (!container.bridgePort || !container.bridgeAuthToken) return null;
 
   try {
-    const authToken = container.bridgeAuthToken.startsWith("v1:")
-      ? decrypt(container.bridgeAuthToken)
-      : container.bridgeAuthToken;
+    const authToken = decryptIfEncrypted(container.bridgeAuthToken);
     return await bridgeClientManager.getClient(
       container.id,
       container.bridgePort,

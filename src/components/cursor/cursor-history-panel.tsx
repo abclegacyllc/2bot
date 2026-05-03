@@ -2,7 +2,7 @@
  * Cursor Session History Panel
  *
  * Displays past cursor sessions with expandable event timelines.
- * Similar to GitHub Copilot's action history / Cursor IDE's session log.
+ * Session history panel — action log for completed and in-progress agent runs.
  *
  * Reads from the localStorage-based cursor-session-store.
  *
@@ -19,6 +19,7 @@ import {
     ChevronRight,
     Clock,
     Loader2,
+    RotateCcw,
     Trash2,
     Wrench,
     XCircle,
@@ -69,6 +70,12 @@ function statusIcon(status: SessionStatus) {
       return <XCircle size={14} className="text-yellow-400" />;
     case "running":
       return <Loader2 size={14} className="text-blue-400 animate-spin" />;
+    case "retried":
+      return <RotateCcw size={14} className="text-orange-400" />;
+    default: {
+      const _exhaustive: never = status;
+      return <Check size={14} className="text-muted-foreground" />;
+    }
   }
 }
 
@@ -78,6 +85,11 @@ function statusLabel(status: SessionStatus): string {
     case "error": return "Error";
     case "cancelled": return "Cancelled";
     case "running": return "Running";
+    case "retried": return "Retried";
+    default: {
+      const _exhaustive: never = status;
+      return String(status);
+    }
   }
 }
 

@@ -30,6 +30,17 @@ vi.mock('@/lib/prisma', () => ({
       delete: vi.fn(),
       count: vi.fn(),
     },
+    workspaceContainer: {
+      findFirst: vi.fn(),
+    },
+    userPlugin: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
+    workflow: {
+      findMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
     organization: {
       findUnique: vi.fn(),
     },
@@ -63,6 +74,17 @@ const mockedPrisma = prisma as unknown as {
     delete: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
   };
+  workspaceContainer: {
+    findFirst: ReturnType<typeof vi.fn>;
+  };
+  userPlugin: {
+    findMany: ReturnType<typeof vi.fn>;
+    deleteMany: ReturnType<typeof vi.fn>;
+  };
+  workflow: {
+    findMany: ReturnType<typeof vi.fn>;
+  };
+  $transaction: ReturnType<typeof vi.fn>;
   organization: {
     findUnique: ReturnType<typeof vi.fn>;
   };
@@ -73,6 +95,24 @@ beforeEach(() => {
   
   // Set default mock return values
   mockedPrisma.gateway.findMany.mockResolvedValue([]);
+  mockedPrisma.workspaceContainer.findFirst.mockResolvedValue(null);
+  mockedPrisma.userPlugin.findMany.mockResolvedValue([]);
+  mockedPrisma.workflow.findMany.mockResolvedValue([]);
+  mockedPrisma.$transaction.mockImplementation((fn: (tx: any) => Promise<any>) =>
+    fn({
+      workflowStep: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      workflow: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      userPlugin: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      gateway: {
+        create: mockedPrisma.gateway.create,
+        delete: mockedPrisma.gateway.delete,
+      },
+      projectResource: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({ id: 'pr_test' }),
+      },
+    })
+  );
 });
 
 afterEach(() => {

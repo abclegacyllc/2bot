@@ -15,9 +15,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useStudio } from "@/app/studio/layout";
+import { PreflightResultDialog } from "@/components/bot-studio/preflight-result-dialog";
 import { WorkflowRunHistory } from "@/components/bot-studio/workflow-run-history";
 import { WorkflowTestChat } from "@/components/bot-studio/workflow-test-chat";
-import { CursorStudioBar } from "@/components/cursor/cursor-studio-bar";
+import { useProvideStudioBarData, useStudioBarActions } from "@/components/cursor/studio-bar-context";
 import { Breadcrumbs } from "@/components/navigation/breadcrumbs";
 import { useAuth } from "@/components/providers/auth-provider";
 import { OverviewTab } from "@/components/studio/overview-tab";
@@ -25,6 +26,14 @@ import { SettingsTab } from "@/components/studio/settings-tab";
 import { WorkflowTab } from "@/components/studio/workflow-tab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -32,18 +41,23 @@ import type { StepEditorData } from "@/components/bot-studio/workflow-step-edito
 import { useWorkflowUndo } from "@/hooks/use-workflow-undo";
 import type {
     GatewayOption,
+    PreflightReport,
     WorkflowListItem,
     WorkflowStepItem,
 } from "@/lib/api-client";
 import {
+    addWorkflowEdge,
     addWorkflowStep,
+    applyPreflightFix,
     createWorkflow,
+    deleteWorkflowEdge,
     deleteWorkflowStep,
     getPluginBySlug,
     getWorkflowRunDetail,
     getWorkflows,
     installPluginToBot,
     installPluginToBotOrg,
+    preflightWorkflow,
     togglePlugin,
     triggerWorkflow,
     uninstallPlugin,
@@ -52,14 +66,16 @@ import {
     updateWorkflow,
     updateWorkflowStep,
 } from "@/lib/api-client";
-import type { ConfigSchema, PluginListItem, UserPlugin } from "@/shared/types/plugin";
+import type { ConfigSchema, PluginListItem, PluginSchemaSet, UserPlugin } from "@/shared/types/plugin";
 
 import {
     Activity,
     BarChart3,
+    ChevronDown,
     Loader2,
     Play,
     Settings,
+    Sparkles,
     Workflow,
     Zap,
 } from "lucide-react";
@@ -132,7 +148,7 @@ const GATEWAY_TYPE_LABEL: Record<string, string> = {
 // =============================================================================
 
 export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioViewProps) {
-  const { token, user, context } = useAuth();
+  const { token, context } = useAuth();
   const { refresh: studioRefresh } = useStudio();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -165,13 +181,56 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
   const [insertAtOrder, setInsertAtOrder] = useState(0);
   const [showTriggerEditor, setShowTriggerEditor] = useState(false);
   const [viewMode, setViewMode] = useState<"canvas" | "list">("canvas");
-  const [stepRunStatuses, setStepRunStatuses] = useState<Record<string, { status: string; durationMs?: number }>>({});
+  const [stepRunStatuses, setStepRunStatuses] = useState<Record<string, { status: string; durationMs?: number; error?: string }>>({});
   const [isTestingWorkflow, setIsTestingWorkflow] = useState(false);
   const [isTogglingWorkflow, setIsTogglingWorkflow] = useState(false);
+
+  // Preflight dialog state — shown after Quick mode and on standard/deep failure
+  const [preflightReport, setPreflightReport] = useState<PreflightReport | null>(null);
+  const [showPreflight, setShowPreflight] = useState(false);
+  const [pendingTestMode, setPendingTestMode] = useState<"standard" | "deep" | null>(null);
 
   // Plugin management state
   const [_pendingWorkflowAdd, _setPendingWorkflowAdd] = useState<{ pluginId: string; pluginName: string } | null>(null);
   const [stepConfigSchema, setStepConfigSchema] = useState<ConfigSchema | null>(null);
+
+  // Fetch plugin schemas for ALL workflow steps (config + input/output for canvas)
+  const [allPluginSchemas, setAllPluginSchemas] = useState<Record<string, PluginSchemaSet>>({});
+  const configSlugsKey = useMemo(
+    () => (workflow?.steps ?? []).map((s) => s.pluginSlug).filter(Boolean).sort().join(","),
+    [workflow?.steps],
+  );
+  useEffect(() => {
+    if (!configSlugsKey) return;
+    let cancelled = false;
+    const slugs = [...new Set(configSlugsKey.split(","))];
+    Promise.all(
+      slugs.map(async (slug) => {
+        try {
+          const res = await getPluginBySlug(slug, token ?? undefined);
+          if (res.success && res.data) {
+            return {
+              slug,
+              schemas: {
+                configSchema: res.data.configSchema,
+                inputSchema: res.data.inputSchema,
+                outputSchema: res.data.outputSchema,
+              },
+            };
+          }
+        } catch { /* ignore */ }
+        return null;
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, PluginSchemaSet> = {};
+      for (const r of results) {
+        if (r) map[r.slug] = r.schemas;
+      }
+      setAllPluginSchemas(map);
+    });
+    return () => { cancelled = true; };
+  }, [configSlugsKey, token]);
 
   // Auto-created workflow ref
   const autoCreatedRef = useRef(false);
@@ -255,18 +314,53 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
     fetchWorkflow();
   }, [fetchWorkflow]);
 
+  // Push page-specific data up to the layout-level CursorStudioBar
+  useProvideStudioBarData({ workflow, botName: gateway.name, gatewayId: gateway.id, fetchWorkflow, activeTab });
+  const { firePrompt } = useStudioBarActions();
+
+  /**
+   * Apply a server-side preflight fix task, then re-run preflight so the
+   * dialog refreshes automatically with the updated report.
+   */
+  const handleApplyFix = useCallback(
+    async (fixId: string, fixContext: Record<string, unknown>) => {
+      if (!workflow) return;
+      await applyPreflightFix(
+        workflow.id,
+        fixId,
+        fixContext,
+        { organizationId },
+        token ?? undefined
+      );
+      // Re-run preflight so the dialog reflects the fix immediately
+      const fresh = await preflightWorkflow(workflow.id, { organizationId }, token ?? undefined);
+      if (fresh.data) setPreflightReport(fresh.data);
+    },
+    [workflow, organizationId, token]
+  );
+
   // =========================================================================
   // Auto-sync installed plugins to workflow steps
   // =========================================================================
+
+  // Track which pluginIds have already been auto-synced to prevent duplicates
+  // on re-renders (e.g. when gatewayPlugins.length changes multiple times)
+  const autoSyncedPluginIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!workflow || !token || gatewayPlugins.length === 0) return;
 
     const missingPlugins = gatewayPlugins.filter(
-      (p) => p.isEnabled && !workflow.steps.some((s) => s.pluginId === p.pluginId)
+      (p) =>
+        p.isEnabled &&
+        !workflow.steps.some((s) => s.pluginId === p.pluginId) &&
+        !autoSyncedPluginIdsRef.current.has(p.pluginId)
     );
 
     if (missingPlugins.length === 0) return;
+
+    // Mark all as queued before the async work to prevent re-entry
+    missingPlugins.forEach((mp) => autoSyncedPluginIdsRef.current.add(mp.pluginId));
 
     let cancelled = false;
     (async () => {
@@ -528,6 +622,60 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
     [workflow, organizationId, token, fetchWorkflow, gatewayPlugins, studioRefresh, pushUndo]
   );
 
+  // --- Graph: save node position after drag ---
+  const handleSaveNodePosition = useCallback(
+    async (stepId: string, positionX: number, positionY: number) => {
+      if (!workflow) return;
+      await updateWorkflowStep(
+        workflow.id,
+        stepId,
+        { positionX, positionY },
+        { organizationId },
+        token ?? undefined
+      );
+      // Don't refetch — position is already updated in the canvas
+    },
+    [workflow, organizationId, token]
+  );
+
+  // --- Graph: add edge ---
+  const handleAddEdge = useCallback(
+    async (sourceStepId: string | null, targetStepId: string) => {
+      if (!workflow) return;
+      const result = await addWorkflowEdge(
+        workflow.id,
+        { sourceStepId, targetStepId },
+        { organizationId },
+        token ?? undefined
+      );
+      if (result.success) {
+        await fetchWorkflow();
+      } else {
+        toast.error("Failed to add connection");
+      }
+    },
+    [workflow, organizationId, token, fetchWorkflow]
+  );
+
+  // --- Graph: delete edge ---
+  const handleDeleteEdge = useCallback(
+    async (edgeId: string) => {
+      if (!workflow) return;
+      const result = await deleteWorkflowEdge(
+        workflow.id,
+        edgeId,
+        { organizationId },
+        token ?? undefined
+      );
+      if (result.success) {
+        await fetchWorkflow();
+      } else {
+        toast.error("Failed to delete connection");
+      }
+    },
+    [workflow, organizationId, token, fetchWorkflow]
+  );
+
   const handleDropPlugin = useCallback(
     async (pluginId: string, pluginName: string, pluginSlug: string, afterOrder: number) => {
       if (!workflow) return;
@@ -612,58 +760,141 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
   // Test workflow
   // =========================================================================
 
-  const handleTestWorkflow = useCallback(async () => {
-    if (!workflow) return;
-    setIsTestingWorkflow(true);
-    setStepRunStatuses({});
-    try {
-      const result = await triggerWorkflow(workflow.id, {}, { organizationId }, token ?? undefined);
-      if (!result.success || !result.data?.runId) {
-        toast.error(result.error?.message ?? "Failed to trigger workflow");
-        setIsTestingWorkflow(false);
-        return;
-      }
-      const runId = result.data.runId;
-      toast.success("Workflow triggered — watching execution...");
-
+  /**
+   * Poll a running workflow for completion and update step statuses.
+   * Shared between standard / deep / legacy test modes.
+   */
+  const pollRun = useCallback(
+    (workflowId: string, runId: string) => {
       let attempts = 0;
-      const poll = async () => {
+      const tick = async () => {
         attempts++;
-        const detail = await getWorkflowRunDetail(workflow.id, runId, { organizationId }, token ?? undefined);
+        const detail = await getWorkflowRunDetail(workflowId, runId, { organizationId }, token ?? undefined);
         if (detail.success && detail.data) {
-          const statuses: Record<string, { status: string; durationMs?: number }> = {};
+          const statuses: Record<string, { status: string; durationMs?: number; error?: string }> = {};
           for (const sr of detail.data.stepRuns) {
-            const step = workflow.steps.find((s) => s.order === sr.stepOrder);
+            const step = workflow?.steps.find((s) => s.order === sr.stepOrder);
             if (step) {
-              statuses[step.id] = { status: sr.status.toLowerCase(), durationMs: sr.durationMs ?? undefined };
+              statuses[step.id] = {
+                status: sr.status.toLowerCase(),
+                durationMs: sr.durationMs ?? undefined,
+                error: sr.error ?? undefined,
+              };
             }
           }
           setStepRunStatuses(statuses);
 
-          if (detail.data.status === "completed" || detail.data.status === "COMPLETED") {
+          const status = detail.data.status?.toUpperCase();
+          if (status === "COMPLETED") {
             toast.success(`Workflow completed in ${detail.data.durationMs ?? 0}ms`);
             setIsTestingWorkflow(false);
             return;
           }
-          if (detail.data.status === "failed" || detail.data.status === "FAILED") {
+          if (status === "FAILED") {
             toast.error(`Workflow failed: ${detail.data.error ?? "Unknown error"}`);
             setIsTestingWorkflow(false);
             return;
           }
         }
         if (attempts < 40) {
-          setTimeout(poll, 1500);
+          setTimeout(tick, 1500);
         } else {
           toast.info("Still running — check run history for results");
           setIsTestingWorkflow(false);
         }
       };
-      setTimeout(poll, 1000);
-    } catch {
-      toast.error("Failed to test workflow");
-      setIsTestingWorkflow(false);
-    }
-  }, [workflow, organizationId, token]);
+      setTimeout(tick, 1000);
+    },
+    [workflow, organizationId, token],
+  );
+
+  /**
+   * Run a workflow in the given Test mode.
+   *
+   * Modes:
+   *   - quick    : preflight only — show report dialog, no execution.
+   *   - standard : preflight (server-side) + dry-run execution + log capture.
+   *   - deep     : preflight (server-side) + LIVE execution + log capture.
+   *   - ai       : delegate to Cursor agent (opens AI panel).
+   */
+  const runTest = useCallback(
+    async (mode: "quick" | "standard" | "deep" | "ai") => {
+      if (!workflow) return;
+
+      // AI mode — surface a hint and delegate to Cursor agent panel.
+      if (mode === "ai") {
+        toast.info(
+          "AI test mode — open the Cursor panel and ask: \"validate workflow\". The agent has tools to inspect every step and plugin file.",
+          { duration: 8000 },
+        );
+        return;
+      }
+
+      setIsTestingWorkflow(true);
+      setStepRunStatuses({});
+      try {
+        const result = await triggerWorkflow(
+          workflow.id,
+          { mode },
+          { organizationId },
+          token ?? undefined,
+        );
+
+        // Quick mode → preflight-only response
+        if (mode === "quick") {
+          setIsTestingWorkflow(false);
+          if (result.success && result.data?.preflight) {
+            setPreflightReport(result.data.preflight);
+            setShowPreflight(true);
+            return;
+          }
+          toast.error(result.error?.message ?? "Preflight check failed");
+          return;
+        }
+
+        // Standard / Deep — server-side preflight may fail and return 412
+        if (!result.success) {
+          // Preflight gate: surface the report and offer to retry the same mode
+          // by re-firing as a Deep / Standard run while ignoring errors is not
+          // exposed (the dialog Close button is the safer default).
+          const apiPreflight = (result.data as { preflight?: PreflightReport } | undefined)?.preflight;
+          if (apiPreflight) {
+            setPreflightReport(apiPreflight);
+            setPendingTestMode(mode);
+            setShowPreflight(true);
+            setIsTestingWorkflow(false);
+            return;
+          }
+          toast.error(result.error?.message ?? "Failed to trigger workflow");
+          setIsTestingWorkflow(false);
+          return;
+        }
+
+        const runId = result.data?.runId;
+        if (!runId) {
+          toast.error("No run ID returned from server");
+          setIsTestingWorkflow(false);
+          return;
+        }
+
+        toast.success(
+          mode === "deep"
+            ? "Deep test triggered — running live with full diagnostics..."
+            : "Test triggered (dry-run) — watching execution...",
+        );
+        pollRun(workflow.id, runId);
+      } catch {
+        toast.error("Failed to test workflow");
+        setIsTestingWorkflow(false);
+      }
+    },
+    [workflow, organizationId, token, pollRun],
+  );
+
+  /** Default Test button click — runs Standard mode. */
+  const handleTestWorkflow = useCallback(() => {
+    void runTest("standard");
+  }, [runTest]);
 
   const handleRetryWorkflow = useCallback(async () => {
     if (!workflow) return;
@@ -690,7 +921,7 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
   // =========================================================================
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
       {/* ===== Header Bar ===== */}
       <div className="flex-shrink-0 border-b border-border bg-card/30 px-4 py-2">
         {/* Breadcrumb */}
@@ -724,20 +955,89 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
           <div className="flex items-center gap-2 shrink-0">
             {workflow ? (
               <>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={handleTestWorkflow}
-                  disabled={isTestingWorkflow || !workflow.steps.length}
-                  className="gap-1.5 text-xs h-8 bg-emerald-600 hover:bg-emerald-700"
-                >
-                  {isTestingWorkflow ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Zap className="h-3.5 w-3.5" />
-                  )}
-                  {isTestingWorkflow ? "Running..." : "Test"}
-                </Button>
+                {/* Split-button: primary = Standard test; chevron opens mode menu */}
+                <div className="flex items-center">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleTestWorkflow}
+                    disabled={isTestingWorkflow || !workflow.steps.length}
+                    className="gap-1.5 text-xs h-8 bg-emerald-600 hover:bg-emerald-700 rounded-r-none"
+                  >
+                    {isTestingWorkflow ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Zap className="h-3.5 w-3.5" />
+                    )}
+                    {isTestingWorkflow ? "Running..." : "Test"}
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        disabled={isTestingWorkflow || !workflow.steps.length}
+                        className="h-8 px-1.5 bg-emerald-600 hover:bg-emerald-700 rounded-l-none border-l border-emerald-700"
+                        aria-label="Test mode"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-72">
+                      <DropdownMenuLabel className="text-xs">Test mode</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => void runTest("quick")}
+                        className="flex flex-col items-start gap-0.5 py-2"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Zap className="h-3.5 w-3.5 text-emerald-500" />
+                          Quick — static checks only
+                        </div>
+                        <span className="text-[11px] text-muted-foreground pl-5">
+                          Validates schema, plugins, gateway. ~1s, no execution.
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => void runTest("standard")}
+                        className="flex flex-col items-start gap-0.5 py-2"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Play className="h-3.5 w-3.5 text-blue-500" />
+                          Standard — dry-run with logs
+                        </div>
+                        <span className="text-[11px] text-muted-foreground pl-5">
+                          Preflight + simulated run. Captures plugin logs. Default.
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => void runTest("deep")}
+                        className="flex flex-col items-start gap-0.5 py-2"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Activity className="h-3.5 w-3.5 text-amber-500" />
+                          Deep — live execution
+                        </div>
+                        <span className="text-[11px] text-muted-foreground pl-5">
+                          Real run, real side-effects. Full diagnostics + logs.
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => void runTest("ai")}
+                        className="flex flex-col items-start gap-0.5 py-2"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Sparkles className="h-3.5 w-3.5 text-purple-500" />
+                          AI — Cursor agent review
+                        </div>
+                        <span className="text-[11px] text-muted-foreground pl-5">
+                          Ask Cursor to inspect every step, plugin & config.
+                        </span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
@@ -816,6 +1116,7 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
               viewMode={viewMode}
               stepRunStatuses={stepRunStatuses}
               isTestingWorkflow={isTestingWorkflow}
+              preflightReport={preflightReport}
               stepConfigSchema={stepConfigSchema}
               showAddStep={showAddStep}
               gatewayPlugins={gatewayPlugins}
@@ -831,6 +1132,7 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
               onClickTrigger={handleClickTrigger}
               onSaveTrigger={handleSaveTrigger}
               onSaveStep={handleSaveStep}
+              allPluginSchemas={allPluginSchemas}
               onTestWorkflow={handleTestWorkflow}
               onRetryWorkflow={handleRetryWorkflow}
               onPluginSelected={handlePluginSelected}
@@ -839,6 +1141,9 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
               onSetSelectedStepId={setSelectedStepId}
               onSetViewMode={setViewMode}
               fetchWorkflow={fetchWorkflow}
+              onSaveNodePosition={handleSaveNodePosition}
+              onAddEdge={handleAddEdge}
+              onDeleteEdge={handleDeleteEdge}
             />
           </TabsContent>
 
@@ -870,18 +1175,21 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
         </div>
       </Tabs>
 
-      {/* ===== Cursor Studio Bar — persistent across all tabs ===== */}
-      <div className="flex-shrink-0 relative">
-        <CursorStudioBar
-          token={token}
-          userId={user?.id}
-          organizationId={organizationId}
-          workflow={workflow}
-          botName={gateway.name}
-          fetchWorkflow={fetchWorkflow}
-          activeTab={activeTab}
-        />
-      </div>
+      {/* Preflight result dialog — surfaced by Quick mode and on
+          standard/deep preflight failures. Errors block execution at the
+          API layer, so this dialog is informational: users must fix the
+          issues (or use a different mode) before retrying. */}
+      <PreflightResultDialog
+        open={showPreflight}
+        onOpenChange={(open) => {
+          setShowPreflight(open);
+          if (!open) setPendingTestMode(null);
+        }}
+        report={preflightReport}
+        onFixWithAI={firePrompt}
+        onApplyFix={handleApplyFix}
+      />
+
     </div>
   );
 }

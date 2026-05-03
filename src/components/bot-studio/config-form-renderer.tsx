@@ -18,11 +18,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { apiUrl } from "@/shared/config/urls";
@@ -44,20 +44,20 @@ interface ConfigFormRendererProps {
 // ===========================================
 
 const AI_MODEL_OPTIONS = [
-  { id: "auto", label: "Auto (Recommended)", group: "Auto" },
-  { id: "2bot-ai-text-lite", label: "Text Lite", group: "Text Generation" },
-  { id: "2bot-ai-text-pro", label: "Text Pro", group: "Text Generation" },
-  { id: "2bot-ai-text-premium", label: "Text Premium", group: "Text Generation" },
-  { id: "2bot-ai-code-lite", label: "Code Lite", group: "Code Generation" },
-  { id: "2bot-ai-code-pro", label: "Code Pro", group: "Code Generation" },
-  { id: "2bot-ai-code-premium", label: "Code Premium", group: "Code Generation" },
-  { id: "2bot-ai-reasoning-pro", label: "Reasoning Pro", group: "Reasoning" },
-  { id: "2bot-ai-reasoning-premium", label: "Reasoning Premium", group: "Reasoning" },
-  { id: "2bot-ai-image-pro", label: "Image Pro", group: "Image Generation" },
-  { id: "2bot-ai-image-premium", label: "Image Premium", group: "Image Generation" },
-  { id: "2bot-ai-voice-pro", label: "Voice Pro", group: "Speech" },
-  { id: "2bot-ai-voice-premium", label: "Voice Premium", group: "Speech" },
-  { id: "2bot-ai-transcribe-lite", label: "Transcribe Lite", group: "Speech" },
+  { id: "auto", label: "Auto (Recommended)", group: "Auto", capability: "text-generation" },
+  { id: "2bot-ai-text-lite", label: "Text Lite", group: "Text Generation", capability: "text-generation" },
+  { id: "2bot-ai-text-pro", label: "Text Pro", group: "Text Generation", capability: "text-generation" },
+  { id: "2bot-ai-text-premium", label: "Text Premium", group: "Text Generation", capability: "text-generation" },
+  { id: "2bot-ai-code-lite", label: "Code Lite", group: "Code Generation", capability: "text-generation" },
+  { id: "2bot-ai-code-pro", label: "Code Pro", group: "Code Generation", capability: "text-generation" },
+  { id: "2bot-ai-code-premium", label: "Code Premium", group: "Code Generation", capability: "text-generation" },
+  { id: "2bot-ai-reasoning-pro", label: "Reasoning Pro", group: "Reasoning", capability: "text-generation" },
+  { id: "2bot-ai-reasoning-premium", label: "Reasoning Premium", group: "Reasoning", capability: "text-generation" },
+  { id: "2bot-ai-image-pro", label: "Image Pro", group: "Image Generation", capability: "image-generation" },
+  { id: "2bot-ai-image-premium", label: "Image Premium", group: "Image Generation", capability: "image-generation" },
+  { id: "2bot-ai-voice-pro", label: "Voice Pro", group: "Speech", capability: "speech-synthesis" },
+  { id: "2bot-ai-voice-premium", label: "Voice Premium", group: "Speech", capability: "speech-synthesis" },
+  { id: "2bot-ai-transcribe-lite", label: "Transcribe Lite", group: "Speech", capability: "speech-recognition" },
 ] as const;
 
 // ===========================================
@@ -255,13 +255,14 @@ function AIModelField({
     return models;
   }, [realModels, capability, modelSearch]);
 
-  // Branded tier options as fallback
+  // Branded tier options as fallback — filtered to match the detected capability
   const brandedOptions = useMemo(() => {
     if (prop.enum) {
       return AI_MODEL_OPTIONS.filter((m) => (prop.enum as string[]).includes(m.id));
     }
-    return [...AI_MODEL_OPTIONS];
-  }, [prop.enum]);
+    // No enum specified: show only tiers matching the capability
+    return AI_MODEL_OPTIONS.filter((m) => m.capability === capability);
+  }, [prop.enum, capability]);
 
   const brandedGroups = useMemo(
     () => Array.from(new Set(brandedOptions.map((m) => m.group))),
@@ -493,7 +494,7 @@ export function ConfigFormRenderer({ schema, values, onChange }: ConfigFormRende
       try {
         const token = localStorage.getItem("token") || "";
         const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await fetch(apiUrl('/2bot-ai/real-models'), {
+        const res = await fetch(apiUrl('/2bot-ai/real-models?capability=text-generation'), {
           credentials: 'include',
           headers,
         });

@@ -27,10 +27,44 @@ import { createTenantContext } from '../types/context';
 // ===========================================
 
 /**
- * Connection pool for isolated databases (future)
- * Map<tenantId, PrismaClient>
+ * Bounded connection pool for isolated databases.
+ *
+ * Today this only ever caches the shared `prisma` singleton (one entry per
+ * tenant, all pointing at the same client) — but the map grows monotonically
+ * with the active tenant set. Cap it at MAX_TENANT_CONNECTIONS with simple
+ * LRU eviction so the map can't grow without bound on a long-running replica.
+ *
+ * FUTURE: when isolated tenant DBs are introduced, eviction must call
+ * `$disconnect()` on the evicted client. The LRU eviction below already does
+ * this (skipping when the value is the shared singleton).
  */
+const MAX_TENANT_CONNECTIONS = parseInt(
+  process.env.DATA_CLIENT_MAX_TENANT_CONNECTIONS || "256",
+  10,
+);
+
+// JS Maps preserve insertion order, which gives us cheap LRU semantics:
+// touched entries get re-inserted (most-recent-last), eviction picks the
+// first key.
 const connectionPool = new Map<string, PrismaClient>();
+
+function touchPoolEntry(tenantId: string, client: PrismaClient): void {
+  // Re-insert to bump to MRU position
+  if (connectionPool.has(tenantId)) connectionPool.delete(tenantId);
+  connectionPool.set(tenantId, client);
+
+  // Evict LRU entries when over capacity
+  while (connectionPool.size > MAX_TENANT_CONNECTIONS) {
+    const oldestKey = connectionPool.keys().next().value;
+    if (oldestKey === undefined) break;
+    const evicted = connectionPool.get(oldestKey);
+    connectionPool.delete(oldestKey);
+    if (evicted && evicted !== prisma) {
+      // Background-disconnect; don't block the request path
+      void evicted.$disconnect().catch(() => {});
+    }
+  }
+}
 
 /**
  * Get or create a connection for an isolated tenant
@@ -40,6 +74,7 @@ const connectionPool = new Map<string, PrismaClient>();
 function getOrCreateConnection(tenantId: string, _databaseUrl: string): PrismaClient {
   const existing = connectionPool.get(tenantId);
   if (existing) {
+    touchPoolEntry(tenantId, existing); // bump LRU
     return existing;
   }
   // FUTURE: Use databaseUrl when Prisma supports dynamic datasources
@@ -47,7 +82,7 @@ function getOrCreateConnection(tenantId: string, _databaseUrl: string): PrismaCl
   console.warn(
     `[DataClient] Isolated database requested for ${tenantId} but dynamic datasources not yet implemented. Using default.`
   );
-  connectionPool.set(tenantId, prisma);
+  touchPoolEntry(tenantId, prisma);
   return prisma;
 }
 

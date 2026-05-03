@@ -299,11 +299,11 @@ export function createOrgGateway(
 }
 
 /**
- * Update a gateway (e.g. toggle mode between plugin/workflow)
+ * Update a gateway
  */
 export function updateGateway(
   gatewayId: string,
-  data: { name?: string; mode?: "plugin" | "workflow" },
+  data: { name?: string },
   token?: string
 ): Promise<ApiResponse<GatewayOption>> {
   return apiPut<GatewayOption>(`/gateways/${gatewayId}`, data, token);
@@ -481,6 +481,17 @@ export function togglePlugin(
 }
 
 /**
+ * Pull the latest catalog code bundle into this install's container and clear
+ * the `needsUpdate` flag.
+ */
+export function updateInstalledPlugin(
+  id: string,
+  token?: string
+): Promise<ApiResponse<UserPlugin>> {
+  return apiPost<UserPlugin>(`/plugins/installed/${id}/update`, {}, token);
+}
+
+/**
  * Update plugin config, gateway binding, and/or storage quota
  */
 export function updatePluginConfig(
@@ -553,6 +564,7 @@ export interface WorkflowListItem {
   status: string;
   isEnabled: boolean;
   steps: WorkflowStepItem[];
+  edges: WorkflowEdgeItem[];
   executionCount: number;
   lastExecutedAt?: string;
   lastError?: string;
@@ -574,6 +586,9 @@ export interface WorkflowStepItem {
   condition?: { if: string };
   onError: string;
   maxRetries: number;
+  // Canvas position (graph layout)
+  positionX: number;
+  positionY: number;
   // Unified Engine fields
   entryFile?: string;
   userPluginId?: string;
@@ -581,6 +596,14 @@ export interface WorkflowStepItem {
   executionCount?: number;
   lastExecutedAt?: string;
   lastError?: string;
+}
+
+export interface WorkflowEdgeItem {
+  id: string;
+  sourceStepId: string | null;  // null = from trigger
+  targetStepId: string;
+  sourcePort: string;
+  targetPort: string;
 }
 
 export function getWorkflows(
@@ -710,6 +733,8 @@ export function updateWorkflowStep(
     onError?: string;
     maxRetries?: number;
     condition?: { if: string } | null;
+    positionX?: number;
+    positionY?: number;
   },
   opts: { organizationId?: string },
   token?: string
@@ -735,6 +760,55 @@ export function deleteWorkflowStep(
 ): Promise<ApiResponse<void>> {
   return apiRequest<void>(`/workflows/${workflowId}/steps/${stepId}`, {
     method: "DELETE",
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+// --- Workflow Edges (Graph connections) ---
+
+export function addWorkflowEdge(
+  workflowId: string,
+  data: { sourceStepId?: string | null; targetStepId: string; sourcePort?: string; targetPort?: string },
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowEdgeItem>> {
+  return apiRequest<WorkflowEdgeItem>(`/workflows/${workflowId}/edges`, {
+    method: "POST",
+    body: data,
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function deleteWorkflowEdge(
+  workflowId: string,
+  edgeId: string,
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<void>> {
+  return apiRequest<void>(`/workflows/${workflowId}/edges/${edgeId}`, {
+    method: "DELETE",
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+export function replaceWorkflowEdges(
+  workflowId: string,
+  edges: Array<{ sourceStepId?: string | null; targetStepId: string; sourcePort?: string; targetPort?: string }>,
+  opts: { organizationId?: string },
+  token?: string
+): Promise<ApiResponse<WorkflowEdgeItem[]>> {
+  return apiRequest<WorkflowEdgeItem[]>(`/workflows/${workflowId}/edges`, {
+    method: "PUT",
+    body: { edges },
     token,
     headers: opts.organizationId
       ? { "x-organization-id": opts.organizationId }
@@ -815,10 +889,16 @@ export function getWorkflowRunDetail(
 
 export function triggerWorkflow(
   workflowId: string,
-  data: { params?: Record<string, unknown> } = {},
+  data: {
+    params?: Record<string, unknown>;
+    /** Test mode — see backend triggerWorkflowSchema for semantics */
+    mode?: "quick" | "standard" | "deep" | "ai";
+    /** Force dry-run when not using a `mode` */
+    dryRun?: boolean;
+  } = {},
   opts: { organizationId?: string } = {},
   token?: string
-): Promise<ApiResponse<{ runId: string }>> {
+): Promise<ApiResponse<{ runId?: string; preflight?: PreflightReport }>> {
   return apiRequest(`/workflows/${workflowId}/trigger`, {
     method: "POST",
     body: data,
@@ -827,4 +907,516 @@ export function triggerWorkflow(
       ? { "x-organization-id": opts.organizationId }
       : undefined,
   });
+}
+
+// ===========================================
+// Workflow Preflight (Test → Quick mode)
+// ===========================================
+
+export interface PreflightProblem {
+  severity: "error" | "warning" | "info";
+  message: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  /**
+   * When set, a server-side fix task with this ID can repair the problem
+   * automatically.  The UI renders a "Fix" button for these problems.
+   */
+  fixId?: string;
+  /** Extra context forwarded to the fix task alongside workflowId */
+  fixContext?: Record<string, unknown>;
+}
+
+export interface StepPreflightReport {
+  stepId: string;
+  stepOrder: number;
+  stepName: string;
+  pluginSlug: string;
+  entryFile: string | null;
+  problems: PreflightProblem[];
+  bridgeChecked: boolean;
+  bridgeSkipped: boolean;
+}
+
+export interface PreflightReport {
+  workflowId: string;
+  workflowName: string;
+  ok: boolean;
+  errors: PreflightProblem[];
+  warnings: PreflightProblem[];
+  steps: StepPreflightReport[];
+  durationMs: number;
+  summary: {
+    stepsTotal: number;
+    stepsEnabled: number;
+    errorCount: number;
+    warningCount: number;
+  };
+}
+
+/**
+ * Run a static-only preflight check on a workflow (Quick test mode).
+ * No workflow run is created. No plugins are executed.
+ */
+export function preflightWorkflow(
+  workflowId: string,
+  opts: { organizationId?: string } = {},
+  token?: string
+): Promise<ApiResponse<PreflightReport>> {
+  return apiRequest(`/workflows/${workflowId}/preflight`, {
+    method: "POST",
+    body: {},
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+/**
+ * Apply a registered preflight fix task to repair a specific problem.
+ * The server looks up the fixId in the fix registry and runs it.
+ */
+export function applyPreflightFix(
+  workflowId: string,
+  fixId: string,
+  context: Record<string, unknown> = {},
+  opts: { organizationId?: string } = {},
+  token?: string
+): Promise<ApiResponse<{ message: string; rerunPreflight?: boolean }>> {
+  return apiRequest(`/workflows/${workflowId}/preflight/fix`, {
+    method: "POST",
+    body: { fixId, context },
+    token,
+    headers: opts.organizationId
+      ? { "x-organization-id": opts.organizationId }
+      : undefined,
+  });
+}
+
+// ===========================================
+// Projects (/ 7.1)
+// ===========================================
+
+export type ProjectKind = "BOT" | "WEB_APP" | "AUTOMATION" | "HYBRID";
+export type ProjectStatus = "ACTIVE" | "PAUSED" | "ARCHIVED";
+
+export interface ProjectListItem {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  kind: ProjectKind;
+  status: ProjectStatus;
+  icon: string | null;
+  color: string | null;
+  isDefault: boolean;
+  activeVersionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateProjectPayload {
+  name: string;
+  slug?: string;
+  description?: string | null;
+  kind?: ProjectKind;
+  icon?: string | null;
+  color?: string | null;
+}
+
+export interface UpdateProjectPayload {
+  name?: string;
+  slug?: string;
+  description?: string | null;
+  kind?: ProjectKind;
+  status?: ProjectStatus;
+  icon?: string | null;
+  color?: string | null;
+}
+
+function projectScopeHeader(orgId?: string | null): Record<string, string> | undefined {
+  return orgId ? { "x-organization-id": orgId } : undefined;
+}
+
+/** List projects in the current scope (personal or org). */
+export function listProjects(
+  opts: { organizationId?: string | null } = {},
+  token?: string,
+): Promise<ApiResponse<ProjectListItem[]>> {
+  return apiRequest<ProjectListItem[]>("/projects", {
+    method: "GET",
+    token,
+    headers: projectScopeHeader(opts.organizationId),
+  });
+}
+
+/** Get a single project by id. */
+export function getProject(
+  id: string,
+  opts: { organizationId?: string | null } = {},
+  token?: string,
+): Promise<ApiResponse<ProjectListItem>> {
+  return apiRequest<ProjectListItem>(`/projects/${id}`, {
+    method: "GET",
+    token,
+    headers: projectScopeHeader(opts.organizationId),
+  });
+}
+
+/** Get or create the default project for the current scope. */
+export function getDefaultProject(
+  opts: { organizationId?: string | null } = {},
+  token?: string,
+): Promise<ApiResponse<ProjectListItem>> {
+  return apiRequest<ProjectListItem>("/projects/default", {
+    method: "GET",
+    token,
+    headers: projectScopeHeader(opts.organizationId),
+  });
+}
+
+/** Create a new project. */
+export function createProject(
+  data: CreateProjectPayload,
+  opts: { organizationId?: string | null } = {},
+  token?: string,
+): Promise<ApiResponse<ProjectListItem>> {
+  return apiRequest<ProjectListItem>("/projects", {
+    method: "POST",
+    body: data,
+    token,
+    headers: projectScopeHeader(opts.organizationId),
+  });
+}
+
+/** Update a project. */
+export function updateProject(
+  id: string,
+  data: UpdateProjectPayload,
+  opts: { organizationId?: string | null } = {},
+  token?: string,
+): Promise<ApiResponse<ProjectListItem>> {
+  return apiRequest<ProjectListItem>(`/projects/${id}`, {
+    method: "PATCH",
+    body: data,
+    token,
+    headers: projectScopeHeader(opts.organizationId),
+  });
+}
+
+/** Archive (soft-delete) a project. */
+export function archiveProject(
+  id: string,
+  opts: { organizationId?: string | null } = {},
+  token?: string,
+): Promise<ApiResponse<void>> {
+  return apiRequest<void>(`/projects/${id}`, {
+    method: "DELETE",
+    token,
+    headers: projectScopeHeader(opts.organizationId),
+  });
+}
+
+// ===========================================
+// AI Builder (/ 7.1 Wave 2)
+// ===========================================
+
+export interface BuildSpecApplyOptions {
+  dryRun?: boolean;
+  rollbackOnSmokeFailure?: boolean;
+  source?: string;
+}
+
+export interface BuildSpecSmokeResult {
+  workflowRef: string;
+  workflowId: string;
+  ok: boolean;
+  errorCount: number;
+  warningCount: number;
+  errors: Array<{ code: string; message: string }>;
+}
+
+export interface BuildSpecApplyResult {
+  status: "applied" | "rolled-back" | "validation-failed";
+  projectId?: string;
+  refMap: {
+    gateways: Record<string, string>;
+    plugins: Record<string, string>;
+    workflows: Record<string, string>;
+  };
+  smokeResults: BuildSpecSmokeResult[];
+  rollbackReason?: string;
+  validationErrors?: Record<string, string[]>;
+}
+
+/**
+ * Apply a BuildSpec. Server gates on FEATURE_AI_BUILDER and may return 403
+ * with code "AI_BUILDER_DISABLED" when the flag is off.
+ */
+export function applyBuildSpec(
+  spec: unknown,
+  options: BuildSpecApplyOptions = {},
+  token?: string,
+): Promise<ApiResponse<BuildSpecApplyResult>> {
+  return apiPost<BuildSpecApplyResult>(
+    "/ai-builder/apply",
+    { spec, options },
+    token,
+  );
+}
+
+/**
+ * Validate a BuildSpec without mutating anything.
+ */
+export function validateBuildSpec(
+  spec: unknown,
+  token?: string,
+): Promise<ApiResponse<{ ok: true } | { ok: false; errors: Record<string, string[]> }>> {
+  return apiPost("/ai-builder/validate", { spec }, token);
+}
+
+// ====================================================================
+// Project Versions (/ 7.1 Wave 3)
+// ====================================================================
+
+export type ProjectVersionStatus = "STAGING" | "ACTIVE" | "ROLLED_BACK";
+
+export interface ProjectVersionListItem {
+  id: string;
+  projectId: string;
+  versionNumber: number;
+  status: ProjectVersionStatus;
+  source: string | null;
+  buildspecHash: string | null;
+  appliedBy: string | null;
+  createdAt: string;
+  rolledBackAt: string | null;
+  rollbackReason: string | null;
+}
+
+export interface ProjectVersionWithManifest extends ProjectVersionListItem {
+  manifest: unknown;
+}
+
+/** List versions for a project (newest first). */
+export function listProjectVersions(
+  projectId: string,
+  token?: string,
+): Promise<ApiResponse<ProjectVersionListItem[]>> {
+  return apiRequest<ProjectVersionListItem[]>(
+    `/projects/${projectId}/versions`,
+    { method: "GET", token },
+  );
+}
+
+/** Fetch a single version with its full manifest. */
+export function getProjectVersion(
+  projectId: string,
+  versionId: string,
+  token?: string,
+): Promise<ApiResponse<ProjectVersionWithManifest>> {
+  return apiRequest<ProjectVersionWithManifest>(
+    `/projects/${projectId}/versions/${versionId}`,
+    { method: "GET", token },
+  );
+}
+
+/** Activate a STAGING version (promote to ACTIVE; demotes prior ACTIVE). */
+export function activateProjectVersion(
+  projectId: string,
+  versionId: string,
+  token?: string,
+): Promise<ApiResponse<ProjectVersionListItem>> {
+  return apiPost<ProjectVersionListItem>(
+    `/projects/${projectId}/versions/${versionId}/activate`,
+    {},
+    token,
+  );
+}
+
+/** Roll back to a prior version. `reason` is required. */
+export function rollbackProjectVersion(
+  projectId: string,
+  versionId: string,
+  reason: string,
+  token?: string,
+): Promise<ApiResponse<ProjectVersionListItem>> {
+  return apiPost<ProjectVersionListItem>(
+    `/projects/${projectId}/versions/${versionId}/rollback`,
+    { reason },
+    token,
+  );
+}
+
+// ====================================================================
+// Project Resources (Path C, polymorphic resource layer)
+// ====================================================================
+
+export type ProjectResourceKind =
+  | "GATEWAY_BOT"
+  | "HTTP_ROUTE"
+  | "SCHEDULE"
+  | "SECRET"
+  | "EXTERNAL_API"
+  | "DATABASE"
+  | "KV_STORE"
+  | "OBJECT_STORE";
+
+export type ProjectResourceStatus = "ACTIVE" | "PAUSED" | "ERROR" | "ARCHIVED";
+
+export interface ProjectResource {
+  id: string;
+  projectId: string;
+  userId: string;
+  organizationId: string | null;
+  kind: ProjectResourceKind;
+  name: string;
+  slug: string;
+  status: ProjectResourceStatus;
+  config: Record<string, unknown>;
+  metadata: Record<string, unknown> | null;
+  gatewayId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectResourceWithSidecar extends ProjectResource {
+  gateway?: unknown | null;
+  httpRoute?: HttpRoute | null;
+}
+
+// HTTP_ROUTE sidecar
+
+export type HttpMethod =
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "PATCH"
+  | "DELETE"
+  | "OPTIONS"
+  | "HEAD"
+  | "ANY";
+
+export type HttpAuthMode = "NONE" | "API_KEY" | "HMAC" | "BEARER_JWT";
+
+export interface HttpRouteSpec {
+  method?: HttpMethod;
+  path: string;
+  targetUserPluginId?: string | null;
+  targetExport?: string | null;
+  authMode?: HttpAuthMode;
+  authConfig?: Record<string, unknown>;
+  maxBodyKb?: number;
+  timeoutMs?: number;
+  corsOrigin?: string | null;
+  passthroughBody?: boolean;
+}
+
+export interface HttpRoute {
+  id: string;
+  resourceId: string;
+  method: HttpMethod;
+  path: string;
+  targetUserPluginId: string | null;
+  targetExport: string | null;
+  authMode: HttpAuthMode;
+  authConfig: Record<string, unknown>;
+  maxBodyKb: number;
+  timeoutMs: number;
+  corsOrigin: string | null;
+  passthroughBody: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listProjectResources(
+  projectId: string,
+  options: { kind?: ProjectResourceKind; status?: ProjectResourceStatus } = {},
+  token?: string,
+): Promise<ApiResponse<ProjectResource[]>> {
+  const params = new URLSearchParams();
+  if (options.kind) params.set("kind", options.kind);
+  if (options.status) params.set("status", options.status);
+  const qs = params.toString();
+  return apiRequest<ProjectResource[]>(
+    `/projects/${projectId}/resources${qs ? `?${qs}` : ""}`,
+    { method: "GET", token },
+  );
+}
+
+export function getProjectResource(
+  projectId: string,
+  resourceId: string,
+  token?: string,
+): Promise<ApiResponse<ProjectResourceWithSidecar>> {
+  return apiRequest<ProjectResourceWithSidecar>(
+    `/projects/${projectId}/resources/${resourceId}`,
+    { method: "GET", token },
+  );
+}
+
+export function createProjectResource(
+  projectId: string,
+  body: {
+    kind: ProjectResourceKind;
+    name: string;
+    slug?: string;
+    status?: ProjectResourceStatus;
+    config?: Record<string, unknown>;
+    metadata?: Record<string, unknown> | null;
+    gatewayId?: string;
+    httpRoute?: HttpRouteSpec;
+  },
+  token?: string,
+): Promise<ApiResponse<ProjectResource>> {
+  return apiPost<ProjectResource>(
+    `/projects/${projectId}/resources`,
+    body,
+    token,
+  );
+}
+
+export function updateProjectResource(
+  projectId: string,
+  resourceId: string,
+  body: {
+    name?: string;
+    slug?: string;
+    status?: ProjectResourceStatus;
+    config?: Record<string, unknown>;
+    metadata?: Record<string, unknown> | null;
+    httpRoute?: Partial<HttpRouteSpec>;
+  },
+  token?: string,
+): Promise<ApiResponse<ProjectResource>> {
+  return apiPatch<ProjectResource>(
+    `/projects/${projectId}/resources/${resourceId}`,
+    body,
+    token,
+  );
+}
+
+export function archiveProjectResource(
+  projectId: string,
+  resourceId: string,
+  token?: string,
+): Promise<ApiResponse<ProjectResource>> {
+  return apiPost<ProjectResource>(
+    `/projects/${projectId}/resources/${resourceId}/archive`,
+    {},
+    token,
+  );
+}
+
+export function deleteProjectResource(
+  projectId: string,
+  resourceId: string,
+  token?: string,
+): Promise<ApiResponse<void>> {
+  return apiDelete<void>(
+    `/projects/${projectId}/resources/${resourceId}`,
+    token,
+  );
 }

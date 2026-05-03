@@ -37,7 +37,10 @@ class FileManager {
   /**
    * List files in a directory
    */
-  async list(dirPath = '.', recursive = false) {
+  async list(dirPath = '.', recursive = false, _depth = 0) {
+    // Prevent stack overflow from deeply nested directories
+    if (_depth > 20) return [];
+
     const fullPath = this._safePath(dirPath);
     const entries = await fs.readdir(fullPath, { withFileTypes: true });
 
@@ -48,22 +51,36 @@ class FileManager {
 
       const entryPath = path.join(fullPath, entry.name);
       const relativePath = path.relative(this.workspaceDir, entryPath);
-      const stat = await fs.stat(entryPath);
+      const isDir = entry.isDirectory();
+
+      // Only stat files (for size + mtime). Directories don't need size.
+      // Wrap in try/catch to handle TOCTOU race (file deleted between readdir and stat).
+      let sizeBytes = 0;
+      let updatedAt = new Date().toISOString();
+      if (!isDir) {
+        try {
+          const stat = await fs.stat(entryPath);
+          sizeBytes = stat.size;
+          updatedAt = stat.mtime.toISOString();
+        } catch {
+          continue; // File was deleted between readdir and stat — skip it
+        }
+      }
 
       const item = {
         name: entry.name,
         path: '/' + relativePath,
-        type: entry.isDirectory() ? 'DIRECTORY' : 'FILE',
-        sizeBytes: entry.isDirectory() ? 0 : stat.size,
+        type: isDir ? 'DIRECTORY' : 'FILE',
+        sizeBytes,
         mimeType: entry.isFile() ? lookup(entry.name) : null,
-        isPlugin: entry.isDirectory()
-          ? this._isPluginDir(entry.name, relativePath)
+        isPlugin: isDir
+          ? await this._isPluginDir(entry.name, relativePath)
           : this._isPluginFile(entry.name, relativePath),
-        updatedAt: stat.mtime.toISOString(),
+        updatedAt,
       };
 
-      if (recursive && entry.isDirectory() && entry.name !== 'node_modules') {
-        item.children = await this.list(relativePath, true);
+      if (recursive && isDir && entry.name !== 'node_modules') {
+        item.children = await this.list(relativePath, true, _depth + 1);
       }
 
       result.push(item);
@@ -106,8 +123,17 @@ class FileManager {
 
   /**
    * Write file content (create or overwrite)
+   * @param {string} filePath
+   * @param {string} content
+   * @param {boolean} createDirs
    */
   async write(filePath, content, createDirs = true) {
+    // Limit write size to 10MB to prevent OOM / disk fill
+    const MAX_WRITE_BYTES = 10 * 1024 * 1024;
+    if (typeof content === 'string' && Buffer.byteLength(content, 'utf-8') > MAX_WRITE_BYTES) {
+      throw new Error(`Content too large to write (${(Buffer.byteLength(content, 'utf-8') / 1024 / 1024).toFixed(1)}MB). Max: 10MB`);
+    }
+
     const fullPath = this._safePath(filePath);
 
     if (createDirs) {
@@ -140,11 +166,21 @@ class FileManager {
       throw new Error('Maximum 50 files per writeMulti call');
     }
 
-    const results = [];
+    // Enforce 50MB total size limit across all files
+    const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+    let totalBytes = 0;
     for (const file of files) {
       if (!file.path || typeof file.content !== 'string') {
         throw new Error(`Invalid file entry: ${JSON.stringify(file)}`);
       }
+      totalBytes += Buffer.byteLength(file.content, 'utf-8');
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        throw new Error(`Total content too large (>${(MAX_TOTAL_BYTES / 1024 / 1024)}MB). Split into multiple writeMulti calls.`);
+      }
+    }
+
+    const results = [];
+    for (const file of files) {
       const result = await this.write(file.path, file.content, true);
       results.push({ path: result.path, sizeBytes: result.sizeBytes });
     }
@@ -259,7 +295,7 @@ class FileManager {
       mimeType: stat.isFile() ? lookup(filePath) : null,
       isPlugin: stat.isFile()
         ? this._isPluginFile(path.basename(fullPath), relativePath)
-        : this._isPluginDir(path.basename(fullPath), relativePath),
+        : await this._isPluginDir(path.basename(fullPath), relativePath),
       createdAt: stat.birthtime.toISOString(),
       updatedAt: stat.mtime.toISOString(),
     };
@@ -281,8 +317,9 @@ class FileManager {
   /**
    * Check if a directory is a plugin directory (plugins/{slug}/ with plugin.json or index.js).
    * Only checks direct children of the plugins/ folder.
+   * Async to avoid blocking the event loop.
    */
-  _isPluginDir(name, relativePath) {
+  async _isPluginDir(name, relativePath) {
     const isDirectChildOfPlugins =
       (relativePath === `plugins/${name}` || relativePath === `plugins\\${name}`);
     if (!isDirectChildOfPlugins) return false;
@@ -290,12 +327,12 @@ class FileManager {
     // Check if plugin.json or index.js exists inside
     const dirPath = path.join(this.workspaceDir, relativePath);
     try {
-      const { statSync } = require('fs');
-      return statSync(path.join(dirPath, 'plugin.json')).isFile();
+      const stat = await fs.stat(path.join(dirPath, 'plugin.json'));
+      return stat.isFile();
     } catch {
       try {
-        const { statSync } = require('fs');
-        return statSync(path.join(dirPath, 'index.js')).isFile();
+        const stat = await fs.stat(path.join(dirPath, 'index.js'));
+        return stat.isFile();
       } catch {
         return false;
       }

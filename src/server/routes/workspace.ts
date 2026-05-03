@@ -1,7 +1,7 @@
 /**
  * Workspace Routes
  * 
- * API endpoints for the Docker workspace system (Phase 13).
+ * API endpoints for the Docker workspace system.
  * All routes require authentication.
  * 
  * Routes:
@@ -86,8 +86,8 @@ import {
 } from '@/modules/workspace/workspace.validation';
 import { BadRequestError, RateLimitError } from '@/shared/errors';
 import type { ApiResponse } from '@/shared/types';
-import type { WorkspaceFileEntry } from '@/shared/types/workspace';
 import { createServiceContext, type ServiceContext } from '@/shared/types/context';
+import type { WorkspaceFileEntry } from '@/shared/types/workspace';
 import type { NextFunction } from 'express';
 import { Router, type Request, type Response } from 'express';
 import { RateLimiterRes } from 'rate-limiter-flexible';
@@ -453,7 +453,6 @@ workspaceRouter.get(
 
 /**
  * Walk the file tree and inject displayName + group bots by gateway type.
- * Also hides the legacy top-level plugins/ folder (content migrated to bots/).
  *
  * Virtual tree structure:
  *   bots/
@@ -464,6 +463,10 @@ workspaceRouter.get(
  *
  * Real filesystem paths are preserved in each entry's `path` property so
  * all file operations (read, write, delete) continue to work.
+ *
+ * Note: all plugins live under bots/{platform}/{gwId}/plugins/{slug}/ — the old
+ * top-level plugins/ staging directory is no longer used and is cleaned up
+ * automatically after any plugin creation.
  */
 async function enrichFileDisplayNames(
   entries: WorkspaceFileEntry[],
@@ -485,11 +488,11 @@ async function enrichFileDisplayNames(
   const gatewayById = new Map(gateways.map(g => [g.id, g]));
   const pluginNameBySlug = new Map(userPlugins.map(up => [up.plugin.slug, up.plugin.name]));
 
-  // Hide legacy top-level plugins/ folder (content migrated to bots/)
-  const pluginsDirIdx = entries.findIndex(e => e.type === 'DIRECTORY' && e.name === 'plugins');
-  if (pluginsDirIdx !== -1) entries.splice(pluginsDirIdx, 1);
-
   // Restructure bots/ folder into type-grouped virtual tree
+  // Handles BOTH layouts:
+  //   Old: bots/{gatewayId}/plugins/...
+  //   New: bots/{platform}/{gatewayId}/plugins/...
+  const KNOWN_PLATFORMS = new Set(['telegram', 'discord', 'slack', 'whatsapp']);
   const botsDir = entries.find(e => e.type === 'DIRECTORY' && e.name === 'bots');
   if (botsDir?.children) {
     const byType = new Map<string, WorkspaceFileEntry[]>();
@@ -498,6 +501,29 @@ async function enrichFileDisplayNames(
     for (const child of botsDir.children) {
       if (child.type !== 'DIRECTORY') { other.push(child); continue; }
 
+      // New format: child is a platform folder (e.g. "telegram") containing gateway subdirs
+      if (KNOWN_PLATFORMS.has(child.name) && child.children) {
+        for (const gwChild of child.children) {
+          // Files directly inside the platform folder (e.g. bots/telegram/someFile) — keep visible
+          if (gwChild.type !== 'DIRECTORY') { other.push(gwChild); continue; }
+          const gw = gatewayById.get(gwChild.name);
+          if (!gw) {
+            // Gateway folder exists on disk but not in DB (e.g. deleted gateway with orphaned files)
+            // Show it as-is so the user can see and clean up their own files
+            other.push(gwChild);
+            continue;
+          }
+          const meta = gw.metadata as Record<string, unknown> | null;
+          const botUsername = meta?.botUsername as string | undefined;
+          gwChild.displayName = botUsername ? `@${botUsername}` : gw.name;
+          const typeKey = gw.type;
+          if (!byType.has(typeKey)) byType.set(typeKey, []);
+          byType.get(typeKey)!.push(gwChild);
+        }
+        continue; // consumed — don't add to "other"
+      }
+
+      // Old format: child is a gateway ID directly under bots/
       const gw = gatewayById.get(child.name);
       if (!gw) { other.push(child); continue; }
 

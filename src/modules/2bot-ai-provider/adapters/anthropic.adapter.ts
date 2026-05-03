@@ -262,6 +262,14 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
     const content = textBlock?.type === "text" ? (textBlock as { type: "text"; text: string }).text : "";
     const toolCalls = extractAnthropicToolCalls(response.content);
 
+    // Extract thinking blocks (extended thinking / reasoning models)
+    // Anthropic SDK ContentBlock doesn't include "thinking" type yet — cast through unknown
+    const thinkingBlocks = (response.content as unknown as Array<{ type: string; thinking?: string }>)
+      .filter((c) => c.type === "thinking" && c.thinking);
+    const reasoning = thinkingBlocks.length > 0
+      ? thinkingBlocks.map((b) => b.thinking!).join("\n")
+      : undefined;
+
     const cacheCreated = (response.usage as unknown as Record<string, unknown>).cache_creation_input_tokens as number | undefined;
     const cacheRead = (response.usage as unknown as Record<string, unknown>).cache_read_input_tokens as number | undefined;
 
@@ -288,6 +296,7 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
       creditsUsed: 0,
       newBalance: 0,
       toolCalls,
+      reasoning,
     };
   } catch (error) {
     log.error({ error }, "Anthropic chat error");

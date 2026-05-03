@@ -196,6 +196,8 @@ async function main() {
           authorType: "SYSTEM",
           isPublic: true,
           isActive: true,
+          inputSchema: manifest.inputSchema ?? null,
+          outputSchema: manifest.outputSchema ?? null,
         };
 
         const plugin = await prisma.plugin.create({ data: seedData });

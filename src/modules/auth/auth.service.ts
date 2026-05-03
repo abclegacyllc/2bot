@@ -2,7 +2,7 @@
  * Auth Service
  *
  * Handles user authentication, registration, and session management.
- * Phase 6.7: Simplified tokens - context determined by URL, not token.
+ * Simplified tokens - context determined by URL, not token.
  *
  * @module modules/auth/auth.service
  */
@@ -123,7 +123,7 @@ class AuthService {
     // Create session
     const session = await this.createSession(user.id, meta);
 
-    // Phase 6.7: Simplified token - no context, orgs fetched via API
+    // Simplified token - no context, orgs fetched via API
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
@@ -193,7 +193,7 @@ class AuthService {
     // Create session
     const session = await this.createSession(user.id, meta);
 
-    // Phase 6.7: Simplified token - context determined by URL
+    // Simplified token - context determined by URL
     // Organizations are fetched via /api/user/organizations
     const payload: TokenPayload = {
       userId: user.id,
@@ -227,7 +227,7 @@ class AuthService {
   /**
    * Switch context between personal and organization
    *
-   * @deprecated Phase 6.7: Context switching is now UI-only via navigation.
+   * @deprecated Context switching is now UI-only via navigation.
    * This method is kept for backward compatibility but returns the same token.
    * Frontend should navigate to /dashboard (personal) or /organizations/:orgId (org).
    *
@@ -293,7 +293,7 @@ class AuthService {
       contextPlan = membership.organization.plan;
     }
 
-    // Phase 6.7: Token no longer contains context
+    // Token no longer contains context
     // Generate same simplified token
     const payload: TokenPayload = {
       userId: user.id,

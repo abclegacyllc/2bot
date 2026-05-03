@@ -13,6 +13,7 @@ import { adminGuard } from "../middleware/admin-guard";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
 import { twoBotAIRouter } from "./2bot-ai";
 import { adminRouter } from "./admin";
+import { aiBuilderRouter } from "./ai-builder";
 // ai-usage routes removed — dead code (replaced by /credits/* routes)
 import { alertRouter } from "./alerts";
 import { authRouter } from "./auth";
@@ -24,9 +25,13 @@ import { healthRouter } from "./health";
 import { invitesRouter } from "./invites";
 import { kbRouter } from "./kb";
 import { marketplaceRouter } from "./marketplace";
+import { mcpRouter } from "./mcp";
 import { organizationRouter } from "./organization";
 import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
+import { projectRouter } from "./project";
+import { projectResourceRouter } from "./project-resource";
+import { projectVersionRouter } from "./project-version";
 import { quotaRouter, resourcesRouter } from "./resources";
 import { supportRouter } from "./support";
 import { ticketsRouter } from "./tickets";
@@ -71,12 +76,12 @@ router.use("/auth", authRouter);
 // ===========================================
 
 /**
- * User routes (Phase 6.7) - Personal resources
+ * User routes - Personal resources
  */
 router.use("/user", userRouter);
 
 /**
- * Organization routes (Phase 6.7) - Org resources by ID
+ * Organization routes - Org resources by ID
  */
 router.use("/orgs", orgsRouter);
 
@@ -86,27 +91,27 @@ router.use("/orgs", orgsRouter);
 router.use("/invites", invitesRouter);
 
 /**
- * Organization routes (Phase 4) - Legacy
+ * Organization routes - Legacy
  */
 router.use("/organizations", organizationRouter);
 
 /**
- * Gateway routes (Phase 2)
+ * Gateway routes
  */
 router.use("/gateways", gatewayRouter);
 
 /**
- * Webhook routes (Phase 2)
+ * Webhook routes
  */
 router.use("/webhooks", webhookRouter);
 
 /**
- * Plugin routes (Phase 3)
+ * Plugin routes
  */
 router.use("/plugins", pluginRouter);
 
 /**
- * Marketplace routes (Phase 12)
+ * Marketplace routes
  */
 router.use("/marketplace", marketplaceRouter);
 
@@ -122,17 +127,17 @@ router.use("/resources", resourcesRouter);
 router.use("/quota", quotaRouter);
 
 /**
- * Usage routes (Phase 6.8)
+ * Usage routes
  */
 router.use("/usage", usageRouter);
 
 /**
- * Alert routes (Phase 4)
+ * Alert routes
  */
 router.use("/alerts", alertRouter);
 
 /**
- * Billing routes (Phase 5)
+ * Billing routes
  */
 router.use("/billing", billingRouter);
 
@@ -175,9 +180,36 @@ router.use("/support", supportRouter);
 router.use("/workflows", workflowRouter);
 
 /**
- * Workspace routes (Phase 13)
+ * Project routes - Group Gateways/Workflows/UserPlugins
+ */
+router.use("/projects", projectRouter);
+
+/**
+ * Project Version routes - Snapshot/Activate/Rollback
+ * Mounted as a subpath of /projects to inherit the projectId param.
+ */
+router.use("/projects/:projectId/versions", projectVersionRouter);
+
+/**
+ * Project Resource routes (Path C) - Polymorphic resource layer
+ * Gated by FEATURE_PROJECT_RESOURCES.
+ */
+router.use("/projects/:projectId/resources", projectResourceRouter);
+
+/**
+ * AI BuildSpec Orchestrator - gated by FEATURE_AI_BUILDER
+ */
+router.use("/ai-builder", aiBuilderRouter);
+
+/**
+ * Workspace routes
  */
 router.use("/workspace", workspaceRouter);
+
+/**
+ * MCP routes (- MCP Integration)
+ */
+router.use("/mcp", mcpRouter);
 
 // ===========================================
 // ADMIN ROUTES (dev mode only, under /admin prefix)
@@ -244,7 +276,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 // Mount module routes here
-// router.use("/users", userRoutes);    // Phase 1
+// router.use("/users", userRoutes); //
 
 // 404 handler for unmatched API routes
 router.use(notFoundHandler);

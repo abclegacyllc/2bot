@@ -40,12 +40,27 @@ class LocalStore {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    this.db = new Database(dbPath);
+    try {
+      this.db = new Database(dbPath);
+    } catch (err) {
+      this.log.error(`Failed to open SQLite database at ${dbPath}: ${err.message}. Falling back to in-memory DB.`);
+      // If the DB file is corrupted, remove it and retry; otherwise use in-memory
+      try {
+        if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+        this.db = new Database(dbPath);
+      } catch {
+        this.db = new Database(':memory:');
+      }
+    }
 
     // Performance pragmas
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('synchronous = NORMAL');
-    this.db.pragma('busy_timeout = 5000');
+    try {
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+      this.db.pragma('busy_timeout = 5000');
+    } catch (err) {
+      this.log.warn(`SQLite pragma failed (non-fatal): ${err.message}`);
+    }
 
     // Create schema
     this.db.exec(`

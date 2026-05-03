@@ -1126,7 +1126,7 @@ class OrganizationService {
 
   /**
    * Get remaining AI tokens for this billing period
-   * Note: AI token tracking will be implemented in Phase 6.8+ with ExecutionTracker
+ * Note: AI token tracking will be implemented with ExecutionTracker
    */
   async getRemainingAiTokens(orgId: string): Promise<{ remaining: number; limit: number; used: number }> {
     const org = await prisma.organization.findUnique({

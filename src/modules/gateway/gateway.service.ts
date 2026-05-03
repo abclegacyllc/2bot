@@ -188,16 +188,58 @@ class GatewayService {
     // Encrypt credentials
     const credentialsEnc = encrypt(data.credentials);
 
-    const gateway = await prisma.gateway.create({
-      data: {
+    // Wave 2: every resource gets attached to a project. Gated
+    // behind FEATURE_AUTO_ATTACH_PROJECT until the NOT NULL migration in
+    // prisma/migrations/_drafts/finalize_project_layer.sql is applied.
+    let projectId: string | null = null;
+    if ((process.env.FEATURE_AUTO_ATTACH_PROJECT ?? "disabled").toLowerCase() === "enabled") {
+      const { ensureDefaultProject } = await import("@/modules/project/project.service");
+      const defaultProject = await ensureDefaultProject({
         userId: ctx.userId,
         organizationId: ctx.organizationId ?? null,
-        name: data.name,
-        type: data.type,
-        status: "DISCONNECTED",
-        credentialsEnc,
-        config: (data.config ?? {}) as object,
-      },
+      });
+      projectId = defaultProject.id;
+    }
+
+    const gateway = await prisma.$transaction(async (tx) => {
+      const created = await tx.gateway.create({
+        data: {
+          userId: ctx.userId,
+          organizationId: ctx.organizationId ?? null,
+          projectId,
+          name: data.name,
+          type: data.type,
+          status: "DISCONNECTED",
+          credentialsEnc,
+          config: (data.config ?? {}) as object,
+          workspaceContainerId: await prisma.workspaceContainer.findFirst({
+            where: { userId: ctx.userId, organizationId: ctx.organizationId ?? null },
+            select: { id: true },
+          }).then(c => c?.id ?? null).catch(() => null),
+        },
+      });
+
+      // Path C: every Gateway gets a paired ProjectResource of
+      // kind GATEWAY_BOT. Companion-write is gated by FEATURE_PROJECT_RESOURCES
+      // and only runs when the gateway has a projectId (i.e. when
+      // FEATURE_AUTO_ATTACH_PROJECT is also enabled).
+      if (
+        projectId &&
+        (process.env.FEATURE_PROJECT_RESOURCES ?? "disabled").toLowerCase() === "enabled"
+      ) {
+        const { ensureGatewayResource } = await import(
+          "@/modules/project-resource/project-resource.service"
+        );
+        await ensureGatewayResource(tx, {
+          id: created.id,
+          name: created.name,
+          userId: created.userId,
+          organizationId: created.organizationId,
+          projectId: created.projectId,
+        });
+      }
+
+      return created;
     });
 
     // Audit log (non-blocking)
@@ -276,7 +318,6 @@ class GatewayService {
         name: true,
         type: true,
         status: true,
-        mode: true,
         lastConnectedAt: true,
         lastError: true,
         createdAt: true,
@@ -304,7 +345,6 @@ class GatewayService {
         name: gw.name,
         type: gw.type,
         status: gw.status,
-        mode: gw.mode,
         lastConnectedAt: gw.lastConnectedAt,
         lastError: gw.lastError,
         createdAt: gw.createdAt,
@@ -350,7 +390,6 @@ class GatewayService {
       name?: string;
       credentialsEnc?: string;
       config?: object;
-      mode?: string;
     } = {};
 
     if (data.name !== undefined) {
@@ -366,13 +405,6 @@ class GatewayService {
       updateData.config = { ...(existing.config as object), ...data.config };
     }
 
-    if (data.mode !== undefined && data.mode !== existing.mode) {
-      // Unified engine: mode is now informational only.
-      // Both plugins and workflows can coexist on the same gateway,
-      // so we no longer block switching based on active resources.
-      updateData.mode = data.mode;
-    }
-
     const gateway = await prisma.gateway.update({
       where: { id },
       data: updateData,
@@ -383,7 +415,6 @@ class GatewayService {
       nameChanged: data.name !== undefined,
       credentialsChanged: data.credentials !== undefined,
       configChanged: data.config !== undefined,
-      modeChanged: data.mode !== undefined,
     });
 
     gatewayLogger.info({ gatewayId: gateway.id }, "Gateway updated");

@@ -124,7 +124,7 @@ export const installPluginSchema = z.object({
  * Update plugin config request validation
  */
 export const updatePluginConfigSchema = z.object({
-  config: pluginConfigSchema,
+  config: z.record(z.string(), z.unknown()).optional(),
   gatewayId: z.string().cuid("Invalid gateway ID").optional().nullable(),
   storageQuotaMb: z.number().int().min(0).max(500).optional(),
 });

@@ -16,6 +16,8 @@ import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { discoverAllModels } from "./model-discovery.service";
+// Import alerts service to register event listeners at startup
+import "./provider-alerts.service";
 import { setProviderValidated } from "./provider-config";
 import type { TwoBotAIProvider } from "./types";
 

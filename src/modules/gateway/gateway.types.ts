@@ -212,7 +212,6 @@ export interface GatewayListItem {
   name: string;
   type: GatewayType;
   status: GatewayStatus;
-  mode: string;
   lastConnectedAt: Date | null;
   lastError: string | null;
   createdAt: Date;

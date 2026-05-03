@@ -16,15 +16,61 @@ import Docker from 'dockerode';
 import { logger } from '@/lib/logger';
 
 import {
-  BRIDGE_PORT,
-  CONTAINER_LABELS,
-  CONTAINER_STOP_TIMEOUT,
-  WORKSPACE_IMAGE,
-  WORKSPACE_NETWORK,
+    BRIDGE_PORT,
+    CONTAINER_LABELS,
+    CONTAINER_STOP_TIMEOUT,
+    WORKSPACE_IMAGE,
+    WORKSPACE_NETWORK,
 } from './workspace.constants';
 import type { DockerContainerInfo, DockerCreateOptions } from './workspace.types';
 
 const log = logger.child({ module: 'workspace:docker' });
+
+// ===========================================
+// Squid proxy IP resolution
+// ===========================================
+//
+// We resolve the Squid proxy hostname ("2bot-proxy" by default) to an IP
+// at container-creation time and inject the IP form of the URL as the
+// HTTP(S)_PROXY env var. This neuters DNS-poisoning attacks where a malicious
+// process inside the workspace network could spoof the "2bot-proxy" hostname
+// and capture egress traffic.
+//
+// Cached for 60s so a burst of container creations doesn't hammer Docker.
+
+let cachedProxyUrl: { url: string; expiresAt: number } | null = null;
+
+async function resolveProxyUrl(): Promise<string> {
+  // Explicit override: trust the operator.
+  if (process.env.WORKSPACE_PROXY_URL) return process.env.WORKSPACE_PROXY_URL;
+
+  const now = Date.now();
+  if (cachedProxyUrl && cachedProxyUrl.expiresAt > now) return cachedProxyUrl.url;
+
+  const proxyName = process.env.WORKSPACE_PROXY_CONTAINER || '2bot-proxy';
+  const proxyPort = process.env.WORKSPACE_PROXY_PORT || '3128';
+  const fallback = `http://${proxyName}:${proxyPort}`;
+
+  try {
+    const docker = getDocker();
+    const info = await docker.getContainer(proxyName).inspect();
+    const networks = info.NetworkSettings?.Networks ?? {};
+    const ip =
+      networks[WORKSPACE_NETWORK]?.IPAddress ||
+      Object.values(networks).find((n) => n?.IPAddress)?.IPAddress ||
+      null;
+    const url = ip ? `http://${ip}:${proxyPort}` : fallback;
+    cachedProxyUrl = { url, expiresAt: now + 60_000 };
+    log.debug({ proxyName, ip, url }, 'Resolved Squid proxy IP');
+    return url;
+  } catch (err) {
+    log.warn(
+      { err: (err as Error).message, proxyName, fallback },
+      'Could not resolve Squid proxy by container — falling back to hostname'
+    );
+    return fallback;
+  }
+}
 
 // ===========================================
 // Docker Client (singleton)
@@ -85,6 +131,10 @@ class DockerService {
 
     const { bridgeAuthToken } = options;
 
+    // Resolve Squid by container IP so DNS poisoning of the
+    // proxy hostname inside the workspace network can't redirect egress.
+    const proxyUrl = await resolveProxyUrl();
+
     // Build environment variables
     const envArray = [
       `BRIDGE_AUTH_TOKEN=${bridgeAuthToken}`,
@@ -92,13 +142,11 @@ class DockerService {
       `WORKSPACE_DIR=/workspace`,
       `NODE_ENV=production`,
       `LOG_LEVEL=${process.env.LOG_LEVEL || 'info'}`,
-      // Egress proxy (Phase 13.2): route outbound HTTP/HTTPS through Squid proxy
-      // The proxy container runs on the workspace network, reachable via Docker DNS
-      // as "2bot-proxy" (container name resolved automatically on the same network).
-      `HTTP_PROXY=${process.env.WORKSPACE_PROXY_URL || 'http://2bot-proxy:3128'}`,
-      `HTTPS_PROXY=${process.env.WORKSPACE_PROXY_URL || 'http://2bot-proxy:3128'}`,
-      `http_proxy=${process.env.WORKSPACE_PROXY_URL || 'http://2bot-proxy:3128'}`,
-      `https_proxy=${process.env.WORKSPACE_PROXY_URL || 'http://2bot-proxy:3128'}`,
+      // Egress proxy: route outbound HTTP/HTTPS through Squid by IP (resolved above).
+      `HTTP_PROXY=${proxyUrl}`,
+      `HTTPS_PROXY=${proxyUrl}`,
+      `http_proxy=${proxyUrl}`,
+      `https_proxy=${proxyUrl}`,
       `NO_PROXY=localhost,127.0.0.1,.local,${process.env.WORKSPACE_HOST_API_IP || '172.20.0.1'}`,
       `no_proxy=localhost,127.0.0.1,.local,${process.env.WORKSPACE_HOST_API_IP || '172.20.0.1'}`,
       // Credential REST fallback: host API server accessible from container
@@ -143,7 +191,15 @@ class DockerService {
         // Security: no privileged access
         Privileged: false,
         ReadonlyRootfs: false,
-        
+
+        // hardening:
+        //   - no-new-privileges blocks setuid binaries from gaining caps
+        //     (defense-in-depth on top of CapDrop=ALL)
+        //   - Docker's default seccomp profile is left active (we do NOT pass
+        //     seccomp=unconfined). It already blocks mount/umount2/pivot_root/
+        //     chroot/setns/unshare(NEWNS) under unprivileged containers.
+        SecurityOpt: ['no-new-privileges:true'],
+
         // Drop all capabilities except what's needed
         CapDrop: ['ALL'],
         CapAdd: ['CHOWN', 'DAC_OVERRIDE', 'SETUID', 'SETGID'],
@@ -226,6 +282,50 @@ class DockerService {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('not running')) {
         log.debug({ containerId }, 'Container not running, kill skipped');
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Pause a container via the freezer cgroup (Docker pause).
+   * All processes are SIGSTOP'd; memory state is preserved.
+   * Use unpauseContainer() to resume instantly.
+   * Idle workspace container suspend.
+   */
+  async pauseContainer(containerId: string): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(containerId);
+    try {
+      await container.pause();
+      log.info({ containerId }, 'Container paused');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Docker returns 409 / "already paused" if already paused.
+      if (message.includes('already paused') || message.includes('not running')) {
+        log.debug({ containerId }, 'Container already paused or not running');
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Resume a paused container.
+   * Idle workspace container suspend.
+   */
+  async unpauseContainer(containerId: string): Promise<void> {
+    const docker = getDocker();
+    const container = docker.getContainer(containerId);
+    try {
+      await container.unpause();
+      log.info({ containerId }, 'Container unpaused');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Docker returns an error if not paused — treat as already-running.
+      if (message.includes('not paused')) {
+        log.debug({ containerId }, 'Container not paused, unpause skipped');
       } else {
         throw err;
       }

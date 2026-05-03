@@ -4,8 +4,15 @@
   "version": "1.0.0",
   "description": "Track message stats, active users, and chat activity. View daily trends, top users, and engagement metrics.",
   "category": "analytics",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["analytics", "statistics", "telegram", "tracking"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "analytics",
+    "statistics",
+    "telegram",
+    "tracking"
+  ],
   "difficulty": "intermediate",
   "configSchema": {
     "type": "object",
@@ -44,6 +51,34 @@
   "icon": "chart-bar",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "observer"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "observer",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      },
+      "chatId": {
+        "type": "string",
+        "title": "Chat ID"
+      },
+      "userId": {
+        "type": "string",
+        "title": "User ID"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "stats": {
+        "type": "object",
+        "title": "Stats"
+      }
+    }
+  }
 }

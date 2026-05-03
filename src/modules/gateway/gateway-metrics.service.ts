@@ -1,5 +1,5 @@
 /**
- * Gateway Metrics Service (Phase 8)
+ * Gateway Metrics Service
  *
  * Records action execution counts per gateway, bucketed by daily period.
  * Uses upsert + increment for efficient fire-and-forget metric collection.

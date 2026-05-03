@@ -93,6 +93,49 @@ export {
     recordModelSuccess
 } from "./model-health-tracker";
 
+// Provider Circuit Breaker
+export {
+    classifyFailure,
+    clearAllCircuitBreakers,
+    getProviderCircuitStatus,
+    isProviderCircuitHealthy,
+    providerAlerts,
+    recordProviderFailure,
+    recordProviderSuccess,
+    resetProviderCircuit,
+    type FailureCategory,
+    type ProviderAlertEvent,
+} from "./provider-circuit-breaker";
+
+// Provider Alerts Service
+export {
+    acknowledgeAlert,
+    acknowledgeProviderAlerts,
+    getAlertSummary,
+    getRecentAlerts,
+    getUnacknowledgedAlertCount,
+    type StoredAlert,
+} from "./provider-alerts.service";
+
+// Provider Balance Monitoring
+export {
+    clearBalanceCache,
+    getAllProviderBalances,
+    getProviderBalance,
+    type ProviderBalance,
+} from "./provider-balance.service";
+
+// Model Probing (Individual Model Availability)
+export {
+    probeAllModels,
+    probeProviderModels,
+    toModelCentricView,
+    type ModelCentricProbe,
+    type ModelProbeResult,
+    type ModelProviderStatus,
+    type ProbeReport,
+} from "./model-probe.service";
+
 // Smart Model Router
 export {
     classifyQueryComplexity,

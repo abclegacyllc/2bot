@@ -26,6 +26,8 @@ export type AuditAction =
   | 'FORCE_STOP'
   | 'AUTO_STOP'
   | 'AUTO_RESTART'
+  | 'AUTO_SUSPEND'
+  | 'AUTO_RESUME'
   | 'ERROR';
 
 export interface AuditEntry {

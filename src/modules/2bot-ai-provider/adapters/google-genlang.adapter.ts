@@ -16,11 +16,11 @@
 
 import { logger } from "@/lib/logger";
 import type {
-  TextGenerationRequest,
-  TextGenerationResponse,
-  TextGenerationStreamChunk,
-  ToolCallResult,
-  ToolDefinition,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    TextGenerationStreamChunk,
+    ToolCallResult,
+    ToolDefinition,
 } from "../types";
 import { TwoBotAIError } from "../types";
 
@@ -117,6 +117,8 @@ async function getGenLangAccessToken(): Promise<string> {
 
 interface GenLangPart {
   text?: string;
+  /** When true, this text part is model reasoning/thinking (Gemini thinkingContent) */
+  thought?: boolean;
   inlineData?: { mimeType: string; data: string };
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: { name: string; response: Record<string, unknown> };
@@ -335,10 +337,16 @@ export async function genLangTextGeneration(
 
   // Extract text, tool calls, and images from response parts
   let textContent = "";
+  let reasoningContent = "";
   const toolCalls: ToolCallResult[] = [];
 
   for (const part of parts) {
-    if (part.text) textContent += part.text;
+    if (part.text && part.thought) {
+      // Gemini thought/reasoning part
+      reasoningContent += part.text;
+    } else if (part.text) {
+      textContent += part.text;
+    }
     if (part.functionCall) {
       toolCalls.push({
         id: `genlang-tc-${Date.now()}-${toolCalls.length}`,
@@ -378,6 +386,7 @@ export async function genLangTextGeneration(
       totalTokens: usage.totalTokenCount || 0,
     },
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    reasoning: reasoningContent || undefined,
     creditsUsed: 0,
     newBalance: 0,
   };

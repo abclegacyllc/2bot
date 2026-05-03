@@ -33,6 +33,7 @@ import {
     type TwoBotAIModelId,
     type TwoBotAIModelInfo,
 } from "./model-catalog";
+import { CODE_GENERATION_MODELS, REASONING_MODELS } from "./model-catalog/tier-auto-curator";
 import { recordModelFailure, recordModelSuccess } from "./model-health-tracker";
 import type { SmartRoutingResult } from "./model-router";
 import { getSmartRoutingDecision, validateModelAvailable } from "./model-router";
@@ -94,17 +95,39 @@ function prepareTextGeneration(
 ): TextGenPrep {
   const originalModel = request.model;
 
-  // 🔄 "auto" → cheapest available model for this capability (with fallback chain)
+  // 🔄 "auto" → best available model for this capability (with fallback chain)
   let autoFallbackChain: ModelInfo[] = [];
   if (request.model === "auto") {
-    const chain = getAutoFallbackChain("text-generation");
+    let chain = getAutoFallbackChain("text-generation");
+
+    // When capability is code-generation (e.g., cursor agent), filter auto chain
+    // to only include verified tool-calling models from CODE_GENERATION_MODELS,
+    // then prefer reasoning-capable models (they think before calling tools,
+    // which produces far better results for agentic code generation).
+    if (request.capability === "code-generation" || request.tools?.length) {
+      chain = chain.filter((m) => CODE_GENERATION_MODELS.has(m.id));
+      // Sort: reasoning models first (same tier), then by tier ascending,
+      // then by cost ascending (cheaper models preferred for agentic loops)
+      chain.sort((a, b) => {
+        const aReasoning = REASONING_MODELS.has(a.id) ? 0 : 1;
+        const bReasoning = REASONING_MODELS.has(b.id) ? 0 : 1;
+        if (aReasoning !== bReasoning) return aReasoning - bReasoning;
+        const tierDiff = (a.tier || 99) - (b.tier || 99);
+        if (tierDiff !== 0) return tierDiff;
+        // Same tier: prefer cheaper models (critical for agentic loops with many iterations)
+        const aCost = (a.creditsPerInputToken || 0) + (a.creditsPerOutputToken || 0);
+        const bCost = (b.creditsPerInputToken || 0) + (b.creditsPerOutputToken || 0);
+        return aCost - bCost;
+      });
+    }
+
     if (chain.length === 0) {
       throw new TwoBotAIError("No text-generation models available", "MODEL_UNAVAILABLE", 503);
     }
-    const cheapest = chain[0]!;
+    const best = chain[0]!;
     autoFallbackChain = chain.slice(1); // remaining models for failover
-    log.info({ resolvedModel: cheapest.id, fallbackCount: autoFallbackChain.length }, `⚡ Auto mode: using cheapest available model${logSuffix}`);
-    request = { ...request, model: cheapest.id as TwoBotAIModel };
+    log.info({ resolvedModel: best.id, fallbackCount: autoFallbackChain.length, reasoning: REASONING_MODELS.has(best.id) }, `⚡ Auto mode: selected model${logSuffix}`);
+    request = { ...request, model: best.id as TwoBotAIModel };
   }
 
   // 🔄 Resolve 2Bot AI model IDs to provider models (with failover support)
@@ -132,7 +155,10 @@ function prepareTextGeneration(
   validateModelAvailable(request.model);
 
   // 🧠 Smart Model Routing — only for legacy provider models (not 2Bot catalog models)
-  const smartRoutingEnabled = request.smartRouting !== false && !resolution;
+  // Disabled for code-generation capability: smart routing may downgrade to models
+  // that don't reliably support function calling, breaking agent tool loops
+  const smartRoutingEnabled = request.smartRouting !== false && !resolution
+    && request.capability !== "code-generation";
   let routingResult: SmartRoutingResult | null = null;
 
   if (smartRoutingEnabled) {
@@ -169,6 +195,13 @@ function prepareTextGeneration(
       "MODEL_UNAVAILABLE",
       400
     );
+  }
+
+  // Update request model to the provider-specific ID when resolved via registry
+  // (e.g. canonical "google/gemini-2.5-flash-preview" → provider "gemini-2.5-flash")
+  if (modelInfo.id !== request.model) {
+    log.info({ canonicalModel: request.model, providerModel: modelInfo.id, provider: modelInfo.provider }, "🔄 Mapped canonical model to provider model ID");
+    request = { ...request, model: modelInfo.id as TwoBotAIModel };
   }
 
   return {
@@ -454,13 +487,13 @@ export const twoBotAIProvider = {
       while (true) {
         try {
           response = await callProviderAdapter(currentProvider, { ...request, model: currentModel });
-          recordModelSuccess(currentModel);
+          recordModelSuccess(currentModel, currentProvider);
           request = { ...request, model: currentModel };
           usedProvider = currentProvider;
           break;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          recordModelFailure(currentModel, error.message);
+          recordModelFailure(currentModel, error.message, currentProvider);
           if (currentResolution) {
             const next = twoBotAIModelResolver.getNextFallback(currentResolution);
             if (next) {
@@ -490,21 +523,28 @@ export const twoBotAIProvider = {
       // Try primary model first
       try {
         response = await callProviderAdapter(currentProvider, request);
-        recordModelSuccess(currentModel);
+        recordModelSuccess(currentModel, currentProvider);
         usedProvider = currentProvider;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        recordModelFailure(currentModel, lastError.message);
+        recordModelFailure(currentModel, lastError.message, currentProvider);
         log.warn({ failedModel: currentModel, error: lastError.message }, "⚠️ Auto primary model failed, trying fallbacks");
 
         // Try each fallback in order
         let succeeded = false;
+        const providerFailCounts = new Map<string, number>();
         for (const fallback of autoFallbackChain) {
+          // Provider-level circuit breaker: skip provider after 2+ consecutive failures
+          const providerFails = providerFailCounts.get(fallback.provider) ?? 0;
+          if (providerFails >= 2) {
+            log.warn({ skippedModel: fallback.id, provider: fallback.provider, providerFails }, "⏭️ Skipping model — provider has 2+ failures this round");
+            continue;
+          }
           try {
             currentProvider = fallback.provider;
             currentModel = fallback.id;
             response = await callProviderAdapter(currentProvider, { ...request, model: currentModel });
-            recordModelSuccess(currentModel);
+            recordModelSuccess(currentModel, currentProvider);
             request = { ...request, model: currentModel };
             log.info({ fallbackModel: currentModel, fallbackProvider: currentProvider }, "✅ Auto fallback succeeded");
             usedProvider = currentProvider;
@@ -512,8 +552,9 @@ export const twoBotAIProvider = {
             break;
           } catch (fallbackErr) {
             lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
-            recordModelFailure(currentModel, lastError.message);
-            log.warn({ failedModel: currentModel, error: lastError.message }, "⚠️ Auto fallback also failed");
+            recordModelFailure(currentModel, lastError.message, currentProvider);
+            providerFailCounts.set(fallback.provider, providerFails + 1);
+            log.warn({ failedModel: currentModel, error: lastError.message, providerFails: providerFails + 1 }, "⚠️ Auto fallback also failed");
           }
         }
         if (!succeeded) {
@@ -645,13 +686,13 @@ export const twoBotAIProvider = {
           }
 
           usage = result.value;
-          recordModelSuccess(currentModel);
+          recordModelSuccess(currentModel, currentProvider);
           request = { ...request, model: currentModel };
           usedProvider = currentProvider;
           break;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          recordModelFailure(currentModel, error.message);
+          recordModelFailure(currentModel, error.message, currentProvider);
 
           // Can only failover if no chunks have been sent to the client yet
           if (!chunksYielded && currentResolution) {
@@ -708,7 +749,7 @@ export const twoBotAIProvider = {
               yield lastChunk;
             }
           }
-          recordModelSuccess(candidate.model);
+          recordModelSuccess(candidate.model, candidate.provider);
           request = { ...request, model: candidate.model };
           usedProvider = candidate.provider;
           succeeded = true;
@@ -718,7 +759,7 @@ export const twoBotAIProvider = {
           break;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          recordModelFailure(candidate.model, error.message);
+          recordModelFailure(candidate.model, error.message, candidate.provider);
           // Can only failover if no chunks sent yet
           if (content.length > 0) {
             throw err; // Already sent data to client, can't switch
@@ -927,14 +968,14 @@ export const twoBotAIProvider = {
       while (true) {
         try {
           response = await callImageAdapter(currentProvider, currentModel);
-          recordModelSuccess(currentModel);
+          recordModelSuccess(currentModel, currentProvider);
           // Update for billing/logging
           providerModelId = currentModel;
           provider = currentProvider;
           break;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          recordModelFailure(currentModel, error.message);
+          recordModelFailure(currentModel, error.message, currentProvider);
 
           // Try next fallback provider
           if (currentResolution) {
@@ -964,17 +1005,17 @@ export const twoBotAIProvider = {
       let lastError: Error | undefined;
       try {
         response = await callImageAdapter(provider, providerModelId);
-        recordModelSuccess(providerModelId);
+        recordModelSuccess(providerModelId, provider);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        recordModelFailure(providerModelId, lastError.message);
+        recordModelFailure(providerModelId, lastError.message, provider);
         log.warn({ failedModel: providerModelId, error: lastError.message }, "⚠️ Auto primary image model failed, trying fallbacks");
 
         let succeeded = false;
         for (const fallback of autoFallbackChain) {
           try {
             response = await callImageAdapter(fallback.provider, fallback.id);
-            recordModelSuccess(fallback.id);
+            recordModelSuccess(fallback.id, fallback.provider);
             providerModelId = fallback.id;
             provider = fallback.provider;
             log.info({ fallbackModel: fallback.id, fallbackProvider: fallback.provider }, "✅ Auto image fallback succeeded");
@@ -982,7 +1023,7 @@ export const twoBotAIProvider = {
             break;
           } catch (fallbackErr) {
             lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
-            recordModelFailure(fallback.id, lastError.message);
+            recordModelFailure(fallback.id, lastError.message, fallback.provider);
             log.warn({ failedModel: fallback.id, error: lastError.message }, "⚠️ Auto image fallback also failed");
           }
         }
@@ -1158,17 +1199,17 @@ export const twoBotAIProvider = {
       let lastError: Error | undefined;
       try {
         response = await callSpeechAdapter(provider, providerModelId);
-        recordModelSuccess(providerModelId);
+        recordModelSuccess(providerModelId, provider);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        recordModelFailure(providerModelId, lastError.message);
+        recordModelFailure(providerModelId, lastError.message, provider);
         log.warn({ failedModel: providerModelId, error: lastError.message }, "⚠️ Auto primary speech model failed, trying fallbacks");
 
         let succeeded = false;
         for (const fallback of autoFallbackChain) {
           try {
             response = await callSpeechAdapter(fallback.provider, fallback.id);
-            recordModelSuccess(fallback.id);
+            recordModelSuccess(fallback.id, fallback.provider);
             providerModelId = fallback.id;
             provider = fallback.provider;
             log.info({ fallbackModel: fallback.id, fallbackProvider: fallback.provider }, "✅ Auto speech fallback succeeded");
@@ -1176,7 +1217,7 @@ export const twoBotAIProvider = {
             break;
           } catch (fallbackErr) {
             lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
-            recordModelFailure(fallback.id, lastError.message);
+            recordModelFailure(fallback.id, lastError.message, fallback.provider);
             log.warn({ failedModel: fallback.id, error: lastError.message }, "⚠️ Auto speech fallback also failed");
           }
         }
@@ -1351,17 +1392,17 @@ export const twoBotAIProvider = {
       let lastError: Error | undefined;
       try {
         response = await callTranscribeAdapter(provider, providerModelId);
-        recordModelSuccess(providerModelId);
+        recordModelSuccess(providerModelId, provider);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        recordModelFailure(providerModelId, lastError.message);
+        recordModelFailure(providerModelId, lastError.message, provider);
         log.warn({ failedModel: providerModelId, error: lastError.message }, "⚠️ Auto primary transcription model failed, trying fallbacks");
 
         let succeeded = false;
         for (const fallback of autoFallbackChain) {
           try {
             response = await callTranscribeAdapter(fallback.provider, fallback.id);
-            recordModelSuccess(fallback.id);
+            recordModelSuccess(fallback.id, fallback.provider);
             providerModelId = fallback.id;
             provider = fallback.provider;
             log.info({ fallbackModel: fallback.id, fallbackProvider: fallback.provider }, "✅ Auto transcription fallback succeeded");
@@ -1369,7 +1410,7 @@ export const twoBotAIProvider = {
             break;
           } catch (fallbackErr) {
             lastError = fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
-            recordModelFailure(fallback.id, lastError.message);
+            recordModelFailure(fallback.id, lastError.message, fallback.provider);
             log.warn({ failedModel: fallback.id, error: lastError.message }, "⚠️ Auto transcription fallback also failed");
           }
         }

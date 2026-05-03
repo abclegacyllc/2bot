@@ -15,50 +15,50 @@ datasource db {
 
 enum PlanType {
   FREE
-  STARTER     // $9/mo tier
+  STARTER // $9/mo tier
   PRO
-  BUSINESS    // $79/mo tier
-  ENTERPRISE  // Custom pricing
+  BUSINESS // $79/mo tier
+  ENTERPRISE // Custom pricing
 }
 
 enum UserRole {
-  SUPER_ADMIN   // Full platform control
-  ADMIN         // Platform administrator
-  DEVELOPER     // Marketplace developer
-  SUPPORT       // Customer support (future)
-  MEMBER        // Standard user (default)
+  SUPER_ADMIN // Full platform control
+  ADMIN // Platform administrator
+  DEVELOPER // Marketplace developer
+  SUPPORT // Customer support (future)
+  MEMBER // Standard user (default)
 }
 
 enum OrgRole {
-  ORG_OWNER     // Organization owner
-  ORG_ADMIN     // Can manage org users/settings
-  DEPT_MANAGER  // Manages their department
-  ORG_MEMBER    // Regular org member
+  ORG_OWNER // Organization owner
+  ORG_ADMIN // Can manage org users/settings
+  DEPT_MANAGER // Manages their department
+  ORG_MEMBER // Regular org member
 }
 
 enum MembershipStatus {
-  INVITED       // Pending invite
-  ACTIVE        // Full member
-  SUSPENDED     // Temporarily disabled
+  INVITED // Pending invite
+  ACTIVE // Full member
+  SUSPENDED // Temporarily disabled
 }
 
 enum InviteStatus {
-  PENDING       // Waiting for response
-  ACCEPTED      // Invite was accepted
-  DECLINED      // Invite was declined by recipient
-  EXPIRED       // Invite has expired (computed, not stored)
+  PENDING // Waiting for response
+  ACCEPTED // Invite was accepted
+  DECLINED // Invite was declined by recipient
+  EXPIRED // Invite has expired (computed, not stored)
 }
 
 enum DatabaseType {
-  SHARED        // Uses default shared database (Free/Starter/Pro/Business)
-  DEDICATED     // Has own database instance (Enterprise)
+  SHARED // Uses default shared database (Free/Starter/Pro/Business)
+  DEDICATED // Has own database instance (Enterprise)
 }
 
 enum GatewayType {
-  TELEGRAM_BOT    // Telegram Bot API (uses botToken)
-  DISCORD_BOT     // Discord Bot API (uses botToken + applicationId)
-  SLACK_BOT       // Slack Bot API (uses botToken + signingSecret)
-  WHATSAPP_BOT    // WhatsApp Cloud API (uses accessToken + phoneNumberId)
+  TELEGRAM_BOT // Telegram Bot API (uses botToken)
+  DISCORD_BOT // Discord Bot API (uses botToken + applicationId)
+  SLACK_BOT // Slack Bot API (uses botToken + signingSecret)
+  WHATSAPP_BOT // WhatsApp Cloud API (uses accessToken + phoneNumberId)
   // TELEGRAM_ACCOUNT - MTProto user accounts (V2 - requires phone auth flow)
 }
 
@@ -69,37 +69,38 @@ enum GatewayStatus {
 }
 
 enum ExecutionMode {
-  SERVERLESS    // Traditional serverless execution with per-execution limits
-  WORKSPACE     // Docker-based workspace with persistent resources
+  SERVERLESS // Traditional serverless execution with per-execution limits
+  WORKSPACE // Docker-based workspace with persistent resources
 }
 
 enum OrgPlan {
-  ORG_FREE        // Free tier - limited features
-  ORG_STARTER     // $49/mo - 5 seats, 5 gateways
-  ORG_GROWTH      // $99/mo - 15 seats, 15 gateways
-  ORG_PRO         // $199/mo - 40 seats, 50 gateways
-  ORG_BUSINESS    // $399/mo - 100 seats, 150 gateways
-  ORG_ENTERPRISE  // Custom - unlimited
+  ORG_FREE // Free tier - limited features
+  ORG_STARTER // $49/mo - 5 seats, 5 gateways
+  ORG_GROWTH // $99/mo - 15 seats, 15 gateways
+  ORG_PRO // $199/mo - 40 seats, 50 gateways
+  ORG_BUSINESS // $399/mo - 100 seats, 150 gateways
+  ORG_ENTERPRISE // Custom - unlimited
 }
 
 enum AllocationMode {
-  UNLIMITED     // Use from pool freely (no limit set)
-  SOFT_CAP      // Warning at limit, can request more
-  HARD_CAP      // Blocked at limit
-  RESERVED      // Guaranteed allocation, others can't use
+  UNLIMITED // Use from pool freely (no limit set)
+  SOFT_CAP // Warning at limit, can request more
+  HARD_CAP // Blocked at limit
+  RESERVED // Guaranteed allocation, others can't use
 }
 
 // ===========================================
 // Workspace Container Status (Phase 13: Workspace)
 // ===========================================
 enum ContainerStatus {
-  CREATING      // Docker image being pulled / container being created
-  STARTING      // Container starting up, bridge agent initializing
-  RUNNING       // Container healthy, bridge agent connected
-  STOPPING      // Graceful shutdown in progress
-  STOPPED       // Container exited, data preserved
-  ERROR         // Container crashed or health check failed
-  DESTROYED     // Container removed (data may be preserved in volume)
+  CREATING // Docker image being pulled / container being created
+  STARTING // Container starting up, bridge agent initializing
+  RUNNING // Container healthy, bridge agent connected
+  PAUSED // Container frozen via Docker pause; resumed on next dispatch
+  STOPPING // Graceful shutdown in progress
+  STOPPED // Container exited, data preserved
+  ERROR // Container crashed or health check failed
+  DESTROYED // Container removed (data may be preserved in volume)
 }
 
 enum WorkspaceFileType {
@@ -108,14 +109,14 @@ enum WorkspaceFileType {
 }
 
 enum WorkspaceOwnerType {
-  PERSONAL      // User's personal workspace
-  ORGANIZATION  // Organization shared workspace
+  PERSONAL // User's personal workspace
+  ORGANIZATION // Organization shared workspace
 }
 
 enum PluginAuthorType {
-  SYSTEM    // Built-in platform plugins
-  USER      // Human-created custom plugins
-  AI        // AI-agent created (future)
+  SYSTEM // Built-in platform plugins
+  USER // Human-created custom plugins
+  AI // AI-agent created (future)
 }
 
 // ===========================================
@@ -130,31 +131,31 @@ model User {
   image         String?
 
   // Role System (for admin, developer, support)
-  role              UserRole  @default(MEMBER)
-  
+  role UserRole @default(MEMBER)
+
   // Security (for future 2FA, account lockout)
-  failedLoginCount  Int       @default(0) @map("failed_login_count")
-  lockedUntil       DateTime? @map("locked_until")
+  failedLoginCount   Int       @default(0) @map("failed_login_count")
+  lockedUntil        DateTime? @map("locked_until")
   lastPasswordChange DateTime? @map("last_password_change")
-  
+
   // Soft Delete Support
-  deletedAt         DateTime? @map("deleted_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Subscription (personal workspace)
   plan             PlanType      @default(FREE)
   executionMode    ExecutionMode @default(SERVERLESS) @map("execution_mode")
   stripeCustomerId String?       @unique @map("stripe_customer_id")
-  
+
   // Workspace Add-ons (array of addon tier strings: MICRO, SMALL, MEDIUM, LARGE, XLARGE)
-  workspaceAddons    String[]  @default([]) @map("workspace_addons")
-  
+  workspaceAddons String[] @default([]) @map("workspace_addons")
+
   // Computed workspace resources (updated when plan/addons change)
-  workspaceRamMb     Int?      @map("workspace_ram_mb")
-  workspaceCpuCores  Float?    @map("workspace_cpu_cores")
-  workspaceStorageMb Int?      @map("workspace_storage_mb")
+  workspaceRamMb     Int?   @map("workspace_ram_mb")
+  workspaceCpuCores  Float? @map("workspace_cpu_cores")
+  workspaceStorageMb Int?   @map("workspace_storage_mb")
 
   // AI Routing Preference (quality=best models first, balanced=default, cost=cheapest first)
-  aiRoutingPreference  String  @default("balanced") @map("ai_routing_preference")
+  aiRoutingPreference String @default("balanced") @map("ai_routing_preference")
 
   // Status
   isActive    Boolean   @default(true) @map("is_active")
@@ -171,35 +172,42 @@ model User {
   creditWallet        CreditWallet?
   userPlugins         UserPlugin[]
   workflows           Workflow[]
+  projects            Project[]
   aiUsage             AIUsage[]
   memberships         Membership[]
-  invitedMemberships  Membership[] @relation("InvitedMemberships")
+  invitedMemberships  Membership[]         @relation("InvitedMemberships")
   departmentMembers   DepartmentMember[]
   usageHistory        UsageHistory[]
   subscription        Subscription?
   memberAllocations   MemberAllocation[]
-  deptAllocsSetBy     DeptAllocation[]   @relation("DeptAllocSetBy")
-  memberAllocsSetBy   MemberAllocation[] @relation("MemberAllocSetBy")
+  deptAllocsSetBy     DeptAllocation[]     @relation("DeptAllocSetBy")
+  memberAllocsSetBy   MemberAllocation[]   @relation("MemberAllocSetBy")
   orgInvitesSent      OrgInvite[]
 
   // Support relations (Phase 7)
-  supportTickets       SupportTicket[]  @relation("UserTickets")
-  assignedTickets      SupportTicket[]  @relation("AssignedTickets")
-  ticketMessages       TicketMessage[]  @relation("TicketMessageSender")
-  kbArticles           KBArticle[]      @relation("KBArticleAuthor")
+  supportTickets  SupportTicket[] @relation("UserTickets")
+  assignedTickets SupportTicket[] @relation("AssignedTickets")
+  ticketMessages  TicketMessage[] @relation("TicketMessageSender")
+  kbArticles      KBArticle[]     @relation("KBArticleAuthor")
 
   // Marketplace relations (Phase 12)
-  pluginReviews        PluginReview[]
+  pluginReviews PluginReview[]
 
   // Workspace relations (Phase 13)
-  workspaceContainers  WorkspaceContainer[]
-  allowedDomains       WorkspaceAllowedDomain[]
+  workspaceContainers WorkspaceContainer[]
+  allowedDomains      WorkspaceAllowedDomain[]
 
   // AI Agent relations
-  agentSessions        AgentSession[]
+  agentSessions     AgentSession[]
+  cursorPreferences CursorUserPreference[]
+  cursorMemories    CursorAgentMemory[]
+  cursorChatPlans   CursorChatPlan[]
+
+  // MCP integrations (Phase 2)
+  mcpServerConfigs MCPServerConfig[]
 
   // Admin domain blacklist
-  adminBlockedDomains  AdminBlockedDomain[] @relation("AdminBlockedDomains")
+  adminBlockedDomains AdminBlockedDomain[] @relation("AdminBlockedDomains")
 
   @@index([email])
   @@index([stripeCustomerId])
@@ -234,10 +242,10 @@ model Session {
 // Password Reset Token (Phase 1: Authentication)
 // ===========================================
 model PasswordResetToken {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  token     String   @unique
-  expiresAt DateTime @map("expires_at")
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  token     String    @unique
+  expiresAt DateTime  @map("expires_at")
   usedAt    DateTime? @map("used_at")
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -256,33 +264,33 @@ model PasswordResetToken {
 // Stripe subscription for User OR Organization
 // ===========================================
 model Subscription {
-  id                   String    @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Owner reference (exactly one of these)
-  userId               String?   @unique @map("user_id")
-  organizationId       String?   @unique @map("organization_id")
-  
+  userId         String? @unique @map("user_id")
+  organizationId String? @unique @map("organization_id")
+
   // Stripe fields
-  stripeSubscriptionId String?   @unique @map("stripe_subscription_id")
-  stripePriceId        String?   @map("stripe_price_id")
-  stripeStatus         String?   @map("stripe_status") // 'active', 'past_due', 'canceled', etc.
-  
+  stripeSubscriptionId String? @unique @map("stripe_subscription_id")
+  stripePriceId        String? @map("stripe_price_id")
+  stripeStatus         String? @map("stripe_status") // 'active', 'past_due', 'canceled', etc.
+
   // Plan info - String to support both user (FREE, STARTER, etc.) and org (ORG_FREE, ORG_STARTER, etc.) plans
-  plan                 String    @default("FREE")
-  
+  plan String @default("FREE")
+
   // Billing period
-  currentPeriodStart   DateTime? @map("current_period_start")
-  currentPeriodEnd     DateTime? @map("current_period_end")
-  cancelAtPeriodEnd    Boolean   @default(false) @map("cancel_at_period_end")
-  
+  currentPeriodStart DateTime? @map("current_period_start")
+  currentPeriodEnd   DateTime? @map("current_period_end")
+  cancelAtPeriodEnd  Boolean   @default(false) @map("cancel_at_period_end")
+
   // Timestamps
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  user                 User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization         Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@index([stripeSubscriptionId])
   @@index([stripeStatus])
   @@map("subscriptions")
@@ -292,52 +300,56 @@ model Subscription {
 // Organization Model (Phase 4: Organization)
 // ===========================================
 model Organization {
-  id               String       @id @default(cuid())
-  name             String
-  slug             String       @unique
-  
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
   // Billing (linked in Phase 5)
-  plan             OrgPlan      @default(ORG_FREE) @map("org_plan")
-  stripeCustomerId String?      @unique @map("stripe_customer_id")
-  
+  plan             OrgPlan @default(ORG_FREE) @map("org_plan")
+  stripeCustomerId String? @unique @map("stripe_customer_id")
+
   // Seat management
-  maxSeats         Int          @default(5) @map("max_seats")
-  usedSeats        Int          @default(0) @map("used_seats")
-  
+  maxSeats  Int @default(5) @map("max_seats")
+  usedSeats Int @default(0) @map("used_seats")
+
   // Shared workspace pool resources (from org plan)
-  workspacePoolRamMb        Int          @default(4096) @map("workspace_pool_ram_mb")
-  workspacePoolCpuCores     Float        @default(2) @map("workspace_pool_cpu_cores")
-  workspacePoolStorageMb    Int          @default(20480) @map("workspace_pool_storage_mb")
-  
+  workspacePoolRamMb     Int   @default(4096) @map("workspace_pool_ram_mb")
+  workspacePoolCpuCores  Float @default(2) @map("workspace_pool_cpu_cores")
+  workspacePoolStorageMb Int   @default(20480) @map("workspace_pool_storage_mb")
+
   // Database Isolation (Future-Ready)
   // See Phase 1.5 for architecture details
-  databaseType     DatabaseType @default(SHARED)
-  databaseUrl      String?      @map("database_url")     // Encrypted if dedicated
-  databaseRegion   String?      @map("database_region")  // 'us-east', 'eu-west'
-  
+  databaseType   DatabaseType @default(SHARED)
+  databaseUrl    String?      @map("database_url") // Encrypted if dedicated
+  databaseRegion String?      @map("database_region") // 'us-east', 'eu-west'
+
   // Status
-  isActive         Boolean      @default(true) @map("is_active")
-  
+  isActive Boolean @default(true) @map("is_active")
+
   // Timestamps
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  memberships      Membership[]
-  departments      Department[]
-  gateways         Gateway[]
-  userPlugins      UserPlugin[]
-  workflows        Workflow[]
-  usageHistory     UsageHistory[]
-  alertConfig      AlertConfig?
-  alertHistory     AlertHistory[]
-  subscription     Subscription?
-  orgInvites       OrgInvite[]
-  creditWallet     CreditWallet?
+  memberships  Membership[]
+  departments  Department[]
+  gateways     Gateway[]
+  userPlugins  UserPlugin[]
+  workflows    Workflow[]
+  projects     Project[]
+  usageHistory UsageHistory[]
+  alertConfig  AlertConfig?
+  alertHistory AlertHistory[]
+  subscription Subscription?
+  orgInvites   OrgInvite[]
+  creditWallet CreditWallet?
 
   // Workspace relations (Phase 13)
-  workspaceContainers  WorkspaceContainer[]
-  
+  workspaceContainers WorkspaceContainer[]
+
+  // MCP integrations (Phase 2)
+  mcpServerConfigs MCPServerConfig[]
+
   @@index([slug])
   @@index([databaseType])
   @@index([isActive])
@@ -349,31 +361,31 @@ model Organization {
 // User ↔ Organization relationship with role
 // ===========================================
 model Membership {
-  id             String           @id @default(cuid())
-  userId         String           @map("user_id")
-  organizationId String           @map("organization_id")
-  
+  id             String @id @default(cuid())
+  userId         String @map("user_id")
+  organizationId String @map("organization_id")
+
   // Role in this organization
-  role           OrgRole          @default(ORG_MEMBER)
-  
+  role OrgRole @default(ORG_MEMBER)
+
   // Status
-  status         MembershipStatus @default(INVITED)
-  
+  status MembershipStatus @default(INVITED)
+
   // Invite tracking
-  invitedBy      String?          @map("invited_by")
-  invitedAt      DateTime         @default(now()) @map("invited_at")
-  joinedAt       DateTime?        @map("joined_at")
-  
+  invitedBy String?   @map("invited_by")
+  invitedAt DateTime  @default(now()) @map("invited_at")
+  joinedAt  DateTime? @map("joined_at")
+
   // Timestamps
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  inviter        User?            @relation("InvitedMemberships", fields: [invitedBy], references: [id])
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter           User?              @relation("InvitedMemberships", fields: [invitedBy], references: [id])
   departmentMembers DepartmentMember[]
-  
+
   @@unique([userId, organizationId])
   @@index([userId])
   @@index([organizationId])
@@ -386,34 +398,34 @@ model Membership {
 // Pending invites for users who haven't registered yet
 // ===========================================
 model OrgInvite {
-  id             String       @id @default(cuid())
-  organizationId String       @map("organization_id")
-  
+  id             String @id @default(cuid())
+  organizationId String @map("organization_id")
+
   // Invite target (email, not a user yet)
-  email          String
-  role           OrgRole      @default(ORG_MEMBER)
-  
+  email String
+  role  OrgRole @default(ORG_MEMBER)
+
   // Secure invite token
-  token          String       @unique
-  
+  token String @unique
+
   // Invite tracking
-  invitedBy      String       @map("invited_by")
-  expiresAt      DateTime     @map("expires_at")
-  resendCount    Int          @default(0) @map("resend_count")
-  lastResentAt   DateTime?    @map("last_resent_at")
-  
+  invitedBy    String    @map("invited_by")
+  expiresAt    DateTime  @map("expires_at")
+  resendCount  Int       @default(0) @map("resend_count")
+  lastResentAt DateTime? @map("last_resent_at")
+
   // Status
-  status         InviteStatus @default(PENDING)
-  usedAt         DateTime?    @map("used_at")
-  declinedAt     DateTime?    @map("declined_at")
-  
+  status     InviteStatus @default(PENDING)
+  usedAt     DateTime?    @map("used_at")
+  declinedAt DateTime?    @map("declined_at")
+
   // Timestamps
-  createdAt      DateTime     @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   // Relations
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  inviter        User         @relation(fields: [invitedBy], references: [id])
-  
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inviter      User         @relation(fields: [invitedBy], references: [id])
+
   @@unique([organizationId, email])
   @@index([email])
   @@index([token])
@@ -426,29 +438,29 @@ model OrgInvite {
 // Organization hierarchy for resource quotas
 // ===========================================
 model Department {
-  id               String       @id @default(cuid())
-  organizationId   String       @map("organization_id")
-  name             String
-  description      String?
-  
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
+  name           String
+  description    String?
+
   // NOTE: Legacy quota fields (maxWorkflows, maxPlugins, maxWorkflowRuns, maxStorage)
   // have been migrated to DeptAllocation table. Use allocationService for quotas.
-  
+
   // Status
-  isActive         Boolean      @default(true) @map("is_active")
-  
+  isActive Boolean @default(true) @map("is_active")
+
   // Timestamps
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  members          DepartmentMember[]
-  workflows        Workflow[]
-  usageHistory     UsageHistory[]
-  deptAllocation   DeptAllocation?
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members           DepartmentMember[]
+  workflows         Workflow[]
+  usageHistory      UsageHistory[]
+  deptAllocation    DeptAllocation?
   memberAllocations MemberAllocation[]
-  
+
   @@unique([organizationId, name])
   @@index([organizationId])
   @@index([isActive])
@@ -460,26 +472,26 @@ model Department {
 // User ↔ Department relationship with role
 // ===========================================
 model DepartmentMember {
-  id             String           @id @default(cuid())
-  userId         String           @map("user_id")
-  departmentId   String           @map("department_id")
-  membershipId   String           @map("membership_id")
-  
+  id           String @id @default(cuid())
+  userId       String @map("user_id")
+  departmentId String @map("department_id")
+  membershipId String @map("membership_id")
+
   // Role in this department
-  role           DepartmentRole   @default(MEMBER)
-  
+  role DepartmentRole @default(MEMBER)
+
   // NOTE: Legacy quota fields (maxWorkflows, maxPlugins) have been migrated
   // to MemberAllocation table. Use allocationService for member quotas.
-  
+
   // Timestamps
-  createdAt      DateTime         @default(now()) @map("created_at")
-  updatedAt      DateTime         @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  department     Department       @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  membership     Membership       @relation(fields: [membershipId], references: [id], onDelete: Cascade)
-  
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
   @@unique([userId, departmentId])
   @@index([userId])
   @@index([departmentId])
@@ -487,8 +499,8 @@ model DepartmentMember {
 }
 
 enum DepartmentRole {
-  MANAGER    // Can manage dept workflows, set employee limits
-  MEMBER     // Can use dept workflows, create personal workflows
+  MANAGER // Can manage dept workflows, set employee limits
+  MEMBER // Can use dept workflows, create personal workflows
 }
 
 enum PeriodType {
@@ -503,35 +515,35 @@ enum PeriodType {
 // Admin allocates org pool resources to departments
 // ===========================================
 model DeptAllocation {
-  id              String         @id @default(cuid())
-  departmentId    String         @unique @map("department_id")
-  
+  id           String @id @default(cuid())
+  departmentId String @unique @map("department_id")
+
   // Allocated from org pool
-  maxGateways     Int?           @map("max_gateways")
-  maxWorkflows    Int?           @map("max_workflows")
-  maxPlugins      Int?           @map("max_plugins")
-  creditBudget    Int?           @map("credit_budget")      // credits per month
-  
+  maxGateways  Int? @map("max_gateways")
+  maxWorkflows Int? @map("max_workflows")
+  maxPlugins   Int? @map("max_plugins")
+  creditBudget Int? @map("credit_budget") // credits per month
+
   // Credit usage tracking (resets monthly)
-  creditUsed      Int            @default(0) @map("credit_used")
-  creditResetAt   DateTime?      @map("credit_reset_at")
-  
+  creditUsed    Int       @default(0) @map("credit_used")
+  creditResetAt DateTime? @map("credit_reset_at")
+
   // Workspace allocation
-  maxRamMb        Int?           @map("max_ram_mb")
-  maxCpuCores     Float?         @map("max_cpu_cores")
-  maxStorageMb    Int?           @map("max_storage_mb")
-  
-  allocMode       AllocationMode @default(SOFT_CAP) @map("alloc_mode")
-  
+  maxRamMb     Int?   @map("max_ram_mb")
+  maxCpuCores  Float? @map("max_cpu_cores")
+  maxStorageMb Int?   @map("max_storage_mb")
+
+  allocMode AllocationMode @default(SOFT_CAP) @map("alloc_mode")
+
   // Timestamps
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
-  setById         String         @map("set_by_id")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  setById   String   @map("set_by_id")
+
   // Relations
-  department      Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  setBy           User           @relation("DeptAllocSetBy", fields: [setById], references: [id])
-  
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  setBy      User       @relation("DeptAllocSetBy", fields: [setById], references: [id])
+
   @@map("dept_allocations")
 }
 
@@ -540,35 +552,35 @@ model DeptAllocation {
 // Manager allocates dept resources to members
 // ===========================================
 model MemberAllocation {
-  id              String         @id @default(cuid())
-  userId          String         @map("user_id")
-  departmentId    String         @map("department_id")
-  
+  id           String @id @default(cuid())
+  userId       String @map("user_id")
+  departmentId String @map("department_id")
+
   // Allocated from department pool
-  maxGateways     Int?           @map("max_gateways")
-  maxWorkflows    Int?           @map("max_workflows")
-  creditBudget    Int?           @map("credit_budget")
-  
+  maxGateways  Int? @map("max_gateways")
+  maxWorkflows Int? @map("max_workflows")
+  creditBudget Int? @map("credit_budget")
+
   // Credit usage tracking (resets monthly)
-  creditUsed      Int            @default(0) @map("credit_used")
-  creditResetAt   DateTime?      @map("credit_reset_at")
-  
-  maxRamMb        Int?           @map("max_ram_mb")
-  maxCpuCores     Float?         @map("max_cpu_cores")
-  maxStorageMb    Int?           @map("max_storage_mb")
-  
-  allocMode       AllocationMode @default(SOFT_CAP) @map("alloc_mode")
-  
+  creditUsed    Int       @default(0) @map("credit_used")
+  creditResetAt DateTime? @map("credit_reset_at")
+
+  maxRamMb     Int?   @map("max_ram_mb")
+  maxCpuCores  Float? @map("max_cpu_cores")
+  maxStorageMb Int?   @map("max_storage_mb")
+
+  allocMode AllocationMode @default(SOFT_CAP) @map("alloc_mode")
+
   // Timestamps
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
-  setById         String         @map("set_by_id")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  setById   String   @map("set_by_id")
+
   // Relations
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  department      Department     @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  setBy           User           @relation("MemberAllocSetBy", fields: [setById], references: [id])
-  
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  setBy      User       @relation("MemberAllocSetBy", fields: [setById], references: [id])
+
   @@unique([userId, departmentId])
   @@index([departmentId])
   @@map("member_allocations")
@@ -579,35 +591,35 @@ model MemberAllocation {
 // Historical tracking for monitoring dashboard
 // ===========================================
 model UsageHistory {
-  id               String       @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Owner reference (one of these)
-  organizationId   String?      @map("organization_id")
-  departmentId     String?      @map("department_id")
-  userId           String?      @map("user_id")
-  
+  organizationId String? @map("organization_id")
+  departmentId   String? @map("department_id")
+  userId         String? @map("user_id")
+
   // Time bucket
-  periodStart      DateTime     @map("period_start")
-  periodType       PeriodType   @default(DAILY) @map("period_type")
-  
+  periodStart DateTime   @map("period_start")
+  periodType  PeriodType @default(DAILY) @map("period_type")
+
   // Metrics
-  requests         Int          @default(0) @map("requests")  // HTTP request count (monitoring)
-  workflowRuns     Int          @default(0) @map("workflow_runs")  // Billing metric
-  pluginExecutions Int          @default(0) @map("plugin_executions")
-  storageUsed      Int          @default(0) @map("storage_used")    // MB at period end
-  errors           Int          @default(0)
-  
+  requests         Int @default(0) @map("requests") // HTTP request count (monitoring)
+  workflowRuns     Int @default(0) @map("workflow_runs") // Billing metric
+  pluginExecutions Int @default(0) @map("plugin_executions")
+  storageUsed      Int @default(0) @map("storage_used") // MB at period end
+  errors           Int @default(0)
+
   // Cost tracking (for enterprise)
-  estimatedCost    Decimal?     @map("estimated_cost") @db.Decimal(10, 2)
-  
+  estimatedCost Decimal? @map("estimated_cost") @db.Decimal(10, 2)
+
   // Timestamps
-  createdAt        DateTime     @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   // Relations
-  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  department       Department?   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department   Department?   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([organizationId, periodStart, periodType])
   @@unique([departmentId, periodStart, periodType])
   @@unique([userId, periodStart, periodType])
@@ -623,32 +635,32 @@ model UsageHistory {
 // Configuration for resource alerts per organization
 // ===========================================
 model AlertConfig {
-  id                      String   @id @default(cuid())
-  organizationId          String   @unique @map("organization_id")
-  
+  id             String @id @default(cuid())
+  organizationId String @unique @map("organization_id")
+
   // Threshold settings
-  quotaWarningThreshold   Int      @default(80) @map("quota_warning_threshold")
-  quotaCriticalThreshold  Int      @default(95) @map("quota_critical_threshold")
-  errorRateThreshold      Int      @default(10) @map("error_rate_threshold")
-  consecutiveFailures     Int      @default(3) @map("consecutive_failures")
-  
+  quotaWarningThreshold  Int @default(80) @map("quota_warning_threshold")
+  quotaCriticalThreshold Int @default(95) @map("quota_critical_threshold")
+  errorRateThreshold     Int @default(10) @map("error_rate_threshold")
+  consecutiveFailures    Int @default(3) @map("consecutive_failures")
+
   // Cost thresholds (enterprise)
-  dailyCostThreshold      Int?     @map("daily_cost_threshold")
-  monthlyCostThreshold    Int?     @map("monthly_cost_threshold")
-  
+  dailyCostThreshold   Int? @map("daily_cost_threshold")
+  monthlyCostThreshold Int? @map("monthly_cost_threshold")
+
   // Notification channels (JSON)
-  channels                Json     @default("{\"email\": true}")
-  
+  channels Json @default("{\"email\": true}")
+
   // Status
-  enabled                 Boolean  @default(true)
-  
+  enabled Boolean @default(true)
+
   // Timestamps
-  createdAt               DateTime @default(now()) @map("created_at")
-  updatedAt               DateTime @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@map("alert_configs")
 }
 
@@ -657,38 +669,38 @@ model AlertConfig {
 // Historical log of alerts sent
 // ===========================================
 model AlertHistory {
-  id               String    @id @default(cuid())
-  organizationId   String    @map("organization_id")
-  
+  id             String @id @default(cuid())
+  organizationId String @map("organization_id")
+
   // Alert details
-  type             String    // AlertType enum value
-  severity         String    // AlertSeverity enum value
-  title            String
-  message          String    @db.Text
-  
+  type     String // AlertType enum value
+  severity String // AlertSeverity enum value
+  title    String
+  message  String @db.Text
+
   // Resource details (optional)
-  resource         String?
-  currentValue     Int?      @map("current_value")
-  limitValue       Int?      @map("limit_value")
-  percentage       Int?
-  
+  resource     String?
+  currentValue Int?    @map("current_value")
+  limitValue   Int?    @map("limit_value")
+  percentage   Int?
+
   // Metadata (JSON)
-  metadata         String?   @db.Text
-  
+  metadata String? @db.Text
+
   // Acknowledgement
-  acknowledged     Boolean   @default(false)
-  acknowledgedBy   String?   @map("acknowledged_by")
-  acknowledgedAt   DateTime? @map("acknowledged_at")
-  
+  acknowledged   Boolean   @default(false)
+  acknowledgedBy String?   @map("acknowledged_by")
+  acknowledgedAt DateTime? @map("acknowledged_at")
+
   // Resolution
-  resolvedAt       DateTime? @map("resolved_at")
-  
+  resolvedAt DateTime? @map("resolved_at")
+
   // Timestamps
-  createdAt        DateTime  @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   // Relations
-  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   @@index([organizationId])
   @@index([type])
   @@index([severity])
@@ -703,9 +715,12 @@ model AlertHistory {
 model Gateway {
   id     String @id @default(cuid())
   userId String @map("user_id")
-  
+
   // Organization Support (if owned by org, not individual user)
   organizationId String? @map("organization_id")
+
+  // Project Support (Phase 6.2: every gateway belongs to a Project; nullable during rollout)
+  projectId String? @map("project_id")
 
   name   String
   type   GatewayType
@@ -713,7 +728,7 @@ model Gateway {
 
   // Encrypted credentials (AES-256-GCM)
   credentialsEnc String @map("credentials_enc") @db.Text
-  
+
   // Provider-specific configuration
   config Json @default("{}")
 
@@ -721,8 +736,8 @@ model Gateway {
   // Persisted on connect so it survives server restarts
   metadata Json @default("{}")
 
-  // Bot mode: "plugin" (single standalone plugin) or "workflow" (plugin pipeline)
-  mode   String @default("plugin") @map("mode")
+  // Workspace container this gateway belongs to (set on create / backfilled on container RUNNING)
+  workspaceContainerId String? @map("workspace_container_id")
 
   // Connection tracking
   lastConnectedAt DateTime? @map("last_connected_at")
@@ -734,17 +749,23 @@ model Gateway {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  workflows     Workflow[]
-  workflowSteps WorkflowStep[]
-  aiUsage       AIUsage[]
-  userPlugins   UserPlugin[]
-  gatewayChats  GatewayChat[]
-  gatewayMetrics GatewayMetric[]
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization       Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project            Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  workspaceContainer WorkspaceContainer? @relation(fields: [workspaceContainerId], references: [id], onDelete: SetNull)
+  workflows          Workflow[]
+  workflowSteps      WorkflowStep[]
+  aiUsage            AIUsage[]
+  userPlugins        UserPlugin[]
+  gatewayChats       GatewayChat[]
+  gatewayMetrics     GatewayMetric[]
+  workflowGateways   WorkflowGateway[]
+  projectResource    ProjectResource?    @relation("GatewayProjectResource")
 
   @@index([userId])
   @@index([organizationId])
+  @@index([projectId])
+  @@index([workspaceContainerId])
   @@index([type])
   @@index([status])
   @@map("gateways")
@@ -755,29 +776,29 @@ model Gateway {
 // Tracks which Telegram chats the bot has been added to / removed from
 // ===========================================
 model GatewayChat {
-  id          String    @id @default(cuid())
-  gatewayId   String    @map("gateway_id")
+  id        String @id @default(cuid())
+  gatewayId String @map("gateway_id")
 
   // Telegram chat info
-  chatId      BigInt    @map("chat_id")        // Telegram chat ID (can be negative for groups)
-  chatType    String    @map("chat_type")      // "private", "group", "supergroup", "channel"
-  chatTitle   String?   @map("chat_title")     // Chat/group/channel title
-  chatUsername String?  @map("chat_username")  // @username if public
-  memberCount Int?      @map("member_count")   // Approximate member count
+  chatId       BigInt  @map("chat_id") // Telegram chat ID (can be negative for groups)
+  chatType     String  @map("chat_type") // "private", "group", "supergroup", "channel"
+  chatTitle    String? @map("chat_title") // Chat/group/channel title
+  chatUsername String? @map("chat_username") // @username if public
+  memberCount  Int?    @map("member_count") // Approximate member count
 
   // Status tracking
-  isActive    Boolean   @default(true) @map("is_active")
-  joinedAt    DateTime  @default(now()) @map("joined_at")
-  leftAt      DateTime? @map("left_at")
+  isActive Boolean   @default(true) @map("is_active")
+  joinedAt DateTime  @default(now()) @map("joined_at")
+  leftAt   DateTime? @map("left_at")
 
   // Bot status in this chat
-  botStatus   String    @default("member") @map("bot_status") // "member", "administrator", "kicked", "left"
+  botStatus String @default("member") @map("bot_status") // "member", "administrator", "kicked", "left"
 
   // Timestamps
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  gateway     Gateway   @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+  gateway Gateway @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
 
   @@unique([gatewayId, chatId])
   @@index([gatewayId, isActive])
@@ -790,28 +811,28 @@ model GatewayChat {
 // Tracks action execution counts per gateway for analytics dashboards
 // ===========================================
 model GatewayMetric {
-  id          String    @id @default(cuid())
-  gatewayId   String    @map("gateway_id")
+  id        String @id @default(cuid())
+  gatewayId String @map("gateway_id")
 
   // Action tracking
-  action      String                            // e.g. "sendMessage", "getMe", "text-generation"
-  
+  action String // e.g. "sendMessage", "getMe", "text-generation"
+
   // Counters
-  successCount Int      @default(0) @map("success_count")
-  errorCount   Int      @default(0) @map("error_count")
-  
+  successCount Int @default(0) @map("success_count")
+  errorCount   Int @default(0) @map("error_count")
+
   // Performance
   totalDurationMs BigInt @default(0) @map("total_duration_ms") // Sum of all durations for avg calc
 
   // Period bucketing — one row per gateway+action+period
-  period      String                            // "2026-02-09" (daily) or "2026-02-09T08" (hourly)
+  period String // "2026-02-09" (daily) or "2026-02-09T08" (hourly)
 
   // Timestamps
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  gateway     Gateway   @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+  gateway Gateway @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
 
   @@unique([gatewayId, action, period])
   @@index([gatewayId, period])
@@ -824,26 +845,26 @@ model GatewayMetric {
 // Audit Log Model (Phase 1.5: Architecture)
 // ===========================================
 model AuditLog {
-  id             String   @id @default(cuid())
-  userId         String?  @map("user_id")
-  organizationId String?  @map("organization_id")
-  
+  id             String  @id @default(cuid())
+  userId         String? @map("user_id")
+  organizationId String? @map("organization_id")
+
   // Action details
-  action         String   // 'gateway.create', 'plugin.install', 'user.login'
-  resource       String   // 'gateway', 'plugin', 'user'
-  resourceId     String?  @map("resource_id")
-  
+  action     String // 'gateway.create', 'plugin.install', 'user.login'
+  resource   String // 'gateway', 'plugin', 'user'
+  resourceId String? @map("resource_id")
+
   // Additional context (no secrets!)
-  metadata       Json?
-  
+  metadata Json?
+
   // Request info
-  ipAddress      String?  @map("ip_address")
-  userAgent      String?  @map("user_agent")
-  
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+
   // Result
-  status         String   @default("success") // 'success', 'failure'
-  
-  createdAt      DateTime @default(now()) @map("created_at")
+  status String @default("success") // 'success', 'failure'
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId])
   @@index([organizationId])
@@ -859,70 +880,68 @@ model AuditLog {
 
 /**
  * CreditWallet - Universal credit storage
- * 
  * Can belong to EITHER a user OR an organization (mutually exclusive).
  * This enables:
  * - Personal credits for individual users
  * - Shared organization credits for team members
  * - Future: Department-level budgets
- * 
  * Credit Resolution Order:
  * 1. If user is in org with shared credits → use org wallet
  * 2. Else → use personal wallet
  */
 model CreditWallet {
-  id              String   @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Owner - exactly one must be set (user XOR organization)
-  userId          String?  @unique @map("user_id")
-  organizationId  String?  @unique @map("organization_id")
-  
+  userId         String? @unique @map("user_id")
+  organizationId String? @unique @map("organization_id")
+
   // Balance
-  balance         Int      @default(0)   // Current credit balance (whole credits only)
-  lifetime        Int      @default(0)   // Total credits ever added (purchases + grants)
-  pendingCredits  Float    @default(0)   @map("pending_credits") // Accumulated fractional credits
-  
+  balance        Int   @default(0) // Current credit balance (whole credits only)
+  lifetime       Int   @default(0) // Total credits ever added (purchases + grants)
+  pendingCredits Float @default(0) @map("pending_credits") // Accumulated fractional credits
+
   // Monthly allocation from plan (resets each billing period)
-  monthlyAllocation Int    @default(0)   @map("monthly_allocation")
-  monthlyUsed       Int    @default(0)   @map("monthly_used")
+  monthlyAllocation Int       @default(0) @map("monthly_allocation")
+  monthlyUsed       Int       @default(0) @map("monthly_used")
   allocationResetAt DateTime? @map("allocation_reset_at")
-  
+
   // Daily credit claims (FREE/STARTER = daily, PRO+ = monthly auto-grant)
-  lastClaimedAt       DateTime?  @map("last_claimed_at")
-  monthlyClaimedTotal Int        @default(0)  @map("monthly_claimed_total")
-  
+  lastClaimedAt       DateTime? @map("last_claimed_at")
+  monthlyClaimedTotal Int       @default(0) @map("monthly_claimed_total")
+
   // Settings (auto-topup, notifications, etc.)
-  settings        Json     @default("{}")
-  
+  settings Json @default("{}")
+
   // Timestamps
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user            User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  transactions    CreditTransaction[]
+  user         User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions CreditTransaction[]
 
   @@map("credit_wallets")
 }
 
 model CreditTransaction {
-  id              String   @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Wallet reference
-  creditWalletId  String?  @map("credit_wallet_id")
-  
-  type            String   // 'purchase', 'usage', 'refund', 'bonus', 'grant', 'allocation'
-  amount          Int      // Positive = credit, Negative = debit
-  balanceAfter    Int      @map("balance_after")
-  
-  description     String
-  metadata        Json?    // { stripeId?, aiProvider?, model?, itemId?, walletType? }
-  
-  createdAt       DateTime @default(now()) @map("created_at")
+  creditWalletId String? @map("credit_wallet_id")
+
+  type         String // 'purchase', 'usage', 'refund', 'bonus', 'grant', 'allocation'
+  amount       Int // Positive = credit, Negative = debit
+  balanceAfter Int    @map("balance_after")
+
+  description String
+  metadata    Json? // { stripeId?, aiProvider?, model?, itemId?, walletType? }
+
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
-  creditWallet    CreditWallet?  @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
+  creditWallet CreditWallet? @relation(fields: [creditWalletId], references: [id], onDelete: Cascade)
 
   @@index([creditWalletId])
   @@index([type])
@@ -936,71 +955,81 @@ model CreditTransaction {
 
 // Plugin definitions (system-defined for V1)
 model Plugin {
-  id            String        @id @default(cuid())
-  slug          String        @unique  // "analytics", "welcome", "auto-reply"
-  name          String
-  description   String        @db.Text
-  version       String        @default("1.0.0")
-  
+  id          String @id @default(cuid())
+  slug        String @unique // "analytics", "welcome", "auto-reply"
+  name        String
+  description String @db.Text
+  version     String @default("1.0.0")
+
   // Requirements - which gateway types this plugin needs
   requiredGateways GatewayType[]
-  
+
   // Configuration schema (JSON Schema format for validation)
-  configSchema  Json          @default("{}")
-  
+  configSchema Json @default("{}")
+
   // Metadata for UI
-  icon          String?       // Icon name or URL
-  category      String        @default("general")  // "general", "analytics", "messaging", "automation"
-  tags          String[]      @default([])         // Discovery tags: "sport", "blog", "ecommerce"
-  isBuiltin     Boolean       @default(true)       // Built-in vs marketplace (V2)
-  
+  icon      String? // Icon name or URL
+  category  String   @default("general") // "general", "analytics", "messaging", "automation"
+  tags      String[] @default([]) // Discovery tags: "sport", "blog", "ecommerce"
+  isBuiltin Boolean  @default(true) // Built-in vs marketplace (V2)
+
   // Catalog template code for first-time installs to workspace containers
   // This is NOT user-specific code — the container filesystem is the source of truth for user code
   // @deprecated — use bundlePath for marketplace plugins; kept for custom user plugins
-  codeBundle    String?       @db.Text @map("code_bundle")
-  
+  codeBundle String? @map("code_bundle") @db.Text
+
+  // Timestamp of the last codeBundle update (set when author republishes).
+  // Used to flag installs as needing an update via UserPlugin.needsUpdate.
+  codeBundleUpdatedAt DateTime? @map("code_bundle_updated_at")
+
+  // Catalog metadata for USER-authored plugins whose code lives in the author's
+  // container (not in this DB). Mirrors the plugin.json file: entry, files list,
+  // configSchema defaults, etc. Null for BUILTIN/MARKETPLACE plugins where the
+  // canonical template is stored in codeBundle / bundlePath.
+  manifest Json? @map("manifest")
+
   // Marketplace bundle path (e.g. "plugins/ai-chat-bot/1.0.0") — replaces codeBundle for builtins
-  bundlePath    String?       @map("bundle_path") @db.VarChar(500)
-  
+  bundlePath String? @map("bundle_path") @db.VarChar(500)
+
   // Authorship and visibility
-  authorId      String?       @map("author_id")    // userId of creator (null for SYSTEM)
-  authorType    PluginAuthorType @default(SYSTEM)   @map("author_type")
-  isPublic      Boolean       @default(false)      @map("is_public")  // Marketplace visibility
-  
+  authorId   String?          @map("author_id") // userId of creator (null for SYSTEM)
+  authorType PluginAuthorType @default(SYSTEM) @map("author_type")
+  isPublic   Boolean          @default(false) @map("is_public") // Marketplace visibility
+
   // Input/Output schemas for workflow integration (Phase 5+)
-  inputSchema   Json?         @map("input_schema")   // What plugin accepts
-  outputSchema  Json?         @map("output_schema")  // What plugin outputs
+  inputSchema  Json? @map("input_schema") // What plugin accepts
+  outputSchema Json? @map("output_schema") // What plugin outputs
 
   // Plugin permissions: controls what the plugin can read, write, and reply
   // JSON: { read: { messages, userData, otherPluginOutput }, write: { sendMessages, storeData, modifyState }, reply: { canReply, priority } }
-  permissions   Json          @default("{}")        @map("permissions")
+  permissions Json @default("{}") @map("permissions")
 
   // Event routing & conflict detection
   // eventTypes: which events this plugin handles (e.g. ["telegram.message", "telegram.callback"])
-  eventTypes    String[]      @default([])           @map("event_types")
+  eventTypes    String[] @default([]) @map("event_types")
   // eventRole: "responder" (sends replies, exclusive), "observer" (read-only, unlimited)
-  eventRole     String        @default("responder")  @map("event_role")
+  eventRole     String   @default("responder") @map("event_role")
   // conflictsWith: slugs of plugins that cannot coexist on the same gateway
-  conflictsWith String[]      @default([])           @map("conflicts_with")
-  
+  conflictsWith String[] @default([]) @map("conflicts_with")
+
   // Status
-  isActive      Boolean       @default(true)  @map("is_active")
-  isFeatured    Boolean       @default(false) @map("is_featured")
-  
+  isActive   Boolean @default(true) @map("is_active")
+  isFeatured Boolean @default(false) @map("is_featured")
+
   // Popularity tracking
-  installCount  Int           @default(0)     @map("install_count")
-  avgRating     Float         @default(0)     @map("avg_rating")
-  reviewCount   Int           @default(0)     @map("review_count")
-  
+  installCount Int   @default(0) @map("install_count")
+  avgRating    Float @default(0) @map("avg_rating")
+  reviewCount  Int   @default(0) @map("review_count")
+
   // Timestamps
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
   userPlugins   UserPlugin[]
   workflowSteps WorkflowStep[]
   reviews       PluginReview[]
-  
+
   @@index([slug])
   @@index([isActive])
   @@index([category])
@@ -1011,30 +1040,30 @@ model Plugin {
 // Plugin Review Model (Phase 12.5: Reviews & Ratings)
 // ===========================================
 model PluginReview {
-  id              String    @id @default(cuid())
-  userId          String    @map("user_id")
-  pluginId        String    @map("plugin_id")
+  id       String @id @default(cuid())
+  userId   String @map("user_id")
+  pluginId String @map("plugin_id")
 
   // Rating
-  rating          Int       // 1-5 stars
-  title           String?   @db.VarChar(200)
-  content         String?   @db.Text
+  rating  Int // 1-5 stars
+  title   String? @db.VarChar(200)
+  content String? @db.Text
 
   // Moderation
-  isPublic        Boolean   @default(true)  @map("is_public")
+  isPublic Boolean @default(true) @map("is_public")
 
   // Verification
-  verifiedInstall Boolean   @default(false) @map("verified_install")
+  verifiedInstall Boolean @default(false) @map("verified_install")
 
   // Timestamps
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt      @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plugin          Plugin        @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, pluginId])  // One review per user per plugin
+  @@unique([userId, pluginId]) // One review per user per plugin
   @@index([pluginId, rating])
   @@index([createdAt])
   @@map("plugin_reviews")
@@ -1042,56 +1071,365 @@ model PluginReview {
 
 // User/Organization installed plugins
 model UserPlugin {
-  id            String        @id @default(cuid())
-  userId        String        @map("user_id")
-  pluginId      String        @map("plugin_id")
-  
+  id       String @id @default(cuid())
+  userId   String @map("user_id")
+  pluginId String @map("plugin_id")
+
   // Organization Support (same pattern as Gateway)
-  organizationId String?      @map("organization_id")
-  
+  organizationId String? @map("organization_id")
+
+  // Project Support (Phase 6.2: every install belongs to a Project; nullable during rollout)
+  projectId String? @map("project_id")
+
   // User's configuration for this plugin (validated against Plugin.configSchema)
-  config        Json          @default("{}")
-  
+  config Json @default("{}")
+
   // Gateway binding - which gateway this plugin uses (if any)
-  gatewayId     String?       @map("gateway_id")
-  
+  gatewayId String? @map("gateway_id")
+
   // Workspace entry file path (relative to workspace root, e.g. "plugins/my-bot.js" or "plugins/my-bot/index.js")
-  entryFile     String?       @map("entry_file") @db.VarChar(500)
-  
+  entryFile String? @map("entry_file") @db.VarChar(500)
+
   // Storage quota for local KV store in MB (0 = unlimited, default 50)
-  storageQuotaMb Int          @default(50) @map("storage_quota_mb")
-  
+  storageQuotaMb Int @default(50) @map("storage_quota_mb")
+
   // Status
-  isEnabled     Boolean       @default(true) @map("is_enabled")
-  
-  // Unified engine: standalone plugins fire concurrently on webhook events.
-  // Plugins managed exclusively through workflow steps should set this to false.
-  isStandalone  Boolean       @default(true) @map("is_standalone")
-  
+  isEnabled Boolean @default(true) @map("is_enabled")
+
+  // Version of Plugin.codeBundle that was deployed into this user's container.
+  // Null for legacy installs before version-tracking was added.
+  installedVersion String? @map("installed_version") @db.VarChar(50)
+
+  // Set to true by the republishPlugin flow when Plugin.codeBundle changes.
+  // Cleared by updateInstalledPlugin after redeploying to the container.
+  needsUpdate Boolean @default(false) @map("needs_update")
+
+  // Set to true when the workspace container was wiped and this marketplace/builtin plugin's
+  // files are gone with no way to auto-recover. User must reinstall from marketplace.
+  // Not used for USER-authored (custom) plugins — those are deleted from DB instead.
+  needsRestore Boolean @default(false) @map("needs_restore")
+
   // Execution stats
-  executionCount Int          @default(0) @map("execution_count")
-  lastExecutedAt DateTime?    @map("last_executed_at")
-  lastError      String?      @map("last_error")
-  
+  executionCount Int       @default(0) @map("execution_count")
+  lastExecutedAt DateTime? @map("last_executed_at")
+  lastError      String?   @map("last_error")
+
   // Timestamps
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plugin        Plugin        @relation(fields: [pluginId], references: [id])
-  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  gateway       Gateway?      @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
-  aiUsages      AIUsage[]
-  
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plugin       Plugin        @relation(fields: [pluginId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  gateway      Gateway?      @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
+  aiUsages     AIUsage[]
+  httpRoutes   HttpRoute[]   @relation("HttpRouteHandler")
+
   // Unique per user+plugin+gateway (allows same plugin on multiple gateways/bots)
   @@unique([userId, pluginId, organizationId, gatewayId])
   @@index([userId])
   @@index([pluginId])
   @@index([organizationId])
+  @@index([projectId])
   @@index([gatewayId])
   @@index([isEnabled])
   @@map("user_plugins")
+}
+
+// ===========================================
+// Project Models (Phase 6.2: Project Layer)
+// ===========================================
+//
+// A Project is the unit-of-app: a logical grouping of Gateways, UserPlugins,
+// and Workflows that together implement one product (a bot, a web app, an
+// automation, or a hybrid).
+//
+// Every (userId, organizationId) tuple receives a "Default" Project on
+// migration; new resources auto-attach to it unless the user picks another.
+// ===========================================
+
+enum ProjectKind {
+  BOT // Pure bot project (Telegram/Discord/Slack/WhatsApp)
+  WEB_APP // Web application
+  AUTOMATION // Schedule/webhook-driven automation
+  HYBRID // Mixed (default for legacy/unspecified)
+}
+
+enum ProjectStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model Project {
+  id             String  @id @default(cuid())
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+
+  // Identity
+  name        String
+  slug        String
+  description String?
+
+  // Classification
+  kind   ProjectKind   @default(HYBRID)
+  status ProjectStatus @default(ACTIVE)
+
+  // UI metadata
+  icon  String?
+  color String?
+
+  // Default flag — every (user, org) has exactly one default project that
+  // newly-created resources auto-attach to when no project is specified.
+  isDefault Boolean @default(false) @map("is_default")
+
+  // Phase 6.4: pointer to the currently-active ProjectVersion (set after
+  // a STAGING version is activated). Nullable for legacy/unversioned projects.
+  activeVersionId String? @map("active_version_id")
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization  Organization?     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  gateways      Gateway[]
+  workflows     Workflow[]
+  userPlugins   UserPlugin[]
+  versions      ProjectVersion[]  @relation("ProjectVersions")
+  activeVersion ProjectVersion?   @relation("ProjectActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  resources     ProjectResource[]
+
+  @@unique([userId, organizationId, slug])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([kind])
+  @@index([status])
+  @@index([userId, organizationId, isDefault])
+  @@index([activeVersionId])
+  @@map("projects")
+}
+
+// ===========================================
+// ProjectVersion (Phase 6.4: Versioning + Auto-Rollback)
+// ===========================================
+// Snapshot of the entire project state at apply-time. The manifest stores
+// a JSON blob containing project metadata, gateway configs, plugin file
+// hashes + bundle paths, and workflow canvases. Rollback restores plugin
+// files via the bridge `file.write` action and reverts DB state.
+//
+// Lifecycle:
+//   STAGING       — created during BuildSpec apply, smoke tests running
+//   ACTIVE        — promoted; Project.activeVersionId points to it
+//   ROLLED_BACK   — superseded or auto-rolled-back on smoke failure
+// ===========================================
+enum ProjectVersionStatus {
+  STAGING
+  ACTIVE
+  ROLLED_BACK
+}
+
+model ProjectVersion {
+  id            String @id @default(cuid())
+  projectId     String @map("project_id")
+  versionNumber Int    @map("version_number")
+
+  status ProjectVersionStatus @default(STAGING)
+
+  // Full snapshot blob: { project, gateways[], plugins[], workflows[], hashes }
+  manifest Json
+
+  // Apply provenance
+  appliedBy     String? @map("applied_by") // userId who applied
+  source        String? // "api" | "ai-agent" | "cli" | "rollback"
+  buildspecHash String? @map("buildspec_hash")
+
+  // Rollback metadata
+  rolledBackAt   DateTime? @map("rolled_back_at")
+  rollbackReason String?   @map("rollback_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project   Project   @relation("ProjectVersions", fields: [projectId], references: [id], onDelete: Cascade)
+  activeFor Project[] @relation("ProjectActiveVersion")
+
+  @@unique([projectId, versionNumber])
+  @@index([projectId])
+  @@index([status])
+  @@index([projectId, status])
+  @@map("project_versions")
+}
+
+// ===========================================
+// ProjectResource (Phase 7.2: Path C — polymorphic resource layer)
+// ===========================================
+//
+// A ProjectResource is a typed thing a Project owns. Today every Gateway
+// gets a paired ProjectResource of kind GATEWAY_BOT (1:1, FK to Gateway).
+// Future kinds (HTTP_ROUTE, SCHEDULE, SECRET, EXTERNAL_API, DATABASE,
+// KV_STORE, OBJECT_STORE) will be added as their phases ship; the enum
+// values are reserved up-front so adding sidecars later is non-breaking.
+//
+// Phase 7.2 introduces the table + GATEWAY_BOT subtype only. Existing
+// Gateway code paths are untouched. New generic flows read ProjectResource.
+// ===========================================
+enum ProjectResourceKind {
+  GATEWAY_BOT // wraps an existing Gateway row (Phase 7.2)
+  HTTP_ROUTE // Phase 7.3 (reserved)
+  SCHEDULE // Phase 7.4 (reserved)
+  SECRET // Phase 7.4 (reserved)
+  EXTERNAL_API // Phase 7.5 (reserved)
+  DATABASE // Phase 7.5 (reserved)
+  KV_STORE // Phase 8.x (reserved)
+  OBJECT_STORE // Phase 8.x (reserved)
+}
+
+enum ProjectResourceStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+  ARCHIVED
+}
+
+model ProjectResource {
+  id             String  @id @default(cuid())
+  projectId      String  @map("project_id")
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+
+  kind   ProjectResourceKind
+  name   String
+  slug   String
+  status ProjectResourceStatus @default(ACTIVE)
+
+  // Per-kind config blob; sidecar tables own typed fields.
+  config   Json  @default("{}")
+  metadata Json?
+
+  // Sidecar FK for kind = GATEWAY_BOT (Phase 7.2). Other sidecars added later.
+  gatewayId String?  @unique @map("gateway_id")
+  gateway   Gateway? @relation("GatewayProjectResource", fields: [gatewayId], references: [id], onDelete: Cascade)
+
+  // Sidecar relation for kind = HTTP_ROUTE (Phase 7.3). 1:1 via HttpRoute.resourceId.
+  httpRoute HttpRoute?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, kind, slug])
+  @@index([projectId, kind])
+  @@index([userId, kind])
+  @@index([organizationId, kind])
+  @@index([kind, status])
+  @@map("project_resources")
+}
+
+// ===========================================
+// HttpRoute (Phase 7.3 — Path C sidecar for ProjectResource.kind=HTTP_ROUTE)
+// ===========================================
+//
+// Defines an HTTP endpoint exposed by a Project's WEB_APP. Requests to
+//   https://<container.subdomain>.2bot.org<path>
+// (or  https://apps.2bot.org/<projectSlug><path>) are dispatched into the
+// project's container and surfaced to a target Module/UserPlugin as a
+// PluginEvent of type "http.request".
+//
+// Phase 7.3a (this migration): table + sidecar wiring + 1:1 to ProjectResource.
+// Phase 7.3b (deferred): bridge agent HTTP listener + nginx wildcard map.
+// ===========================================
+enum HttpMethod {
+  GET
+  POST
+  PUT
+  PATCH
+  DELETE
+  OPTIONS
+  HEAD
+  ANY
+}
+
+enum HttpAuthMode {
+  NONE // public route
+  API_KEY // header X-API-Key checked against authConfig.apiKey
+  HMAC // signed body via authConfig.hmacSecret
+  BEARER_JWT // verify JWT from Authorization: Bearer <token>
+}
+
+model HttpRoute {
+  id         String @id @default(cuid())
+  resourceId String @unique @map("resource_id")
+
+  // Pattern: HTTP method + path (with :param + * wildcards), e.g. "/api/users/:id".
+  method HttpMethod @default(ANY)
+  path   String
+
+  // Target — which UserPlugin (Module) handles the request.
+  // Nullable so a route can be defined before its handler exists; requests
+  // to a route with no handler return 503.
+  targetUserPluginId String? @map("target_user_plugin_id")
+  /// Optional symbol/export inside the target module to invoke (e.g. "handleHello").
+  targetExport       String? @map("target_export")
+
+  // Auth
+  authMode   HttpAuthMode @default(NONE) @map("auth_mode")
+  authConfig Json         @default("{}") @map("auth_config")
+
+  // Behaviour
+  /// Max body size in KB. 0 = use platform default.
+  maxBodyKb       Int     @default(0) @map("max_body_kb")
+  /// Timeout in ms before the bridge cancels the invocation.
+  timeoutMs       Int     @default(15000) @map("timeout_ms")
+  /// CORS allow-origin pattern; empty = same-origin only.
+  corsOrigin      String? @map("cors_origin")
+  /// Whether to expose path params, query, and body to the handler verbatim.
+  passthroughBody Boolean @default(true) @map("passthrough_body")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  resource         ProjectResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  targetUserPlugin UserPlugin?     @relation("HttpRouteHandler", fields: [targetUserPluginId], references: [id], onDelete: SetNull)
+
+  @@index([targetUserPluginId])
+  @@index([method, path])
+  @@map("http_routes")
+}
+
+// ===========================================
+// WorkflowGateway link table (Phase 6.2: M:N gateway binding)
+// ===========================================
+// Replaces Workflow.gatewayId with a many-to-many relation so a single
+// canvas can listen on / write to multiple gateways (e.g., Telegram trigger
+// → Discord action). The legacy Workflow.gatewayId column is kept as a
+// fallback during transition; Phase 6.2 Wave 2 will drop it.
+//
+// Roles:
+//   "trigger"        — workflow's BOT_MESSAGE / WEBHOOK trigger source
+//   "action-target"  — gateway used by steps to send messages/calls
+//   "side-effect"    — gateway watched but not triggered on
+// ===========================================
+model WorkflowGateway {
+  id         String @id @default(cuid())
+  workflowId String @map("workflow_id")
+  gatewayId  String @map("gateway_id")
+  role       String @default("trigger") // trigger | action-target | side-effect
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  gateway  Gateway  @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, gatewayId, role])
+  @@index([workflowId])
+  @@index([gatewayId])
+  @@index([role])
+  @@map("workflow_gateways")
 }
 
 // ===========================================
@@ -1100,85 +1438,95 @@ model UserPlugin {
 
 // Trigger types for workflows
 enum WorkflowTriggerType {
-  BOT_MESSAGE         // On incoming message to bound gateway (any platform)
-  TELEGRAM_MESSAGE    // @deprecated — use BOT_MESSAGE (kept for migration compat)
-  TELEGRAM_CALLBACK   // On callback button press
-  DISCORD_MESSAGE     // @deprecated — use BOT_MESSAGE (kept for migration compat)
-  DISCORD_COMMAND     // On Discord slash command / interaction
-  SLACK_MESSAGE       // @deprecated — use BOT_MESSAGE (kept for migration compat)
-  SLACK_COMMAND       // On Slack slash command / interaction
-  WHATSAPP_MESSAGE    // @deprecated — use BOT_MESSAGE (kept for migration compat)
-  SCHEDULE            // Cron-based trigger
-  WEBHOOK             // External HTTP trigger
-  MANUAL              // User-triggered
+  BOT_MESSAGE // On incoming message to bound gateway (any platform)
+  TELEGRAM_MESSAGE // @deprecated — use BOT_MESSAGE (kept for migration compat)
+  TELEGRAM_CALLBACK // On callback button press
+  DISCORD_MESSAGE // @deprecated — use BOT_MESSAGE (kept for migration compat)
+  DISCORD_COMMAND // On Discord slash command / interaction
+  SLACK_MESSAGE // @deprecated — use BOT_MESSAGE (kept for migration compat)
+  SLACK_COMMAND // On Slack slash command / interaction
+  WHATSAPP_MESSAGE // @deprecated — use BOT_MESSAGE (kept for migration compat)
+  SCHEDULE // Cron-based trigger
+  WEBHOOK // External HTTP trigger
+  MANUAL // User-triggered
 }
 
 // Workflow status
 enum WorkflowStatus {
-  DRAFT               // Being edited
-  ACTIVE              // Running
-  PAUSED              // Temporarily disabled
-  ARCHIVED            // Soft deleted
+  DRAFT // Being edited
+  STAGING // Phase 6.4: created by BuildSpec apply, awaiting activation
+  ACTIVE // Running
+  PAUSED // Temporarily disabled
+  ARCHIVED // Soft deleted
 }
 
 // Workflow scope (determines visibility and access)
 enum WorkflowScope {
-  USER                // Personal workspace OR employee personal in org
-  DEPARTMENT          // Shared within department (org only)
-  ORGANIZATION        // Company-wide automation (org only)
+  USER // Personal workspace OR employee personal in org
+  DEPARTMENT // Shared within department (org only)
+  ORGANIZATION // Company-wide automation (org only)
 }
 
 // Workflow definition (user-created automation chain)
 model Workflow {
-  id              String              @id @default(cuid())
-  userId          String              @map("user_id")
-  organizationId  String?             @map("organization_id")
-  departmentId    String?             @map("department_id")  // For DEPARTMENT scope
-  
+  id             String  @id @default(cuid())
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+  departmentId   String? @map("department_id") // For DEPARTMENT scope
+
   // Scope determines visibility and access
   // - USER scope: If organizationId=NULL, personal workspace workflow
   //               If organizationId!=NULL, employee personal workflow in org
   // - DEPARTMENT: Requires departmentId, shared within department  
   // - ORGANIZATION: Shared across entire organization
-  scope           WorkflowScope       @default(USER)
-  
+  scope WorkflowScope @default(USER)
+
   // Basic info
-  name            String
-  description     String?
-  slug            String              // User-friendly URL slug
-  
+  name        String
+  description String?
+  slug        String // User-friendly URL slug
+
   // Trigger configuration
-  triggerType     WorkflowTriggerType
-  triggerConfig   Json                @default("{}")  // Type-specific settings
-  
+  triggerType   WorkflowTriggerType
+  triggerConfig Json                @default("{}") // Type-specific settings
+
   // Bound gateway (for telegram/ai triggers)
-  gatewayId       String?             @map("gateway_id")
-  
+  // @deprecated Phase 6.2: prefer the WorkflowGateway M:N link table.
+  // Kept during transition; reads should fall back to workflowGateways.
+  gatewayId String? @map("gateway_id")
+
+  // Project Support (Phase 6.2: every workflow belongs to a Project; nullable during rollout)
+  projectId String? @map("project_id")
+
   // Status
-  status          WorkflowStatus      @default(DRAFT)
-  isEnabled       Boolean             @default(false) @map("is_enabled")
-  
+  status    WorkflowStatus @default(DRAFT)
+  isEnabled Boolean        @default(false) @map("is_enabled")
+
   // Execution stats
-  executionCount  Int                 @default(0) @map("execution_count")
-  lastExecutedAt  DateTime?           @map("last_executed_at")
-  lastError       String?             @map("last_error")
-  
+  executionCount Int       @default(0) @map("execution_count")
+  lastExecutedAt DateTime? @map("last_executed_at")
+  lastError      String?   @map("last_error")
+
   // Timestamps
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gateway         Gateway?            @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
-  organization    Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  department      Department?         @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  steps           WorkflowStep[]
-  runs            WorkflowRun[]
-  
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gateway          Gateway?          @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
+  organization     Organization?     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department       Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  steps            WorkflowStep[]
+  edges            WorkflowEdge[]
+  runs             WorkflowRun[]
+  workflowGateways WorkflowGateway[]
+
   @@unique([userId, organizationId, slug])
   @@index([userId])
   @@index([organizationId])
   @@index([departmentId])
+  @@index([projectId])
   @@index([scope])
   @@index([status])
   @@index([isEnabled])
@@ -1186,122 +1534,163 @@ model Workflow {
   @@map("workflows")
 }
 
-// Individual step in a workflow chain
+// Individual step (node) in a workflow graph
 model WorkflowStep {
-  id              String    @id @default(cuid())
-  workflowId      String    @map("workflow_id")
-  
-  // Step position
-  order           Int       // Execution order (0, 1, 2...)
-  name            String?   // Optional label
-  
+  id         String @id @default(cuid())
+  workflowId String @map("workflow_id")
+
+  // Step position — kept for backward compat, computed from graph topology
+  order Int     @default(0)
+  name  String? // Optional label
+
+  // Canvas position (for graph layout)
+  positionX Float @default(0) @map("position_x")
+  positionY Float @default(0) @map("position_y")
+
   // Plugin to execute
-  pluginId        String    @map("plugin_id")
-  
+  pluginId String @map("plugin_id")
+
   // Whether this step is enabled (disabled steps are skipped at runtime)
-  isEnabled       Boolean   @default(true)  @map("is_enabled")
-  
+  isEnabled Boolean @default(true) @map("is_enabled")
+
   // Step configuration
   // How to map trigger/previous step data to this plugin's input
-  inputMapping    Json      @default("{}")  // { "text": "{{trigger.message.text}}" }
-  
+  inputMapping Json @default("{}") // { "text": "{{trigger.message.text}}" }
+
   // Static config for the plugin
-  config          Json      @default("{}")
-  
+  config Json @default("{}")
+
   // Gateway override (use specific gateway instead of workflow default)
-  gatewayId       String?   @map("gateway_id")
-  
+  gatewayId String? @map("gateway_id")
+
   // Conditional execution (optional)
-  condition       Json?     // { "if": "{{prev.sentiment}} == 'negative'" }
-  
+  condition Json? // { "if": "{{prev.sentiment}} == 'negative'" }
+
   // Error handling
-  onError         String    @default("stop")  // "stop", "continue", "retry"
-  maxRetries      Int       @default(0)       @map("max_retries")
+  onError    String @default("stop") // "stop", "continue", "retry"
+  maxRetries Int    @default(0) @map("max_retries")
 
   // ─── Unified Engine: fields absorbed from UserPlugin ───────────────
   // Workspace entry file path (relative to workspace root)
-  entryFile       String?   @map("entry_file") @db.VarChar(500)
-  
+  entryFile String? @map("entry_file") @db.VarChar(500)
+
   // Storage quota for local KV store in MB (0 = unlimited, default 50)
-  storageQuotaMb  Int       @default(50) @map("storage_quota_mb")
+  storageQuotaMb Int @default(50) @map("storage_quota_mb")
 
   // Reference to legacy UserPlugin record (for migration/backward compat)
-  userPluginId    String?   @map("user_plugin_id")
+  userPluginId String? @map("user_plugin_id")
 
   // Execution stats
-  executionCount  Int       @default(0) @map("execution_count")
-  lastExecutedAt  DateTime? @map("last_executed_at")
-  lastError       String?   @map("last_error")
-  
+  executionCount Int       @default(0) @map("execution_count")
+  lastExecutedAt DateTime? @map("last_executed_at")
+  lastError      String?   @map("last_error")
+
   // Timestamps
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  workflow        Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  plugin          Plugin    @relation(fields: [pluginId], references: [id], onDelete: Cascade)
-  gateway         Gateway?  @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
-  
+  workflow      Workflow       @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  plugin        Plugin         @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  gateway       Gateway?       @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
+  incomingEdges WorkflowEdge[] @relation("targetStep")
+  outgoingEdges WorkflowEdge[] @relation("sourceStep")
+
   @@unique([workflowId, order])
   @@index([workflowId])
   @@index([pluginId])
   @@map("workflow_steps")
 }
 
+// Edge connecting two nodes in the workflow graph
+// sourceStepId=null means the edge comes from the trigger
+model WorkflowEdge {
+  id         String @id @default(cuid())
+  workflowId String @map("workflow_id")
+
+  // Source: null = trigger node, otherwise a step
+  sourceStepId String? @map("source_step_id")
+  // Target: always a step
+  targetStepId String  @map("target_step_id")
+
+  // Port names for the connection
+  sourcePort String @default("output") @map("source_port")
+  targetPort String @default("input") @map("target_port")
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  workflow   Workflow      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  sourceStep WorkflowStep? @relation("sourceStep", fields: [sourceStepId], references: [id], onDelete: Cascade)
+  targetStep WorkflowStep  @relation("targetStep", fields: [targetStepId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, sourceStepId, targetStepId, sourcePort, targetPort])
+  @@index([workflowId])
+  @@index([sourceStepId])
+  @@index([targetStepId])
+  @@map("workflow_edges")
+}
+
 // Workflow execution history
 model WorkflowRun {
-  id              String    @id @default(cuid())
-  workflowId      String    @map("workflow_id")
-  
+  id         String @id @default(cuid())
+  workflowId String @map("workflow_id")
+
   // Trigger info
-  triggeredBy     String    // "telegram_message", "schedule", "manual", etc.
-  triggerData     Json?     @map("trigger_data")  // Original trigger payload
-  
+  triggeredBy String // "telegram_message", "schedule", "manual", etc.
+  triggerData Json?  @map("trigger_data") // Original trigger payload
+
   // Execution status
-  status          String    @default("running")  // running, completed, failed, cancelled
-  
+  status String @default("running") // running, completed, failed, cancelled
+
   // Results
-  output          Json?     // Final output
-  error           String?   // Error message if failed
-  failedStepOrder Int?      @map("failed_step_order")  // Which step failed
-  
+  output          Json? // Final output
+  error           String? // Error message if failed
+  failedStepOrder Int?    @map("failed_step_order") // Which step failed
+
   // Performance
-  startedAt       DateTime  @default(now()) @map("started_at")
-  completedAt     DateTime? @map("completed_at")
-  durationMs      Int?      @map("duration_ms")
-  
+  startedAt   DateTime  @default(now()) @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  durationMs  Int?      @map("duration_ms")
+
   // Relations
-  workflow        Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  stepRuns        WorkflowStepRun[]
-  
+  workflow Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepRuns WorkflowStepRun[]
+
   @@index([workflowId])
   @@index([status])
   @@index([startedAt])
+  // Composite index: speeds up "newest runs of workflow X" queries and
+  // retention deletes by (workflowId, startedAt < cutoff). See Phase 2.1.
+  @@index([workflowId, startedAt(sort: Desc)], map: "workflow_runs_workflow_id_started_at_idx")
   @@map("workflow_runs")
 }
 
 // Individual step execution in a run
 model WorkflowStepRun {
-  id              String      @id @default(cuid())
-  runId           String      @map("run_id")
-  stepOrder       Int         @map("step_order")
-  
+  id        String  @id @default(cuid())
+  runId     String  @map("run_id")
+  stepOrder Int     @map("step_order")
+  stepId    String? @map("step_id") // Graph-based: reference to the step node
+
   // Execution
-  status          String      @default("pending")  // pending, running, completed, failed, skipped
-  input           Json?       // Actual input after mapping
-  output          Json?       // Plugin output
-  error           String?
-  
+  status String  @default("pending") // pending, running, completed, failed, skipped
+  input  Json? // Actual input after mapping
+  output Json? // Plugin output
+  error  String?
+
   // Performance
-  startedAt       DateTime?   @map("started_at")
-  completedAt     DateTime?   @map("completed_at")
-  durationMs      Int?        @map("duration_ms")
-  
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  durationMs  Int?      @map("duration_ms")
+
   // Relations
-  run             WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  
+  run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
   @@unique([runId, stepOrder])
   @@index([runId])
+  @@index([stepId])
   @@map("workflow_step_runs")
 }
 
@@ -1310,54 +1699,54 @@ model WorkflowStepRun {
 // Unified tracking for both BYOK and 2Bot AI
 // ===========================================
 model AIUsage {
-  id              String    @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Owner
-  userId          String    @map("user_id")
-  organizationId  String?   @map("organization_id")
-  departmentId    String?   @map("department_id")  // Track dept for budget enforcement
-  gatewayId       String?   @map("gateway_id")
-  userPluginId    String?   @map("user_plugin_id") // Track which plugin made this AI call
-  
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+  departmentId   String? @map("department_id") // Track dept for budget enforcement
+  gatewayId      String? @map("gateway_id")
+  userPluginId   String? @map("user_plugin_id") // Track which plugin made this AI call
+
   // What was used - using universal capability naming
-  capability      String    @map("capability") // "text-generation", "image-generation", "speech-synthesis", "speech-recognition", "text-embedding", "image-understanding"
-  model           String    // "gpt-4o-mini", "dall-e-3", "whisper", etc.
-  
+  capability String @map("capability") // "text-generation", "image-generation", "speech-synthesis", "speech-recognition", "text-embedding", "image-understanding"
+  model      String // "gpt-4o-mini", "dall-e-3", "whisper", etc.
+
   // Source - determines if credits apply
-  source          String    // "byok" = user's key (no credits), "2bot" = platform key (credits)
-  
+  source String // "byok" = user's key (no credits), "2bot" = platform key (credits)
+
   // Provider - which AI provider handled the request
-  provider        String?   @map("provider") // "openai", "anthropic", "google", "together", "fireworks", "openrouter"
-  
+  provider String? @map("provider") // "openai", "anthropic", "google", "together", "fireworks", "openrouter"
+
   // Feature - which platform feature triggered this usage
-  feature         String?   @map("feature") // "chat", "cursor", "plugin-ipc", "api" — null for legacy rows
-  
+  feature String? @map("feature") // "chat", "cursor", "plugin-ipc", "api" — null for legacy rows
+
   // Raw metrics - store ALL for analytics (nullable based on capability type)
-  inputTokens     Int?      @map("input_tokens")      // Chat/embedding input
-  outputTokens    Int?      @map("output_tokens")     // Chat output
-  totalTokens     Int?      @map("total_tokens")      // Chat/embedding total
-  imageCount      Int?      @map("image_count")       // Image generation
-  characterCount  Int?      @map("character_count")   // TTS character count
-  audioSeconds    Int?      @map("audio_seconds")     // STT audio duration
-  
+  inputTokens    Int? @map("input_tokens") // Chat/embedding input
+  outputTokens   Int? @map("output_tokens") // Chat output
+  totalTokens    Int? @map("total_tokens") // Chat/embedding total
+  imageCount     Int? @map("image_count") // Image generation
+  characterCount Int? @map("character_count") // TTS character count
+  audioSeconds   Int? @map("audio_seconds") // STT audio duration
+
   // Credits (only populated for source="2bot")
-  creditsUsed     Float     @default(0) @map("credits_used") // Precise fractional credits
-  
+  creditsUsed Float @default(0) @map("credits_used") // Precise fractional credits
+
   // Billing period for aggregation
-  billingPeriod   String    @map("billing_period")    // "2026-01" format
-  
+  billingPeriod String @map("billing_period") // "2026-01" format
+
   // Request metadata (optional)
-  requestId       String?   @map("request_id")        // For debugging
-  durationMs      Int?      @map("duration_ms")       // Request latency
-  
+  requestId  String? @map("request_id") // For debugging
+  durationMs Int?    @map("duration_ms") // Request latency
+
   // Timestamps
-  createdAt       DateTime  @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   // Relations
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gateway         Gateway?  @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
-  userPlugin      UserPlugin? @relation(fields: [userPluginId], references: [id], onDelete: SetNull)
-  
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gateway    Gateway?    @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+  userPlugin UserPlugin? @relation(fields: [userPluginId], references: [id], onDelete: SetNull)
+
   @@index([userId, billingPeriod])
   @@index([organizationId, billingPeriod])
   @@index([departmentId, billingPeriod])
@@ -1375,31 +1764,31 @@ model AIUsage {
 // Configurable credit costs per AI capability/model
 // ===========================================
 model CreditRate {
-  id              String    @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // What this rate applies to - using universal capability naming
-  capability      String    @map("capability") // "text-generation", "image-generation", etc.
-  model           String    // "gpt-4o-mini", "dall-e-3", "whisper", etc.
-  
+  capability String @map("capability") // "text-generation", "image-generation", etc.
+  model      String // "gpt-4o-mini", "dall-e-3", "whisper", etc.
+
   // Credit rates (only one applies based on capability type)
-  creditsPerInputToken   Float?   @map("credits_per_input_token")   // Chat input (per token)
-  creditsPerOutputToken  Float?   @map("credits_per_output_token")  // Chat output (per token)
-  creditsPerImage        Float?   @map("credits_per_image")         // Image generation
-  creditsPerChar         Float?   @map("credits_per_char")          // TTS (per character)
-  creditsPerMinute       Float?   @map("credits_per_minute")        // STT
-  
+  creditsPerInputToken  Float? @map("credits_per_input_token") // Chat input (per token)
+  creditsPerOutputToken Float? @map("credits_per_output_token") // Chat output (per token)
+  creditsPerImage       Float? @map("credits_per_image") // Image generation
+  creditsPerChar        Float? @map("credits_per_char") // TTS (per character)
+  creditsPerMinute      Float? @map("credits_per_minute") // STT
+
   // Your actual cost (for margin tracking - admin only)
-  yourCostPer1kInput     Decimal? @map("your_cost_per_1k_input") @db.Decimal(10, 6)
-  yourCostPer1kOutput    Decimal? @map("your_cost_per_1k_output") @db.Decimal(10, 6)
-  yourCostPerUnit        Decimal? @map("your_cost_per_unit") @db.Decimal(10, 6)
-  
+  yourCostPer1kInput  Decimal? @map("your_cost_per_1k_input") @db.Decimal(10, 6)
+  yourCostPer1kOutput Decimal? @map("your_cost_per_1k_output") @db.Decimal(10, 6)
+  yourCostPerUnit     Decimal? @map("your_cost_per_unit") @db.Decimal(10, 6)
+
   // Status
-  isActive        Boolean   @default(true) @map("is_active")
-  
+  isActive Boolean @default(true) @map("is_active")
+
   // Timestamps
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   @@unique([capability, model])
   @@index([isActive])
   @@map("credit_rates")
@@ -1409,30 +1798,30 @@ model CreditRate {
 // Knowledge Base Article (Phase 7: Support)
 // ===========================================
 model KBArticle {
-  id              String    @id @default(cuid())
-  slug            String    @unique
-  title           String
-  content         String    @db.Text    // Markdown content
-  excerpt         String?               // Short summary for list view
-  category        String                // getting_started, gateways, plugins, billing, troubleshooting
+  id       String  @id @default(cuid())
+  slug     String  @unique
+  title    String
+  content  String  @db.Text // Markdown content
+  excerpt  String? // Short summary for list view
+  category String // getting_started, gateways, plugins, billing, troubleshooting
 
   // Search & Discovery
-  tags            String[]              // Array of tags for filtering
-  viewCount       Int       @default(0) @map("view_count")
-  helpfulCount    Int       @default(0) @map("helpful_count")
-  notHelpfulCount Int       @default(0) @map("not_helpful_count")
+  tags            String[] // Array of tags for filtering
+  viewCount       Int      @default(0) @map("view_count")
+  helpfulCount    Int      @default(0) @map("helpful_count")
+  notHelpfulCount Int      @default(0) @map("not_helpful_count")
 
   // Status
-  isPublished     Boolean   @default(false) @map("is_published")
+  isPublished Boolean @default(false) @map("is_published")
 
   // Timestamps
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-  publishedAt     DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  publishedAt DateTime? @map("published_at")
 
   // Author (support/admin user)
-  authorId        String    @map("author_id")
-  author          User      @relation("KBArticleAuthor", fields: [authorId], references: [id])
+  authorId String @map("author_id")
+  author   User   @relation("KBArticleAuthor", fields: [authorId], references: [id])
 
   @@index([slug])
   @@index([category])
@@ -1445,47 +1834,47 @@ model KBArticle {
 // Support Ticket (Phase 7: Support)
 // ===========================================
 model SupportTicket {
-  id              String    @id @default(cuid())
-  ticketNumber    String    @unique @map("ticket_number") // TICKET-0001
-  userId          String    @map("user_id")
+  id           String @id @default(cuid())
+  ticketNumber String @unique @map("ticket_number") // TICKET-0001
+  userId       String @map("user_id")
 
   // Ticket Info
-  type            String    // bug, question, billing, feature_request, other
-  category        String    // gateway, plugin, billing, account, other
-  severity        String    @default("medium") // low, medium, high, critical
-  title           String
-  description     String    @db.Text
+  type        String // bug, question, billing, feature_request, other
+  category    String // gateway, plugin, billing, account, other
+  severity    String @default("medium") // low, medium, high, critical
+  title       String
+  description String @db.Text
 
   // Auto-captured Context (JSON)
-  contextData     Json      @default("{}") @map("context_data")
+  contextData Json @default("{}") @map("context_data")
   // Structure: { url, browser, os, screenSize, recentActions, gatewayStatus, errorLogs }
 
   // AI Chat History (JSON) - conversation that led to ticket creation
-  aiChatHistory   Json      @default("[]") @map("ai_chat_history")
+  aiChatHistory Json @default("[]") @map("ai_chat_history")
 
   // Status & Assignment
-  status          String    @default("open") // open, in_progress, waiting_user, resolved, closed
-  priority        Int       @default(0)      // For queue ordering (higher = more urgent)
-  assignedToId    String?   @map("assigned_to_id")
+  status       String  @default("open") // open, in_progress, waiting_user, resolved, closed
+  priority     Int     @default(0) // For queue ordering (higher = more urgent)
+  assignedToId String? @map("assigned_to_id")
 
   // Resolution
-  resolution      String?   @db.Text
-  resolvedAt      DateTime? @map("resolved_at")
+  resolution String?   @db.Text
+  resolvedAt DateTime? @map("resolved_at")
 
   // Linked Resources
   relatedArticleId String? @map("related_article_id")
 
   // SLA tracking (for future premium support tiers)
-  firstResponseAt  DateTime? @map("first_response_at")
+  firstResponseAt DateTime? @map("first_response_at")
 
   // Timestamps
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user            User      @relation("UserTickets", fields: [userId], references: [id])
-  assignedTo      User?     @relation("AssignedTickets", fields: [assignedToId], references: [id])
-  messages        TicketMessage[]
+  user       User            @relation("UserTickets", fields: [userId], references: [id])
+  assignedTo User?           @relation("AssignedTickets", fields: [assignedToId], references: [id])
+  messages   TicketMessage[]
 
   @@index([userId])
   @@index([status])
@@ -1500,18 +1889,18 @@ model SupportTicket {
 // Ticket Message (Conversation Thread)
 // ===========================================
 model TicketMessage {
-  id              String    @id @default(cuid())
-  ticketId        String    @map("ticket_id")
-  senderId        String    @map("sender_id")
+  id       String @id @default(cuid())
+  ticketId String @map("ticket_id")
+  senderId String @map("sender_id")
 
-  content         String    @db.Text
-  isInternal      Boolean   @default(false) @map("is_internal") // Internal notes (support only)
+  content    String  @db.Text
+  isInternal Boolean @default(false) @map("is_internal") // Internal notes (support only)
 
-  createdAt       DateTime  @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
-  ticket          SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  sender          User          @relation("TicketMessageSender", fields: [senderId], references: [id])
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender User          @relation("TicketMessageSender", fields: [senderId], references: [id])
 
   @@index([ticketId])
   @@index([senderId])
@@ -1522,27 +1911,27 @@ model TicketMessage {
 // Quick Issue Templates (Phase 7: Support)
 // ===========================================
 model QuickIssue {
-  id                String    @id @default(cuid())
-  title             String    // "Gateway not connecting"
-  description       String?   // Brief help text
+  id          String  @id @default(cuid())
+  title       String // "Gateway not connecting"
+  description String? // Brief help text
 
   // Auto-fill values
-  suggestedType     String    @map("suggested_type")     // bug, question, etc.
-  suggestedCategory String    @map("suggested_category") // gateway, billing, etc.
+  suggestedType     String @map("suggested_type") // bug, question, etc.
+  suggestedCategory String @map("suggested_category") // gateway, billing, etc.
 
   // Link to KB Article (if exists)
-  articleSlug       String?   @map("article_slug")
+  articleSlug String? @map("article_slug")
 
   // Usage tracking
-  useCount          Int       @default(0) @map("use_count")
+  useCount Int @default(0) @map("use_count")
 
   // Display
-  icon              String?   // Emoji or icon name
-  sortOrder         Int       @default(0) @map("sort_order")
-  isActive          Boolean   @default(true) @map("is_active")
+  icon      String? // Emoji or icon name
+  sortOrder Int     @default(0) @map("sort_order")
+  isActive  Boolean @default(true) @map("is_active")
 
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([isActive])
   @@index([sortOrder])
@@ -1567,64 +1956,74 @@ model QuickIssue {
 // A user can have ONE personal container + ONE per org they belong to
 // ===========================================
 model WorkspaceContainer {
-  id                String           @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Owner references
-  userId            String           @map("user_id")
-  organizationId    String?          @map("organization_id")
-  
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+
   // Ownership type (determines billing & resource source)
-  ownerType         WorkspaceOwnerType @default(PERSONAL) @map("owner_type")
-  
+  ownerType WorkspaceOwnerType @default(PERSONAL) @map("owner_type")
+
   // Docker container info
-  containerId       String?          @map("container_id")         // Docker container ID (null before creation)
-  containerName     String           @unique @map("container_name") // Unique name: "ws-{userId}" or "ws-{orgSlug}-{userId}"
-  imageName         String           @default("2bot-workspace:latest") @map("image_name")
-  
+  containerId   String? @map("container_id") // Docker container ID (null before creation)
+  containerName String  @unique @map("container_name") // Unique name: "ws-{userId}" or "ws-{orgSlug}-{userId}"
+  imageName     String  @default("2bot-workspace:latest") @map("image_name")
+
   // Status
-  status            ContainerStatus  @default(CREATING)
-  errorMessage      String?          @map("error_message")        // Last error details
-  
+  status       ContainerStatus @default(CREATING)
+  errorMessage String?         @map("error_message") // Last error details
+
   // Allocated resources (snapshot at creation, may differ from plan if resized)
-  ramMb             Int              @map("ram_mb")               // Allocated RAM in MB
-  cpuCores          Float            @map("cpu_cores")            // Allocated CPU cores
-  storageMb         Int              @map("storage_mb")           // Allocated storage in MB
-  
+  ramMb     Int   @map("ram_mb") // Allocated RAM in MB
+  cpuCores  Float @map("cpu_cores") // Allocated CPU cores
+  storageMb Int   @map("storage_mb") // Allocated storage in MB
+
   // Runtime info
-  ipAddress         String?          @map("ip_address")           // Internal container IP
-  bridgePort        Int?             @map("bridge_port")          // Bridge agent WebSocket port
-  bridgeAuthToken   String?          @map("bridge_auth_token")    // Encrypted auth token for bridge reconnection
-  volumePath        String?          @map("volume_path")          // Host path for persistent volume
-  
+  ipAddress       String? @map("ip_address") // Internal container IP
+  bridgePort      Int?    @map("bridge_port") // Bridge agent WebSocket port
+  bridgeAuthToken String? @map("bridge_auth_token") // Encrypted auth token for bridge reconnection
+  volumePath      String? @map("volume_path") // Host path for persistent volume
+
+  // HTTP exposure (Phase 7.3 — Path C: WEB_APP / HTTP_ROUTE resources)
+  // httpPort  : container-local port serving user app traffic (separate from bridgePort)
+  // subdomain : DNS label under <subdomain>.2bot.org; unique per platform
+  httpPort  Int?    @map("http_port")
+  subdomain String? @unique @map("subdomain")
+
   // Health monitoring
-  lastHealthCheck   DateTime?        @map("last_health_check")
-  healthCheckFails  Int              @default(0) @map("health_check_fails")
-  autoRestart       Boolean          @default(true) @map("auto_restart")
-  maxRestarts       Int              @default(5) @map("max_restarts")
-  restartCount      Int              @default(0) @map("restart_count")
-  
+  lastHealthCheck  DateTime? @map("last_health_check")
+  healthCheckFails Int       @default(0) @map("health_check_fails")
+  autoRestart      Boolean   @default(true) @map("auto_restart")
+  maxRestarts      Int       @default(5) @map("max_restarts")
+  restartCount     Int       @default(0) @map("restart_count")
+
   // Lifecycle timestamps
-  startedAt         DateTime?        @map("started_at")
-  stoppedAt         DateTime?        @map("stopped_at")
-  lastActivityAt    DateTime?        @map("last_activity_at")     // For auto-stop idle containers
-  
+  startedAt      DateTime? @map("started_at")
+  stoppedAt      DateTime? @map("stopped_at")
+  lastActivityAt DateTime? @map("last_activity_at") // For auto-stop idle containers
+
   // Auto-stop settings (save resources when idle)
-  autoStopMinutes   Int?             @map("auto_stop_minutes")    // null = never auto-stop
-  
+  autoStopMinutes    Int? @map("auto_stop_minutes") // null = never auto-stop
+  // Auto-suspend (Docker pause) — frozen but resumable instantly. Tier 1 of idle policy.
+  autoSuspendMinutes Int? @map("auto_suspend_minutes") // null = never auto-suspend
+
   // Webhook routing (Phase A: direct container webhook delivery)
-  webhookRoutingActive Boolean       @default(false) @map("webhook_routing_active")
-  
+  webhookRoutingActive Boolean @default(false) @map("webhook_routing_active")
+
   // Timestamps
-  createdAt         DateTime         @default(now()) @map("created_at")
-  updatedAt         DateTime         @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization      Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  files             WorkspaceFile[]
-  logs              WorkspaceLog[]
-  egressLogs        WorkspaceEgressLog[]
-  
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  gateways     Gateway[]
+  files        WorkspaceFile[]
+  logs         WorkspaceLog[]
+  egressLogs   WorkspaceEgressLog[]
+  embeddings   WorkspaceEmbedding[]
+
   // Personal: one container per user (no org)
   // Org: one container per user per org
   @@unique([userId, organizationId])
@@ -1649,32 +2048,32 @@ model WorkspaceContainer {
 //   - File history / audit trail
 // ===========================================
 model WorkspaceFile {
-  id                String           @id @default(cuid())
-  containerId       String           @map("container_id")
-  
+  id          String @id @default(cuid())
+  containerId String @map("container_id")
+
   // File info
-  path              String                                        // Full path inside container: /workspace/plugins/bot.js
-  name              String                                        // File/folder name: bot.js
-  type              WorkspaceFileType @default(FILE)
-  sizeBytes         Int              @default(0) @map("size_bytes")
-  mimeType          String?          @map("mime_type")            // "application/javascript", "application/json"
-  
+  path      String // Full path inside container: /workspace/plugins/bot.js
+  name      String // File/folder name: bot.js
+  type      WorkspaceFileType @default(FILE)
+  sizeBytes Int               @default(0) @map("size_bytes")
+  mimeType  String?           @map("mime_type") // "application/javascript", "application/json"
+
   // Plugin tracking
-  isPlugin          Boolean          @default(false) @map("is_plugin")  // Registered as a runnable plugin
-  pluginStatus      String?          @map("plugin_status")              // "running", "stopped", "error" (null if not plugin)
-  pluginPid         Int?             @map("plugin_pid")                 // Process ID when running
-  
+  isPlugin     Boolean @default(false) @map("is_plugin") // Registered as a runnable plugin
+  pluginStatus String? @map("plugin_status") // "running", "stopped", "error" (null if not plugin)
+  pluginPid    Int?    @map("plugin_pid") // Process ID when running
+
   // Source tracking
-  source            String           @default("upload")                 // "upload", "ai-generated", "github-import", "plugin-store", "manual"
-  sourceUrl         String?          @map("source_url")                 // GitHub URL if imported
-  
+  source    String  @default("upload") // "upload", "ai-generated", "github-import", "plugin-store", "manual"
+  sourceUrl String? @map("source_url") // GitHub URL if imported
+
   // Timestamps
-  createdAt         DateTime         @default(now()) @map("created_at")
-  updatedAt         DateTime         @updatedAt @map("updated_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   // Relations
-  container         WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  
+  container WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
+
   @@unique([containerId, path])
   @@index([containerId])
   @@index([isPlugin])
@@ -1687,26 +2086,26 @@ model WorkspaceFile {
 // Execution and system logs from containers
 // ===========================================
 model WorkspaceLog {
-  id                String           @id @default(cuid())
-  containerId       String           @map("container_id")
-  
+  id          String @id @default(cuid())
+  containerId String @map("container_id")
+
   // Log entry
-  level             String           @default("info")             // "debug", "info", "warn", "error", "fatal"
-  source            String           @default("system")           // "system", "bridge", "plugin", "terminal", "git", "npm"
-  message           String           @db.Text
-  
+  level   String @default("info") // "debug", "info", "warn", "error", "fatal"
+  source  String @default("system") // "system", "bridge", "plugin", "terminal", "git", "npm"
+  message String @db.Text
+
   // Optional structured metadata
-  metadata          Json?                                         // { pluginFile, pid, exitCode, command, etc. }
-  
+  metadata Json? // { pluginFile, pid, exitCode, command, etc. }
+
   // Source plugin (if from a plugin)
-  pluginFile        String?          @map("plugin_file")          // "plugins/bot.js"
-  
+  pluginFile String? @map("plugin_file") // "plugins/bot.js"
+
   // Timestamps
-  createdAt         DateTime         @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   // Relations
-  container         WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  
+  container WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
+
   @@index([containerId, createdAt])
   @@index([containerId, level])
   @@index([containerId, source])
@@ -1719,32 +2118,32 @@ model WorkspaceLog {
 // Records all lifecycle actions for compliance and debugging
 // ===========================================
 model WorkspaceAuditLog {
-  id                String           @id @default(cuid())
-  
+  id String @id @default(cuid())
+
   // Who performed the action
-  userId            String?          @map("user_id")              // null for system-initiated actions (auto-stop, auto-restart)
-  
+  userId String? @map("user_id") // null for system-initiated actions (auto-stop, auto-restart)
+
   // Which container was affected
-  containerId       String           @map("container_id")         // Workspace container DB ID
-  containerName     String?          @map("container_name")       // Snapshot of container name at time of action
-  
+  containerId   String  @map("container_id") // Workspace container DB ID
+  containerName String? @map("container_name") // Snapshot of container name at time of action
+
   // What happened
-  action            String                                        // CREATE, START, STOP, DESTROY, FORCE_STOP, AUTO_STOP, AUTO_RESTART, ERROR
-  
+  action String // CREATE, START, STOP, DESTROY, FORCE_STOP, AUTO_STOP, AUTO_RESTART, ERROR
+
   // Outcome
-  success           Boolean          @default(true)
-  errorMessage      String?          @map("error_message")
-  
+  success      Boolean @default(true)
+  errorMessage String? @map("error_message")
+
   // Optional structured metadata (resources, reason, etc.)
-  metadata          Json?
-  
+  metadata Json?
+
   // Request context
-  ipAddress         String?          @map("ip_address")
-  userAgent         String?          @map("user_agent")
-  
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+
   // Timestamp
-  createdAt         DateTime         @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   @@index([userId])
   @@index([containerId])
   @@index([action])
@@ -1757,23 +2156,23 @@ model WorkspaceAuditLog {
 // Periodic snapshots of container resource usage for time-series analysis
 // ===========================================
 model WorkspaceMetric {
-  id                String           @id @default(cuid())
-  
-  containerId       String           @map("container_id")         // Workspace container DB ID
-  
+  id String @id @default(cuid())
+
+  containerId String @map("container_id") // Workspace container DB ID
+
   // Resource usage snapshot
-  memoryUsedMb      Float            @map("memory_used_mb")
-  memoryPercent     Float            @map("memory_percent")       // 0-100
-  cpuPercent        Float            @map("cpu_percent")          // 0-100
-  diskUsedMb        Float            @map("disk_used_mb")
-  diskPercent       Float            @map("disk_percent")         // 0-100
-  
+  memoryUsedMb  Float @map("memory_used_mb")
+  memoryPercent Float @map("memory_percent") // 0-100
+  cpuPercent    Float @map("cpu_percent") // 0-100
+  diskUsedMb    Float @map("disk_used_mb")
+  diskPercent   Float @map("disk_percent") // 0-100
+
   // Process info
-  runningPlugins    Int              @default(0) @map("running_plugins")
-  
+  runningPlugins Int @default(0) @map("running_plugins")
+
   // Timestamp
-  createdAt         DateTime         @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   @@index([containerId, createdAt])
   @@index([createdAt])
   @@map("workspace_metrics")
@@ -1785,33 +2184,33 @@ model WorkspaceMetric {
 // Parsed from Squid proxy access.log for per-user attribution
 // ===========================================
 model WorkspaceEgressLog {
-  id                String           @id @default(cuid())
-  containerId       String           @map("container_id")         // Workspace container DB ID
-  
+  id          String @id @default(cuid())
+  containerId String @map("container_id") // Workspace container DB ID
+
   // Request info (parsed from Squid access.log or webhook delivery)
-  timestamp         DateTime                                      // When the request was made
-  domain            String                                        // "api.telegram.org", "github.com"
-  url               String?          @db.Text                     // Full URL (HTTP) or CONNECT domain (HTTPS)
-  method            String           @default("CONNECT")          // GET, POST, CONNECT, etc.
-  httpStatus        Int              @map("http_status")          // 200, 403, 407, 503, etc.
-  squidStatus       String           @map("squid_status")         // TCP_TUNNEL, TCP_DENIED, etc.  (empty for inbound)
-  bytesTransferred  Int              @default(0) @map("bytes_transferred")
-  elapsedMs         Int              @default(0) @map("elapsed_ms")  // Response time in ms
-  
+  timestamp        DateTime // When the request was made
+  domain           String // "api.telegram.org", "github.com"
+  url              String?  @db.Text // Full URL (HTTP) or CONNECT domain (HTTPS)
+  method           String   @default("CONNECT") // GET, POST, CONNECT, etc.
+  httpStatus       Int      @map("http_status") // 200, 403, 407, 503, etc.
+  squidStatus      String   @map("squid_status") // TCP_TUNNEL, TCP_DENIED, etc.  (empty for inbound)
+  bytesTransferred Int      @default(0) @map("bytes_transferred")
+  elapsedMs        Int      @default(0) @map("elapsed_ms") // Response time in ms
+
   // Classification
-  action            String           @default("ALLOWED")          // "ALLOWED", "BLOCKED", "RATE_LIMITED"
-  direction         String           @default("OUTBOUND")         // "OUTBOUND" or "INBOUND"
-  
+  action    String @default("ALLOWED") // "ALLOWED", "BLOCKED", "RATE_LIMITED"
+  direction String @default("OUTBOUND") // "OUTBOUND" or "INBOUND"
+
   // Inbound-specific fields
-  sourceType        String?          @map("source_type")          // "telegram", "custom", etc.
-  pluginFile        String?          @map("plugin_file")          // Which plugin(s) received this webhook
-  
+  sourceType String? @map("source_type") // "telegram", "custom", etc.
+  pluginFile String? @map("plugin_file") // Which plugin(s) received this webhook
+
   // Timestamps
-  createdAt         DateTime         @default(now()) @map("created_at")
-  
+  createdAt DateTime @default(now()) @map("created_at")
+
   // Relations
-  container         WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  
+  container WorkspaceContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
+
   @@index([containerId, timestamp])
   @@index([containerId, domain])
   @@index([domain, timestamp])
@@ -1837,35 +2236,43 @@ model WorkspaceEgressLog {
 // Squid proxy's dynamic ACL and take effect after a config reload.
 
 model WorkspaceAllowedDomain {
-  id              String    @id @default(cuid())
+  id String @id @default(cuid())
 
   // Owner — domains are per-user (apply to their workspace container)
-  userId          String    @map("user_id")
+  userId String @map("user_id")
 
   // The domain pattern (e.g. ".example.com" for example.com + subdomains)
-  domain          String    // Stored with leading dot for subdomain matching
+  domain String // Stored with leading dot for subdomain matching
 
   // Approval status
-  status          DomainAllowStatus @default(APPROVED)
+  status DomainAllowStatus @default(APPROVED)
 
   // Justification from user (why they need this domain)
-  reason          String?
+  reason String?
 
   // Consent: user accepted responsibility for external traffic
   consentAccepted Boolean   @default(false) @map("consent_accepted")
   consentAt       DateTime? @map("consent_at")
 
   // Admin review (optional — auto-approved by default)
-  reviewedBy      String?   @map("reviewed_by")
-  reviewedAt      DateTime? @map("reviewed_at")
-  reviewNote      String?   @map("review_note")
+  reviewedBy String?   @map("reviewed_by")
+  reviewedAt DateTime? @map("reviewed_at")
+  reviewNote String?   @map("review_note")
+
+  // Provenance — who added this entry. "user" = manual add via Settings UI;
+  // "ai-agent" = added by a Cursor agent tool call (request_domain_allowlist)
+  // after explicit user confirmation in chat. Used by the admin panel to
+  // surface AI-added entries with a distinct badge for auditing.
+  addedBy          String  @default("user") @map("added_by")
+  // Cursor session that requested the addition (only set when addedBy="ai-agent")
+  addedBySessionId String? @map("added_by_session_id")
 
   // Timestamps
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, domain])
   @@index([userId])
@@ -1874,10 +2281,10 @@ model WorkspaceAllowedDomain {
 }
 
 enum DomainAllowStatus {
-  PENDING   // Awaiting admin approval (if admin-review mode enabled)
-  APPROVED  // Active — domain is in the proxy allowlist
-  REJECTED  // Admin rejected the request
-  REVOKED   // Was approved but later revoked
+  PENDING // Awaiting admin approval (if admin-review mode enabled)
+  APPROVED // Active — domain is in the proxy allowlist
+  REJECTED // Admin rejected the request
+  REVOKED // Was approved but later revoked
 }
 
 // ===========================================
@@ -1887,23 +2294,23 @@ enum DomainAllowStatus {
 // Admin-blocked domains override any user allowlist entries.
 
 model AdminBlockedDomain {
-  id          String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // The blocked domain pattern (e.g. ".malware.com")
-  domain      String   @unique
+  domain String @unique
 
   // Why this domain is blocked
-  reason      String?
+  reason String?
 
   // Who added it
-  createdBy   String   @map("created_by")
+  createdBy String @map("created_by")
 
   // Timestamps
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  admin       User     @relation("AdminBlockedDomains", fields: [createdBy], references: [id])
+  admin User @relation("AdminBlockedDomains", fields: [createdBy], references: [id])
 
   @@index([domain])
   @@map("admin_blocked_domains")
@@ -1913,25 +2320,25 @@ model AdminBlockedDomain {
 // Support AI Cost Tracking (Phase 7: Support)
 // ===========================================
 model SupportAICost {
-  id              String    @id @default(cuid())
+  id String @id @default(cuid())
 
   // Who triggered the cost
-  userId          String?   @map("user_id")  // User who asked (null = anonymous)
+  userId String? @map("user_id") // User who asked (null = anonymous)
 
   // AI usage details
-  model           String    // Provider model ID used (e.g. "claude-3-5-haiku-20241022")
-  provider        String    // "openai", "anthropic", "together"
-  inputTokens     Int       @map("input_tokens")
-  outputTokens    Int       @map("output_tokens")
+  model        String // Provider model ID used (e.g. "claude-3-5-haiku-20241022")
+  provider     String // "openai", "anthropic", "together"
+  inputTokens  Int    @map("input_tokens")
+  outputTokens Int    @map("output_tokens")
 
   // Cost tracking (real API cost, NO margin)
-  apiCostUsd      Float     @map("api_cost_usd")   // Actual API cost in USD
-  creditsCharged  Float     @map("credits_charged") // Credits that would be charged (with margin)
+  apiCostUsd     Float @map("api_cost_usd") // Actual API cost in USD
+  creditsCharged Float @map("credits_charged") // Credits that would be charged (with margin)
 
   // Billing period for aggregation
-  billingPeriod   String    @map("billing_period") // "2026-02" format
+  billingPeriod String @map("billing_period") // "2026-02" format
 
-  createdAt       DateTime  @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([billingPeriod])
   @@index([createdAt])
@@ -1945,50 +2352,53 @@ model SupportAICost {
 
 /**
  * AgentSession — Tracks the full lifecycle of an AI agent task.
- *
  * One user prompt → multiple AI iterations → multiple tool calls → final response.
  * Used for billing audit, usage history, debugging, and admin analytics.
  */
 model AgentSession {
-  id               String    @id @default(cuid())
+  id String @id @default(cuid())
 
   // Owner
-  userId           String    @map("user_id")
-  organizationId   String?   @map("organization_id")
-  workspaceId      String    @map("workspace_id")
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+  workspaceId    String  @map("workspace_id")
 
   // AI model used
-  model            String
+  model String
 
   // Session lifecycle
-  status           String    @default("running")  // running, completed, paused, max_iterations, max_credits, error, cancelled
+  status String @default("running") // running, completed, paused, max_iterations, max_credits, error, cancelled
 
   // Metrics
-  iterationCount   Int       @default(0) @map("iteration_count")
-  toolCallCount    Int       @default(0) @map("tool_call_count")
-  totalCreditsUsed Float     @default(0) @map("total_credits_used")
-  inputTokens      Int       @default(0) @map("input_tokens")
-  outputTokens     Int       @default(0) @map("output_tokens")
+  iterationCount   Int   @default(0) @map("iteration_count")
+  toolCallCount    Int   @default(0) @map("tool_call_count")
+  totalCreditsUsed Float @default(0) @map("total_credits_used")
+  inputTokens      Int   @default(0) @map("input_tokens")
+  outputTokens     Int   @default(0) @map("output_tokens")
 
   // Content
-  prompt           String    @db.Text          // User's original prompt
-  finalResponse    String?   @map("final_response") @db.Text  // AI's final text (on completion)
-  error            String?   @db.Text          // Error message (on failure)
+  prompt        String  @db.Text // User's original prompt
+  finalResponse String? @map("final_response") @db.Text // AI's final text (on completion)
+  error         String? @db.Text // Error message (on failure)
 
   // Suspend/Resume — enables Copilot-style "answer whenever" UX
-  messages         Json?                        // Full LLM messages array snapshot (saved on suspend)
-  suspendedState   Json?     @map("suspended_state") // Worker state blob: worker type, metrics, context (saved on suspend)
+  messages       Json? // Full LLM messages array snapshot (saved on suspend)
+  suspendedState Json? @map("suspended_state") // Worker state blob: worker type, metrics, context (saved on suspend)
+
+  // User feedback (thumbs up/down after session completes)
+  feedback        String? // "positive" | "negative" | null
+  feedbackComment String? @map("feedback_comment") @db.Text
 
   // Duration
-  durationMs       Int?      @map("duration_ms")
+  durationMs Int? @map("duration_ms")
 
   // Timestamps
-  startedAt        DateTime  @default(now()) @map("started_at")
-  completedAt      DateTime? @map("completed_at")
+  startedAt   DateTime  @default(now()) @map("started_at")
+  completedAt DateTime? @map("completed_at")
 
   // Relations
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  toolCalls        AgentToolCall[]
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolCalls AgentToolCall[]
 
   @@index([userId, startedAt])
   @@index([organizationId, startedAt])
@@ -1999,38 +2409,226 @@ model AgentSession {
 }
 
 /**
+ * CursorUserPreference — Cross-session learned preferences.
+ * Tracks patterns the AI has observed about this user's coding style,
+ * preferred patterns, common plugin types, etc. Injected into future
+ * session prompts so the AI remembers user habits.
+ */
+model CursorUserPreference {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  key       String
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("cursor_user_preferences")
+}
+
+/**
+ * CursorAgentMemory — Chat-scoped freeform memory for the AI agent.
+ * The agent can save important discoveries within a chat session
+ * (architecture patterns, known issues, conventions) and recall them
+ * within that same chat. Memories are scoped to chatThreadId — the
+ * frontend's activeSessionId — so a fresh chat always starts clean.
+ * Old memories from other chats are never injected into new sessions.
+ */
+model CursorAgentMemory {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  chatThreadId String   @map("chat_thread_id") // Frontend activeSessionId — scopes memory to one chat
+  key          String // Topic/label (e.g. "project-architecture", "known-bugs")
+  content      String   @db.Text // Freeform markdown (max ~2000 chars, enforced in service)
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chatThreadId, key])
+  @@index([userId, chatThreadId])
+  @@map("cursor_agent_memories")
+}
+
+/**
+ * CursorChatPlan — One persistent plan per chat thread.
+ * Produced by the Plan agent (`update_plan` tool with `summary` field).
+ * The implementation Agent loads this on hand-off so the plan survives
+ * across runs even when the in-memory chat history is truncated.
+ * Replaces the hallucinated `/memories/session/plan.md` reference in the
+ * Plan agent's system prompt with a real, retrievable artifact.
+ */
+model CursorChatPlan {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  chatThreadId String   @map("chat_thread_id") // Frontend activeSessionId — one plan per chat
+  /**
+   * Markdown plan body (Why / Steps / Relevant files / Verification / etc.)
+   */
+  markdown     String?  @db.Text
+  /**
+   * Latest TODO checklist as JSON array of { id, title, status }
+   */
+  items        Json?
+  /**
+   * Last agent that touched the plan (e.g. "plan", "agent") — informational only
+   */
+  authorAgent  String?  @map("author_agent")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chatThreadId])
+  @@index([userId])
+  @@map("cursor_chat_plans")
+}
+
+/**
  * AgentToolCall — Individual tool invocation within an agent session.
- *
  * Records what the AI asked to do, what happened, and how long it took.
  * Used for debugging, audit trail, and understanding agent behavior.
  */
 model AgentToolCall {
-  id             String    @id @default(cuid())
+  id String @id @default(cuid())
 
   // Parent session
-  sessionId      String    @map("session_id")
+  sessionId String @map("session_id")
 
   // Tool details
-  toolName       String    @map("tool_name")     // e.g. "read_file", "run_command"
-  toolCallId     String    @map("tool_call_id")   // AI provider's tool call ID
-  input          Json                              // Tool arguments (JSON)
-  output         String    @db.Text               // Tool execution output (truncated)
-  isError        Boolean   @default(false) @map("is_error")
+  toolName   String  @map("tool_name") // e.g. "read_file", "run_command"
+  toolCallId String  @map("tool_call_id") // AI provider's tool call ID
+  input      Json // Tool arguments (JSON)
+  output     String  @db.Text // Tool execution output (truncated)
+  isError    Boolean @default(false) @map("is_error")
 
   // Performance
-  durationMs     Int       @default(0) @map("duration_ms")
+  durationMs Int @default(0) @map("duration_ms")
 
   // Ordering within the session
-  sequence       Int       @default(0)            // 0-based order within session
+  sequence Int @default(0) // 0-based order within session
 
   // Timestamps
-  createdAt      DateTime  @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
-  session        AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, sequence])
   @@index([toolName])
   @@index([createdAt])
   @@map("agent_tool_calls")
+}
+
+// ===========================================
+// AI Provider Health Alerts
+// ===========================================
+
+model ProviderAlert {
+  id Int @id @default(autoincrement())
+
+  /// "provider_down" or "provider_recovered"
+  type String @db.VarChar(30)
+
+  /// AI provider name (openai, anthropic, together, fireworks, openrouter, google)
+  provider String @db.VarChar(30)
+
+  /// Failure category: transient, billing, auth, model_unavailable
+  category String? @db.VarChar(30)
+
+  /// Error message from the failure
+  error String? @db.Text
+
+  /// Number of failures that triggered the alert
+  failureCount Int? @map("failure_count")
+
+  /// Cooldown duration in minutes
+  cooldownMinutes Int? @map("cooldown_minutes")
+
+  /// When the event occurred
+  timestamp DateTime @default(now())
+
+  /// Whether admin has acknowledged this alert
+  acknowledged Boolean @default(false)
+
+  @@index([provider, timestamp])
+  @@index([type, acknowledged])
+  @@index([timestamp])
+  @@map("provider_alerts")
+}
+
+// ===========================================
+// MCP Server Configs (Phase 2: MCP Integration)
+// Stores per-user MCP server connection configs.
+// ===========================================
+
+model MCPServerConfig {
+  id             String  @id @default(cuid())
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+
+  /// Human-readable label shown in the UI (e.g. "My Postgres DB")
+  name String @db.VarChar(100)
+
+  /// "stdio" — spawned inside workspace container via bridge
+  /// "sse"   — HTTP SSE endpoint on an external server
+  transportType String @default("stdio") @map("transport_type") @db.VarChar(10)
+
+  /// AES-256-GCM encrypted JSON:
+  ///   stdio: { command: string, args: string[], env?: Record<string,string> }
+  ///   sse:   { url: string, headers?: Record<string,string> }
+  configEnc String @map("config_enc") @db.Text
+
+  isEnabled Boolean @default(true) @map("is_enabled")
+
+  /// Last known connection status (updated at session start)
+  status    String  @default("disconnected") @db.VarChar(20)
+  lastError String? @map("last_error") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@index([organizationId])
+  @@map("mcp_server_configs")
+}
+
+// ===========================================
+// Workspace Embeddings (Phase 3: Semantic Codebase Search)
+// Stores vector embeddings of code chunks for similarity search.
+// Vector operations use raw SQL (pgvector extension).
+// ===========================================
+model WorkspaceEmbedding {
+  id          String @id @default(cuid())
+  workspaceId String @map("workspace_id")
+
+  /// Relative file path inside the workspace container (e.g. "/plugins/echo-bot/index.js")
+  filePath String @map("file_path")
+
+  /// 0-based chunk index within the file (function 0, function 1, ...)
+  chunkIndex Int @map("chunk_index")
+
+  /// The source code text for this chunk (used as context in search results)
+  chunkText String @map("chunk_text") @db.Text
+
+  /// vector(1536) — managed via raw SQL, not by Prisma migrations
+  embedding Unsupported("vector(1536)")
+
+  /// SHA-256 prefix of file content — used to skip re-indexing unchanged files
+  fileHash String @map("file_hash")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  container WorkspaceContainer @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, filePath, chunkIndex])
+  @@index([workspaceId])
+  @@map("workspace_embeddings")
 }

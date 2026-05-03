@@ -12,7 +12,8 @@
  *   POST   /workflows/:id/steps    - Add step
  *   PATCH  /workflows/:id/steps/:stepId - Update step
  *   DELETE /workflows/:id/steps/:stepId - Delete step
- *   POST   /workflows/:id/trigger  - Trigger workflow manually
+ *   POST   /workflows/:id/preflight - Static validation (no execution)
+ *   POST   /workflows/:id/trigger  - Trigger workflow manually (supports test modes)
  *   GET    /workflows/:id/runs     - List runs
  *   GET    /workflows/:id/runs/:runId - Get run detail
  *
@@ -20,6 +21,8 @@
  */
 
 import { executeWorkflow } from "@/modules/workflow/workflow.executor";
+import { preflightWorkflow } from "@/modules/workflow/workflow.preflight";
+import { getFix } from "@/modules/workflow/preflight-fix-registry";
 import { workflowService } from "@/modules/workflow/workflow.service";
 import {
     createWorkflowSchema,
@@ -292,12 +295,151 @@ workflowRouter.delete(
 );
 
 // ===========================================
+// Edge CRUD (Graph connections)
+// ===========================================
+
+/**
+ * POST /workflows/:id/edges
+ * Add a connection (edge) between two nodes in the workflow graph.
+ * sourceStepId=null means the edge comes from the trigger.
+ */
+workflowRouter.post(
+  "/:id/edges",
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = getOwner(req);
+    const { sourceStepId, targetStepId, sourcePort, targetPort } = req.body;
+    if (!targetStepId || typeof targetStepId !== "string") {
+      throw new ValidationError("targetStepId is required");
+    }
+    const edge = await workflowService.addEdge(owner, getParam(req, "id"), {
+      sourceStepId: sourceStepId ?? null,
+      targetStepId,
+      sourcePort,
+      targetPort,
+    });
+    res.status(201).json({ success: true, data: edge });
+  })
+);
+
+/**
+ * DELETE /workflows/:id/edges/:edgeId
+ * Delete a single edge from the workflow graph.
+ */
+workflowRouter.delete(
+  "/:id/edges/:edgeId",
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = getOwner(req);
+    await workflowService.deleteEdge(owner, getParam(req, "id"), getParam(req, "edgeId"));
+    res.json({ success: true });
+  })
+);
+
+/**
+ * PUT /workflows/:id/edges
+ * Bulk replace all edges for a workflow (save entire graph layout).
+ */
+workflowRouter.put(
+  "/:id/edges",
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = getOwner(req);
+    const { edges } = req.body;
+    if (!Array.isArray(edges)) {
+      throw new ValidationError("edges must be an array");
+    }
+    const result = await workflowService.replaceEdges(owner, getParam(req, "id"), edges);
+    res.json({ success: true, data: result });
+  })
+);
+
+// ===========================================
 // Triggering
 // ===========================================
 
 /**
+ * POST /workflows/:id/preflight
+ *
+ * Static-only validation of a workflow (no execution).
+ *
+ * Used by the Test button's Quick mode and as the first phase of Standard/Deep
+ * test runs. Returns a structured PreflightReport including per-step plugin
+ * file syntax checks (via the workspace bridge agent) when available.
+ */
+workflowRouter.post(
+  "/:id/preflight",
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = getOwner(req);
+    const workflowId = getParam(req, "id");
+
+    // Verify ownership (this loads the workflow; preflight loads it again with details)
+    await workflowService.getWorkflow(owner, workflowId);
+
+    const report = await preflightWorkflow(owner, workflowId);
+
+    res.json({
+      success: true,
+      data: report,
+    });
+  })
+);
+
+/**
+ * POST /workflows/:id/preflight/fix
+ *
+ * Applies a registered auto-fix task to repair a specific preflight problem.
+ *
+ * Body:
+ *   - fixId   : ID of the registered PreflightFixTask
+ *   - context : optional extra context (stepId, stepOrder, etc.)
+ *
+ * Response: { message, rerunPreflight }
+ */
+workflowRouter.post(
+  "/:id/preflight/fix",
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = getOwner(req);
+    const workflowId = getParam(req, "id");
+
+    // Verify ownership before applying any mutation
+    await workflowService.getWorkflow(owner, workflowId);
+
+    const { fixId, context = {} } = req.body as {
+      fixId?: string;
+      context?: Record<string, unknown>;
+    };
+
+    if (!fixId || typeof fixId !== "string") {
+      throw new BadRequestError("fixId is required");
+    }
+
+    const task = getFix(fixId);
+    if (!task) {
+      throw new BadRequestError(`Unknown fix task: "${fixId}"`);
+    }
+
+    const result = await task.execute({ workflowId, ...context });
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  })
+);
+
+/**
  * POST /workflows/:id/trigger
- * Manually trigger a workflow
+ * Manually trigger a workflow.
+ *
+ * Body fields:
+ *   - params  : trigger payload (forwarded to the workflow as triggerData)
+ *   - mode    : "quick" | "standard" | "deep" | "ai"
+ *               • quick     → preflight only, no execution
+ *               • standard  → preflight + dry-run + log capture (default Test)
+ *               • deep      → preflight + live + log capture (real sends)
+ *               • ai        → returns 400 (UI handles AI mode separately)
+ *   - dryRun  : when set without mode, forces a dry-run live execution.
+ *
+ * For "quick" mode the response shape is `{ preflight: PreflightReport }`.
+ * For execution modes the response shape is `{ runId, preflight? }`.
  */
 workflowRouter.post(
   "/:id/trigger",
@@ -309,19 +451,71 @@ workflowRouter.post(
       throw new ValidationError("Validation failed", formatZodErrors(parseResult.error));
     }
 
-    // Verify ownership before triggering
     const workflowId = getParam(req, "id");
     await workflowService.getWorkflow(owner, workflowId);
+
+    const { mode, dryRun, params } = parseResult.data;
+
+    // Mode "ai" is handled client-side via the Cursor agent; reject here
+    if (mode === "ai") {
+      throw new ValidationError(
+        "AI test mode is handled by the Cursor agent — use the Studio AI panel.",
+      );
+    }
+
+    // Mode "quick": preflight only, no execution
+    if (mode === "quick") {
+      const report = await preflightWorkflow(owner, workflowId);
+      res.json({
+        success: true,
+        data: { preflight: report },
+      });
+      return;
+    }
+
+    // For standard / deep, run preflight first; if there are errors, return early
+    // without consuming an execution slot. This prevents wasted gateway calls
+    // when the workflow is misconfigured.
+    let preflight = null as Awaited<ReturnType<typeof preflightWorkflow>> | null;
+    if (mode === "standard" || mode === "deep") {
+      preflight = await preflightWorkflow(owner, workflowId);
+      if (!preflight.ok) {
+        res.status(412).json({
+          success: false,
+          error: {
+            code: "preflight_failed",
+            message: "Preflight checks reported errors — fix them before running.",
+          },
+          data: { preflight },
+        });
+        return;
+      }
+    }
+
+    // Determine effective execution options
+    //   standard → dry-run + capture logs + allow draft (so users can test before activating)
+    //   deep     → live + capture logs + allow draft
+    //   default  → live (legacy behavior; honours `dryRun` flag)
+    const isStandard = mode === "standard";
+    const isDeep = mode === "deep";
+    const effectiveDryRun = isStandard ? true : (isDeep ? false : (dryRun === true));
+    const effectiveCapture = isStandard || isDeep;
+    const effectiveAllowDraft = isStandard || isDeep;
 
     const runId = await executeWorkflow(
       workflowId,
       "manual",
-      parseResult.data.params ?? {}
+      params ?? {},
+      {
+        dryRun: effectiveDryRun,
+        captureLogs: effectiveCapture,
+        allowDraft: effectiveAllowDraft,
+      },
     );
 
     res.status(202).json({
       success: true,
-      data: { runId },
+      data: { runId, preflight },
     });
   })
 );

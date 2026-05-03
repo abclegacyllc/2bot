@@ -1,7 +1,7 @@
 /**
  * Workspace Module Types
  * 
- * Internal types for the workspace module (Phase 13).
+ * Internal types for the workspace module.
  * Public/shared types live in src/shared/types/workspace.ts.
  * These types are for module-internal use (service layer, DB queries, etc.)
  * 

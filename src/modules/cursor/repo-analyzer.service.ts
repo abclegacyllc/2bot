@@ -12,11 +12,9 @@
  */
 
 import { logger } from "@/lib/logger";
-import { redis } from "@/lib/redis";
 import { twoBotAIProvider } from "@/modules/2bot-ai-provider";
 import type { TextGenerationMessage } from "@/modules/2bot-ai-provider/types";
 import type { BridgeClient } from "@/modules/workspace/bridge-client.service";
-import crypto from "crypto";
 
 const analyzerLog = logger.child({ module: "cursor", capability: "repo-analyzer" });
 
@@ -81,14 +79,12 @@ const MAX_FILE_SIZE = 100_000;
 /** Max total content to send to AI (200KB) */
 const MAX_TOTAL_CONTENT = 200_000;
 
-/** Max number of source files to read beyond manifests */
-const MAX_SOURCE_FILES = 15;
-
-/** Redis key prefix for repo analysis cache */
-const REPO_CACHE_PREFIX = "2bot:cursor:repo-analysis";
-
-/** Cache TTL: 24 hours */
-const REPO_CACHE_TTL = 86_400;
+/**
+ * Max source files in lightweight mode (info-only / "what does this repo do?").
+ * We read manifests + entry point + this many additional source files.
+ * Keeps cost low while giving the AI real business-logic context.
+ */
+const MAX_LIGHTWEIGHT_SOURCE_FILES = 3;
 
 /** Files to prioritize reading (order matters) */
 const PRIORITY_FILES = [
@@ -124,9 +120,6 @@ const COMMON_ENTRY_FILES = [
   "main.go", "cmd/main.go",
 ];
 
-/** Source directories to scan for additional files */
-const SOURCE_DIRS = ["src", "lib", "commands", "handlers", "utils", "helpers", "modules", "services"];
-
 /** File extensions to consider as source code */
 const SOURCE_EXTENSIONS = new Set([
   ".js", ".ts", ".tsx", ".mjs", ".cjs",
@@ -139,55 +132,190 @@ const SOURCE_EXTENSIONS = new Set([
 ]);
 
 // ===========================================
+// Smart File Selection Helpers
+// ===========================================
+
+/**
+ * How many source files to read in full mode, scaled by total repo size.
+ * Tiny repos: read everything. Large repos: be selective to save credits.
+ */
+function getSourceFileLimit(totalFileCount: number): number {
+  if (totalFileCount < 20) return totalFileCount; // tiny repo — read it all
+  if (totalFileCount < 60) return 15;
+  if (totalFileCount < 150) return 10;
+  return 7; // large repo — be very selective
+}
+
+/**
+ * Score a source file path by its likely business-logic importance.
+ * Returns -1 to exclude the file entirely (tests, types, generated files).
+ * Higher score = read first.
+ */
+function scoreFile(path: string): number {
+  const nameFull = path.split("/").pop()?.toLowerCase() ?? "";
+  const dir = path.includes("/") ? path.split("/")[0]?.toLowerCase() ?? "" : "";
+  const ext = nameFull.includes(".") ? nameFull.slice(nameFull.lastIndexOf(".")) : "";
+  const nameBase = ext ? nameFull.slice(0, nameFull.lastIndexOf(".")) : nameFull;
+
+  // ── Hard excludes ──────────────────────────────────────────
+  // Test files
+  if (nameFull.includes(".test.") || nameFull.includes(".spec.") || nameFull.includes("_test.")) return -1;
+  if (dir === "__tests__" || dir === "test" || dir === "tests") return -1;
+  // TypeScript declaration / type-only files (no runtime logic)
+  if (ext === ".d.ts") return -1;
+  // Build artefacts that may have leaked past the fileTree filter
+  if (dir === "dist" || dir === "build" || dir === "out") return -1;
+
+  let score = 0;
+
+  // ── Directory importance ───────────────────────────────────
+  const dirScores: Record<string, number> = {
+    commands:    22,
+    handlers:    20,
+    routes:      18,
+    controllers: 16,
+    api:         14,
+    modules:     12,
+    services:    10,
+    src:          8,
+    lib:          6,
+    utils:        3,
+    helpers:      2,
+  };
+  // Top-level files (no directory) are often entry points or key modules
+  score += dirScores[dir] ?? (path.includes("/") ? 1 : 16);
+
+  // ── Filename importance ─────────────────────────────────────
+  const highSignal = ["bot", "app", "main", "index", "command", "handler", "route", "controller", "api", "service", "worker", "action", "event", "message", "task", "job"];
+  const lowSignal  = ["util", "helper", "format", "parse", "logger", "constant", "config", "env", "type", "interface", "schema", "seed", "migration", "fixture"];
+
+  for (const n of highSignal) {
+    if (nameBase.includes(n)) { score += 14; break; }
+  }
+  for (const n of lowSignal) {
+    if (nameBase.includes(n)) { score -= 6; break; }
+  }
+
+  // ── Depth penalty — prefer shallower files ─────────────────
+  const depth = path.split("/").length;
+  score += Math.max(0, 10 - depth * 2);
+
+  return score;
+}
+
+/**
+ * Collect all source-code files from fileTree, score them, sort by score descending.
+ * Files already in `exclude` (already read) are skipped.
+ * Files scoring -1 (tests, types, build artefacts) are excluded.
+ */
+function selectSourceFiles(fileTree: string[], exclude: Set<string>): string[] {
+  const scored: Array<[string, number]> = [];
+
+  for (const file of fileTree) {
+    if (exclude.has(file)) continue;
+    const ext = file.substring(file.lastIndexOf("."));
+    if (!SOURCE_EXTENSIONS.has(ext)) continue;
+    const score = scoreFile(file);
+    if (score < 0) continue;
+    scored.push([file, score]);
+  }
+
+  scored.sort((a, b) => b[1] - a[1]);
+  return scored.map(([f]) => f);
+}
+
+/**
+ * Detect the repository's main entry-point file from manifests and common names.
+ */
+function detectEntryFile(existingFiles: Record<string, string>, fileSet: Set<string>): string | null {
+  // package.json "main" field
+  if (existingFiles["package.json"]) {
+    try {
+      const pkg = JSON.parse(existingFiles["package.json"]);
+      if (pkg.main && fileSet.has(pkg.main)) return pkg.main as string;
+    } catch { /* invalid JSON */ }
+  }
+  // Common entry names
+  for (const candidate of COMMON_ENTRY_FILES) {
+    if (fileSet.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+// ===========================================
 // Main API
 // ===========================================
 
 /**
  * Analyze a cloned repository and produce a structured report.
+ * Yields `status` events at each step so the caller can forward them to the frontend.
  *
  * @param client - Bridge client connected to the user's workspace container
  * @param cloneDir - Directory where repo was cloned (relative to workspace root)
  * @param userId - User ID for AI billing
  * @param repoUrl - Original repo URL (used as cache key)
- * @returns Structured analysis of the repository
+ * @param modelId - AI model to use
+ * @param options - Analysis options
+ * @param options.lightweight - If true, only read README + manifests + entry point (skip deep source scan). Use for "what is this repo?" questions.
+ * @yields `{ type: "status", message }` progress events
+ * @returns Structured analysis of the repository (final yielded value)
  */
-export async function analyzeRepo(
+export async function* analyzeRepo(
   client: BridgeClient,
   cloneDir: string,
   userId: string,
   repoUrl?: string,
   modelId?: string,
-): Promise<{ analysis: RepoAnalysis; creditsUsed: number }> {
-  analyzerLog.info({ cloneDir, repoUrl }, "Starting repo analysis");
+  options?: { lightweight?: boolean },
+): AsyncGenerator<{ type: "status"; message: string }, { analysis: RepoAnalysis; creditsUsed: number; modelUsed: string }, unknown> {
+  const lightweight = options?.lightweight ?? false;
+  analyzerLog.info({ cloneDir, repoUrl, lightweight }, "Starting repo analysis");
 
-  // Check cache — same repo URL = same analysis (24h TTL)
-  if (repoUrl) {
-    const cacheKey = `${REPO_CACHE_PREFIX}:${crypto.createHash("sha256").update(repoUrl).digest("hex").slice(0, 16)}`;
+  // Step 1: Get full file tree
+  yield { type: "status", message: "Scanning repository file structure..." };
+  let fileTree = await getFileTree(client, cloneDir);
+  analyzerLog.debug({ cloneDir, fileCount: fileTree.length }, "File tree retrieved");
+
+  // If fileList returned empty, the bridge may not support recursive listing
+  // or the repo structure is non-standard. Try a terminal fallback to discover files.
+  if (fileTree.length === 0) {
+    analyzerLog.warn({ cloneDir }, "fileList returned empty — trying terminal fallback");
+    yield { type: "status", message: "File listing empty — trying terminal fallback..." };
     try {
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        const analysis = JSON.parse(cached) as RepoAnalysis;
-        analyzerLog.info({ cloneDir, repoUrl, language: analysis.language }, "Repo analysis cache hit");
-        return { analysis, creditsUsed: 0 };
+      const findResult = await client.send("terminal.create", {
+        command: `find "${cloneDir}" -type f -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' | head -200`,
+        timeout: 10_000,
+      }) as { output?: string };
+      if (findResult?.output) {
+        const prefix = cloneDir.endsWith("/") ? cloneDir : `${cloneDir}/`;
+        fileTree = findResult.output
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((abs) => abs.startsWith(prefix) ? abs.slice(prefix.length) : abs)
+          .filter((name) => name && !name.startsWith(".git/"));
+        analyzerLog.debug({ cloneDir, fileCount: fileTree.length }, "Terminal fallback found files");
       }
     } catch {
-      // Cache miss or parse error — continue with fresh analysis
+      analyzerLog.warn({ cloneDir }, "Terminal fallback also failed");
     }
   }
 
-  // Step 1: Get full file tree
-  const fileTree = await getFileTree(client, cloneDir);
-  analyzerLog.debug({ cloneDir, fileCount: fileTree.length }, "File tree retrieved");
+  const fileCount = fileTree.length;
+  yield { type: "status", message: `Found ${fileCount} file${fileCount !== 1 ? "s" : ""}. Reading key files...` };
 
   // Step 2: Read key files
-  const keyFiles = await readKeyFiles(client, cloneDir, fileTree);
+  const keyFiles = await readKeyFiles(client, cloneDir, fileTree, lightweight);
+  const keyFileCount = Object.keys(keyFiles).length;
   analyzerLog.debug(
-    { cloneDir, keyFileCount: Object.keys(keyFiles).length },
+    { cloneDir, keyFileCount, lightweight },
     "Key files read",
   );
 
+  yield { type: "status", message: `Read ${keyFileCount} key file${keyFileCount !== 1 ? "s" : ""}${lightweight ? " (quick scan)" : ""}. Analyzing with AI...` };
+
   // Step 3: Send to AI for analysis
-  const { analysis, creditsUsed } = await aiAnalyze(cloneDir, fileTree, keyFiles, userId, modelId);
+  const { analysis, creditsUsed, modelUsed } = await aiAnalyze(cloneDir, fileTree, keyFiles, userId, modelId);
   analyzerLog.info(
     { cloneDir, language: analysis.language, complexity: analysis.complexity, creditsUsed },
     "Repo analysis complete",
@@ -197,21 +325,7 @@ export async function analyzeRepo(
   analysis.fileTree = fileTree;
   analysis.keyFileContents = keyFiles;
 
-  // Store in cache for future imports of the same repo
-  // Exclude keyFileContents from cache — the coder reads files via read_file tool anyway,
-  // and storing 200KB of source code in Redis is wasteful
-  if (repoUrl) {
-    const cacheKey = `${REPO_CACHE_PREFIX}:${crypto.createHash("sha256").update(repoUrl).digest("hex").slice(0, 16)}`;
-    try {
-      const { keyFileContents: _excluded, ...cacheableAnalysis } = analysis;
-      await redis.set(cacheKey, JSON.stringify(cacheableAnalysis), "EX", REPO_CACHE_TTL);
-      analyzerLog.debug({ repoUrl }, "Repo analysis cached (24h TTL)");
-    } catch {
-      // Non-critical — continue without caching
-    }
-  }
-
-  return { analysis, creditsUsed };
+  return { analysis, creditsUsed, modelUsed };
 }
 
 // ===========================================
@@ -248,20 +362,30 @@ async function getFileTree(client: BridgeClient, cloneDir: string): Promise<stri
 /**
  * Read key files from the repo: manifests, config, entry points, and source files.
  * Respects size limits to avoid sending too much to the AI.
+ *
+ * File selection is scored by business-logic importance (commands > handlers > routes > src > utils)
+ * and scaled dynamically by repo size so credits are spent where it matters.
+ *
+ * @param lightweight - If true (info-only query), read priority files + entry point +
+ *   top-3 highest-scoring source files. Keeps cost low while giving the AI real logic context.
+ *   Full mode scales the source-file count dynamically by repo size (7–15 files).
  */
 async function readKeyFiles(
   client: BridgeClient,
   cloneDir: string,
   fileTree: string[],
+  lightweight = false,
 ): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
   let totalSize = 0;
 
   const fileSet = new Set(fileTree);
+  const fileTreeEmpty = fileTree.length === 0;
 
   // Helper: read a file if it exists and fits within limits
+  // When fileTree is empty (listing failed), try reading the file directly
   async function tryRead(relativePath: string): Promise<boolean> {
-    if (!fileSet.has(relativePath)) return false;
+    if (!fileTreeEmpty && !fileSet.has(relativePath)) return false;
     if (result[relativePath]) return true; // already read
     if (totalSize >= MAX_TOTAL_CONTENT) return false;
 
@@ -289,75 +413,20 @@ async function readKeyFiles(
   }
 
   // 2. Detect and read entry point
-  let entryFile: string | null = null;
+  const entryFile = detectEntryFile(result, fileSet);
+  if (entryFile) await tryRead(entryFile);
 
-  // Try package.json "main" field
-  if (result["package.json"]) {
-    try {
-      const pkg = JSON.parse(result["package.json"]);
-      if (pkg.main && fileSet.has(pkg.main)) {
-        entryFile = pkg.main;
-      }
-    } catch { /* invalid JSON — skip */ }
-  }
+  // 3. Score and rank remaining source files, then read top N.
+  //    lightweight: top 3 — gives AI real business-logic context without burning credits.
+  //    full:        dynamic limit scaled by repo size (7–15 files).
+  const limit = lightweight ? MAX_LIGHTWEIGHT_SOURCE_FILES : getSourceFileLimit(fileTree.length);
+  const ranked = selectSourceFiles(fileTree, new Set(Object.keys(result)));
 
-  // Try common entry file names
-  if (!entryFile) {
-    for (const candidate of COMMON_ENTRY_FILES) {
-      if (fileSet.has(candidate)) {
-        entryFile = candidate;
-        break;
-      }
-    }
-  }
-
-  if (entryFile) {
-    await tryRead(entryFile);
-  }
-
-  // 3. Read source files from common directories
   let sourceFilesRead = 0;
-  for (const dir of SOURCE_DIRS) {
-    if (sourceFilesRead >= MAX_SOURCE_FILES) break;
-
-    const dirFiles = fileTree.filter((f) => {
-      if (!f.startsWith(`${dir}/`)) return false;
-      const ext = f.substring(f.lastIndexOf("."));
-      return SOURCE_EXTENSIONS.has(ext);
-    });
-
-    // Sort by path depth (shallow first) then alphabetically
-    dirFiles.sort((a, b) => {
-      const depthA = a.split("/").length;
-      const depthB = b.split("/").length;
-      return depthA !== depthB ? depthA - depthB : a.localeCompare(b);
-    });
-
-    for (const file of dirFiles) {
-      if (sourceFilesRead >= MAX_SOURCE_FILES) break;
-      if (totalSize >= MAX_TOTAL_CONTENT) break;
-      if (await tryRead(file)) {
-        sourceFilesRead++;
-      }
-    }
-  }
-
-  // 4. If few source files found, try top-level source files
-  if (sourceFilesRead < 3) {
-    const topLevelSource = fileTree.filter((f) => {
-      if (f.includes("/")) return false; // only top-level
-      if (result[f]) return false; // already read
-      const ext = f.substring(f.lastIndexOf("."));
-      return SOURCE_EXTENSIONS.has(ext);
-    });
-
-    for (const file of topLevelSource) {
-      if (sourceFilesRead >= MAX_SOURCE_FILES) break;
-      if (totalSize >= MAX_TOTAL_CONTENT) break;
-      if (await tryRead(file)) {
-        sourceFilesRead++;
-      }
-    }
+  for (const file of ranked) {
+    if (sourceFilesRead >= limit) break;
+    if (totalSize >= MAX_TOTAL_CONTENT) break;
+    if (await tryRead(file)) sourceFilesRead++;
   }
 
   return result;
@@ -376,7 +445,7 @@ async function aiAnalyze(
   keyFiles: Record<string, string>,
   userId: string,
   modelId?: string,
-): Promise<{ analysis: RepoAnalysis; creditsUsed: number }> {
+): Promise<{ analysis: RepoAnalysis; creditsUsed: number; modelUsed: string }> {
   // Build the prompt with all file contents
   const fileContentsSection = Object.entries(keyFiles)
     .map(([path, content]) => `### ${path}\n\`\`\`\n${content}\n\`\`\``)
@@ -406,16 +475,37 @@ Respond with a JSON object matching the RepoAnalysis schema. No markdown wrappin
     },
   ];
 
-  const response = await twoBotAIProvider.textGeneration({
-    messages,
-    model: modelId || "auto",
-    temperature: 0.1,
-    maxTokens: 8192,
-    stream: false,
-    userId,
-    feature: "cursor",
-    capability: "code-generation",
-  });
+  let response;
+  try {
+    response = await twoBotAIProvider.textGeneration({
+      messages,
+      model: modelId || "auto",
+      temperature: 0.1,
+      maxTokens: 8192,
+      stream: false,
+      userId,
+      feature: "cursor",
+      capability: "code-generation",
+    });
+  } catch (err) {
+    const errMsg = (err as Error).message || "";
+    // If the selected model is unavailable, retry with auto (picks from fallback chain)
+    if (modelId && modelId !== "auto" && (errMsg.includes("unavailable") || errMsg.includes("not available"))) {
+      analyzerLog.warn({ failedModel: modelId }, "Model unavailable for repo analysis — retrying with auto");
+      response = await twoBotAIProvider.textGeneration({
+        messages,
+        model: "auto",
+        temperature: 0.1,
+        maxTokens: 8192,
+        stream: false,
+        userId,
+        feature: "cursor",
+        capability: "code-generation",
+      });
+    } else {
+      throw err;
+    }
+  }
 
   // Parse the JSON response
   const content = (response.content || "").trim();
@@ -435,7 +525,7 @@ Respond with a JSON object matching the RepoAnalysis schema. No markdown wrappin
   // Ensure all required fields exist
   analysis = normalizeAnalysis(analysis);
 
-  return { analysis, creditsUsed: response.creditsUsed ?? 0 };
+  return { analysis, creditsUsed: response.creditsUsed ?? 0, modelUsed: response.model || modelId || "" };
 }
 
 // ===========================================
@@ -481,10 +571,20 @@ Rules:
 - For commands: look for command handlers (e.g., bot.command('/start'), @bot.message_handler)
 - For externalApis: look for HTTP client calls (fetch, axios, requests, http.get)
 - For coreLogic: identify algorithms, business logic, data transformations worth preserving
-- For npmDependencies: only include packages safe for a sandboxed environment (axios, lodash, dayjs, etc.)
+- For npmDependencies: only include packages safe for a sandboxed environment (lodash, dayjs, uuid, etc.)
   Do NOT include: express, fastify, koa, socket.io, mongoose, sequelize, or any server framework
+  Do NOT include: axios, node-fetch, got, superagent — the sdk.fetch built-in replaces all of these
+  Do NOT include: cheerio, jsdom, htmlparser2, parse5 — HTML parsing must use regex in plugins
+  Do NOT include: puppeteer, playwright, selenium — browser automation is not supported in the sandbox
 - For suggestedConfigSchema: map env vars and config values to a JSON Schema
-  with user-friendly titles and descriptions. Use "uiComponent": "ai-model-selector" for AI model fields
+  with user-friendly titles and descriptions. Use "uiComponent": "ai-model-selector" for AI model fields.
+  CRITICAL — configSchema is ONLY for values the USER must supply that the platform does not already provide.
+  The platform/gateway ALREADY provides at runtime (never add these to configSchema):
+    * Any bot/gateway auth token or secret — Telegram botToken, Discord token, Slack token, WhatsApp token, etc.
+    * The gateway ID (available as event.gatewayId at runtime)
+    * The gateway type (TELEGRAM_BOT, DISCORD_BOT, etc.)
+    * User/org identity (PLUGIN_USER_ID, PLUGIN_ORG_ID env vars)
+  Only add fields that are THIRD-PARTY and user-owned: OpenAI API key, weather API key, feature flags, thresholds, custom messages, etc.
 - For complexity: simple = single file / few commands; medium = multi-file with APIs; complex = many features + database + complex logic
 - For warnings: flag things that can't be directly ported (HTTP servers, WebSockets, databases, file system access, cron jobs)
 - portable = true if the logic is pure JS/TS or can trivially run in Node.js; false if it needs Python/Go/system APIs
@@ -494,6 +594,50 @@ Respond with ONLY the JSON object. No markdown, no explanation.`;
 // ===========================================
 // Helpers
 // ===========================================
+
+/**
+ * Semantic patterns that identify any field whose value the gateway/platform already provides at runtime.
+ * Uses regex so it matches any naming convention (camelCase, snake_case, SCREAMING_SNAKE, kebab-case).
+ * Principle: if the value comes from the gateway (auth token, ID) or from the platform (user/org ID)
+ * it belongs to the runtime environment — never to user-supplied plugin config.
+ */
+const GATEWAY_CREDENTIAL_PATTERNS: RegExp[] = [
+  // Any kind of bot/gateway authentication token or secret
+  /bot[_-]?token/i,
+  /bot[_-]?secret/i,
+  /telegram[_-]?token/i,
+  /telegram[_-]?bot[_-]?token/i,
+  /discord[_-]?token/i,
+  /discord[_-]?bot[_-]?secret/i,
+  /slack[_-]?token/i,
+  /slack[_-]?bot[_-]?token/i,
+  /whatsapp[_-]?token/i,
+  /gateway[_-]?token/i,
+  /gateway[_-]?secret/i,
+  // Gateway / platform identity fields
+  /gateway[_-]?id/i,         // comes from event.gatewayId at runtime
+  /plugin[_-]?user[_-]?id/i, // injected as PLUGIN_USER_ID env var
+  /plugin[_-]?org[_-]?id/i,  // injected as PLUGIN_ORG_ID env var
+];
+
+/**
+ * Remove any platform/gateway-provided fields from suggestedConfigSchema.
+ * Uses semantic patterns so it works regardless of the naming convention the source repo used.
+ */
+function stripGatewayCredentials(schema: Record<string, unknown>): Record<string, unknown> {
+  const props = schema.properties as Record<string, unknown> | undefined;
+  if (!props) return schema;
+  const filteredProps: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(props)) {
+    if (!GATEWAY_CREDENTIAL_PATTERNS.some((re) => re.test(key))) {
+      filteredProps[key] = val;
+    }
+  }
+  const required = (schema.required as string[] | undefined)?.filter(
+    (f) => !GATEWAY_CREDENTIAL_PATTERNS.some((re) => re.test(f)),
+  );
+  return { ...schema, properties: filteredProps, ...(required ? { required } : {}) };
+}
 
 /**
  * Build a basic fallback analysis when AI fails to return valid JSON.
@@ -552,7 +696,7 @@ function normalizeAnalysis(raw: Partial<RepoAnalysis>): RepoAnalysis {
     envVars: Array.isArray(raw.envVars) ? raw.envVars : [],
     coreLogic: Array.isArray(raw.coreLogic) ? raw.coreLogic : [],
     commands: Array.isArray(raw.commands) ? raw.commands : [],
-    suggestedConfigSchema: raw.suggestedConfigSchema || {},
+    suggestedConfigSchema: stripGatewayCredentials(raw.suggestedConfigSchema || {}),
     npmDependencies: Array.isArray(raw.npmDependencies) ? raw.npmDependencies : [],
     complexity: raw.complexity || "medium",
     warnings: Array.isArray(raw.warnings) ? raw.warnings : [],

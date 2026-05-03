@@ -1,7 +1,7 @@
 // Layout Components Index
 // Page layouts, headers, sidebars, etc.
 
-// Context Switcher (Phase 4)
+// Context Switcher
 export { ContextSwitcher } from "./context-switcher";
 
 // Placeholder - will export layout components

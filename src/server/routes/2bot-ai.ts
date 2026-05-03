@@ -42,6 +42,7 @@ import {
     type TwoBotAIModelId,
     type TwoBotAIModelInfo
 } from "@/modules/2bot-ai-provider";
+import { CODE_GENERATION_MODELS, REASONING_MODELS } from "@/modules/2bot-ai-provider/model-catalog/tier-auto-curator";
 import { getModelHealthSummary, isModelHealthy } from "@/modules/2bot-ai-provider/model-health-tracker";
 import { isProviderConfigured } from "@/modules/2bot-ai-provider/provider-config";
 import { areHealthChecksReady } from "@/modules/2bot-ai-provider/provider-health.service";
@@ -321,6 +322,10 @@ interface RealModelResponse {
   isHealthy: boolean;
   /** Whether the model supports function/tool calling */
   functionCalling: boolean;
+  /** Whether the model supports extended thinking / reasoning */
+  reasoning: boolean;
+  /** Whether the model can analyze images (vision / multimodal) */
+  supportsVision: boolean;
 }
 
 interface RealModelsResponse {
@@ -368,9 +373,33 @@ twoBotAIRouter.get(
 
     const models: RealModelResponse[] = [];
 
+    // code-generation is a virtual capability: filter text-generation models
+    // to only those verified for tool calling (from CODE_GENERATION_MODELS set)
+    const isCodeGenFilter = capability === "code-generation";
+    const isTextGenFilter = capability === "text-generation";
+
     for (const entry of MODEL_REGISTRY) {
-      if (capability && entry.capability !== capability) continue;
+      if (isCodeGenFilter) {
+        // Code-generation: only include text-generation models whose provider
+        // model IDs are in the verified CODE_GENERATION_MODELS set
+        if (entry.capability !== "text-generation") continue;
+        const providerModelIds = Object.values(entry.providers)
+          .filter(Boolean)
+          .map((p) => (p as { modelId: string }).modelId);
+        const hasCodeModel = providerModelIds.some((id) => CODE_GENERATION_MODELS.has(id));
+        // Also check if the registry ID itself is in the set (e.g., "claude-sonnet-4-6")
+        if (!hasCodeModel && !CODE_GENERATION_MODELS.has(entry.id)) continue;
+      } else if (capability && entry.capability !== capability) {
+        continue;
+      }
       if (entry.deprecated) continue;
+
+      // Exclude image-chat models (e.g. Gemini 3 Pro Image) from text-generation
+      // and code-generation filters — they are specialized for image generation
+      // and should only appear when no capability filter is set
+      if ((isTextGenFilter || isCodeGenFilter) && entry.capabilities?.canGenerateImages) {
+        continue;
+      }
 
       // Only include models that have at least one configured provider
       const configuredProviders = (Object.keys(entry.providers) as Array<keyof typeof entry.providers>)
@@ -453,6 +482,8 @@ twoBotAIRouter.get(
         deprecated: entry.deprecated,
         isHealthy: isModelHealthy(entry.id),
         functionCalling: entry.capabilities?.supportsFunctionCalling ?? false,
+        reasoning: REASONING_MODELS.has(entry.id),
+        supportsVision: entry.capabilities?.canAnalyzeImages ?? false,
       });
     }
 

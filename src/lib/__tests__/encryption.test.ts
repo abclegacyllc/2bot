@@ -32,7 +32,7 @@ describe('encrypt', () => {
 
     expect(typeof encrypted).toBe('string');
     expect(encrypted).not.toBe(plaintext);
-    expect(encrypted.startsWith('v1:')).toBe(true);
+    expect(encrypted.startsWith('v2:1:')).toBe(true);
   });
 
   it('encrypts an object as JSON', () => {
@@ -40,7 +40,7 @@ describe('encrypt', () => {
     const encrypted = encrypt(data);
 
     expect(typeof encrypted).toBe('string');
-    expect(encrypted.startsWith('v1:')).toBe(true);
+    expect(encrypted.startsWith('v2:1:')).toBe(true);
     expect(encrypted).not.toContain('secret');
     expect(encrypted).not.toContain('token123');
   });
@@ -58,7 +58,7 @@ describe('encrypt', () => {
     const encrypted = encrypt('');
 
     expect(typeof encrypted).toBe('string');
-    expect(encrypted.startsWith('v1:')).toBe(true);
+    expect(encrypted.startsWith('v2:1:')).toBe(true);
   });
 
   it('encrypts long strings', () => {
@@ -66,7 +66,7 @@ describe('encrypt', () => {
     const encrypted = encrypt(longText);
 
     expect(typeof encrypted).toBe('string');
-    expect(encrypted.startsWith('v1:')).toBe(true);
+    expect(encrypted.startsWith('v2:1:')).toBe(true);
   });
 
   it('encrypts special characters', () => {
@@ -74,7 +74,7 @@ describe('encrypt', () => {
     const encrypted = encrypt(special);
 
     expect(typeof encrypted).toBe('string');
-    expect(encrypted.startsWith('v1:')).toBe(true);
+    expect(encrypted.startsWith('v2:1:')).toBe(true);
   });
 
   it('encrypts unicode characters', () => {
@@ -82,7 +82,7 @@ describe('encrypt', () => {
     const encrypted = encrypt(unicode);
 
     expect(typeof encrypted).toBe('string');
-    expect(encrypted.startsWith('v1:')).toBe(true);
+    expect(encrypted.startsWith('v2:1:')).toBe(true);
   });
 
   it('encrypts newlines and whitespace', () => {
@@ -90,7 +90,7 @@ describe('encrypt', () => {
     const encrypted = encrypt(multiline);
 
     expect(typeof encrypted).toBe('string');
-    expect(encrypted.startsWith('v1:')).toBe(true);
+    expect(encrypted.startsWith('v2:1:')).toBe(true);
   });
 });
 
@@ -154,8 +154,12 @@ describe('decrypt', () => {
 
   it('throws error for tampered ciphertext', () => {
     const encrypted = encrypt('secret');
-    // Tamper with base64 data
-    const tampered = encrypted.replace('v1:', 'v1:AA');
+    // Flip a byte in the base64 payload (after the `v2:1:` prefix)
+    const prefix = encrypted.slice(0, encrypted.indexOf(':', 3) + 1);
+    const payload = encrypted.slice(prefix.length);
+    const bytes = Buffer.from(payload, 'base64');
+    bytes[bytes.length - 1] = bytes[bytes.length - 1]! ^ 0xff;
+    const tampered = prefix + bytes.toString('base64');
 
     expect(() => decrypt(tampered)).toThrow();
   });
@@ -289,7 +293,8 @@ describe('Encryption roundtrip', () => {
 describe('Security properties', () => {
   it('encrypted data is base64 encoded', () => {
     const encrypted = encrypt('secret');
-    const base64Part = encrypted.slice(3); // Remove 'v1:'
+    // Strip `v2:<keyVersion>:` prefix
+    const base64Part = encrypted.slice(encrypted.indexOf(':', 3) + 1);
 
     // Valid base64 should decode without error
     expect(() => Buffer.from(base64Part, 'base64')).not.toThrow();
@@ -307,9 +312,10 @@ describe('Security properties', () => {
     const encrypted = encrypt('secret');
 
     // Any modification should fail decryption
-    const bytes = Buffer.from(encrypted.slice(3), 'base64');
+    const prefix = encrypted.slice(0, encrypted.indexOf(':', 3) + 1);
+    const bytes = Buffer.from(encrypted.slice(prefix.length), 'base64');
     bytes[20] = bytes[20]! ^ 0xff; // Flip bits in auth tag area
-    const modified = 'v1:' + bytes.toString('base64');
+    const modified = prefix + bytes.toString('base64');
 
     expect(() => decrypt(modified)).toThrow();
   });

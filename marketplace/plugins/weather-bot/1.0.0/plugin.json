@@ -4,8 +4,17 @@
   "version": "1.0.0",
   "description": "Check weather for any city with /weather. Get current temperature, humidity, wind speed, and conditions in real time.",
   "category": "utilities",
-  "requiredGateways": ["TELEGRAM_BOT"],
-  "tags": ["telegram", "weather", "api", "http", "bot", "open-meteo"],
+  "requiredGateways": [
+    "TELEGRAM_BOT"
+  ],
+  "tags": [
+    "telegram",
+    "weather",
+    "api",
+    "http",
+    "bot",
+    "open-meteo"
+  ],
   "difficulty": "intermediate",
   "configSchema": {
     "type": "object",
@@ -23,6 +32,34 @@
   "icon": "cloud-sun",
   "author": "2bot",
   "isBuiltin": true,
-  "eventTypes": ["telegram.message"],
-  "eventRole": "responder"
+  "eventTypes": [
+    "telegram.message"
+  ],
+  "eventRole": "responder",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "message": {
+        "type": "string",
+        "title": "Message"
+      },
+      "city": {
+        "type": "string",
+        "title": "City"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "response": {
+        "type": "string",
+        "title": "Response"
+      },
+      "weatherData": {
+        "type": "object",
+        "title": "Weather Data"
+      }
+    }
+  }
 }

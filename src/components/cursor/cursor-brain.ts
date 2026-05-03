@@ -32,8 +32,35 @@ export interface WorkerStreamClientRequest {
   workflowContext?: WorkflowContext;
   /** Studio mode — controls tool availability and prompt behavior */
   studioMode?: "agent" | "ask" | "plan";
+  /**
+   * Declarative agent name from the dropdown (e.g. "agent" / "ask" / "plan").
+   * The backend uses this to apply the agent's frontmatter (runtime + studioMode).
+   * When omitted, the legacy `studioMode` + heuristic routing is used.
+   */
+  agentName?: string;
   /** Resume a suspended session — message becomes the user's answer */
   resumeSessionId?: string;
+  /**
+   * Frontend chat thread ID (the activeSessionId from cursor-studio-bar).
+   * Scopes agent memories to this chat session — fresh chat = clean slate.
+   */
+  chatThreadId?: string;
+  /**
+   * Attached images (base64 data URLs) to include in the first user message.
+   * Format: "data:image/png;base64,..." — max 4 images, each ≤ 4 MB.
+   */
+  imageParts?: Array<{ url: string; mimeType: string }>;
+  /**
+   * Prior turns from the current chat session — gives the AI memory of what was discussed.
+   * Serialized from the frontend messages array before each send.
+   */
+  conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+  /**
+   * User-configured per-session credit budget (from the Cursor settings popover).
+   * When supplied, overrides the per-runtime defaults (assistant=10, coder=30).
+   * Server clamps to a safe range; repo-clone sessions still get a 500-credit floor.
+   */
+  creditBudgetOverride?: number;
 }
 
 /** Workflow context passed from Studio to give the AI awareness of the current workflow */
@@ -42,6 +69,8 @@ export interface WorkflowContext {
   workflowName: string;
   triggerType: string;
   botName?: string;
+  /** Gateway ID of the bot currently open in the Studio */
+  gatewayId?: string;
   steps: Array<{
     id: string;
     order: number;
@@ -120,8 +149,11 @@ export function streamWorker(
 
       const decoder = new TextDecoder();
       let buffer = "";
+      let currentEventId: string | null = null;
 
       resetStaleTimer();
+
+      let receivedDone = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -137,7 +169,13 @@ export function streamWorker(
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith(":")) continue;
+          // Capture SSE event ID for reconnect support
+          if (trimmed.startsWith("id: ")) {
+            currentEventId = trimmed.slice(4).trim();
+            continue;
+          }
           if (trimmed === "data: [DONE]") {
+            receivedDone = true;
             clearStaleTimer();
             onDone();
             return;
@@ -145,6 +183,9 @@ export function streamWorker(
           if (trimmed.startsWith("data: ")) {
             try {
               const event = JSON.parse(trimmed.slice(6)) as Record<string, unknown>;
+              // Attach SSE event ID for reconnect tracking
+              if (currentEventId) event._eventId = parseInt(currentEventId, 10);
+              currentEventId = null;
               onEvent(event);
             } catch {
               // Skip malformed events
@@ -154,6 +195,10 @@ export function streamWorker(
       }
 
       clearStaleTimer();
+      // Stream closed without a [DONE] marker — unexpected disconnect
+      if (!receivedDone) {
+        onError("Connection closed unexpectedly. The session may have timed out or the server restarted. You can retry your request.");
+      }
       onDone();
     } catch (err) {
       clearStaleTimer();

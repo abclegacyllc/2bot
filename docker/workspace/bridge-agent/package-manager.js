@@ -54,36 +54,38 @@ class PackageManager {
    * @param {string} cwd - Working directory (relative to workspace)
    */
   async install(packages, dev = false, cwd = '.') {
-    if (!packages || packages.length === 0) {
-      throw new Error('No packages specified');
-    }
+    // Allow empty packages array to mean "npm install from package.json" (install all deps)
+    const installFromManifest = !packages || packages.length === 0;
 
     // Validate packages
-    const results = { installed: [], failed: [] };
+    const results = { installed: [], failed: [], skipped: [] };
     const validPackages = [];
 
-    for (const pkg of packages) {
-      const name = this._extractPackageName(pkg);
+    if (!installFromManifest) {
+      for (const pkg of packages) {
+        const name = this._extractPackageName(pkg);
 
-      if (BLOCKED_PACKAGES.has(name)) {
-        results.failed.push({ package: pkg, reason: 'Blocked for security reasons' });
-        continue;
+        if (BLOCKED_PACKAGES.has(name)) {
+          results.failed.push({ package: pkg, reason: 'Blocked for security reasons' });
+          continue;
+        }
+
+        if (!this._isValidPackageName(name)) {
+          results.failed.push({ package: pkg, reason: 'Invalid package name' });
+          continue;
+        }
+
+        validPackages.push(pkg);
       }
 
-      if (!this._isValidPackageName(name)) {
-        results.failed.push({ package: pkg, reason: 'Invalid package name' });
-        continue;
+      if (validPackages.length === 0) {
+        return {
+          success: results.failed.length === 0,
+          installed: [],
+          failed: results.failed,
+          skipped: [],
+        };
       }
-
-      validPackages.push(pkg);
-    }
-
-    if (validPackages.length === 0) {
-      return {
-        success: results.failed.length === 0,
-        installed: [],
-        failed: results.failed,
-      };
     }
 
     const fullCwd = path.resolve(this.workspaceDir, cwd);
@@ -91,23 +93,51 @@ class PackageManager {
       throw new Error('Working directory must be within workspace');
     }
 
-    // Ensure package.json exists
-    try {
-      await fs.access(path.join(fullCwd, 'package.json'));
-    } catch {
-      // Create a basic package.json
-      await fs.writeFile(
-        path.join(fullCwd, 'package.json'),
-        JSON.stringify({ name: 'workspace', version: '1.0.0', private: true }, null, 2)
-      );
+    // Ensure package.json exists (only needed when installing specific packages)
+    if (!installFromManifest) {
+      try {
+        await fs.access(path.join(fullCwd, 'package.json'));
+      } catch {
+        // Create a basic package.json
+        await fs.writeFile(
+          path.join(fullCwd, 'package.json'),
+          JSON.stringify({ name: 'workspace', version: '1.0.0', private: true }, null, 2)
+        );
+      }
+
+      // Deduplicate: skip packages already present in node_modules to avoid
+      // redundant installs when multiple plugins share the same dependency.
+      const toInstall = [];
+      const nodeModulesDir = path.join(fullCwd, 'node_modules');
+      for (const pkg of validPackages) {
+        const name = this._extractPackageName(pkg);
+        try {
+          await fs.access(path.join(nodeModulesDir, name, 'package.json'));
+          // Package directory exists — skip it
+          results.skipped.push(pkg);
+          this.log.debug(`Dependency already present, skipping: ${name}`);
+        } catch {
+          toInstall.push(pkg);
+        }
+      }
+
+      if (toInstall.length === 0) {
+        this.logCollector.log('info', 'npm', `All packages already installed (skipped): ${validPackages.join(', ')}`);
+        return { success: true, installed: [], failed: [], skipped: validPackages };
+      }
+
+      // Replace validPackages with only the ones that need installing
+      validPackages.length = 0;
+      validPackages.push(...toInstall);
     }
 
     // Build command
-    const args = ['install', ...validPackages];
-    if (dev) args.push('--save-dev');
-    args.push('--no-audit', '--no-fund', '--loglevel', 'warn');
+    const args = installFromManifest
+      ? ['install', '--no-audit', '--no-fund', '--loglevel', 'warn']
+      : ['install', ...validPackages, '--no-audit', '--no-fund', '--loglevel', 'warn'];
+    if (!installFromManifest && dev) args.splice(1, 0, '--save-dev');
 
-    this.log.info(`Installing packages: ${validPackages.join(', ')}`);
+    this.log.info(installFromManifest ? 'Installing all deps from package.json' : `Installing packages: ${validPackages.join(', ')}`);
     this.logCollector.log('info', 'npm', `Installing: ${validPackages.join(', ')}`);
 
     try {
@@ -121,7 +151,7 @@ class PackageManager {
         },
       });
 
-      results.installed = validPackages;
+      results.installed = installFromManifest ? ['(all from package.json)'] : validPackages;
 
       if (stderr && !stderr.includes('npm warn')) {
         this.log.warn(`npm stderr: ${stderr.trim()}`);

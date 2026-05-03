@@ -88,12 +88,6 @@ export function BotCard({ bot, onSelect }: BotCardProps) {
             )}
             {gateway.status === "CONNECTED" ? "Online" : gateway.status.toLowerCase()}
           </Badge>
-          <Badge
-            variant={gateway.mode === "workflow" ? "default" : "outline"}
-            className="text-[10px]"
-          >
-            {gateway.mode === "workflow" ? "Workflow" : "Plugin"}
-          </Badge>
           {hasErrors ? (
             <Badge variant="destructive" className="text-[11px]">
               Has errors
@@ -102,7 +96,7 @@ export function BotCard({ bot, onSelect }: BotCardProps) {
         </div>
 
         {/* Capabilities */}
-        {gateway.mode === "workflow" && wf ? (
+        {wf ? (
           <div className="space-y-1.5">
             <p className="text-xs text-muted-foreground flex items-center gap-1">
               <GitBranch className="h-3 w-3" />

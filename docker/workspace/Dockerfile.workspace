@@ -21,6 +21,7 @@ FROM node:20-alpine AS base
 # python3: some npm packages need it for node-gyp builds
 # openssh-client: for git SSH operations (future)
 # iptables: for network egress control (container-side rules)
+# util-linux: provides `prlimit` for per-plugin RLIMIT enforcement
 RUN apk add --no-cache \
     git \
     bash \
@@ -28,6 +29,7 @@ RUN apk add --no-cache \
     python3 \
     openssh-client \
     iptables \
+    util-linux \
     && rm -rf /var/cache/apk/*
 
 # ============================================
@@ -50,8 +52,9 @@ COPY bridge-agent/package.json bridge-agent/package-lock.json* ./
 
 # Install bridge agent dependencies
 # better-sqlite3 requires native compilation (build-base provides gcc/g++/make)
+# NOTE: Do not suppress stderr — native module build failures must be visible
 RUN apk add --no-cache --virtual .build-deps build-base \
-    && npm ci --production 2>/dev/null || npm install --production \
+    && npm ci --production || npm install --production \
     && apk del .build-deps
 
 # Copy bridge agent source

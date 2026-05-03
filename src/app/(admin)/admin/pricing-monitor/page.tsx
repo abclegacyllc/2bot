@@ -63,6 +63,15 @@ interface PricingAuditReport {
     removedModels: number;
     errors: number;
   };
+  meta?: {
+    runType?: "manual" | "scheduled";
+    autoCheckEnabled?: boolean;
+    autoCheckIntervalMs?: number;
+    changesDetectedFromPreviousRun?: boolean;
+    previousTimestamp?: string;
+    telegramNotificationsEnabled?: boolean;
+    telegramChatConfigured?: boolean;
+  };
   newModelsByType?: Record<string, number>;
   providers: ProviderAuditResult[];
 }
@@ -832,8 +841,40 @@ export default function AdminPricingMonitorPage() {
             Provider Price Monitor
           </h1>
           <p className="text-muted-foreground">
-            Live comparison of provider API prices vs our model-pricing.ts
+            Live comparison of provider API prices vs our registry, with automatic background checks.
           </p>
+          {report?.meta?.autoCheckEnabled && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Badge variant="outline" className="border-blue-500/30 text-blue-400 bg-blue-500/10">
+                Auto-check every {Math.max(1, Math.round((report.meta.autoCheckIntervalMs ?? 86_400_000) / 3_600_000))}h
+              </Badge>
+              <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
+                {report.meta.runType === "scheduled" ? "Last run: scheduled" : "Last run: manual"}
+              </Badge>
+              {report.meta.changesDetectedFromPreviousRun ? (
+                <Badge variant="outline" className="border-yellow-500/30 text-yellow-400 bg-yellow-500/10">
+                  Changes detected since previous run
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="border-zinc-500/30 text-zinc-300 bg-zinc-500/10">
+                  No new changes since previous run
+                </Badge>
+              )}
+              {report.meta.telegramNotificationsEnabled ? (
+                <Badge variant="outline" className="border-sky-500/30 text-sky-400 bg-sky-500/10">
+                  Telegram alerts enabled
+                </Badge>
+              ) : report.meta.telegramChatConfigured ? (
+                <Badge variant="outline" className="border-orange-500/30 text-orange-400 bg-orange-500/10">
+                  Telegram chat set, bot token missing
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="border-zinc-500/30 text-zinc-300 bg-zinc-500/10">
+                  Telegram alerts not configured
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
         <Button
           onClick={runAudit}
@@ -873,7 +914,7 @@ export default function AdminPricingMonitorPage() {
             <h3 className="text-lg font-medium text-foreground mb-2">No Audit Report</h3>
             <p className="text-muted-foreground mb-6 max-w-md mx-auto">
               Click &quot;Run Audit&quot; to compare all provider prices against our system.
-              The audit queries each provider&apos;s API in real-time.
+              Automatic background monitoring also runs daily by default.
             </p>
             <Button
               onClick={runAudit}

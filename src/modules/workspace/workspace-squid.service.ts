@@ -896,8 +896,22 @@ class EgressProxyService {
   /**
    * Add a domain to a user's allowlist.
    * Validates the domain, stores it in DB, then syncs the proxy config.
+   *
+   * @param options.addedBy  Provenance of the addition. `"user"` for manual
+   *   additions via Settings UI; `"ai-agent"` for additions made by a
+   *   Cursor agent tool call after explicit user confirmation in chat.
+   * @param options.sessionId  Cursor session id when `addedBy="ai-agent"`,
+   *   stored for admin auditing.
    */
-  async addUserDomain(userId: string, domain: string, reason?: string): Promise<{ id: string; domain: string }> {
+  async addUserDomain(
+    userId: string,
+    domain: string,
+    reason?: string,
+    options?: { addedBy?: "user" | "ai-agent"; sessionId?: string },
+  ): Promise<{ id: string; domain: string; addedBy: string }> {
+    const addedBy = options?.addedBy ?? "user";
+    const addedBySessionId = options?.sessionId ?? null;
+
     // Normalize domain: ensure leading dot for subdomain matching
     const normalized = this.normalizeDomain(domain);
     if (!normalized) {
@@ -928,6 +942,8 @@ class EgressProxyService {
         reason,
         consentAccepted: true,
         consentAt: new Date(),
+        addedBy,
+        addedBySessionId,
       },
       create: {
         userId,
@@ -936,6 +952,8 @@ class EgressProxyService {
         reason,
         consentAccepted: true,
         consentAt: new Date(),
+        addedBy,
+        addedBySessionId,
       },
     });
 
@@ -943,8 +961,11 @@ class EgressProxyService {
     await this.syncAllAcls();
     await this.reloadProxy();
 
-    log.info({ userId, domain: normalized }, 'User domain added to allowlist');
-    return { id: record.id, domain: record.domain };
+    log.info(
+      { userId, domain: normalized, addedBy, sessionId: addedBySessionId },
+      'User domain added to allowlist',
+    );
+    return { id: record.id, domain: record.domain, addedBy: record.addedBy };
   }
 
   /**
@@ -990,10 +1011,15 @@ class EgressProxyService {
 
   /**
    * Get all allowed domains (admin view).
+   *
+   * @param status   Optional status filter (e.g. `"APPROVED"`).
+   * @param addedBy  Optional provenance filter (`"user"` or `"ai-agent"`)
+   *   so the admin panel can show "AI-added domains" as a separate audit list.
    */
-  async getAllDomains(status?: string) {
+  async getAllDomains(status?: string, addedBy?: "user" | "ai-agent") {
     const where: Record<string, unknown> = {};
     if (status) where.status = status;
+    if (addedBy) where.addedBy = addedBy;
 
     return prisma.workspaceAllowedDomain.findMany({
       where,

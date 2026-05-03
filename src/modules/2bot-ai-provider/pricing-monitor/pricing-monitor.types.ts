@@ -131,6 +131,17 @@ export interface PricingAuditReport {
     errors: number;
   };
 
+  /** Run metadata for UI/cron visibility */
+  meta?: {
+    runType?: 'manual' | 'scheduled';
+    autoCheckEnabled?: boolean;
+    autoCheckIntervalMs?: number;
+    changesDetectedFromPreviousRun?: boolean;
+    previousTimestamp?: string;
+    telegramNotificationsEnabled?: boolean;
+    telegramChatConfigured?: boolean;
+  };
+
   /** Breakdown of new models by type */
   newModelsByType?: Record<string, number>;
 

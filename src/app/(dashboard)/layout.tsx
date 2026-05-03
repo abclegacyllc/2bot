@@ -33,11 +33,14 @@ import {
     ChevronRight,
     Coins,
     CreditCard,
+    FolderKanban,
     Home,
     Layers,
     LogOut,
     Menu,
+    MessageSquare,
     Network,
+    Plug,
     Settings,
     Shield,
     Store,
@@ -56,9 +59,20 @@ const sharedNavItemsBase = [
   { path: "/workspace", label: "Workspace", icon: Box },
 ];
 
+// Chat-first surfaces (Projects) — only shown when the
+// NEXT_PUBLIC_FEATURE_CHAT_FIRST flag is enabled.
+const CHAT_FIRST_ENABLED =
+  (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() === "enabled";
+const chatFirstNavItemsBase = CHAT_FIRST_ENABLED
+  ? [
+      { path: "/chat", label: "Chat", icon: MessageSquare },
+      { path: "/projects", label: "Projects", icon: FolderKanban },
+    ]
+  : [];
+
 // Build shared nav items based on context
 const buildSharedNavItems = (isOrgContext: boolean, orgSlug: string) => 
-  sharedNavItemsBase.map(item => ({
+  [...sharedNavItemsBase, ...chatFirstNavItemsBase].map(item => ({
     href: isOrgContext && orgSlug 
       ? `/organizations/${orgSlug}${item.path}`
       : `${item.path || '/'}`,
@@ -88,6 +102,7 @@ const buildOrgNavItems = (orgSlug: string) => [
 // Settings sub-items for PERSONAL context
 const personalSettingsSubItems = [
   { href: "/settings", label: "Profile", icon: User },
+  { href: "/settings/integrations", label: "Integrations", icon: Plug },
 ];
 
 // Settings sub-items for ORGANIZATION context (dynamic - see buildOrgSettingsSubItems)

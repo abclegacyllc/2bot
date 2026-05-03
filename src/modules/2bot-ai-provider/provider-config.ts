@@ -16,6 +16,7 @@ import { logger } from "@/lib/logger";
 import { type AICapability } from "./ai-capabilities";
 import { getDiscoveredModels, hasDiscoveredModels } from "./model-discovery.service";
 import { isModelHealthy } from "./model-health-tracker";
+import { isProviderCircuitHealthy } from "./provider-circuit-breaker";
 import { getProviderModelIds, getRegistryEntriesByProvider, getRegistryEntry, registryToModelInfo } from "./model-registry";
 import {
     getAllProviders,
@@ -206,7 +207,7 @@ export function getCheapestModel(capability: AICapability = "text-generation"): 
  */
 export function getAutoFallbackChain(capability: AICapability = "text-generation"): ModelInfo[] {
   return getAvailableModels(capability)
-    .filter((m) => !m.deprecated && isModelHealthy(m.id))
+    .filter((m) => !m.deprecated && isModelHealthy(m.id) && isProviderCircuitHealthy(m.provider))
     .sort((a, b) => (a.tier || 99) - (b.tier || 99) || a.id.localeCompare(b.id));
 }
 
@@ -231,10 +232,11 @@ export function isModelAvailable(modelId: string): boolean {
  */
 export function getModelIfAvailable(modelId: string): ModelInfo | undefined {
   const models = getAvailableModels();
-  const direct = models.find((m) => m.id === modelId);
-  if (direct) return direct;
 
-  // Fallback: resolve canonical registry ID → provider-specific modelId
+  // First try registry-based lookup: resolves canonical registry ID (e.g. "zai-org/GLM-4.7")
+  // to the best available provider, respecting provider priority order.
+  // This prevents picking a provider just because its modelId happens to match the registry ID
+  // (e.g. Together uses "zai-org/GLM-4.7" as its modelId but may not have the model available).
   const entry = getRegistryEntry(modelId);
   if (entry) {
     for (const provider of Object.keys(entry.providers) as TwoBotAIProvider[]) {
@@ -245,6 +247,10 @@ export function getModelIfAvailable(modelId: string): ModelInfo | undefined {
       }
     }
   }
+
+  // Direct match fallback: for provider-specific IDs not in the registry
+  const direct = models.find((m) => m.id === modelId);
+  if (direct) return direct;
 
   return undefined;
 }

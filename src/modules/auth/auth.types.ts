@@ -24,7 +24,7 @@ export type SessionWithUser = Session & {
 
 /**
  * JWT Token Payload
- * Simplified for Phase 6.7 architecture - context determined by URL, not token
+ * Simplified for architecture - context determined by URL, not token
  */
 export interface TokenPayload {
   userId: string;
@@ -32,17 +32,17 @@ export interface TokenPayload {
   plan: PlanType;      // User's personal plan
   sessionId: string;
   
-  // Role fields (Phase 1.5) - platform role
+  // Role fields - platform role
   role: UserRole;
   
-  // Phase 6.7: activeContext and availableOrgs REMOVED
+  // activeContext and availableOrgs REMOVED
   // - Context is determined by URL (/api/user/* vs /api/orgs/:orgId/*)
   // - Organizations are fetched via /api/user/organizations
 }
 
 /**
  * Active context - what the user is currently operating as
- * Phase 6.7: Now UI-only, not stored in token
+ * Now UI-only, not stored in token
  */
 export interface ActiveContext {
   type: "personal" | "organization";
@@ -54,7 +54,7 @@ export interface ActiveContext {
 
 /**
  * Organization available for switching
- * Phase 6.7: Now fetched from API, not stored in token
+ * Now fetched from API, not stored in token
  */
 export interface AvailableOrg {
   id: string;
@@ -99,7 +99,7 @@ export interface ChangePasswordRequest {
 }
 
 /**
- * Context switching request (Phase 4)
+ * Context switching request
  */
 export interface SwitchContextRequest {
   contextType: "personal" | "organization";
@@ -107,7 +107,7 @@ export interface SwitchContextRequest {
 }
 
 /**
- * Context switching response (Phase 4)
+ * Context switching response
  */
 export interface SwitchContextResponse {
   token: string;

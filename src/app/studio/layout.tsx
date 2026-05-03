@@ -13,6 +13,8 @@
 
 import { ProtectedRoute } from "@/components/auth/protected-route";
 import { Cursor, CursorProvider } from "@/components/cursor";
+import { CursorStudioBar } from "@/components/cursor/cursor-studio-bar";
+import { StudioBarProvider } from "@/components/cursor/studio-bar-context";
 import { useAuth } from "@/components/providers/auth-provider";
 import { BotSidebar } from "@/components/studio/bot-sidebar";
 import { StudioTopBar } from "@/components/studio/top-bar";
@@ -26,6 +28,7 @@ import {
     useCallback,
     useContext,
     useEffect,
+    useRef,
     useState,
     type ReactNode,
 } from "react";
@@ -61,6 +64,11 @@ export function useStudio(): StudioContextValue {
   return ctx;
 }
 
+/** Safe version — returns null when outside StudioLayout instead of throwing */
+export function useStudioSafe(): StudioContextValue | null {
+  return useContext(StudioContext);
+}
+
 // =============================================================================
 // Layout Content
 // =============================================================================
@@ -72,8 +80,12 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
   const organizationId =
     context.type === "organization" ? context.organizationId : undefined;
 
-  // Sidebar state
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Sidebar state — default collapsed, persisted in localStorage
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const saved = localStorage.getItem("studio-sidebar-collapsed");
+    return saved !== null ? saved === "true" : true;
+  });
 
   // Bot data
   const [gateways, setGateways] = useState<GatewayOption[]>([]);
@@ -86,6 +98,10 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
   // =========================================================================
   // Data Fetching
   // =========================================================================
+
+  // Keep previous data refs for equality checks to avoid re-renders when unchanged
+  const prevGatewaysRef = useRef<GatewayOption[]>([]);
+  const prevPluginsRef = useRef<UserPlugin[]>([]);
 
   const fetchData = useCallback(async () => {
     if (!token) return;
@@ -104,12 +120,21 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
       ]);
 
       if (gatewayResult.success && gatewayResult.data) {
-        setGateways(gatewayResult.data);
+        // Only update state when data actually changed to avoid cascading re-renders
+        const next = gatewayResult.data;
+        if (JSON.stringify(next) !== JSON.stringify(prevGatewaysRef.current)) {
+          prevGatewaysRef.current = next;
+          setGateways(next);
+        }
       }
 
       if (pluginsRes.ok) {
         const json = await pluginsRes.json();
-        setPlugins(json.data ?? []);
+        const next: UserPlugin[] = json.data ?? [];
+        if (JSON.stringify(next) !== JSON.stringify(prevPluginsRef.current)) {
+          prevPluginsRef.current = next;
+          setPlugins(next);
+        }
       }
     } catch {
       // Best-effort
@@ -120,6 +145,15 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     fetchData();
+  }, [fetchData]);
+
+  // Event-driven refresh: triggered by Cursor AI when it creates/modifies plugins.
+  // Replaces the old 30-second polling loop which caused constant layout re-renders
+  // even when the user was idle (bad UX — visible flicker in sidebar/canvas).
+  useEffect(() => {
+    const handler = () => fetchData();
+    window.addEventListener("studio:plugins-updated", handler);
+    return () => window.removeEventListener("studio:plugins-updated", handler);
   }, [fetchData]);
 
   // =========================================================================
@@ -134,7 +168,11 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
   );
 
   const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed((prev) => !prev);
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("studio-sidebar-collapsed", String(next));
+      return next;
+    });
   }, []);
 
   // =========================================================================
@@ -154,7 +192,7 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
 
   return (
     <StudioContext.Provider value={studioCtx}>
-      <div className="h-screen flex flex-col overflow-hidden bg-background">
+      <div className="h-screen flex flex-col overflow-hidden bg-background relative">
         {/* Top Bar */}
         <StudioTopBar />
 
@@ -164,7 +202,20 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
           <BotSidebar />
 
           {/* Main Studio Area */}
-          <main className="flex-1 overflow-auto">{children}</main>
+          <main
+            className="flex-1 overflow-auto transition-[margin] duration-300 ease-in-out"
+            style={{
+              marginRight: "var(--cursor-bar-right, 0px)",
+              marginLeft: "var(--cursor-bar-left, 0px)",
+            }}
+          >
+            {children}
+          </main>
+        </div>
+
+        {/* CursorStudioBar — persistent across all studio pages */}
+        <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none">
+          <CursorStudioBar />
         </div>
       </div>
     </StudioContext.Provider>
@@ -179,7 +230,9 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
   return (
     <ProtectedRoute>
       <CursorProvider>
-        <StudioLayoutContent>{children}</StudioLayoutContent>
+        <StudioBarProvider>
+          <StudioLayoutContent>{children}</StudioLayoutContent>
+        </StudioBarProvider>
         {/* CursorPanel hidden in studio — CursorStudioBar replaces it */}
         <Cursor />
       </CursorProvider>

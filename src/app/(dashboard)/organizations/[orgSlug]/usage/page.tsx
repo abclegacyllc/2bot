@@ -10,7 +10,7 @@ export const metadata: Metadata = {
  * Organization Usage Dashboard Page
  *
  * Displays the organization's resource usage, limits, and per-member breakdown.
- * Uses new hierarchical resource types (Phase 3 migration).
+ * Uses new hierarchical resource types (migration).
  * The client component uses useOrganization hook to resolve slug to orgId.
  */
 export default function OrgUsagePage() {

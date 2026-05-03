@@ -56,6 +56,10 @@ export interface PluginManifest {
   isBuiltin: boolean;
   eventTypes?: string[];
   eventRole?: string;
+  /** What data the plugin accepts (workflow input ports) */
+  inputSchema?: Record<string, unknown> | null;
+  /** What data the plugin produces (workflow output ports) */
+  outputSchema?: Record<string, unknown> | null;
   /** For directory layouts: list of files in the bundle */
   files?: string[];
 }

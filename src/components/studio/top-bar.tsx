@@ -273,7 +273,7 @@ export function StudioTopBar() {
             <SearchQuickLink
               icon={Workflow}
               label="2Bot AI"
-              href="/2bot-ai"
+              href="/studio"
               onNavigate={() => setSearchOpen(false)}
             />
             <SearchQuickLink

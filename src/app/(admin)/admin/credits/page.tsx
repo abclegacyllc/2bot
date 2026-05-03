@@ -259,20 +259,23 @@ export default function AdminCreditsPage() {
               </Card>
             </Link>
 
-            <Card className="border-dashed">
-              <CardContent className="pt-6">
-                <div className="flex flex-col items-center text-center space-y-2">
-                  <DollarSign className="h-8 w-8 text-muted-foreground" />
-                  <h3 className="font-semibold text-foreground">Grant Credits</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Manual credit grants
-                  </p>
-                  <Button size="sm" className="w-full" disabled>
-                    Coming Soon
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <Link href="/admin/credits/grant">
+              <Card className="cursor-pointer hover:border-yellow-500 transition-colors">
+                <CardContent className="pt-6">
+                  <div className="flex flex-col items-center text-center space-y-2">
+                    <DollarSign className="h-8 w-8 text-yellow-500" />
+                    <h3 className="font-semibold text-foreground">Grant Credits</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Manual credit grants
+                    </p>
+                    <Button variant="ghost" size="sm" className="w-full">
+                      Grant Credits
+                      <ArrowRight className="h-4 w-4 ml-2" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
           </div>
         </CardContent>
       </Card>

@@ -68,6 +68,18 @@ describe('Cursor Tool Definitions', () => {
     expect(assistantTools.length).toBe(WORKER_TOOL_NAMES.assistant.length);
     expect(coderTools.length).toBe(WORKER_TOOL_NAMES.coder.length);
   });
+
+  it('exposes request_domain_allowlist to both worker types with required args', () => {
+    const assistantTools = getWorkerTools('assistant');
+    const coderTools = getWorkerTools('coder');
+    const onAssistant = assistantTools.find((t) => t.name === 'request_domain_allowlist');
+    const onCoder = coderTools.find((t) => t.name === 'request_domain_allowlist');
+    expect(onAssistant).toBeDefined();
+    expect(onCoder).toBeDefined();
+    expect(onAssistant?.parameters.required).toEqual(['domains', 'reason']);
+    expect(onAssistant?.parameters.properties.domains).toBeDefined();
+    expect(onAssistant?.parameters.properties.reason).toBeDefined();
+  });
 });
 
 // ===========================================

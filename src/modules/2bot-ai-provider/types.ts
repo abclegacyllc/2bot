@@ -217,6 +217,8 @@ export interface TextGenerationResponse {
   cached?: boolean; // True if response came from cache (cost: $0.00)
   /** Tool calls requested by the AI (present when finishReason === "tool_use") */
   toolCalls?: ToolCallResult[];
+  /** Internal reasoning / chain-of-thought from reasoning models (Anthropic thinking, Gemini thinkingContent, <think> tags) */
+  reasoning?: string;
 }
 
 export interface TextGenerationStreamChunk {

@@ -26,8 +26,9 @@ export type { Plugin, PluginAuthorType, UserPlugin } from "@prisma/client";
  */
 export function pluginSlugFromPath(filePath: string): string {
   return filePath
-    .replace(/^bots\/[^/]+\/plugins\//, '')  // Strip bot-dir prefix: bots/{gwId}/plugins/
-    .replace(/^plugins\//, '')                // Strip flat prefix: plugins/
+    .replace(/^bots\/[^/]+\/[^/]+\/plugins\//, '')  // Strip new format: bots/{platform}/{gwId}/plugins/
+    .replace(/^bots\/[^/]+\/plugins\//, '')          // Strip old format: bots/{gwId}/plugins/
+    .replace(/^plugins\//, '')                        // Strip flat prefix: plugins/
     .replace(/\.(js|ts|mjs|cjs|jsx|tsx)$/, '')
     .replace(/\/index$/, '')
     .replace(/\/$/, '');
@@ -104,7 +105,7 @@ export interface PluginDefinition {
   authorType: PluginAuthorType;
   isPublic: boolean;
   
-  // For workflow integration (Phase 5+)
+  // For workflow integration
   inputSchema?: JSONSchema | null;
   outputSchema?: JSONSchema | null;
 
@@ -202,6 +203,12 @@ export interface SafeUserPlugin {
   entryFile: string | null;
   /** Runtime process status from bridge agent (e.g. "running", "stopped", "not_found") */
   processStatus?: string;
+  /** Catalog `Plugin.version` recorded at install time. */
+  installedVersion: string | null;
+  /** True when the author has republished a newer bundle that the user hasn't pulled yet. */
+  needsUpdate: boolean;
+  /** True when container was wiped and this marketplace plugin's files need to be reinstalled. */
+  needsRestore: boolean;
 }
 
 /**
@@ -232,6 +239,9 @@ export function toSafeUserPlugin(userPlugin: UserPluginWithPlugin): SafeUserPlug
     authorType: userPlugin.plugin.authorType,
     entryFile: userPlugin.entryFile ?? null,
     processStatus: (userPlugin as unknown as Record<string, unknown>).processStatus as string | undefined,
+    installedVersion: userPlugin.installedVersion ?? null,
+    needsUpdate: userPlugin.needsUpdate ?? false,
+    needsRestore: userPlugin.needsRestore ?? false,
   };
 }
 
@@ -273,7 +283,8 @@ export interface InstallPluginRequest {
  * Update plugin config request
  */
 export interface UpdatePluginConfigRequest {
-  config: Record<string, unknown>;
+  /** New config values. If omitted, existing config is preserved and validation is skipped. */
+  config?: Record<string, unknown>;
   gatewayId?: string | null;
   /** Storage quota for local KV store in MB (0 = unlimited, default 50) */
   storageQuotaMb?: number;
@@ -456,6 +467,13 @@ export interface CreateCustomPluginRequest {
   files?: Record<string, string>;
   /** Entry file for directory plugins (default: "index.js") */
   entry?: string;
+  /**
+   * Explicitly force directory layout (creates bots/{platform}/{gwId}/plugins/{slug}/{entry}
+   * instead of bots/{platform}/{gwId}/plugins/{slug}.js).
+   * Defaults to true when `files` is provided; set this to true when registering
+   * the DB record before writing files so the path is correct from the start.
+   */
+  isDirectory?: boolean;
   requiredGateways?: GatewayType[];
   configSchema?: JSONSchema;
   config?: Record<string, unknown>;
@@ -480,6 +498,15 @@ export interface UpdateCustomPluginRequest {
   configSchema?: JSONSchema;
   category?: PluginCategory;
   tags?: string[];
+  /**
+   * When true, stamp the new code into the catalog (`Plugin.codeBundle` +
+   * `codeBundleUpdatedAt`) and flag every *other* install with
+   * `needsUpdate=true` so they can pull the update. When false/omitted, the
+   * change is treated as a private edit: it is pushed to the author's own
+   * container but no other user is affected. Has no effect for BUILTIN
+   * plugins (their code is always personal to the installer).
+   */
+  publish?: boolean;
 }
 
 /**

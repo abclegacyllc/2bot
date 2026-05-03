@@ -4,7 +4,7 @@
  * Usage Dashboard V2 Client Component
  *
  * Uses the new hierarchical resource status types and components.
- * This is the Phase 3 migration path for the usage dashboard.
+ * This is the migration path for the usage dashboard.
  *
  * @module app/(dashboard)/usage/client-v2
  */

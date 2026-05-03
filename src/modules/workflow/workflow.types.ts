@@ -15,7 +15,7 @@ import type {
 
 // Re-export Prisma types
 export type {
-    Workflow, WorkflowRun, WorkflowScope, WorkflowStatus, WorkflowStep, WorkflowStepRun,
+    Workflow, WorkflowEdge, WorkflowRun, WorkflowScope, WorkflowStatus, WorkflowStep, WorkflowStepRun,
     WorkflowTriggerType
 } from "@prisma/client";
 
@@ -222,6 +222,7 @@ export interface WorkflowDefinition {
   status: WorkflowStatus;
   isEnabled: boolean;
   steps: WorkflowStepDefinition[];
+  edges: WorkflowEdgeDefinition[];
   executionCount: number;
   lastExecutedAt?: Date;
   lastError?: string;
@@ -246,6 +247,9 @@ export interface WorkflowStepDefinition {
   condition?: StepCondition;
   onError: StepErrorHandler;
   maxRetries: number;
+  // Canvas position (graph layout)
+  positionX: number;
+  positionY: number;
   // Unified Engine fields (absorbed from UserPlugin)
   entryFile?: string;
   userPluginId?: string;
@@ -253,6 +257,27 @@ export interface WorkflowStepDefinition {
   executionCount?: number;
   lastExecutedAt?: Date;
   lastError?: string;
+}
+
+/**
+ * Workflow edge definition for API responses (graph connections)
+ */
+export interface WorkflowEdgeDefinition {
+  id: string;
+  sourceStepId: string | null;  // null = trigger
+  targetStepId: string;
+  sourcePort: string;
+  targetPort: string;
+}
+
+/**
+ * Create workflow edge request
+ */
+export interface CreateWorkflowEdgeRequest {
+  sourceStepId?: string | null;  // null or omitted = trigger
+  targetStepId: string;
+  sourcePort?: string;
+  targetPort?: string;
 }
 
 /**
@@ -404,6 +429,8 @@ export interface CreateWorkflowStepRequest {
   condition?: StepCondition;
   onError?: StepErrorHandler;
   maxRetries?: number;
+  positionX?: number;
+  positionY?: number;
 }
 
 /**
@@ -420,6 +447,8 @@ export interface UpdateWorkflowStepRequest {
   condition?: StepCondition | null;
   onError?: StepErrorHandler;
   maxRetries?: number;
+  positionX?: number;
+  positionY?: number;
 }
 
 /**

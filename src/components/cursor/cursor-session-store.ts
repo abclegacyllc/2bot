@@ -2,7 +2,7 @@
  * Cursor Session History Store — localStorage-based
  *
  * Records every Cursor interaction session with its events so users
- * can browse action history (like GitHub Copilot / Cursor IDE).
+ * can browse action history across agent sessions.
  *
  * Storage: browser localStorage (NOT server DB).
  * Key: "cursor-sessions"
@@ -30,7 +30,7 @@ import type { CursorWorkerType } from "@/modules/cursor/cursor-workers";
 // Types
 // ===========================================
 
-export type SessionStatus = "running" | "completed" | "error" | "cancelled";
+export type SessionStatus = "running" | "completed" | "error" | "cancelled" | "retried";
 
 /**
  * A single recorded event within a cursor session.
@@ -91,8 +91,76 @@ export interface CursorSession {
 // ===========================================
 
 const STORAGE_KEY = "cursor-sessions";
+const STORAGE_MODE_KEY = "cursor-session-storage";
 const MAX_SESSIONS = 50;
 const MAX_EVENTS_PER_SESSION = 200;
+
+// ===========================================
+// Session Storage Mode (local vs cloud)
+// ===========================================
+
+export type SessionStorageMode = "local" | "cloud";
+
+/** Read the current storage mode preference. */
+export function getSessionStorageMode(): SessionStorageMode {
+  try {
+    const v = localStorage.getItem(STORAGE_MODE_KEY);
+    if (v === "cloud") return "cloud";
+  } catch { /* ignore */ }
+  return "local";
+}
+
+/** Set the storage mode preference. */
+export function setSessionStorageMode(mode: SessionStorageMode): void {
+  try {
+    localStorage.setItem(STORAGE_MODE_KEY, mode);
+  } catch { /* ignore */ }
+}
+
+// ===========================================
+// Per-Session Credit Budget (user-configurable)
+// ===========================================
+
+/**
+ * The user's chosen per-session AI credit budget. This is the single source
+ * of truth for "Credit budget reached (X/Y) — continue?" prompts.
+ *
+ * When set, the value is sent on every stream request and the runner uses
+ * it instead of the per-runtime defaults (assistant=10, coder=30).
+ *
+ * Bounds: clamped to [10, 500] to keep AI budgets sane on both ends.
+ * The runner always lifts repo-clone sessions to ≥500 regardless of override.
+ */
+const CREDIT_BUDGET_KEY = "cursor-credit-budget";
+export const CREDIT_BUDGET_MIN = 10;
+export const CREDIT_BUDGET_MAX = 500;
+export const CREDIT_BUDGET_DEFAULT = 30;
+export const CREDIT_BUDGET_PRESETS: ReadonlyArray<number> = [30, 60, 120, 250, 500] as const;
+
+/** Read the user's per-session credit budget. Returns the default when unset. */
+export function getCreditBudget(): number {
+  try {
+    const raw = localStorage.getItem(CREDIT_BUDGET_KEY);
+    if (!raw) return CREDIT_BUDGET_DEFAULT;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return CREDIT_BUDGET_DEFAULT;
+    return Math.max(CREDIT_BUDGET_MIN, Math.min(CREDIT_BUDGET_MAX, Math.floor(n)));
+  } catch {
+    return CREDIT_BUDGET_DEFAULT;
+  }
+}
+
+/** Persist the per-session credit budget. Clamped to [MIN, MAX]. */
+export function setCreditBudget(value: number): number {
+  const clamped = Math.max(
+    CREDIT_BUDGET_MIN,
+    Math.min(CREDIT_BUDGET_MAX, Math.floor(Number.isFinite(value) ? value : CREDIT_BUDGET_DEFAULT)),
+  );
+  try {
+    localStorage.setItem(CREDIT_BUDGET_KEY, String(clamped));
+  } catch { /* ignore */ }
+  return clamped;
+}
 
 // ===========================================
 // Internal Helpers
@@ -174,9 +242,9 @@ function findActiveSession(): CursorSession | null {
  * Create a new session when the user submits a command.
  * Returns the session ID for reference.
  */
-export function createSession(userMessage: string): string {
+export function createSession(userMessage: string, overrideId?: string): string {
   const sessions = getSessionsCache();
-  const id = generateId();
+  const id = overrideId ?? generateId();
 
   const session: CursorSession = {
     id,
@@ -365,4 +433,91 @@ export function getSessionStats(): {
     totalToolCalls: sessions.reduce((sum, s) => sum + s.toolCount, 0),
     totalDurationMs: sessions.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
   };
+}
+
+/**
+ * Mark a session as "retried" — indicates the user retried this session's output.
+ * The session data is preserved for history but flagged.
+ */
+export function markSessionRetried(sessionId: string): void {
+  const sessions = getSessionsCache();
+  const session = sessions.find((s) => s.id === sessionId);
+  if (session && session.status !== "running") {
+    session.status = "retried";
+    saveToStorage(sessions);
+  }
+}
+
+// ===========================================
+// Cloud Session Storage (Container-Based)
+// ===========================================
+
+/**
+ * Sync a completed session to the user's workspace container.
+ * Fire-and-forget — failures are silently ignored.
+ * Called automatically by completeSession when storage mode is "cloud".
+ */
+export async function syncSessionToCloud(
+  sessionId: string,
+  token: string,
+  apiUrlFn: (path: string) => string,
+): Promise<void> {
+  const session = getSession(sessionId);
+  if (!session) return;
+
+  try {
+    await fetch(apiUrlFn("/cursor/sessions/cloud/sync"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ session }),
+    });
+  } catch {
+    // Fire-and-forget — container may be offline
+  }
+}
+
+/**
+ * Fetch session list from the user's workspace container.
+ * Falls back to localStorage if the request fails.
+ */
+export async function getCloudSessions(
+  token: string,
+  apiUrlFn: (path: string) => string,
+): Promise<CursorSession[]> {
+  try {
+    const res = await fetch(apiUrlFn("/cursor/sessions/cloud"), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return getSessions();
+    const data = (await res.json()) as { success: boolean; data?: { sessions: CursorSession[] } };
+    if (data.success && data.data?.sessions) return data.data.sessions;
+  } catch {
+    // Fallback to local
+  }
+  return getSessions();
+}
+
+/**
+ * Fetch a single session from the user's workspace container.
+ * Falls back to localStorage if the request fails.
+ */
+export async function getCloudSession(
+  sessionId: string,
+  token: string,
+  apiUrlFn: (path: string) => string,
+): Promise<CursorSession | null> {
+  try {
+    const res = await fetch(apiUrlFn(`/cursor/sessions/cloud/${encodeURIComponent(sessionId)}`), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return getSession(sessionId);
+    const data = (await res.json()) as { success: boolean; data?: { session: CursorSession } };
+    if (data.success && data.data?.session) return data.data.session;
+  } catch {
+    // Fallback to local
+  }
+  return getSession(sessionId);
 }

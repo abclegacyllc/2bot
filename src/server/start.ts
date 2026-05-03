@@ -49,7 +49,7 @@ serverLogger.info('Plugin IPC handler registered for workspace bridge clients');
 const app = createApp();
 const server = startServer(app);
 
-// Initialize workspace terminal WebSocket handler (Phase 13)
+// Initialize workspace terminal WebSocket handler
 initWorkspaceWebSocket(server);
 
 // Start workspace lifecycle monitoring (health checks, auto-stop, restart recovery)

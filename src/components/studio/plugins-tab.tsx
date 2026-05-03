@@ -16,26 +16,31 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
+    Sheet,
+    SheetContent,
+    SheetDescription,
+    SheetHeader,
+    SheetTitle,
 } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 
 import type { GatewayOption, WorkflowListItem } from "@/lib/api-client";
+import { updateInstalledPlugin as apiUpdateInstalledPlugin } from "@/lib/api-client";
 import type { UserPlugin } from "@/shared/types/plugin";
 
 import {
-  AlertCircle,
-  Check,
-  Loader2,
-  Plug,
-  Plus,
-  Settings,
-  Trash2,
+    AlertCircle,
+    ArrowUpCircle,
+    Check,
+    Loader2,
+    Plug,
+    Plus,
+    RefreshCw,
+    Settings,
+    Trash2,
 } from "lucide-react";
+
+import { useState } from "react";
 
 // =============================================================================
 // Types
@@ -90,6 +95,23 @@ export function PluginsTab({
   onCloseAddPlugin,
   onPluginInstalled,
 }: PluginsTabProps) {
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  async function handleUpdate(userPluginId: string) {
+    if (!token) return;
+    setUpdatingId(userPluginId);
+    try {
+      await apiUpdateInstalledPlugin(userPluginId, token);
+      // Optimistically trigger parent refresh via the installed callback
+      // (studio layout polls every 30s, but bump now for snappy UX).
+      onPluginInstalled();
+    } catch (err) {
+      console.error("Failed to update plugin", err);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
   // Sort plugins by their workflow step order
   const sortedPlugins = [...plugins]
     .map((p) => {
@@ -167,6 +189,35 @@ export function PluginsTab({
 
                   {/* Right: actions */}
                   <div className="flex items-center gap-2 shrink-0">
+                    {p.needsRestore ? (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] gap-1 text-orange-400 border-orange-500/40 cursor-default"
+                        title="Container was wiped — reinstall this plugin from the Marketplace to restore it"
+                      >
+                        <RefreshCw className="h-3 w-3" /> Reinstall needed
+                      </Badge>
+                    ) : null}
+                    {p.needsUpdate ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-xs gap-1 text-sky-400 border-sky-500/40 hover:bg-sky-500/10"
+                        onClick={() => handleUpdate(p.id)}
+                        disabled={updatingId === p.id}
+                        title={
+                          p.installedVersion
+                            ? `Installed v${p.installedVersion} — new version available`
+                            : "A new version is available"
+                        }
+                      >
+                        {updatingId === p.id ? (
+                          <><Loader2 className="h-3 w-3 animate-spin" /> Updating...</>
+                        ) : (
+                          <><ArrowUpCircle className="h-3 w-3" /> Update</>
+                        )}
+                      </Button>
+                    ) : null}
                     {p.lastError ? (
                       p.processStatus === "running" ? (
                         <Badge

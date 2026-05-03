@@ -41,12 +41,12 @@ vi.mock("../workflow.executor", () => ({
 // Import after mocking
 import { prisma } from "@/lib/prisma";
 import {
-  checkBotMessageTrigger,
-  checkTelegramCallbackTrigger,
-  checkTelegramMessageTrigger,
-  checkDiscordMessageTrigger,
-  checkSlackMessageTrigger,
-  checkWhatsAppMessageTrigger,
+    checkBotMessageTrigger,
+    checkDiscordMessageTrigger,
+    checkSlackMessageTrigger,
+    checkTelegramCallbackTrigger,
+    checkTelegramMessageTrigger,
+    checkWhatsAppMessageTrigger,
 } from "../workflow.triggers";
 
 const mockedPrisma = prisma as unknown as {
@@ -103,8 +103,8 @@ describe("checkBotMessageTrigger", () => {
     const result = await checkBotMessageTrigger(GATEWAY_ID, USER_ID, ORG_ID, "telegram", { text: "hello" });
     expect(result).toBe(true);
     expect(mockExecuteWorkflow).toHaveBeenCalledTimes(2);
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_telegram", expect.objectContaining({ gatewayId: GATEWAY_ID }));
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-2", "bot_message_telegram", expect.objectContaining({ gatewayId: GATEWAY_ID }));
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_telegram", expect.objectContaining({ gatewayId: GATEWAY_ID }), undefined, undefined);
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-2", "bot_message_telegram", expect.objectContaining({ gatewayId: GATEWAY_ID }), undefined, undefined);
   });
 
   it("queries with correct filters", async () => {
@@ -137,7 +137,7 @@ describe("checkBotMessageTrigger", () => {
     const result = await checkBotMessageTrigger(GATEWAY_ID, USER_ID, ORG_ID, "telegram", { text: "/start" }, matchFn);
     expect(result).toBe(true);
     expect(mockExecuteWorkflow).toHaveBeenCalledTimes(1);
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-match", "bot_message_telegram", expect.anything());
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-match", "bot_message_telegram", expect.anything(), undefined, undefined);
   });
 
   it("returns false when all workflows are filtered by matchFn", async () => {
@@ -172,7 +172,7 @@ describe("checkTelegramMessageTrigger", () => {
     });
 
     expect(result).toBe(true);
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_telegram", expect.anything());
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_telegram", expect.anything(), undefined, undefined);
   });
 
   it("filters by chat type config", async () => {
@@ -251,7 +251,7 @@ describe("checkTelegramCallbackTrigger", () => {
     });
 
     expect(result).toBe(true);
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_telegram_callback", expect.anything());
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_telegram_callback", expect.anything(), undefined, undefined);
   });
 
   it("filters by dataValues", async () => {
@@ -311,7 +311,7 @@ describe("checkDiscordMessageTrigger", () => {
     });
 
     expect(result).toBe(true);
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_discord", expect.anything());
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_discord", expect.anything(), undefined, undefined);
   });
 
   it("filters by channel IDs", async () => {
@@ -341,7 +341,7 @@ describe("checkSlackMessageTrigger", () => {
     });
 
     expect(result).toBe(true);
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_slack", expect.anything());
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_slack", expect.anything(), undefined, undefined);
   });
 });
 
@@ -360,7 +360,7 @@ describe("checkWhatsAppMessageTrigger", () => {
     });
 
     expect(result).toBe(true);
-    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_whatsapp", expect.anything());
+    expect(mockExecuteWorkflow).toHaveBeenCalledWith("wf-1", "bot_message_whatsapp", expect.anything(), undefined, undefined);
   });
 
   it("filters by message types", async () => {

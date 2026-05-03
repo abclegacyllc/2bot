@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
-type TransactionType = 'purchase' | 'usage' | 'refund' | 'bonus' | 'grant' | 'allocation';
+type TransactionType = 'purchase' | 'usage' | 'refund' | 'bonus' | 'grant' | 'allocation' | 'daily_claim' | 'monthly_grant';
 
 interface CreditTransaction {
   id: string;
@@ -81,6 +81,8 @@ const TRANSACTION_TYPES: TransactionType[] = [
   'bonus',
   'grant',
   'allocation',
+  'daily_claim',
+  'monthly_grant',
 ];
 
 const TYPE_COLORS: Record<TransactionType, string> = {
@@ -90,6 +92,8 @@ const TYPE_COLORS: Record<TransactionType, string> = {
   bonus: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
   grant: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
   allocation: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20',
+  daily_claim: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+  monthly_grant: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
 };
 
 export default function AdminCreditTransactionsPage() {

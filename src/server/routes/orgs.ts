@@ -57,7 +57,7 @@ orgsRouter.use("/:orgId/billing", orgBillingRouter);
 // Mount org credits routes at /api/orgs/:orgId/credits/*
 orgsRouter.use("/:orgId/credits", orgCreditsRouter);
 
-// Mount org alerts routes at /api/orgs/:orgId/alerts/* (Phase 6.9)
+// Mount org alerts routes at /api/orgs/:orgId/alerts/*
 orgsRouter.use("/:orgId/alerts", orgAlertsRouter);
 
 /**
@@ -721,7 +721,7 @@ orgsRouter.get(
 );
 
 // ===========================================
-// Department Allocation Routes (Phase 6.9 → Phase B)
+// Department Allocation Routes (→ Phase B)
 // Renamed from "quotas" to "allocations" for 3-pool resource system
 // ===========================================
 
@@ -784,7 +784,7 @@ orgsRouter.post(
 );
 
 // ===========================================
-// Department Member Allocation Routes (Phase 6.9 → Phase B)
+// Department Member Allocation Routes (→ Phase B)
 // Renamed from "quotas" to "allocations" for 3-pool resource system
 // ===========================================
 

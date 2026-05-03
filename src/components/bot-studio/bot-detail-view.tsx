@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AddPluginPanel } from "@/components/bot-studio/add-plugin-panel";
 import { AddStepDialog } from "@/components/bot-studio/add-step-dialog";
@@ -48,7 +48,7 @@ import {
     updateWorkflow,
     updateWorkflowStep,
 } from "@/lib/api-client";
-import type { ConfigSchema, PluginListItem, UserPlugin } from "@/shared/types/plugin";
+import type { ConfigSchema, PluginListItem, PluginSchemaSet, UserPlugin } from "@/shared/types/plugin";
 import {
     AlertCircle,
     ArrowLeft,
@@ -177,7 +177,7 @@ export function BotDetailView({
   const [viewMode, setViewMode] = useState<"canvas" | "list">("canvas");
 
   // Step run statuses from last test run (for canvas overlay)
-  const [stepRunStatuses, setStepRunStatuses] = useState<Record<string, { status: string; durationMs?: number }>>({});
+  const [stepRunStatuses, setStepRunStatuses] = useState<Record<string, { status: string; durationMs?: number; error?: string }>>({});
 
   // Test workflow running state
   const [isTestingWorkflow, setIsTestingWorkflow] = useState(false);
@@ -208,6 +208,44 @@ export function BotDetailView({
     });
     return () => { cancelled = true; };
   }, [selectedStep?.pluginSlug, token]);
+
+  // Fetch plugin schemas for ALL workflow steps (config + input/output for canvas)
+  const [allPluginSchemas, setAllPluginSchemas] = useState<Record<string, PluginSchemaSet>>({});
+  const configSlugsKey = useMemo(
+    () => (workflow?.steps ?? []).map((s) => s.pluginSlug).filter(Boolean).sort().join(","),
+    [workflow?.steps],
+  );
+  useEffect(() => {
+    if (!configSlugsKey) return;
+    let cancelled = false;
+    const slugs = [...new Set(configSlugsKey.split(","))];
+    Promise.all(
+      slugs.map(async (slug) => {
+        try {
+          const res = await getPluginBySlug(slug, token ?? undefined);
+          if (res.success && res.data) {
+            return {
+              slug,
+              schemas: {
+                configSchema: res.data.configSchema,
+                inputSchema: res.data.inputSchema,
+                outputSchema: res.data.outputSchema,
+              },
+            };
+          }
+        } catch { /* ignore */ }
+        return null;
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, PluginSchemaSet> = {};
+      for (const r of results) {
+        if (r) map[r.slug] = r.schemas;
+      }
+      setAllPluginSchemas(map);
+    });
+    return () => { cancelled = true; };
+  }, [configSlugsKey, token]);
 
   // ===========================================
   // Fetch or auto-create workflow
@@ -735,12 +773,16 @@ export function BotDetailView({
           token ?? undefined
         );
         if (detail.success && detail.data) {
-          const statuses: Record<string, { status: string; durationMs?: number }> = {};
+          const statuses: Record<string, { status: string; durationMs?: number; error?: string }> = {};
           for (const sr of detail.data.stepRuns) {
             // Map stepOrder to stepId
             const step = workflow.steps.find((s) => s.order === sr.stepOrder);
             if (step) {
-              statuses[step.id] = { status: sr.status.toLowerCase(), durationMs: sr.durationMs ?? undefined };
+              statuses[step.id] = {
+                status: sr.status.toLowerCase(),
+                durationMs: sr.durationMs ?? undefined,
+                error: sr.error ?? undefined,
+              };
             }
           }
           setStepRunStatuses(statuses);
@@ -1490,7 +1532,9 @@ export function BotDetailView({
 
                 {viewMode === "canvas" ? (
                   <WorkflowCanvas
+                    workflowId={workflow.id}
                     steps={workflow.steps}
+                    edges={workflow.edges ?? []}
                     selectedStepId={selectedStepId}
                     triggerType={workflow.triggerType}
                     triggerConfig={workflow.triggerConfig}
@@ -1503,6 +1547,8 @@ export function BotDetailView({
                     onDuplicateStep={handleDuplicateStep}
                     onToggleStepEnabled={handleToggleStepEnabled}
                     onClickTrigger={handleClickTrigger}
+                    pluginSchemas={allPluginSchemas}
+                    onSaveStep={handleSaveStep}
                   />
                 ) : (
                   <div className="rounded-lg border border-border bg-background/50 p-4 space-y-2 h-full overflow-y-auto">

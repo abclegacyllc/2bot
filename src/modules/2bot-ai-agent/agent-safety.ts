@@ -338,6 +338,26 @@ export function validateToolCallArgs(
       }
       break;
     }
+
+    case "fetch_url": {
+      const url = args.url as string;
+      if (!url || typeof url !== "string") {
+        return "fetch_url requires a non-empty url string";
+      }
+      if (url.length > 2048) {
+        return "URL too long (max 2048 characters)";
+      }
+      // Basic protocol check — full SSRF guard runs inside fetchUrl() at execution time
+      if (!url.startsWith("https://") && !url.startsWith("http://")) {
+        return "URL must start with https:// or http://";
+      }
+      // Reject obvious localhost / private hostnames early
+      const lower = url.toLowerCase();
+      if (/https?:\/\/(localhost|127\.|0\.0\.0\.0|169\.254\.|::1)/.test(lower)) {
+        return "Blocked: URL points to a loopback or link-local address";
+      }
+      break;
+    }
   }
 
   return null; // Safe
@@ -365,10 +385,9 @@ export function checkSessionLimits(
     return `Maximum credit budget reached (${config.maxCreditsPerSession})`;
   }
 
-  const elapsed = Date.now() - startedAt.getTime();
-  if (elapsed >= config.sessionTimeoutMs) {
-    return `Session timeout reached (${config.sessionTimeoutMs}ms)`;
-  }
+  // Wall-clock timeout intentionally removed — maxIterations and maxCreditsPerSession
+  // already cap runaway sessions. A fixed wall-clock limit breaks legitimate long-running
+  // tasks (e.g. large npm installs, slow plan execution, manual command approval waits).
 
   return null; // OK to continue
 }
@@ -378,7 +397,7 @@ export function checkSessionLimits(
  * Large outputs (e.g., from ls -la) are cut to a reasonable size
  * with a note about truncation.
  */
-export function truncateToolOutput(output: string, maxChars = 3000): string {
+export function truncateToolOutput(output: string, maxChars = 8000): string {
   if (output.length <= maxChars) return output;
 
   const truncated = output.substring(0, maxChars);

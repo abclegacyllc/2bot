@@ -31,7 +31,7 @@ export const gatewayRouter = Router();
 
 /**
  * Helper to create ServiceContext from Express request
- * Phase 6.7: Context is now determined by URL, not token
+ * Context is now determined by URL, not token
  * This route is deprecated - use /api/user/gateways or /api/orgs/:orgId/gateways
  */
 function getServiceContext(req: Request) {
@@ -39,7 +39,7 @@ function getServiceContext(req: Request) {
     throw new BadRequestError("User not authenticated");
   }
 
-  // Phase 6.7: Token no longer contains activeContext
+  // Token no longer contains activeContext
   // For legacy routes, default to personal context
   return createServiceContext(
     {
@@ -520,7 +520,7 @@ gatewayRouter.post(
   })
 );
 
-// ─── Chat Tracking Endpoints (Phase 7) ───────────────────────────
+// ─── Chat Tracking Endpoints ───────────────────────────
 
 /**
  * GET /api/gateways/:id/chats
@@ -569,7 +569,7 @@ gatewayRouter.get(
   })
 );
 
-// ─── Gateway Metrics Endpoints (Phase 8) ─────────────────────────
+// ─── Gateway Metrics Endpoints ─────────────────────────
 
 /**
  * GET /api/gateways/:id/metrics

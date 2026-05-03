@@ -28,8 +28,10 @@ class TerminalService {
     /** Map<string, TerminalSession> */
     this.sessions = new Map();
 
-    // Maximum concurrent terminal sessions per container
-    this.maxSessions = 4;
+    // Maximum concurrent terminal sessions per container.
+    // Needs to cover both UI terminal tabs (user-facing) AND cursor's
+    // internal script-runner sessions (each run_command opens 1 session).
+    this.maxSessions = 10;
   }
 
   /**
@@ -102,12 +104,17 @@ class TerminalService {
       this.log.warn('node-pty not available — terminal will run in non-interactive mode');
 
       const { spawn } = require('child_process');
+      // Allowlist env vars — same as PTY mode. Never spread process.env (leaks BRIDGE_AUTH_TOKEN etc.)
       const shell = spawn('bash', ['-i'], {
         cwd: this.workspaceDir,
         env: {
-          ...process.env,
+          PATH: process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+          LANG: process.env.LANG || 'C.UTF-8',
           TERM: 'dumb',
           HOME: this.workspaceDir,
+          USER: process.env.USER || 'node',
+          SHELL: '/bin/bash',
+          NODE_VERSION: process.env.NODE_VERSION || '',
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
