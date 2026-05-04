@@ -555,6 +555,20 @@ async function resolveResources(
   refMap: BuildSpecApplyResult["refMap"],
   rollback: RollbackHandles,
 ): Promise<void> {
+  if (spec.resources.length === 0) return;
+
+  // Hard-fail if the runtime is gated off — creating HTTP_ROUTE / SCHEDULE
+  // resources while `FEATURE_PROJECT_RESOURCES=disabled` would silently
+  // produce dead routes (no nginx route, no cron tick) and confuse users.
+  const flag = (process.env.FEATURE_PROJECT_RESOURCES ?? "disabled").toLowerCase();
+  if (flag !== "enabled") {
+    throw new Error(
+      "ProjectResources (HTTP_ROUTE / SCHEDULE / SECRET) are disabled on this " +
+        "deployment. Set FEATURE_PROJECT_RESOURCES=enabled to apply BuildSpecs " +
+        "that declare a `resources[]` block.",
+    );
+  }
+
   for (const r of spec.resources) {
     if (r.kind === "HTTP_ROUTE") {
       const targetUserPluginId = r.httpRoute.targetPluginRef

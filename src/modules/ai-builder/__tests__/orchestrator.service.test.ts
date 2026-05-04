@@ -5,7 +5,7 @@
  * full DB apply paths are exercised by integration tests (Wave 2).
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/logger", () => ({
   logger: {
@@ -153,7 +153,10 @@ describe("applyBuildSpec", () => {
 // ===========================================================================
 
 describe("applyBuildSpec — resolveResources", () => {
+  const ORIGINAL_FLAG = process.env.FEATURE_PROJECT_RESOURCES;
+
   beforeEach(() => {
+    process.env.FEATURE_PROJECT_RESOURCES = "enabled";
     incMock.mockClear();
     Object.values(prismaMock).forEach((m) => {
       Object.values(m).forEach((fn) => (fn as { mockClear?: () => void }).mockClear?.());
@@ -180,6 +183,11 @@ describe("applyBuildSpec — resolveResources", () => {
     prismaMock.workflow.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.userPlugin.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.gateway.deleteMany.mockResolvedValue({ count: 0 });
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_FLAG === undefined) delete process.env.FEATURE_PROJECT_RESOURCES;
+    else process.env.FEATURE_PROJECT_RESOURCES = ORIGINAL_FLAG;
   });
 
   it("creates HTTP_ROUTE resource and resolves targetWorkflowRef → workflow id", async () => {
@@ -335,6 +343,54 @@ describe("applyBuildSpec — resolveResources", () => {
       where: { id: { in: ["res-http-2"] } },
     });
     // Project rollback also ran (createdProjectId set, so project.delete called).
+    expect(prismaMock.project.delete).toHaveBeenCalledWith({
+      where: { id: "proj-new" },
+    });
+  });
+
+  it("rejects BuildSpecs with resources[] when FEATURE_PROJECT_RESOURCES is disabled", async () => {
+    process.env.FEATURE_PROJECT_RESOURCES = "disabled";
+
+    let thrown: unknown;
+    try {
+      await applyBuildSpec(owner, {
+        project: { name: "P" },
+        workflows: [
+          {
+            ref: "wf-main",
+            name: "Main",
+            slug: "main",
+            triggerType: "WEBHOOK",
+            steps: [],
+            edges: [],
+          },
+        ],
+        resources: [
+          {
+            ref: "http-1",
+            kind: "HTTP_ROUTE",
+            name: "Webhook",
+            httpRoute: {
+              method: "POST",
+              path: "/hooks/run",
+              targetWorkflowRef: "wf-main",
+              authMode: "NONE",
+              authConfig: {},
+              maxBodyKb: 1024,
+              timeoutMs: 15000,
+              passthroughBody: true,
+            },
+          },
+        ],
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/FEATURE_PROJECT_RESOURCES/);
+    expect(createHttpRouteResourceMock).not.toHaveBeenCalled();
+    // Anything created prior to resources (project + workflow) must be rolled back.
     expect(prismaMock.project.delete).toHaveBeenCalledWith({
       where: { id: "proj-new" },
     });
