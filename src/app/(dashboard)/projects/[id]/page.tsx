@@ -11,12 +11,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useProject } from "@/hooks/use-project";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, GitBranch, Layers } from "lucide-react";
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 
 const FEATURE_CHAT_FIRST_ENABLED =
   (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() === "enabled";
+
+const FEATURE_PROJECT_RESOURCES_ENABLED =
+  (process.env.NEXT_PUBLIC_FEATURE_PROJECT_RESOURCES ?? "disabled").toLowerCase() ===
+  "enabled";
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
@@ -56,6 +60,23 @@ export default function ProjectDetailPage() {
               <span className="font-mono">/{project.slug}</span>
               {project.description ? ` — ${project.description}` : null}
             </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {FEATURE_PROJECT_RESOURCES_ENABLED ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/projects/${project.id}/resources`}>
+                  <Layers className="mr-1 h-4 w-4" />
+                  Resources
+                </Link>
+              </Button>
+            ) : null}
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/projects/${project.id}/versions`}>
+                <GitBranch className="mr-1 h-4 w-4" />
+                Versions
+              </Link>
+            </Button>
           </div>
 
           <Card>

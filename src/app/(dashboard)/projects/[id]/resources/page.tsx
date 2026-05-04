@@ -8,7 +8,7 @@
  * ProjectResource via the sidecar FK. Other kinds (HTTP_ROUTE, SCHEDULE,
  * SECRET, …) appear here automatically as their phases ship.
  *
- * Gated by NEXT_PUBLIC_FEATURE_CHAT_FIRST. Calls notFound() when off.
+ * Gated by NEXT_PUBLIC_FEATURE_PROJECT_RESOURCES. Calls notFound() when off.
  */
 
 import { useAuth } from "@/components/providers/auth-provider";
@@ -27,8 +27,8 @@ import { useCallback, useEffect, useState } from "react";
 import { CreateResourceDialog } from "./CreateResourceDialog";
 import { EditResourceDialog } from "./EditResourceDialog";
 
-const FEATURE_CHAT_FIRST_ENABLED =
-  (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() ===
+const FEATURE_PROJECT_RESOURCES_ENABLED =
+  (process.env.NEXT_PUBLIC_FEATURE_PROJECT_RESOURCES ?? "disabled").toLowerCase() ===
   "enabled";
 
 const STATUS_VARIANT: Record<
@@ -63,7 +63,7 @@ export default function ProjectResourcesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<ProjectResource | null>(null);
 
-  if (!FEATURE_CHAT_FIRST_ENABLED) {
+  if (!FEATURE_PROJECT_RESOURCES_ENABLED) {
     notFound();
   }
 
