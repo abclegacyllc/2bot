@@ -293,10 +293,88 @@ const SecretResource = z.object({
   secret: SecretResourceConfig,
 });
 
+// EXTERNAL_API resource (Phase 7.5)
+export const ExternalApiAuthModeEnum = z.enum([
+  "NONE",
+  "API_KEY",
+  "BEARER",
+  "BASIC",
+  "HMAC",
+]);
+
+const ExternalApiResourceConfig = z.object({
+  /** Required base URL, e.g. "https://api.openai.com/v1". No trailing slash. */
+  baseUrl: z
+    .string()
+    .min(1)
+    .max(2048)
+    .regex(/^https?:\/\//i, "baseUrl must be an http(s) URL"),
+  authMode: ExternalApiAuthModeEnum.default("NONE"),
+  /**
+   * Plaintext credential bag. Shape depends on `authMode`:
+   *   NONE     -> omit
+   *   API_KEY  -> { apiKey, headerName? }
+   *   BEARER   -> { token }
+   *   BASIC    -> { username, password }
+   *   HMAC     -> { hmacSecret, algorithm? }
+   * Encrypted at rest by the orchestrator.
+   */
+  credentials: z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+    .optional(),
+  /** Default headers merged into every request. Non-secret only. */
+  defaultHeaders: z.record(z.string(), z.string()).optional(),
+  /** Per-call timeout in ms. 0 = platform default (15s). */
+  timeoutMs: z.number().int().min(0).max(60_000).optional(),
+});
+
+const ExternalApiResource = z.object({
+  ref: SpecLocalId,
+  kind: z.literal("EXTERNAL_API"),
+  name: z.string().min(1).max(120),
+  slug: Slug.optional(),
+  externalApi: ExternalApiResourceConfig,
+});
+
+// DATABASE resource (Phase 7.5)
+export const DatabaseDriverEnum = z.enum(["POSTGRES", "MYSQL", "SQLITE"]);
+export const DatabaseSslModeEnum = z.enum([
+  "DISABLE",
+  "REQUIRE",
+  "VERIFY_CA",
+  "VERIFY_FULL",
+]);
+
+const DatabaseResourceConfig = z.object({
+  driver: DatabaseDriverEnum,
+  /** Hostname or IP. For SQLITE this holds the file path. */
+  host: z.string().min(1).max(255),
+  /** TCP port. POSTGRES default 5432, MYSQL 3306. Ignored for SQLITE. */
+  port: z.number().int().min(0).max(65535).optional(),
+  /** Database / schema name. For SQLITE same as the file path. */
+  database: z.string().min(1).max(128),
+  username: z.string().max(128).nullable().optional(),
+  /** Plaintext password. Encrypted at rest. Optional for SQLITE. */
+  password: z.string().max(1024).nullable().optional(),
+  sslMode: DatabaseSslModeEnum.optional(),
+  poolMin: z.number().int().min(0).max(1000).optional(),
+  poolMax: z.number().int().min(1).max(1000).optional(),
+});
+
+const DatabaseResource = z.object({
+  ref: SpecLocalId,
+  kind: z.literal("DATABASE"),
+  name: z.string().min(1).max(120),
+  slug: Slug.optional(),
+  database: DatabaseResourceConfig,
+});
+
 export const ResourceSpec = z.discriminatedUnion("kind", [
   HttpRouteResource,
   ScheduleResource,
   SecretResource,
+  ExternalApiResource,
+  DatabaseResource,
 ]);
 
 // ─────────────────────────────────────────────────────────────────────

@@ -5,6 +5,9 @@
  */
 
 import type {
+    DatabaseDriver,
+    DatabaseSslMode,
+    ExternalApiAuthMode,
     HttpAuthMode,
     HttpMethod,
     ProjectResourceKind,
@@ -153,6 +156,138 @@ export interface SafeSecret {
   resourceId: string;
   key: string;
   description: string | null;
+  version: number;
+  lastRotatedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ===========================================
+// EXTERNAL_API sidecar (Phase 7.5)
+// ===========================================
+
+/**
+ * Plaintext credential bag whose shape depends on `authMode`.
+ *
+ * - NONE     → undefined / empty
+ * - API_KEY  → { apiKey, headerName? }
+ * - BEARER   → { token }
+ * - BASIC    → { username, password }
+ * - HMAC     → { hmacSecret, algorithm? }
+ *
+ * Encrypted at rest as a single AES-256-GCM ciphertext blob.
+ */
+export type ExternalApiCredentials =
+  | { apiKey: string; headerName?: string }
+  | { token: string }
+  | { username: string; password: string }
+  | { hmacSecret: string; algorithm?: "sha256" | "sha512" }
+  | Record<string, never>;
+
+export interface ExternalApiSpec {
+  /** Required base URL the API sits behind, e.g. `https://api.openai.com/v1`. */
+  baseUrl: string;
+  authMode?: ExternalApiAuthMode;
+  /** Plaintext credentials. Encrypted before persistence. */
+  credentials?: ExternalApiCredentials;
+  /** Default headers merged into every request (non-secret only). */
+  defaultHeaders?: Record<string, string>;
+  /** Per-call timeout in ms. 0 = platform default (15s). */
+  timeoutMs?: number;
+}
+
+export interface CreateExternalApiResourceInput {
+  projectId: string;
+  name: string;
+  slug?: string;
+  status?: ProjectResourceStatus;
+  metadata?: Record<string, unknown> | null;
+  externalApi: ExternalApiSpec;
+}
+
+export interface UpdateExternalApiSidecarInput {
+  baseUrl?: string;
+  authMode?: ExternalApiAuthMode;
+  /** When provided, rotates credentials (bumps version + lastRotatedAt). */
+  credentials?: ExternalApiCredentials;
+  defaultHeaders?: Record<string, string>;
+  timeoutMs?: number;
+}
+
+/**
+ * Public shape of an ExternalApi returned by the API. NEVER includes the
+ * encrypted credential blob.
+ */
+export interface SafeExternalApi {
+  id: string;
+  resourceId: string;
+  baseUrl: string;
+  authMode: ExternalApiAuthMode;
+  defaultHeaders: Record<string, string>;
+  timeoutMs: number;
+  version: number;
+  lastRotatedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// ===========================================
+// DATABASE sidecar (Phase 7.5)
+// ===========================================
+
+export interface DatabaseSpec {
+  driver: DatabaseDriver;
+  /** Hostname or IP. For SQLITE this holds the file path. */
+  host: string;
+  /** TCP port. POSTGRES default 5432, MYSQL 3306. Ignored for SQLITE. */
+  port?: number;
+  /** Database / schema name. For SQLITE same as the file path. */
+  database: string;
+  username?: string | null;
+  /** Plaintext password. Encrypted before persistence. Optional for SQLITE. */
+  password?: string | null;
+  sslMode?: DatabaseSslMode;
+  poolMin?: number;
+  poolMax?: number;
+}
+
+export interface CreateDatabaseResourceInput {
+  projectId: string;
+  name: string;
+  slug?: string;
+  status?: ProjectResourceStatus;
+  metadata?: Record<string, unknown> | null;
+  database: DatabaseSpec;
+}
+
+export interface UpdateDatabaseSidecarInput {
+  driver?: DatabaseDriver;
+  host?: string;
+  port?: number;
+  database?: string;
+  username?: string | null;
+  /** When provided, rotates the password (bumps version + lastRotatedAt). */
+  password?: string | null;
+  sslMode?: DatabaseSslMode;
+  poolMin?: number;
+  poolMax?: number;
+}
+
+/**
+ * Public shape of a DatabaseConnection returned by the API. NEVER includes
+ * the encrypted password blob.
+ */
+export interface SafeDatabaseConnection {
+  id: string;
+  resourceId: string;
+  driver: DatabaseDriver;
+  host: string;
+  port: number;
+  database: string;
+  username: string | null;
+  sslMode: DatabaseSslMode;
+  poolMin: number;
+  poolMax: number;
   version: number;
   lastRotatedAt: Date | null;
   createdAt: Date;

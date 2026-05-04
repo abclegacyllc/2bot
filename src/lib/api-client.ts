@@ -1288,6 +1288,10 @@ export interface ProjectResourceWithSidecar extends ProjectResource {
   schedule?: Schedule | null;
   /** SECRET sidecar metadata only — plaintext value is never returned. */
   secret?: SafeSecret | null;
+  /** EXTERNAL_API sidecar metadata only — credentials are never returned. */
+  externalApi?: SafeExternalApi | null;
+  /** DATABASE sidecar metadata only — password is never returned. */
+  database?: SafeDatabaseConnection | null;
 }
 
 // HTTP_ROUTE sidecar
@@ -1394,6 +1398,80 @@ export interface SafeSecret {
   updatedAt: string;
 }
 
+// EXTERNAL_API sidecar (Phase 7.5)
+
+export type ExternalApiAuthMode = "NONE" | "API_KEY" | "BEARER" | "BASIC" | "HMAC";
+
+export type ExternalApiCredentials =
+  | { apiKey: string; headerName?: string }
+  | { token: string }
+  | { username: string; password: string }
+  | { hmacSecret: string; algorithm?: "sha256" | "sha512" }
+  | Record<string, never>;
+
+export interface ExternalApiSpec {
+  baseUrl: string;
+  authMode?: ExternalApiAuthMode;
+  /** Plaintext credentials. Encrypted at rest; never returned by the API. */
+  credentials?: ExternalApiCredentials;
+  defaultHeaders?: Record<string, string>;
+  /** Per-call timeout in ms. 0 = platform default (15s). */
+  timeoutMs?: number;
+}
+
+/** Public ExternalApi shape — NEVER includes the encrypted credentials. */
+export interface SafeExternalApi {
+  id: string;
+  resourceId: string;
+  baseUrl: string;
+  authMode: ExternalApiAuthMode;
+  defaultHeaders: Record<string, string>;
+  timeoutMs: number;
+  version: number;
+  lastRotatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// DATABASE sidecar (Phase 7.5)
+
+export type DatabaseDriver = "POSTGRES" | "MYSQL" | "SQLITE";
+export type DatabaseSslMode = "DISABLE" | "REQUIRE" | "VERIFY_CA" | "VERIFY_FULL";
+
+export interface DatabaseSpec {
+  driver: DatabaseDriver;
+  /** Hostname or IP. For SQLITE this holds the file path. */
+  host: string;
+  /** TCP port. POSTGRES default 5432, MYSQL 3306. Ignored for SQLITE. */
+  port?: number;
+  /** Database / schema name. For SQLITE same as the file path. */
+  database: string;
+  username?: string | null;
+  /** Plaintext password. Encrypted at rest; never returned by the API. */
+  password?: string | null;
+  sslMode?: DatabaseSslMode;
+  poolMin?: number;
+  poolMax?: number;
+}
+
+/** Public DatabaseConnection shape — NEVER includes the encrypted password. */
+export interface SafeDatabaseConnection {
+  id: string;
+  resourceId: string;
+  driver: DatabaseDriver;
+  host: string;
+  port: number;
+  database: string;
+  username: string | null;
+  sslMode: DatabaseSslMode;
+  poolMin: number;
+  poolMax: number;
+  version: number;
+  lastRotatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export function listProjectResources(
   projectId: string,
   options: { kind?: ProjectResourceKind; status?: ProjectResourceStatus } = {},
@@ -1433,6 +1511,8 @@ export function createProjectResource(
     httpRoute?: HttpRouteSpec;
     schedule?: ScheduleSpec;
     secret?: SecretSpec;
+    externalApi?: ExternalApiSpec;
+    database?: DatabaseSpec;
   },
   token?: string,
 ): Promise<ApiResponse<ProjectResource>> {
@@ -1455,6 +1535,8 @@ export function updateProjectResource(
     httpRoute?: Partial<HttpRouteSpec>;
     schedule?: Partial<ScheduleSpec>;
     secret?: SecretPatch;
+    externalApi?: Partial<ExternalApiSpec>;
+    database?: Partial<DatabaseSpec>;
   },
   token?: string,
 ): Promise<ApiResponse<ProjectResource>> {

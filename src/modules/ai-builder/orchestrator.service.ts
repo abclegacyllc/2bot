@@ -37,6 +37,8 @@ import {
     isDirectoryLayout,
 } from "@/modules/plugin/plugin-deploy.service";
 import {
+    createDatabaseResource,
+    createExternalApiResource,
     createHttpRouteResource,
     createScheduleResource,
     createSecretResource,
@@ -629,6 +631,52 @@ async function resolveResources(
           key: r.secret.key,
           value: r.secret.value,
           description: r.secret.description ?? null,
+        },
+      });
+      refMap.resources[r.ref] = created.id;
+      rollback.resourceIds.push(created.id);
+      continue;
+    }
+
+    if (r.kind === "EXTERNAL_API") {
+      // The buildspec keeps credentials as a loose record; the service
+      // discriminates on `authMode` at validate time, so we pass through
+      // unchanged after a structural cast.
+      const credentials = r.externalApi.credentials as
+        | import("@/modules/project-resource/project-resource.types").ExternalApiCredentials
+        | undefined;
+      const created = await createExternalApiResource(owner, {
+        projectId,
+        name: r.name,
+        slug: r.slug,
+        externalApi: {
+          baseUrl: r.externalApi.baseUrl,
+          authMode: r.externalApi.authMode,
+          credentials,
+          defaultHeaders: r.externalApi.defaultHeaders,
+          timeoutMs: r.externalApi.timeoutMs,
+        },
+      });
+      refMap.resources[r.ref] = created.id;
+      rollback.resourceIds.push(created.id);
+      continue;
+    }
+
+    if (r.kind === "DATABASE") {
+      const created = await createDatabaseResource(owner, {
+        projectId,
+        name: r.name,
+        slug: r.slug,
+        database: {
+          driver: r.database.driver,
+          host: r.database.host,
+          port: r.database.port,
+          database: r.database.database,
+          username: r.database.username ?? null,
+          password: r.database.password ?? null,
+          sslMode: r.database.sslMode,
+          poolMin: r.database.poolMin,
+          poolMax: r.database.poolMax,
         },
       });
       refMap.resources[r.ref] = created.id;

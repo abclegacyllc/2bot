@@ -931,7 +931,8 @@ model CreditTransaction {
   // Wallet reference
   creditWalletId String? @map("credit_wallet_id")
 
-  type         String // 'purchase', 'usage', 'refund', 'bonus', 'grant', 'allocation'
+  type         String  // 'purchase', 'usage', 'refund', 'bonus', 'grant', 'allocation'
+  category     String? @map("category") // 'ai_usage', 'marketplace', 'premium_feature', 'subscription', 'transfer', 'other'
   amount       Int // Positive = credit, Negative = debit
   balanceAfter Int    @map("balance_after")
 
@@ -945,6 +946,7 @@ model CreditTransaction {
 
   @@index([creditWalletId])
   @@index([type])
+  @@index([category])
   @@index([createdAt])
   @@map("credit_transactions")
 }
@@ -1323,6 +1325,12 @@ model ProjectResource {
   // Sidecar relation for kind = SECRET (Phase 7.4). 1:1 via Secret.resourceId.
   secret Secret?
 
+  // Sidecar relation for kind = EXTERNAL_API (Phase 7.5). 1:1 via ExternalApi.resourceId.
+  externalApi ExternalApi?
+
+  // Sidecar relation for kind = DATABASE (Phase 7.5). 1:1 via DatabaseConnection.resourceId.
+  database DatabaseConnection?
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1490,6 +1498,129 @@ model Secret {
 
   @@index([key])
   @@map("secrets")
+}
+
+// ===========================================
+// ExternalApi (Phase 7.5 — Path C sidecar for ProjectResource.kind=EXTERNAL_API)
+// ===========================================
+//
+// A typed reference to a third-party HTTP API the project calls (e.g. OpenAI,
+// Stripe, an internal microservice). Stores the base URL, default headers,
+// and an encrypted credential blob whose shape depends on `authMode`.
+//
+// The credential ciphertext is produced by `src/lib/encryption.encrypt()`
+// (AES-256-GCM, versioned keys). Plaintext credentials are NEVER returned
+// by the resource list/detail endpoints — runtime callers (workflow steps,
+// plugin runtime) must use `getDecryptedExternalApiCredentials()` after an
+// ownership check.
+// ===========================================
+enum ExternalApiAuthMode {
+  NONE // public API, no auth
+  API_KEY // header (default `X-API-Key`) or query param holding `credentials.apiKey`
+  BEARER // `Authorization: Bearer <credentials.token>`
+  BASIC // `Authorization: Basic base64(username:password)`
+  HMAC // signed body using `credentials.hmacSecret`
+}
+
+model ExternalApi {
+  id         String @id @default(cuid())
+  resourceId String @unique @map("resource_id")
+
+  /// Required base URL the API sits behind, e.g. `https://api.openai.com/v1`.
+  /// No trailing slash.
+  baseUrl String @map("base_url")
+
+  authMode ExternalApiAuthMode @default(NONE) @map("auth_mode")
+
+  /// AES-256-GCM ciphertext (v2:N:base64) of a JSON object whose shape
+  /// depends on `authMode`. Empty string when `authMode = NONE`.
+  /// Examples (plaintext, before encryption):
+  ///   API_KEY  -> { "apiKey": "...", "headerName": "X-API-Key" }
+  ///   BEARER   -> { "token": "..." }
+  ///   BASIC    -> { "username": "...", "password": "..." }
+  ///   HMAC     -> { "hmacSecret": "...", "algorithm": "sha256" }
+  authConfigEnc String @default("") @map("auth_config_enc")
+
+  /// Default headers merged into every request (non-secret only).
+  defaultHeaders Json @default("{}") @map("default_headers")
+
+  /// Per-call timeout in ms. 0 = use platform default (15s).
+  timeoutMs Int @default(0) @map("timeout_ms")
+
+  /// Bumps on every credential rotation (parallels Secret.version).
+  version       Int       @default(1)
+  lastRotatedAt DateTime? @map("last_rotated_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  resource ProjectResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@map("external_apis")
+}
+
+// ===========================================
+// DatabaseConnection (Phase 7.5 — Path C sidecar for ProjectResource.kind=DATABASE)
+// ===========================================
+//
+// Bring-your-own database credentials. Stores connection parameters + an
+// encrypted password. The platform does NOT itself open the connection —
+// project code (plugins / workflow steps) reads the resource via the
+// runtime API and uses its own driver of choice (pg, mysql2, better-sqlite3).
+// This is intentionally a credentials-only resource, not a managed DB.
+// ===========================================
+enum DatabaseDriver {
+  POSTGRES
+  MYSQL
+  SQLITE
+}
+
+enum DatabaseSslMode {
+  DISABLE
+  REQUIRE
+  VERIFY_CA
+  VERIFY_FULL
+}
+
+model DatabaseConnection {
+  id         String @id @default(cuid())
+  resourceId String @unique @map("resource_id")
+
+  driver DatabaseDriver
+
+  /// Hostname or IP. For SQLITE this holds the file path and `port` is unused.
+  host String
+
+  /// TCP port. For POSTGRES default is 5432, MYSQL 3306. Ignored for SQLITE.
+  port Int @default(0)
+
+  /// Database / schema name. For SQLITE this is the same as the file path.
+  database String
+
+  /// Username. Optional (SQLITE typically has none).
+  username String?
+
+  /// AES-256-GCM ciphertext (v2:N:base64) of the password. Empty string when
+  /// the driver doesn't require one (SQLITE) or for a passwordless setup.
+  passwordEnc String @default("") @map("password_enc")
+
+  sslMode DatabaseSslMode @default(REQUIRE) @map("ssl_mode")
+
+  /// Optional connection pool hints surfaced to runtime drivers.
+  poolMin Int @default(0) @map("pool_min")
+  poolMax Int @default(10) @map("pool_max")
+
+  /// Bumps on every credential rotation.
+  version       Int       @default(1)
+  lastRotatedAt DateTime? @map("last_rotated_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  resource ProjectResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([driver])
+  @@map("database_connections")
 }
 
 // ===========================================

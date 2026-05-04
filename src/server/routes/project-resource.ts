@@ -23,6 +23,8 @@ import { z } from "zod";
 
 import {
     archiveProjectResource,
+    createDatabaseResource,
+    createExternalApiResource,
     createHttpRouteResource,
     createProjectResource,
     createScheduleResource,
@@ -30,6 +32,8 @@ import {
     deleteProjectResource,
     getProjectResourceWithGateway,
     listProjectResources,
+    updateDatabaseSidecar,
+    updateExternalApiSidecar,
     updateHttpRouteSidecar,
     updateProjectResource,
     updateScheduleSidecar,
@@ -135,6 +139,41 @@ const SecretPatchSchema = z.object({
   description: z.string().max(500).nullable().optional(),
 });
 
+const ExternalApiAuthModeSchema = z.enum(["NONE", "API_KEY", "BEARER", "BASIC", "HMAC"]);
+
+// Loose record — server-side validateExternalApiSpec asserts the per-mode shape.
+const ExternalApiCredentialsSchema = z
+  .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+  .optional();
+
+const ExternalApiSpecSchema = z.object({
+  baseUrl: z.string().min(1).max(2048),
+  authMode: ExternalApiAuthModeSchema.optional(),
+  credentials: ExternalApiCredentialsSchema,
+  defaultHeaders: z.record(z.string(), z.string()).optional(),
+  timeoutMs: z.number().int().min(0).max(60_000).optional(),
+});
+
+const DatabaseDriverSchema = z.enum(["POSTGRES", "MYSQL", "SQLITE"]);
+const DatabaseSslModeSchema = z.enum([
+  "DISABLE",
+  "REQUIRE",
+  "VERIFY_CA",
+  "VERIFY_FULL",
+]);
+
+const DatabaseSpecSchema = z.object({
+  driver: DatabaseDriverSchema,
+  host: z.string().min(1).max(255),
+  port: z.number().int().min(0).max(65535).optional(),
+  database: z.string().min(1).max(128),
+  username: z.string().max(128).nullable().optional(),
+  password: z.string().max(1024).nullable().optional(),
+  sslMode: DatabaseSslModeSchema.optional(),
+  poolMin: z.number().int().min(0).max(1000).optional(),
+  poolMax: z.number().int().min(1).max(1000).optional(),
+});
+
 const ListQuerySchema = z.object({
   kind: ResourceKindSchema.optional(),
   status: ResourceStatusSchema.optional(),
@@ -154,6 +193,10 @@ const CreateBodySchema = z.object({
   schedule: ScheduleSpecSchema.optional(),
   /** Required when kind === 'SECRET'. */
   secret: SecretSpecSchema.optional(),
+  /** Required when kind === 'EXTERNAL_API'. */
+  externalApi: ExternalApiSpecSchema.optional(),
+  /** Required when kind === 'DATABASE'. */
+  database: DatabaseSpecSchema.optional(),
 });
 
 const UpdateBodySchema = z.object({
@@ -168,6 +211,10 @@ const UpdateBodySchema = z.object({
   schedule: ScheduleSpecSchema.partial().optional(),
   /** When set, also patches the SECRET sidecar (kind must be SECRET). */
   secret: SecretPatchSchema.optional(),
+  /** When set, also patches the EXTERNAL_API sidecar. */
+  externalApi: ExternalApiSpecSchema.partial().optional(),
+  /** When set, also patches the DATABASE sidecar. */
+  database: DatabaseSpecSchema.partial().optional(),
 });
 
 // ===========================================
@@ -259,8 +306,42 @@ projectResourceRouter.post(
       return;
     }
 
-    // Other kinds (EXTERNAL_API, DATABASE, KV_STORE, OBJECT_STORE)
-    // are reserved enum values until their phases ship.
+    if (body.kind === "EXTERNAL_API") {
+      if (!body.externalApi) {
+        throw new BadRequestError("EXTERNAL_API: body.externalApi is required");
+      }
+      const resource = await createExternalApiResource(owner, {
+        projectId,
+        name: body.name,
+        slug: body.slug,
+        status: body.status,
+        metadata: body.metadata ?? null,
+        externalApi: body.externalApi as Parameters<
+          typeof createExternalApiResource
+        >[1]["externalApi"],
+      });
+      res.status(201).json({ success: true, data: resource });
+      return;
+    }
+
+    if (body.kind === "DATABASE") {
+      if (!body.database) {
+        throw new BadRequestError("DATABASE: body.database is required");
+      }
+      const resource = await createDatabaseResource(owner, {
+        projectId,
+        name: body.name,
+        slug: body.slug,
+        status: body.status,
+        metadata: body.metadata ?? null,
+        database: body.database,
+      });
+      res.status(201).json({ success: true, data: resource });
+      return;
+    }
+
+    // Other kinds (KV_STORE, OBJECT_STORE) are reserved enum values until
+    // Phase 8.x ships their sidecars.
     throw new BadRequestError(
       `ProjectResource kind ${body.kind} is reserved for a later phase`,
     );
@@ -298,6 +379,16 @@ projectResourceRouter.patch(
     }
     if (body.secret) {
       await updateSecretSidecar(owner, resourceId, body.secret);
+    }
+    if (body.externalApi) {
+      await updateExternalApiSidecar(
+        owner,
+        resourceId,
+        body.externalApi as Parameters<typeof updateExternalApiSidecar>[2],
+      );
+    }
+    if (body.database) {
+      await updateDatabaseSidecar(owner, resourceId, body.database);
     }
     res.json({ success: true, data: resource });
   }),
