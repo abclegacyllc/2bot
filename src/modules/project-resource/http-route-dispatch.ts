@@ -25,16 +25,18 @@ import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getPluginExecutor } from "@/modules/plugin/plugin.executor";
 import type {
-  HttpRequestEventData,
-  PluginContext,
-  PluginEvent,
+    HttpRequestEventData,
+    PluginContext,
+    PluginEvent,
 } from "@/modules/plugin/plugin.interface";
+import { handleWebhookTrigger } from "@/modules/workflow/workflow.triggers";
 
 import {
-  verifyHttpRouteAuth,
-  type AuthVerifyResult,
+    verifyHttpRouteAuth,
+    type AuthVerifyResult,
 } from "./http-route-auth";
 import { pickBestMatch } from "./http-route-match";
+import { loadProjectSecrets } from "./project-resource.service";
 
 const log = logger.child({ module: "http-route-dispatch" });
 
@@ -139,7 +141,48 @@ export async function dispatchHttpRoute(
     }
   }
 
-  // ── No target plugin → echo a 204 (route exists but is unbound) ─
+  // ── Phase 7.3c: Workflow target takes priority over UserPlugin target ──
+  if (route.targetWorkflowId) {
+    try {
+      const runId = await handleWebhookTrigger(route.targetWorkflowId, {
+        method,
+        headers: stringifyHeaders(input.headers),
+        body: input.body ?? null,
+        query: flattenQuery(input.query ?? {}),
+      });
+      log.info(
+        {
+          resourceId: route.resourceId,
+          workflowId: route.targetWorkflowId,
+          runId,
+          method,
+          path: input.path,
+          durationMs: Date.now() - startedAt,
+        },
+        "HTTP_ROUTE dispatched to Workflow",
+      );
+      return {
+        status: 202,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          ...(route.corsOrigin ? { "access-control-allow-origin": route.corsOrigin } : {}),
+        },
+        body: { runId },
+      };
+    } catch (err) {
+      log.warn(
+        {
+          resourceId: route.resourceId,
+          workflowId: route.targetWorkflowId,
+          error: (err as Error).message,
+        },
+        "HTTP_ROUTE workflow trigger failed",
+      );
+      return jsonResponse(503, { error: "handler_unavailable" });
+    }
+  }
+
+  // ── No target plugin → echo a 503 (route exists but is unbound) ─
   if (!route.targetUserPluginId) {
     log.warn(
       { resourceId: route.resourceId, projectId: input.projectId, method, path: input.path },
@@ -186,8 +229,23 @@ export async function dispatchHttpRoute(
 
   const event: PluginEvent = { type: "http.request", data: eventData };
 
+  // ── Load project secrets for this dispatch (best-effort) ──────
+  const projectSecrets = await loadProjectSecrets(
+    {
+      userId: route.resource.userId,
+      organizationId: route.resource.organizationId ?? null,
+    },
+    route.resource.projectId,
+  ).catch((err) => {
+    log.warn(
+      { resourceId: route.resourceId, error: (err as Error).message },
+      "loadProjectSecrets failed for HTTP_ROUTE — continuing with empty secrets",
+    );
+    return {} as Record<string, string>;
+  });
+
   // ── Dispatch ───────────────────────────────────────────────────
-  const context = buildMinimalContext(userPlugin);
+  const context = buildMinimalContext(userPlugin, projectSecrets);
 
   const timeoutMs = route.timeoutMs > 0 ? route.timeoutMs : 15000;
   const executor = getPluginExecutor({ timeoutMs });
@@ -243,6 +301,16 @@ function stringifyHeaders(
   return out;
 }
 
+function flattenQuery(
+  query: Record<string, string | string[]>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(query)) {
+    out[k] = Array.isArray(v) ? v.join(", ") : v;
+  }
+  return out;
+}
+
 function buildMinimalContext(userPlugin: {
   id: string;
   userId: string;
@@ -250,7 +318,7 @@ function buildMinimalContext(userPlugin: {
   config: unknown;
   entryFile: string | null;
   plugin: { slug: string };
-}): PluginContext {
+}, secrets: Record<string, string>): PluginContext {
   // We deliberately keep the context lean: HTTP_ROUTE handlers are pure
   // request/response. Gateway accessors and storage are added in a later
   // phase if a route handler ever needs them.
@@ -273,6 +341,7 @@ function buildMinimalContext(userPlugin: {
     } as unknown as PluginContext["gateways"],
     storage: undefined as unknown as PluginContext["storage"],
     logger: log.child({ pluginSlug: userPlugin.plugin.slug, userId: userPlugin.userId }),
+    secrets,
   };
 }
 

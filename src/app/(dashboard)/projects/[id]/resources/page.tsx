@@ -15,14 +15,17 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  listProjectResources,
-  type ProjectResource,
-  type ProjectResourceKind,
-  type ProjectResourceStatus,
+    listProjectResources,
+    type ProjectResource,
+    type ProjectResourceKind,
+    type ProjectResourceStatus,
 } from "@/lib/api-client";
-import { Layers, Loader2, RefreshCw } from "lucide-react";
+import { Layers, Loader2, Pencil, Plus, RefreshCw } from "lucide-react";
 import { notFound, useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+
+import { CreateResourceDialog } from "./CreateResourceDialog";
+import { EditResourceDialog } from "./EditResourceDialog";
 
 const FEATURE_CHAT_FIRST_ENABLED =
   (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() ===
@@ -57,6 +60,8 @@ export default function ProjectResourcesPage() {
   const [resources, setResources] = useState<ProjectResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<ProjectResource | null>(null);
 
   if (!FEATURE_CHAT_FIRST_ENABLED) {
     notFound();
@@ -107,6 +112,7 @@ export default function ProjectResourcesPage() {
             schedules, and more.
           </p>
         </div>
+        <div className="flex items-center gap-2">
         <Button
           variant="outline"
           size="sm"
@@ -118,6 +124,11 @@ export default function ProjectResourcesPage() {
           />
           Refresh
         </Button>
+        <Button size="sm" onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          New resource
+        </Button>
+        </div>
       </div>
 
       {error ? (
@@ -147,7 +158,12 @@ export default function ProjectResourcesPage() {
               {KIND_LABEL[kind] ?? kind}
             </h2>
             <div className="space-y-2">
-              {(byKind[kind] ?? []).map((r) => (
+              {(byKind[kind] ?? []).map((r) => {
+                const editable =
+                  r.kind === "HTTP_ROUTE" ||
+                  r.kind === "SCHEDULE" ||
+                  r.kind === "SECRET";
+                return (
                 <div
                   key={r.id}
                   className="flex items-center justify-between gap-4 rounded-md border p-3"
@@ -172,12 +188,42 @@ export default function ProjectResourcesPage() {
                       </span>
                     </div>
                   </div>
+                  {editable ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setEditing(r)}
+                    >
+                      <Pencil className="mr-2 h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                  ) : null}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         ))}
       </div>
+
+      <CreateResourceDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        projectId={projectId}
+        token={token ?? null}
+        onCreated={() => void refresh()}
+      />
+
+      <EditResourceDialog
+        open={editing !== null}
+        onOpenChange={(o) => {
+          if (!o) setEditing(null);
+        }}
+        projectId={projectId}
+        resource={editing}
+        token={token ?? null}
+        onSaved={() => void refresh()}
+      />
     </div>
   );
 }

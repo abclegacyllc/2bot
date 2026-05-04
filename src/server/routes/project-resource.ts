@@ -22,14 +22,18 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 
 import {
-  archiveProjectResource,
-  createHttpRouteResource,
-  createProjectResource,
-  deleteProjectResource,
-  getProjectResourceWithGateway,
-  listProjectResources,
-  updateHttpRouteSidecar,
-  updateProjectResource,
+    archiveProjectResource,
+    createHttpRouteResource,
+    createProjectResource,
+    createScheduleResource,
+    createSecretResource,
+    deleteProjectResource,
+    getProjectResourceWithGateway,
+    listProjectResources,
+    updateHttpRouteSidecar,
+    updateProjectResource,
+    updateScheduleSidecar,
+    updateSecretSidecar,
 } from "@/modules/project-resource/project-resource.service";
 import { BadRequestError, ForbiddenError } from "@/shared/errors";
 
@@ -112,6 +116,25 @@ const HttpRouteSpecSchema = z.object({
   passthroughBody: z.boolean().optional(),
 });
 
+const ScheduleSpecSchema = z.object({
+  cron: z.string().min(1).max(200),
+  timezone: z.string().min(1).max(64).nullable().optional(),
+  targetWorkflowId: z.string().min(1).nullable().optional(),
+  enabled: z.boolean().optional(),
+});
+
+const SECRET_KEY_RE = /^[A-Z0-9_]{1,128}$/;
+const SecretSpecSchema = z.object({
+  key: z.string().regex(SECRET_KEY_RE, "key must match [A-Z0-9_]{1,128}"),
+  value: z.string().min(1).max(64 * 1024),
+  description: z.string().max(500).nullable().optional(),
+});
+const SecretPatchSchema = z.object({
+  key: z.string().regex(SECRET_KEY_RE).optional(),
+  value: z.string().min(1).max(64 * 1024).optional(),
+  description: z.string().max(500).nullable().optional(),
+});
+
 const ListQuerySchema = z.object({
   kind: ResourceKindSchema.optional(),
   status: ResourceStatusSchema.optional(),
@@ -127,6 +150,10 @@ const CreateBodySchema = z.object({
   gatewayId: z.string().min(1).optional(),
   /** Required when kind === 'HTTP_ROUTE'. */
   httpRoute: HttpRouteSpecSchema.optional(),
+  /** Required when kind === 'SCHEDULE'. */
+  schedule: ScheduleSpecSchema.optional(),
+  /** Required when kind === 'SECRET'. */
+  secret: SecretSpecSchema.optional(),
 });
 
 const UpdateBodySchema = z.object({
@@ -137,6 +164,10 @@ const UpdateBodySchema = z.object({
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   /** When set, also patches the HTTP_ROUTE sidecar (kind must be HTTP_ROUTE). */
   httpRoute: HttpRouteSpecSchema.partial().optional(),
+  /** When set, also patches the SCHEDULE sidecar (kind must be SCHEDULE). */
+  schedule: ScheduleSpecSchema.partial().optional(),
+  /** When set, also patches the SECRET sidecar (kind must be SECRET). */
+  secret: SecretPatchSchema.optional(),
 });
 
 // ===========================================
@@ -196,8 +227,40 @@ projectResourceRouter.post(
       return;
     }
 
-    // Other kinds (SCHEDULE, SECRET, EXTERNAL_API, DATABASE, KV_STORE,
-    // OBJECT_STORE) are reserved enum values until their phases ship.
+    if (body.kind === "SCHEDULE") {
+      if (!body.schedule) {
+        throw new BadRequestError("SCHEDULE: body.schedule is required");
+      }
+      const resource = await createScheduleResource(owner, {
+        projectId,
+        name: body.name,
+        slug: body.slug,
+        status: body.status,
+        metadata: body.metadata ?? null,
+        schedule: body.schedule,
+      });
+      res.status(201).json({ success: true, data: resource });
+      return;
+    }
+
+    if (body.kind === "SECRET") {
+      if (!body.secret) {
+        throw new BadRequestError("SECRET: body.secret is required");
+      }
+      const resource = await createSecretResource(owner, {
+        projectId,
+        name: body.name,
+        slug: body.slug,
+        status: body.status,
+        metadata: body.metadata ?? null,
+        secret: body.secret,
+      });
+      res.status(201).json({ success: true, data: resource });
+      return;
+    }
+
+    // Other kinds (EXTERNAL_API, DATABASE, KV_STORE, OBJECT_STORE)
+    // are reserved enum values until their phases ship.
     throw new BadRequestError(
       `ProjectResource kind ${body.kind} is reserved for a later phase`,
     );
@@ -229,6 +292,12 @@ projectResourceRouter.patch(
     });
     if (body.httpRoute) {
       await updateHttpRouteSidecar(owner, resourceId, body.httpRoute);
+    }
+    if (body.schedule) {
+      await updateScheduleSidecar(owner, resourceId, body.schedule);
+    }
+    if (body.secret) {
+      await updateSecretSidecar(owner, resourceId, body.secret);
     }
     res.json({ success: true, data: resource });
   }),

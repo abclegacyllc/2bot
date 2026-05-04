@@ -13,6 +13,7 @@ import type { GatewayType } from "@prisma/client";
 import { decryptJson } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { loadProjectSecrets } from "@/modules/project-resource/project-resource.service";
 
 import { gatewayTypeToPlatform, getPluginEntryPath, isDirectoryLayout } from "./plugin-deploy.service";
 
@@ -437,6 +438,7 @@ interface UserPluginWithPlugin {
   userId: string;
   pluginId: string;
   organizationId: string | null;
+  projectId: string | null;
   gatewayId: string | null;
   config: unknown;
   isEnabled: boolean;
@@ -618,6 +620,18 @@ async function createPluginContext(
       plugin: userPlugin.plugin.slug,
       userId: userPlugin.userId,
     }),
+    secrets: userPlugin.projectId
+      ? await loadProjectSecrets(
+          { userId: userPlugin.userId, organizationId: userPlugin.organizationId ?? null },
+          userPlugin.projectId,
+        ).catch((err) => {
+          logger.warn(
+            { err, userPluginId: userPlugin.id, projectId: userPlugin.projectId },
+            "loadProjectSecrets failed for gateway plugin event — continuing with empty secrets",
+          );
+          return {} as Record<string, string>;
+        })
+      : {},
   };
 }
 

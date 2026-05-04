@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  resolveTemplate,
-  resolveInputMapping,
-  evaluateCondition,
-  buildTemplateContext,
+    buildTemplateContext,
+    evaluateCondition,
+    resolveInputMapping,
+    resolveTemplate,
 } from "../template.engine";
 import type { TemplateContext } from "../workflow.types";
 
@@ -20,6 +20,7 @@ function makeCtx(overrides: Partial<TemplateContext> = {}): TemplateContext {
       3: { output: null, error: "timeout" }, // non-contiguous order
     },
     env: {},
+    secrets: {},
     ctx: {
       userId: "u1",
       workflowId: "w1",
@@ -231,5 +232,39 @@ describe("Edge cases", () => {
   it("handles no-expression text", () => {
     const ctx = makeCtx();
     expect(resolveTemplate("plain text", ctx)).toBe("plain text");
+  });
+});
+
+// ===========================================================================
+// Phase 7.4: secrets namespace
+// ===========================================================================
+describe("secrets namespace", () => {
+  it("inlines a secret value via {{secrets.KEY}}", () => {
+    const ctx = makeCtx({ secrets: { OPENAI_API_KEY: "sk-test-123" } });
+    expect(resolveTemplate("{{secrets.OPENAI_API_KEY}}", ctx)).toBe("sk-test-123");
+  });
+
+  it("returns empty string for an unset secret (consistent with other namespaces)", () => {
+    const ctx = makeCtx({ secrets: {} });
+    expect(resolveTemplate("{{secrets.MISSING}}", ctx)).toBe("");
+  });
+
+  it("buildTemplateContext defaults secrets to {} when omitted", () => {
+    const ctx = buildTemplateContext({}, {}, 0, {
+      userId: "u",
+      workflowId: "w",
+      runId: "r",
+    });
+    expect(ctx.secrets).toEqual({});
+  });
+
+  it("buildTemplateContext passes through provided secrets", () => {
+    const ctx = buildTemplateContext({}, {}, 0, {
+      userId: "u",
+      workflowId: "w",
+      runId: "r",
+      secrets: { A: "1", B: "2" },
+    });
+    expect(ctx.secrets).toEqual({ A: "1", B: "2" });
   });
 });

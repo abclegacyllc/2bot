@@ -225,4 +225,361 @@ describe("BuildSpec schema", () => {
       expect(r.success).toBe(false);
     });
   });
+
+  describe("resources (HTTP_ROUTE)", () => {
+    it("defaults resources to [] for existing specs", () => {
+      const r = BuildSpecV1.safeParse(minimal);
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.resources).toEqual([]);
+    });
+
+    it("accepts a minimal HTTP_ROUTE resource", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        plugins: [{ ref: "p1", pluginSlug: "echo-bot" }],
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "Hello",
+            httpRoute: { path: "/hello", targetPluginRef: "p1" },
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+      if (r.success) {
+        expect(r.data.resources[0]).toMatchObject({
+          ref: "r1",
+          kind: "HTTP_ROUTE",
+          httpRoute: { method: "ANY", authMode: "NONE", path: "/hello" },
+        });
+      }
+    });
+
+    it("rejects targetPluginRef that doesn't resolve", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "Hello",
+            httpRoute: { path: "/hello", targetPluginRef: "ghost" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(
+          r.error.issues.some((i) =>
+            i.message.includes('targetPluginRef "ghost" not found'),
+          ),
+        ).toBe(true);
+      }
+    });
+
+    it("rejects bad path syntax", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "Bad",
+            httpRoute: { path: "no-leading-slash" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects duplicate (method, path) pair within the spec", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "A",
+            httpRoute: { method: "GET", path: "/x" },
+          },
+          {
+            ref: "r2",
+            kind: "HTTP_ROUTE",
+            name: "B",
+            httpRoute: { method: "GET", path: "/x" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(
+          r.error.issues.some((i) => i.message.includes("duplicate HTTP_ROUTE")),
+        ).toBe(true);
+      }
+    });
+
+    it("rejects API_KEY without authConfig.apiKey", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "A",
+            httpRoute: { path: "/x", authMode: "API_KEY" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects HMAC without authConfig.hmacSecret", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "A",
+            httpRoute: { path: "/x", authMode: "HMAC" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("accepts resources alongside the existing ref-uniqueness check", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        plugins: [{ ref: "shared", pluginSlug: "echo-bot" }],
+        resources: [
+          {
+            ref: "shared", // collides with the plugin ref
+            kind: "HTTP_ROUTE",
+            name: "A",
+            httpRoute: { path: "/x" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+  });
+
+  describe("resources targetWorkflowRef (Phase 7.4)", () => {
+    const wfMin = {
+      ref: "wf-x",
+      name: "WF",
+      slug: "wf-x",
+      triggerType: "WEBHOOK" as const,
+      gateways: [],
+      steps: [],
+      edges: [],
+    };
+
+    it("accepts HTTP_ROUTE with targetWorkflowRef pointing at a workflow", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        workflows: [wfMin],
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "Hook",
+            httpRoute: { path: "/hook", targetWorkflowRef: "wf-x" },
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("rejects HTTP_ROUTE targetWorkflowRef that does not resolve", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "Hook",
+            httpRoute: { path: "/hook", targetWorkflowRef: "ghost" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(
+          r.error.issues.some((i) =>
+            i.message.includes('targetWorkflowRef "ghost" not found'),
+          ),
+        ).toBe(true);
+      }
+    });
+
+    it("rejects HTTP_ROUTE with both targetPluginRef and targetWorkflowRef", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        plugins: [{ ref: "p1", pluginSlug: "echo-bot" }],
+        workflows: [wfMin],
+        resources: [
+          {
+            ref: "r1",
+            kind: "HTTP_ROUTE",
+            name: "Hook",
+            httpRoute: {
+              path: "/hook",
+              targetPluginRef: "p1",
+              targetWorkflowRef: "wf-x",
+            },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(
+          r.error.issues.some((i) =>
+            i.message.includes("mutually exclusive"),
+          ),
+        ).toBe(true);
+      }
+    });
+  });
+
+  describe("resources SCHEDULE (Phase 7.4)", () => {
+    it("accepts a minimal SCHEDULE", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "s1",
+            kind: "SCHEDULE",
+            name: "Hourly",
+            schedule: { cron: "0 * * * *" },
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts SCHEDULE with targetWorkflowRef + timezone", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        workflows: [
+          {
+            ref: "nightly",
+            name: "Nightly",
+            slug: "nightly",
+            triggerType: "SCHEDULE",
+            gateways: [],
+            steps: [],
+            edges: [],
+          },
+        ],
+        resources: [
+          {
+            ref: "s1",
+            kind: "SCHEDULE",
+            name: "Nightly tick",
+            schedule: {
+              cron: "0 3 * * *",
+              timezone: "Europe/London",
+              targetWorkflowRef: "nightly",
+              enabled: true,
+            },
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("rejects SCHEDULE.targetWorkflowRef that does not resolve", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "s1",
+            kind: "SCHEDULE",
+            name: "X",
+            schedule: { cron: "* * * * *", targetWorkflowRef: "ghost" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+  });
+
+  describe("resources SECRET (Phase 7.4)", () => {
+    it("accepts a minimal SECRET", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "sec1",
+            kind: "SECRET",
+            name: "OpenAI key",
+            secret: { key: "OPENAI_API_KEY", value: "sk-test-123" },
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("rejects SECRET with lowercase key", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "sec1",
+            kind: "SECRET",
+            name: "X",
+            secret: { key: "openai_key", value: "x" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects empty SECRET value", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "sec1",
+            kind: "SECRET",
+            name: "X",
+            secret: { key: "K", value: "" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects duplicate SECRET keys within a single spec", () => {
+      const r = BuildSpecV1.safeParse({
+        ...minimal,
+        resources: [
+          {
+            ref: "sec1",
+            kind: "SECRET",
+            name: "A",
+            secret: { key: "DUP_KEY", value: "v1" },
+          },
+          {
+            ref: "sec2",
+            kind: "SECRET",
+            name: "B",
+            secret: { key: "DUP_KEY", value: "v2" },
+          },
+        ],
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(
+          r.error.issues.some((i) =>
+            i.message.includes('duplicate SECRET key "DUP_KEY"'),
+          ),
+        ).toBe(true);
+      }
+    });
+  });
 });
+

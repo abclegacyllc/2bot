@@ -25,6 +25,15 @@ export const BRIDGE_PORT = 9000;
 /** Bridge agent WebSocket path */
 export const BRIDGE_WS_PATH = '/ws';
 
+/**
+ * User-facing HTTP listener port inside the workspace container (Phase 7.3c).
+ *
+ * Fixed for every container; the host-side port is allocated dynamically by
+ * Docker and persisted to `WorkspaceContainer.httpPort` after start.
+ * Nginx will eventually proxy `*.2bot.org` traffic to `127.0.0.1:<httpPort>`.
+ */
+export const WORKSPACE_HTTP_PORT_INTERNAL = 3000;
+
 // ===========================================
 // Container Naming
 // ===========================================
@@ -42,6 +51,24 @@ export function orgContainerName(orgSlug: string, userId: string): string {
 /** Generate volume path for a container */
 export function containerVolumePath(containerName: string): string {
   return `${WORKSPACE_VOLUME_BASE}/${containerName}`;
+}
+
+/**
+ * Derive the user-facing subdomain for a container (Phase 7.3c).
+ *
+ * Returns a DNS-safe label (lowercase, alphanumeric + hyphens, ≤63 chars).
+ * Container names are already unique so the resulting subdomain is too;
+ * any non-conforming characters are replaced with `-` and runs are collapsed.
+ */
+export function containerSubdomain(containerName: string): string {
+  const label = containerName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 63);
+  // Empty fallback should never trigger for our `ws-...` names, but be safe.
+  return label || `ws-${Date.now().toString(36)}`;
 }
 
 // ===========================================

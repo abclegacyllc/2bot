@@ -64,6 +64,7 @@ next-env.d.ts
 
 # Nginx generated route maps
 nginx/gateway-routes.map
+nginx/apps-routes.map
 
 # Accidental terminal command fragment files
 ql *

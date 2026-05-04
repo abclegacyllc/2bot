@@ -6,11 +6,11 @@
  */
 
 import { hashPassword } from '@/lib/password';
+import { prisma } from '@/lib/prisma';
 import type { Organization, User } from '@prisma/client';
-import { PrismaClient } from '@prisma/client';
 
-// Test database client - URL must be set via DATABASE_URL env var
-export const testDb = new PrismaClient();
+// Re-export so tests can use the same lazy client instance.
+export const testDb = prisma;
 
 // Test fixtures - known data for integration tests
 export const TEST_FIXTURES = {
@@ -53,8 +53,17 @@ export const TEST_FIXTURES = {
  * WARNING: This deletes ALL data in the test database!
  */
 export async function cleanDatabase() {
-  // Delete in correct order to respect foreign keys
+  // Delete in correct order to respect foreign keys.
+  // ProjectResource sidecars cascade from ProjectResource; ProjectResource
+  // itself cascades when the parent Project is deleted.
   await testDb.session.deleteMany();
+  await testDb.workflowStep.deleteMany();
+  await testDb.workflowEdge.deleteMany();
+  await testDb.workflowGateway.deleteMany();
+  await testDb.workflow.deleteMany();
+  // Sidecars cascade automatically; deleteMany on parent is sufficient.
+  await testDb.projectResource.deleteMany();
+  await testDb.project.deleteMany();
   await testDb.userPlugin.deleteMany();
   await testDb.gateway.deleteMany();
   await testDb.plugin.deleteMany();
@@ -156,7 +165,9 @@ export async function setupIntegrationTest() {
  * Call this in afterAll()
  */
 export async function teardownIntegrationTest() {
-  await testDb.$disconnect();
+  // The `prisma` export is the shared app proxy; we don't disconnect it
+  // because other tests in the same process may still use it.
+  // The pool will be released when the process exits.
 }
 
 /**

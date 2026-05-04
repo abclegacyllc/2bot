@@ -1317,6 +1317,12 @@ model ProjectResource {
   // Sidecar relation for kind = HTTP_ROUTE (Phase 7.3). 1:1 via HttpRoute.resourceId.
   httpRoute HttpRoute?
 
+  // Sidecar relation for kind = SCHEDULE (Phase 7.4). 1:1 via Schedule.resourceId.
+  schedule Schedule?
+
+  // Sidecar relation for kind = SECRET (Phase 7.4). 1:1 via Secret.resourceId.
+  secret Secret?
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1376,6 +1382,11 @@ model HttpRoute {
   /// Optional symbol/export inside the target module to invoke (e.g. "handleHello").
   targetExport       String? @map("target_export")
 
+  // Phase 7.3c: optional Workflow target. When set, an inbound request
+  // fires a WEBHOOK-triggered Workflow run instead of executing a UserPlugin.
+  // Mutually exclusive with targetUserPluginId at the validator level.
+  targetWorkflowId   String? @map("target_workflow_id")
+
   // Auth
   authMode   HttpAuthMode @default(NONE) @map("auth_mode")
   authConfig Json         @default("{}") @map("auth_config")
@@ -1395,10 +1406,90 @@ model HttpRoute {
 
   resource         ProjectResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
   targetUserPlugin UserPlugin?     @relation("HttpRouteHandler", fields: [targetUserPluginId], references: [id], onDelete: SetNull)
+  targetWorkflow   Workflow?       @relation("HttpRouteWorkflow", fields: [targetWorkflowId], references: [id], onDelete: SetNull)
 
   @@index([targetUserPluginId])
+  @@index([targetWorkflowId])
   @@index([method, path])
   @@map("http_routes")
+}
+
+// ===========================================
+// Schedule (Phase 7.4 — Path C sidecar for ProjectResource.kind=SCHEDULE)
+// ===========================================
+//
+// Cron-driven trigger that fires a target Workflow on a schedule. Polled by
+// `schedule-tick.service.ts` (default cadence 30s); each tick selects rows
+// where `nextFireAt <= now()` and executes the associated Workflow.
+// ===========================================
+model Schedule {
+  id         String @id @default(cuid())
+  resourceId String @unique @map("resource_id")
+
+  /// 5-field cron expression (UTC unless `timezone` is set).
+  cron     String
+  timezone String?
+
+  /// Workflow fired on each tick. Nullable so a schedule can be defined
+  /// before its target workflow exists; ticks for unbound schedules are
+  /// silently skipped (logged at warn level).
+  targetWorkflowId String? @map("target_workflow_id")
+
+  /// When false, the row is ignored by the tick service.
+  enabled Boolean @default(true)
+
+  /// Last successful fire (set by the tick service after enqueueing the run).
+  lastFiredAt DateTime? @map("last_fired_at")
+  /// Next scheduled fire — (re)computed on create / update / fire.
+  nextFireAt  DateTime? @map("next_fire_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  resource       ProjectResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  targetWorkflow Workflow?       @relation("ScheduleWorkflow", fields: [targetWorkflowId], references: [id], onDelete: SetNull)
+
+  @@index([targetWorkflowId])
+  @@index([enabled, nextFireAt])
+  @@map("schedules")
+}
+
+// ===========================================
+// Secret (Phase 7.4 — Path C sidecar for ProjectResource.kind=SECRET)
+// ===========================================
+//
+// Encrypted credential / API key referenced by plugins and workflows. The
+// ciphertext is produced by `src/lib/encryption.ts` (AES-256-GCM, versioned
+// keys). Plaintext values are never exposed by the resource list/detail
+// endpoints — runtime callers must use `getDecryptedSecretValue()` after an
+// ownership check.
+// ===========================================
+model Secret {
+  id         String @id @default(cuid())
+  resourceId String @unique @map("resource_id")
+
+  /// Logical identifier referenced by plugin/workflow code (e.g. "OPENAI_API_KEY").
+  /// Allowed chars: A-Z, 0-9, underscore. Length 1..128.
+  key String
+
+  /// AES-256-GCM ciphertext produced by `lib/encryption.encrypt()`. Never
+  /// returned by the API.
+  valueEnc String @map("value_enc")
+
+  /// Optional human-readable description.
+  description String?
+
+  /// Bumps on every value rotation.
+  version       Int       @default(1)
+  lastRotatedAt DateTime? @map("last_rotated_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  resource ProjectResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@map("secrets")
 }
 
 // ===========================================
@@ -1521,6 +1612,8 @@ model Workflow {
   edges            WorkflowEdge[]
   runs             WorkflowRun[]
   workflowGateways WorkflowGateway[]
+  httpRoutes       HttpRoute[]       @relation("HttpRouteWorkflow")
+  schedules        Schedule[]        @relation("ScheduleWorkflow")
 
   @@unique([userId, organizationId, slug])
   @@index([userId])

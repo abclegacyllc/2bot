@@ -142,6 +142,8 @@ class ContainerLifecycleService {
         restartCount: true,
         bridgePort: true,
         bridgeAuthToken: true,
+        subdomain: true,
+        httpPort: true,
       },
     });
 
@@ -176,6 +178,8 @@ class ContainerLifecycleService {
     restartCount: number;
     bridgePort: number | null;
     bridgeAuthToken: string | null;
+    subdomain: string | null;
+    httpPort: number | null;
   }): Promise<HealthCheckResult> {
     const result: HealthCheckResult = {
       containerId: container.id,
@@ -221,6 +225,26 @@ class ContainerLifecycleService {
           }
         } catch (err) {
           log.debug({ containerDbId: container.id, error: (err as Error).message }, 'Health check: failed to verify Docker port');
+        }
+      }
+
+      // Phase 7.3c: same drift check for the user-facing HTTP listener port.
+      if (container.subdomain && container.containerId) {
+        try {
+          const actualHttpPort = await dockerService.getHttpPort(container.containerId);
+          if (actualHttpPort && actualHttpPort !== container.httpPort) {
+            log.info(
+              { containerDbId: container.id, oldPort: container.httpPort, newPort: actualHttpPort },
+              'Health check: HTTP port changed, updating DB',
+            );
+            await prisma.workspaceContainer.update({
+              where: { id: container.id },
+              data: { httpPort: actualHttpPort },
+            });
+            container.httpPort = actualHttpPort;
+          }
+        } catch (err) {
+          log.debug({ containerDbId: container.id, error: (err as Error).message }, 'Health check: failed to verify HTTP port');
         }
       }
 
@@ -314,6 +338,7 @@ class ContainerLifecycleService {
     autoRestart: boolean;
     maxRestarts: number;
     restartCount: number;
+    subdomain: string | null;
   }): Promise<void> {
     const newFailCount = container.healthCheckFails + 1;
 
@@ -412,6 +437,7 @@ class ContainerLifecycleService {
     containerName: string;
     userId: string;
     restartCount: number;
+    subdomain: string | null;
   }): Promise<void> {
     if (!container.containerId) return;
 
@@ -436,6 +462,10 @@ class ContainerLifecycleService {
 
       // Discover new bridge port (Docker assigns a new random host port on restart)
       const bridgePort = await dockerService.getBridgePort(container.containerId);
+      // Phase 7.3c: same applies to the user-facing HTTP listener port.
+      const httpPort = container.subdomain
+        ? await dockerService.getHttpPort(container.containerId)
+        : null;
 
       // Update status to RUNNING with new bridge port
       await prisma.workspaceContainer.update({
@@ -444,6 +474,7 @@ class ContainerLifecycleService {
           status: 'RUNNING',
           startedAt: new Date(),
           bridgePort,
+          httpPort,
           healthCheckFails: 0,
         },
       });
@@ -737,6 +768,8 @@ class ContainerLifecycleService {
         bridgeAuthToken: true,
         userId: true,
         organizationId: true,
+        subdomain: true,
+        httpPort: true,
       },
     });
 
@@ -788,6 +821,22 @@ class ContainerLifecycleService {
             data: { bridgePort: actualBridgePort },
           });
           container.bridgePort = actualBridgePort;
+        }
+
+        // Phase 7.3c: also reconcile the user-facing HTTP listener port.
+        if (container.subdomain) {
+          const actualHttpPort = await dockerService.getHttpPort(container.containerId);
+          if (actualHttpPort && actualHttpPort !== container.httpPort) {
+            log.info(
+              { containerDbId: container.id, oldPort: container.httpPort, newPort: actualHttpPort },
+              'HTTP port changed — updating DB',
+            );
+            await prisma.workspaceContainer.update({
+              where: { id: container.id },
+              data: { httpPort: actualHttpPort },
+            });
+            container.httpPort = actualHttpPort;
+          }
         }
 
         // Reconnect bridge client

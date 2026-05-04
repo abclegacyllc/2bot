@@ -26,27 +26,32 @@ import type { z } from "zod";
 
 import { logger } from "@/lib/logger";
 import {
-  buildspecApplyTotal,
-  buildspecSmokeFailuresTotal,
+    buildspecApplyTotal,
+    buildspecSmokeFailuresTotal,
 } from "@/lib/metrics";
 import { prisma } from "@/lib/prisma";
 import { gatewayService } from "@/modules/gateway/gateway.service";
 import {
-  gatewayTypeToPlatform,
-  getPluginEntryPath,
-  isDirectoryLayout,
+    gatewayTypeToPlatform,
+    getPluginEntryPath,
+    isDirectoryLayout,
 } from "@/modules/plugin/plugin-deploy.service";
+import {
+    createHttpRouteResource,
+    createScheduleResource,
+    createSecretResource,
+} from "@/modules/project-resource/project-resource.service";
 import { ensureDefaultProject } from "@/modules/project/project.service";
 import { createServiceContext } from "@/shared/types/context";
 
 import { BuildSpecV1 } from "./buildspec.schema";
 import type {
-  BuildSpec,
-  BuildSpecApplyOptions,
-  BuildSpecApplyResult,
-  BuildSpecOwner,
-  BuildSpecSmokeResult,
-  ValidatedBuildSpec,
+    BuildSpec,
+    BuildSpecApplyOptions,
+    BuildSpecApplyResult,
+    BuildSpecOwner,
+    BuildSpecSmokeResult,
+    ValidatedBuildSpec,
 } from "./buildspec.types";
 import { runSmokeTests } from "./smoke-test.runner";
 
@@ -95,6 +100,8 @@ interface RollbackHandles {
   workflowIds: string[];
   userPluginIds: string[];
   gatewayIds: string[];
+  /** ProjectResource ids created during apply (HTTP_ROUTE / SCHEDULE / SECRET). */
+  resourceIds: string[];
   /** Project id is only added if we CREATED the project (not if we used an
    *  existing one). */
   createdProjectId?: string;
@@ -121,7 +128,7 @@ export async function applyBuildSpec(
     buildspecApplyTotal.inc({ status: "validation-failed", source });
     return {
       status: "validation-failed",
-      refMap: { gateways: {}, plugins: {}, workflows: {} },
+      refMap: { gateways: {}, plugins: {}, workflows: {}, resources: {} },
       smokeResults: [],
       validationErrors: v.errors,
     };
@@ -132,7 +139,7 @@ export async function applyBuildSpec(
   if (dryRun) {
     return {
       status: "applied",
-      refMap: { gateways: {}, plugins: {}, workflows: {} },
+      refMap: { gateways: {}, plugins: {}, workflows: {}, resources: {} },
       smokeResults: [],
     };
   }
@@ -141,11 +148,13 @@ export async function applyBuildSpec(
     gateways: {},
     plugins: {},
     workflows: {},
+    resources: {},
   };
   const rollback: RollbackHandles = {
     workflowIds: [],
     userPluginIds: [],
     gatewayIds: [],
+    resourceIds: [],
   };
 
   let projectId: string | undefined;
@@ -163,6 +172,11 @@ export async function applyBuildSpec(
     // 5. Workflows + steps + edges + workflow_gateways
     await resolveWorkflows(owner, spec, projectId, refMap, rollback);
 
+    // 5b. ProjectResources (HTTP_ROUTE / SCHEDULE / SECRET).
+    //     Runs AFTER workflows so that `targetWorkflowRef` and
+    //     `targetPluginRef` resolve to real DB ids.
+    await resolveResources(owner, spec, projectId, refMap, rollback);
+
     // 6. Smoke tests
     const smokeResults = await runSmokeTests(owner, spec, refMap.workflows);
     const anyFailed = smokeResults.some((r) => !r.ok);
@@ -175,7 +189,7 @@ export async function applyBuildSpec(
         return {
           status: "rolled-back",
           projectId: rollback.createdProjectId ? undefined : projectId,
-          refMap: { gateways: {}, plugins: {}, workflows: {} },
+          refMap: { gateways: {}, plugins: {}, workflows: {}, resources: {} },
           smokeResults,
           rollbackReason: "smoke-test-failed",
         };
@@ -525,9 +539,101 @@ async function activateWorkflows(
   }
 }
 
+/**
+ * Apply ProjectResource rows declared in `spec.resources[]`.
+ *
+ * Runs after `resolveWorkflows` so that spec-local refs (`targetWorkflowRef`,
+ * `targetPluginRef`) can be mapped to real DB ids via `refMap`. Each created
+ * resource id is pushed onto `rollback.resourceIds` for atomic rollback;
+ * deleting a ProjectResource cascades to its sidecar (HttpRoute / Schedule /
+ * Secret) via the schema's `onDelete: Cascade` FK.
+ */
+async function resolveResources(
+  owner: BuildSpecOwner,
+  spec: ValidatedBuildSpec,
+  projectId: string,
+  refMap: BuildSpecApplyResult["refMap"],
+  rollback: RollbackHandles,
+): Promise<void> {
+  for (const r of spec.resources) {
+    if (r.kind === "HTTP_ROUTE") {
+      const targetUserPluginId = r.httpRoute.targetPluginRef
+        ? refMap.plugins[r.httpRoute.targetPluginRef] ?? null
+        : null;
+      const targetWorkflowId = r.httpRoute.targetWorkflowRef
+        ? refMap.workflows[r.httpRoute.targetWorkflowRef] ?? null
+        : null;
+      const created = await createHttpRouteResource(owner, {
+        projectId,
+        name: r.name,
+        slug: r.slug,
+        httpRoute: {
+          method: r.httpRoute.method,
+          path: r.httpRoute.path,
+          targetUserPluginId,
+          targetWorkflowId,
+          targetExport: r.httpRoute.targetExport ?? null,
+          authMode: r.httpRoute.authMode,
+          authConfig: r.httpRoute.authConfig,
+          maxBodyKb: r.httpRoute.maxBodyKb,
+          timeoutMs: r.httpRoute.timeoutMs,
+          corsOrigin: r.httpRoute.corsOrigin ?? null,
+          passthroughBody: r.httpRoute.passthroughBody,
+        },
+      });
+      refMap.resources[r.ref] = created.id;
+      rollback.resourceIds.push(created.id);
+      continue;
+    }
+
+    if (r.kind === "SCHEDULE") {
+      const targetWorkflowId = r.schedule.targetWorkflowRef
+        ? refMap.workflows[r.schedule.targetWorkflowRef] ?? null
+        : null;
+      const created = await createScheduleResource(owner, {
+        projectId,
+        name: r.name,
+        slug: r.slug,
+        schedule: {
+          cron: r.schedule.cron,
+          timezone: r.schedule.timezone ?? null,
+          targetWorkflowId,
+          enabled: r.schedule.enabled,
+        },
+      });
+      refMap.resources[r.ref] = created.id;
+      rollback.resourceIds.push(created.id);
+      continue;
+    }
+
+    if (r.kind === "SECRET") {
+      const created = await createSecretResource(owner, {
+        projectId,
+        name: r.name,
+        slug: r.slug,
+        secret: {
+          key: r.secret.key,
+          value: r.secret.value,
+          description: r.secret.description ?? null,
+        },
+      });
+      refMap.resources[r.ref] = created.id;
+      rollback.resourceIds.push(created.id);
+      continue;
+    }
+  }
+}
+
 async function rollbackAll(rb: RollbackHandles): Promise<void> {
   // Reverse-creation order. Workflows cascade to steps/edges/workflow_gateways
-  // via FK on delete cascade. UserPlugins and gateways are deleted explicitly.
+  // via FK on delete cascade. ProjectResources cascade to their sidecars
+  // (HttpRoute / Schedule / Secret) via schema FKs. UserPlugins and gateways
+  // are deleted explicitly.
+  if (rb.resourceIds.length > 0) {
+    await prisma.projectResource.deleteMany({
+      where: { id: { in: rb.resourceIds } },
+    });
+  }
   if (rb.workflowIds.length > 0) {
     await prisma.workflow.deleteMany({ where: { id: { in: rb.workflowIds } } });
   }

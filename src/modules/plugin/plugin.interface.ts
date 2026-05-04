@@ -578,6 +578,16 @@ export interface PluginContext {
   /** Logger instance for this plugin */
   logger: Logger;
 
+  /**
+   * Project-scoped secrets keyed by uppercase identifier (e.g. `OPENAI_API_KEY`).
+   * Populated from active SECRET ProjectResources for the project this run
+   * belongs to. Empty object when no project context is available.
+   *
+   * Plugins must NEVER log or echo these values. Do not place them on the
+   * outbound HTTP response or in step output unless explicitly intended.
+   */
+  secrets: Record<string, string>;
+
   /** Abort signal for cancellation */
   signal?: AbortSignal;
 

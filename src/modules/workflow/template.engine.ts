@@ -56,7 +56,7 @@ function resolvePath(obj: unknown, path: string): unknown {
 /**
  * Resolve a single template expression path against the context.
  *
- * Supported top-level keys: trigger, prev, steps, env, ctx
+ * Supported top-level keys: trigger, prev, steps, env, secrets, ctx
  */
 function resolveExpression(expression: string, context: TemplateContext): unknown {
   const trimmed = expression.trim();
@@ -83,6 +83,9 @@ function resolveExpression(expression: string, context: TemplateContext): unknow
       break;
     case "env":
       root = context.env;
+      break;
+    case "secrets":
+      root = context.secrets;
       break;
     case "ctx":
       root = context.ctx;
@@ -239,6 +242,12 @@ export function buildTemplateContext(
     organizationId?: string;
     workflowId: string;
     runId: string;
+    /**
+     * Project-scoped SECRETs (key → plaintext). Optional — callers that do
+     * not load secrets pass nothing and the resulting `secrets` namespace is
+     * an empty object.
+     */
+    secrets?: Record<string, string>;
   }
 ): TemplateContext {
   // Build steps map (step order → { output, error })
@@ -262,6 +271,7 @@ export function buildTemplateContext(
     prev,
     steps: stepsOutput,
     env: {}, // No user env vars exposed for now (security)
+    secrets: meta.secrets ?? {},
     ctx: {
       userId: meta.userId,
       organizationId: meta.organizationId,

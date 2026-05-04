@@ -26,7 +26,8 @@ vi.mock("@/lib/metrics", () => ({
 
 // Prisma should never be called when dryRun=true or validation fails.
 const prismaMock = {
-  project: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+  project: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), delete: vi.fn() },
+  projectResource: { deleteMany: vi.fn() },
   gateway: { findUnique: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
   plugin: { findUnique: vi.fn() },
   userPlugin: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), deleteMany: vi.fn() },
@@ -57,6 +58,16 @@ vi.mock("@/shared/types/context", () => ({
 }));
 vi.mock("../smoke-test.runner", () => ({
   runSmokeTests: vi.fn(async () => []),
+}));
+
+// Mocks for ProjectResource service used by `resolveResources`.
+const createHttpRouteResourceMock = vi.fn();
+const createScheduleResourceMock = vi.fn();
+const createSecretResourceMock = vi.fn();
+vi.mock("@/modules/project-resource/project-resource.service", () => ({
+  createHttpRouteResource: (...a: unknown[]) => createHttpRouteResourceMock(...a),
+  createScheduleResource: (...a: unknown[]) => createScheduleResourceMock(...a),
+  createSecretResource: (...a: unknown[]) => createSecretResourceMock(...a),
 }));
 
 import { applyBuildSpec, validateBuildSpec } from "../orchestrator.service";
@@ -133,6 +144,199 @@ describe("applyBuildSpec", () => {
     expect(incMock).toHaveBeenCalledWith("apply", {
       status: "validation-failed",
       source: "ai-agent",
+    });
+  });
+});
+
+// ===========================================================================
+// resolveResources integration (Phase 7.4)
+// ===========================================================================
+
+describe("applyBuildSpec — resolveResources", () => {
+  beforeEach(() => {
+    incMock.mockClear();
+    Object.values(prismaMock).forEach((m) => {
+      Object.values(m).forEach((fn) => (fn as { mockClear?: () => void }).mockClear?.());
+    });
+    createHttpRouteResourceMock.mockReset();
+    createScheduleResourceMock.mockReset();
+    createSecretResourceMock.mockReset();
+
+    // Default DB stubs: project create succeeds; workflow create returns id;
+    // plugin lookup returns null (no plugin steps in these specs).
+    prismaMock.project.findFirst.mockResolvedValue(null);
+    prismaMock.project.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({
+      id: "proj-new",
+      ...args.data,
+    }));
+    prismaMock.workflow.findFirst.mockResolvedValue(null);
+    prismaMock.workflow.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({
+      id: `wf-${(args.data.slug as string) ?? "x"}`,
+      ...args.data,
+    }));
+    prismaMock.plugin.findUnique.mockResolvedValue(null);
+    prismaMock.project.delete.mockResolvedValue(undefined);
+    prismaMock.projectResource.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.workflow.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.userPlugin.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.gateway.deleteMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("creates HTTP_ROUTE resource and resolves targetWorkflowRef → workflow id", async () => {
+    createHttpRouteResourceMock.mockResolvedValue({ id: "res-http-1" });
+
+    const result = await applyBuildSpec(owner, {
+      project: { name: "P" },
+      workflows: [
+        {
+          ref: "wf-main",
+          name: "Main",
+          slug: "main",
+          triggerType: "WEBHOOK",
+          steps: [],
+          edges: [],
+        },
+      ],
+      resources: [
+        {
+          ref: "http-1",
+          kind: "HTTP_ROUTE",
+          name: "Webhook",
+          httpRoute: {
+            method: "POST",
+            path: "/hooks/run",
+            targetWorkflowRef: "wf-main",
+            authMode: "NONE",
+            authConfig: {},
+            maxBodyKb: 1024,
+            timeoutMs: 15000,
+            passthroughBody: true,
+          },
+        },
+      ],
+    });
+
+    expect(result.status).toBe("applied");
+    expect(createHttpRouteResourceMock).toHaveBeenCalledTimes(1);
+    const [, payload] = createHttpRouteResourceMock.mock.calls[0]!;
+    expect(payload.projectId).toBe("proj-new");
+    expect(payload.httpRoute.targetWorkflowId).toBe("wf-main");
+    expect(payload.httpRoute.targetUserPluginId).toBeNull();
+    expect(result.refMap.resources["http-1"]).toBe("res-http-1");
+  });
+
+  it("creates SCHEDULE resource and resolves targetWorkflowRef", async () => {
+    createScheduleResourceMock.mockResolvedValue({ id: "res-sched-1" });
+
+    const result = await applyBuildSpec(owner, {
+      project: { name: "P" },
+      workflows: [
+        {
+          ref: "wf-tick",
+          name: "Tick",
+          slug: "tick",
+          triggerType: "SCHEDULE",
+          steps: [],
+          edges: [],
+        },
+      ],
+      resources: [
+        {
+          ref: "sched-1",
+          kind: "SCHEDULE",
+          name: "Hourly",
+          schedule: {
+            cron: "0 * * * *",
+            timezone: "UTC",
+            targetWorkflowRef: "wf-tick",
+            enabled: true,
+          },
+        },
+      ],
+    });
+
+    expect(result.status).toBe("applied");
+    expect(createScheduleResourceMock).toHaveBeenCalledTimes(1);
+    const [, payload] = createScheduleResourceMock.mock.calls[0]!;
+    expect(payload.schedule.cron).toBe("0 * * * *");
+    expect(payload.schedule.targetWorkflowId).toBe("wf-tick");
+    expect(result.refMap.resources["sched-1"]).toBe("res-sched-1");
+  });
+
+  it("creates SECRET resource without ref resolution", async () => {
+    createSecretResourceMock.mockResolvedValue({ id: "res-sec-1" });
+
+    const result = await applyBuildSpec(owner, {
+      project: { name: "P" },
+      resources: [
+        {
+          ref: "sec-1",
+          kind: "SECRET",
+          name: "OpenAI key",
+          secret: {
+            key: "OPENAI_API_KEY",
+            value: "sk-test",
+            description: "for the assistant",
+          },
+        },
+      ],
+    });
+
+    expect(result.status).toBe("applied");
+    expect(createSecretResourceMock).toHaveBeenCalledTimes(1);
+    const [, payload] = createSecretResourceMock.mock.calls[0]!;
+    expect(payload.secret).toEqual({
+      key: "OPENAI_API_KEY",
+      value: "sk-test",
+      description: "for the assistant",
+    });
+    expect(result.refMap.resources["sec-1"]).toBe("res-sec-1");
+  });
+
+  it("rolls back created resources when a later step throws", async () => {
+    createHttpRouteResourceMock.mockResolvedValue({ id: "res-http-2" });
+    createSecretResourceMock.mockRejectedValue(new Error("boom"));
+
+    let thrown: unknown;
+    try {
+      await applyBuildSpec(owner, {
+        project: { name: "P" },
+        resources: [
+          {
+            ref: "http-1",
+            kind: "HTTP_ROUTE",
+            name: "Webhook",
+            httpRoute: {
+              method: "POST",
+              path: "/hooks/run",
+              authMode: "NONE",
+              authConfig: {},
+              maxBodyKb: 1024,
+              timeoutMs: 15000,
+              passthroughBody: true,
+            },
+          },
+          {
+            ref: "sec-1",
+            kind: "SECRET",
+            name: "Key",
+            secret: { key: "K", value: "v" },
+          },
+        ],
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("boom");
+    // The previously-created http resource must be rolled back via deleteMany.
+    expect(prismaMock.projectResource.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["res-http-2"] } },
+    });
+    // Project rollback also ran (createdProjectId set, so project.delete called).
+    expect(prismaMock.project.delete).toHaveBeenCalledWith({
+      where: { id: "proj-new" },
     });
   });
 });

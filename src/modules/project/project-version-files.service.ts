@@ -27,8 +27,8 @@
 
 import { createHash } from "node:crypto";
 
-import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
 
 import type { ProjectManifest } from "./project-version.types";
 

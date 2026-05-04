@@ -19,6 +19,8 @@ export interface BuildSpecApplyResult {
     gateways: Record<string, string>;
     plugins: Record<string, string>; // spec ref → UserPlugin.id
     workflows: Record<string, string>;
+    /** Spec ref → ProjectResource.id (HTTP_ROUTE / SCHEDULE / SECRET). */
+    resources: Record<string, string>;
   };
   /** Smoke test results, in spec order */
   smokeResults: BuildSpecSmokeResult[];

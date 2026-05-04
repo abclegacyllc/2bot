@@ -3,6 +3,7 @@ import { metricsHandler } from "@/lib/metrics";
 import { initializeProviderHealth } from "@/modules/2bot-ai-provider/provider-health.service";
 import { BUILTIN_PLUGINS } from "@/modules/plugin/handlers";
 import { registerPlugin } from "@/modules/plugin/plugin.executor";
+import { initializeScheduleTick } from "@/modules/project-resource/schedule-tick.service";
 import { workflowService } from "@/modules/workflow/workflow.service";
 import cors from "cors";
 import express, { type Express } from "express";
@@ -153,6 +154,10 @@ export function startServer(app: Express): ReturnType<Express['listen']> {
 
     // Initialize bridge token rotation cron (rotates BRIDGE_AUTH_TOKEN daily)
     initializeBridgeTokenRotationCron();
+
+    // Initialize SCHEDULE ProjectResource tick loop (Phase 7.4 — gated by
+    // FEATURE_PROJECT_RESOURCES).
+    initializeScheduleTick();
 
     // Clean up workflow runs orphaned by previous server instance
     workflowService.cleanupOrphanedRuns().catch((err) => {

@@ -22,6 +22,7 @@ import { loggers } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { pluginIpcService } from "@/modules/plugin/plugin-ipc.service";
 import { bridgeClientManager } from "@/modules/workspace";
+import { appRouteService } from "@/modules/workspace/app-route.service";
 import { bridgeLeaseService, SERVER_INSTANCE_ID } from "@/modules/workspace/bridge-lease.service";
 import { containerLifecycleService } from "@/modules/workspace/container-lifecycle.service";
 import { gatewayRouteService } from "@/modules/workspace/gateway-route.service";
@@ -66,6 +67,12 @@ egressProxyService.start().catch(err => {
 // Rebuild custom-gateway routes for any running containers (Phase A: direct delivery)
 gatewayRouteService.rebuildRoutes().catch(err => {
   serverLogger.warn({ error: err.message }, 'Gateway route rebuild failed — fallback still active');
+});
+
+// Phase 7.3c: rebuild user-facing HTTP_ROUTE map (`*.2bot.org`) for running
+// containers. No-op when FEATURE_PROJECT_RESOURCES is disabled.
+appRouteService.rebuildRoutes().catch(err => {
+  serverLogger.warn({ error: err.message }, 'App route rebuild failed');
 });
 
 // ===========================================

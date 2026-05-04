@@ -9,14 +9,14 @@
  * @module server/routes/ai-builder
  */
 
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { RateLimiterRes } from "rate-limiter-flexible";
 
-import {
-  applyBuildSpec,
-  validateBuildSpec,
-} from "@/modules/ai-builder/orchestrator.service";
 import { rateLimitRejectionsTotal } from "@/lib/metrics";
+import {
+    applyBuildSpec,
+    validateBuildSpec,
+} from "@/modules/ai-builder/orchestrator.service";
 import { BadRequestError, ForbiddenError, RateLimitError } from "@/shared/errors";
 
 import { requireAuth } from "../middleware/auth";

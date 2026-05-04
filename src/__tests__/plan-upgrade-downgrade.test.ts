@@ -30,7 +30,13 @@ vi.mock('@/lib/prisma', () => ({
     },
     plugin: {
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
+    projectResource: {
+      findUnique: vi.fn(),
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -55,6 +61,22 @@ beforeEach(() => {
   mockedPrisma.gateway.findMany.mockResolvedValue([]);
   // Default: no workspace container found
   mockedPrisma.workspaceContainer.findFirst.mockResolvedValue(null);
+  // plugin.update used by installPlugin to increment installCount
+  mockedPrisma.plugin.update.mockResolvedValue({});
+  // projectResource stubs (FEATURE_PROJECT_RESOURCES disabled in tests)
+  mockedPrisma.projectResource.findUnique.mockResolvedValue(null);
+  mockedPrisma.projectResource.create.mockResolvedValue({ id: 'pr_test' });
+  // $transaction: execute callback with a proxy tx that delegates create to the gateway mock
+  mockedPrisma.$transaction.mockImplementation(
+    (fn: (tx: Record<string, Record<string, ReturnType<typeof vi.fn>>>) => Promise<unknown>) =>
+      fn({
+        gateway: { create: mockedPrisma.gateway.create },
+        projectResource: {
+          findUnique: mockedPrisma.projectResource.findUnique,
+          create: mockedPrisma.projectResource.create,
+        },
+      }),
+  );
 });
 
 afterEach(() => {
@@ -213,6 +235,7 @@ describe('Plan Downgrades - Existing Resources', () => {
       name: `Gateway ${i + 1}`,
       type: 'TELEGRAM_BOT',
       organizationId: null,
+      workflows: [],
     }));
     
     mockedPrisma.gateway.count.mockResolvedValue(5);

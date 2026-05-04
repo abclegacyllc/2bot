@@ -24,6 +24,7 @@ vi.mock('@/lib/prisma', () => ({
     plugin: {
       findUnique: vi.fn(),
       findMany: vi.fn(),
+      update: vi.fn(),
     },
     userPlugin: {
       create: vi.fn(),
@@ -31,9 +32,25 @@ vi.mock('@/lib/prisma', () => ({
       count: vi.fn(),
       update: vi.fn(),
     },
+    workspaceContainer: {
+      findFirst: vi.fn(),
+    },
     organization: {
       findUnique: vi.fn(),
     },
+  },
+}));
+
+vi.mock('@/modules/workspace', () => ({
+  workspaceService: {
+    ensureContainerRunning: vi.fn().mockResolvedValue('container-id'),
+    writeTemplateToContainer: vi.fn().mockResolvedValue(undefined),
+    pluginStart: vi.fn().mockResolvedValue(undefined),
+    pluginStop: vi.fn().mockResolvedValue(undefined),
+    fileRead: vi.fn().mockResolvedValue({ success: true, content: '' }),
+  },
+  bridgeClientManager: {
+    getOrCreate: vi.fn(),
   },
 }));
 
@@ -57,12 +74,16 @@ const mockedPrisma = prisma as unknown as {
   plugin: {
     findUnique: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
   };
   userPlugin: {
     create: ReturnType<typeof vi.fn>;
     findFirst: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+  };
+  workspaceContainer: {
+    findFirst: ReturnType<typeof vi.fn>;
   };
   organization: {
     findUnique: ReturnType<typeof vi.fn>;
@@ -74,6 +95,10 @@ beforeEach(() => {
   
   // Set default mock return values
   mockedPrisma.plugin.findMany.mockResolvedValue([]);
+  // plugin.update used by installPlugin to increment installCount
+  mockedPrisma.plugin.update.mockResolvedValue({});
+  // workspaceContainer.findFirst used during container deploy steps
+  mockedPrisma.workspaceContainer.findFirst.mockResolvedValue(null);
 });
 
 afterEach(() => {

@@ -1285,6 +1285,9 @@ export interface ProjectResource {
 export interface ProjectResourceWithSidecar extends ProjectResource {
   gateway?: unknown | null;
   httpRoute?: HttpRoute | null;
+  schedule?: Schedule | null;
+  /** SECRET sidecar metadata only — plaintext value is never returned. */
+  secret?: SafeSecret | null;
 }
 
 // HTTP_ROUTE sidecar
@@ -1306,6 +1309,11 @@ export interface HttpRouteSpec {
   path: string;
   targetUserPluginId?: string | null;
   targetExport?: string | null;
+  /**
+   * Phase 7.3c: optional Workflow target. When set (and targetUserPluginId is
+   * unset) an inbound match fires a WEBHOOK-triggered Workflow run.
+   */
+  targetWorkflowId?: string | null;
   authMode?: HttpAuthMode;
   authConfig?: Record<string, unknown>;
   maxBodyKb?: number;
@@ -1321,12 +1329,67 @@ export interface HttpRoute {
   path: string;
   targetUserPluginId: string | null;
   targetExport: string | null;
+  targetWorkflowId: string | null;
   authMode: HttpAuthMode;
   authConfig: Record<string, unknown>;
   maxBodyKb: number;
   timeoutMs: number;
   corsOrigin: string | null;
   passthroughBody: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// SCHEDULE sidecar (Phase 7.4)
+
+export interface ScheduleSpec {
+  /** 5-field cron expression. */
+  cron: string;
+  /** IANA timezone name. Defaults to UTC. */
+  timezone?: string | null;
+  /** Workflow fired on each tick. Optional. */
+  targetWorkflowId?: string | null;
+  /** When false, the schedule exists but does not fire. */
+  enabled?: boolean;
+}
+
+export interface Schedule {
+  id: string;
+  resourceId: string;
+  cron: string;
+  timezone: string | null;
+  targetWorkflowId: string | null;
+  enabled: boolean;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// SECRET sidecar (Phase 7.4)
+
+export interface SecretSpec {
+  /** Logical identifier referenced by plugin/workflow code, e.g. `OPENAI_API_KEY`. */
+  key: string;
+  /** Plaintext value. Encrypted at rest; never returned by the API. */
+  value: string;
+  description?: string | null;
+}
+
+export interface SecretPatch {
+  key?: string;
+  value?: string;
+  description?: string | null;
+}
+
+/** Public Secret shape — NEVER includes the plaintext value. */
+export interface SafeSecret {
+  id: string;
+  resourceId: string;
+  key: string;
+  description: string | null;
+  version: number;
+  lastRotatedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1368,6 +1431,8 @@ export function createProjectResource(
     metadata?: Record<string, unknown> | null;
     gatewayId?: string;
     httpRoute?: HttpRouteSpec;
+    schedule?: ScheduleSpec;
+    secret?: SecretSpec;
   },
   token?: string,
 ): Promise<ApiResponse<ProjectResource>> {
@@ -1388,6 +1453,8 @@ export function updateProjectResource(
     config?: Record<string, unknown>;
     metadata?: Record<string, unknown> | null;
     httpRoute?: Partial<HttpRouteSpec>;
+    schedule?: Partial<ScheduleSpec>;
+    secret?: SecretPatch;
   },
   token?: string,
 ): Promise<ApiResponse<ProjectResource>> {

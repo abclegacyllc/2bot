@@ -41,6 +41,7 @@ import { pluginDeployService } from '@/modules/plugin/plugin-deploy.service';
 import { clearActivePlugins } from '@/modules/plugin/plugin-ipc.service';
 import { pluginWorkspaceSyncService } from '@/modules/plugin/plugin-workspace-sync.service';
 import { pushAllWorkflowCaches } from '@/modules/workflow/workflow-cache.service';
+import { appRouteService } from './app-route.service';
 import { bridgeClientManager, type BridgeClient } from './bridge-client.service';
 import { gatewayRouteService } from './gateway-route.service';
 import { workspaceAuditService } from './workspace-audit.service';
@@ -57,6 +58,7 @@ import {
     FREE_TIER_AUTO_STOP_MINUTES,
     WORKSPACE_IMAGE,
     WORKSPACE_NETWORK,
+    containerSubdomain,
     containerVolumePath,
     orgContainerName,
     personalContainerName,
@@ -64,6 +66,18 @@ import {
 import type { OrgPoolUsage, WorkspaceOperationResult } from './workspace.types';
 
 const log = logger.child({ module: 'workspace' });
+
+/**
+ * Phase 7.3c: enable the user-facing HTTP listener (port + subdomain) on
+ * newly-provisioned containers. Gated behind the same flag as the rest of
+ * the ProjectResource layer so existing flows are unaffected.
+ */
+function isHttpListenerEnabled(): boolean {
+  return (
+    (process.env.FEATURE_PROJECT_RESOURCES ?? 'disabled').toLowerCase() ===
+    'enabled'
+  );
+}
 
 // ===========================================
 // Workspace Service
@@ -283,6 +297,9 @@ class WorkspaceService {
         storageMb: resources.storageMb,
         volumePath,
         bridgePort: BRIDGE_PORT,
+        // Phase 7.3c: assign a unique DNS subdomain at creation time. The
+        // host-side `httpPort` is filled in after the container starts.
+        subdomain: isHttpListenerEnabled() ? containerSubdomain(containerName) : null,
         autoStopMinutes: autoStopValue,
         autoRestart: true,
         maxRestarts: 5,
@@ -295,6 +312,7 @@ class WorkspaceService {
       await dockerService.ensureVolumeDir(volumePath);
 
       // 7. Create Docker container
+      const enableHttpListener = isHttpListenerEnabled();
       const { containerId } = await dockerService.createContainer({
         name: containerName,
         image: WORKSPACE_IMAGE,
@@ -311,6 +329,7 @@ class WorkspaceService {
           [CONTAINER_LABELS.containerDbId]: container.id,
         },
         env: {},
+        enableHttpListener,
       });
 
       // 8. Update DB with Docker container ID
@@ -337,12 +356,20 @@ class WorkspaceService {
       const bridgePort = await dockerService.getBridgePort(containerId);
       const containerInfo = await dockerService.inspectContainer(containerId);
 
+      // Phase 7.3c: capture the dynamically-assigned host port for the
+      // user-facing HTTP listener so nginx can route `<subdomain>.2bot.org`
+      // to `127.0.0.1:<httpPort>`. Null when the listener is disabled.
+      const httpPort = enableHttpListener
+        ? await dockerService.getHttpPort(containerId)
+        : null;
+
       // 12. Update DB with final status + encrypted bridge auth token for reconnection
       await prisma.workspaceContainer.update({
         where: { id: container.id },
         data: {
           status: 'RUNNING',
           bridgePort,
+          httpPort,
           ipAddress: containerInfo.ipAddress ?? null,
           startedAt: new Date(),
           lastActivityAt: new Date(),
@@ -376,6 +403,12 @@ class WorkspaceService {
       // 14b. Activate webhook routes (non-blocking)
       gatewayRouteService.activateRoutes(container.id).catch(err => {
         log.warn({ containerDbId: container.id, error: (err as Error).message }, 'Webhook route activation failed');
+      });
+
+      // Phase 7.3c: activate user-facing app route (`*.2bot.org`) — no-op
+      // when FEATURE_PROJECT_RESOURCES is disabled or no subdomain assigned.
+      appRouteService.activateRoutes(container.id).catch(err => {
+        log.warn({ containerDbId: container.id, error: (err as Error).message }, 'App route activation failed');
       });
 
       // 14c. Sync egress proxy ACLs for new container IP (non-blocking)
@@ -497,6 +530,11 @@ class WorkspaceService {
       await this.waitForBridge(container.containerId, containerDbId);
 
       const bridgePort = await dockerService.getBridgePort(container.containerId);
+      // Phase 7.3c: refresh httpPort too — Docker re-assigns ephemeral host
+      // ports on every start, so the value persisted at create time is stale.
+      const httpPort = container.subdomain
+        ? await dockerService.getHttpPort(container.containerId)
+        : null;
       const containerInfo = await dockerService.inspectContainer(container.containerId);
 
       await prisma.workspaceContainer.update({
@@ -504,6 +542,7 @@ class WorkspaceService {
         data: {
           status: 'RUNNING',
           bridgePort,
+          httpPort,
           ipAddress: containerInfo.ipAddress ?? null,
           startedAt: new Date(),
           lastActivityAt: new Date(),
@@ -517,6 +556,11 @@ class WorkspaceService {
       // Activate webhook routes (non-blocking)
       gatewayRouteService.activateRoutes(containerDbId).catch(err => {
         log.warn({ containerDbId, error: (err as Error).message }, 'Webhook route activation failed');
+      });
+
+      // Phase 7.3c: app route activation (no-op when feature flag off).
+      appRouteService.activateRoutes(containerDbId).catch(err => {
+        log.warn({ containerDbId, error: (err as Error).message }, 'App route activation failed');
       });
 
       // Sync egress proxy ACLs for container IP (non-blocking)
@@ -625,6 +669,9 @@ class WorkspaceService {
       await this.waitForBridge(container.containerId, containerDbId);
 
       const bridgePort = await dockerService.getBridgePort(container.containerId);
+      const httpPort = container.subdomain
+        ? await dockerService.getHttpPort(container.containerId)
+        : null;
       const containerInfo = await dockerService.inspectContainer(container.containerId);
 
       await prisma.workspaceContainer.update({
@@ -632,6 +679,7 @@ class WorkspaceService {
         data: {
           status: 'RUNNING',
           bridgePort,
+          httpPort,
           ipAddress: containerInfo.ipAddress ?? null,
           startedAt: new Date(),
           lastActivityAt: new Date(),
@@ -689,6 +737,8 @@ class WorkspaceService {
     try {
       // Deactivate webhook routes before stopping
       await gatewayRouteService.deactivateRoutes(containerDbId);
+      // Phase 7.3c: deactivate app route as well.
+      await appRouteService.deactivateRoutes(containerDbId);
 
       // Disconnect bridge
       bridgeClientManager.removeClient(containerDbId);
@@ -755,6 +805,8 @@ class WorkspaceService {
 
     // Deactivate webhook routes before destroying
     await gatewayRouteService.deactivateRoutes(containerDbId);
+    // Phase 7.3c: deactivate app route as well.
+    await appRouteService.deactivateRoutes(containerDbId);
 
     // Disconnect bridge
     bridgeClientManager.removeClient(containerDbId);

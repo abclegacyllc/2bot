@@ -46,6 +46,7 @@ import type {
     PluginEvent,
     WorkflowMetadata,
 } from "@/modules/plugin/plugin.interface";
+import { loadProjectSecrets } from "@/modules/project-resource/project-resource.service";
 import { BadRequestError, NotFoundError, ServiceUnavailableError } from "@/shared/errors";
 import type { Prisma } from "@prisma/client";
 
@@ -202,6 +203,23 @@ async function executeWorkflowInternal(
   // Per-run cache: avoids redundant DB queries across steps
   const runCache: WorkflowRunCache = { gateways: null, userPlugins: new Map() };
 
+  // Project-scoped SECRET ProjectResources, loaded ONCE per run. Plugins
+  // reference these in `inputMapping` via `${secrets.<KEY>}` (the template
+  // engine inlines values only on explicit reference). Empty when the
+  // workflow has no project or no SECRET resources.
+  const projectSecrets: Record<string, string> = workflow.projectId
+    ? await loadProjectSecrets(
+        { userId: workflow.userId, organizationId: workflow.organizationId ?? null },
+        workflow.projectId,
+      ).catch((err) => {
+        execLogger.warn(
+          { workflowId, runId, error: (err as Error).message },
+          "loadProjectSecrets failed \u2014 continuing without secrets",
+        );
+        return {};
+      })
+    : {};
+
   // Per-step plugin stdout/stderr capture (Test mode). Keyed by step order.
   // Populated when options.captureLogs=true; flushed into WorkflowRun.output._stepLogs at end.
   const stepLogsByOrder: Map<number, Array<{ level: string; message: string; ts?: string | number }>> =
@@ -267,6 +285,7 @@ async function executeWorkflowInternal(
               organizationId: workflow.organizationId ?? undefined,
               workflowId,
               runId,
+              secrets: projectSecrets,
             }
           );
 
@@ -339,7 +358,8 @@ async function executeWorkflowInternal(
               entryFile: step.entryFile,
               userPluginId: step.userPluginId,
               idempotencyKey: idempotencyKey ? `${idempotencyKey}:step${step.order}` : undefined,
-            }
+            },
+            projectSecrets,
           );
 
           // Find the previous output for this step: use the output of its upstream step(s)
@@ -753,7 +773,8 @@ async function buildPluginContext(
   gatewayId: string | null | undefined,
   gatewayActionsEnabled = false,
   runCache?: WorkflowRunCache,
-  stepOverrides?: { entryFile?: string | null; userPluginId?: string | null; idempotencyKey?: string }
+  stepOverrides?: { entryFile?: string | null; userPluginId?: string | null; idempotencyKey?: string },
+  projectSecrets: Record<string, string> = {}
 ): Promise<PluginContext> {
   // Cache key for userPlugin: scoped to plugin + gateway
   const cacheKey = `${pluginId}:${gatewayId ?? "null"}`;
@@ -884,6 +905,7 @@ async function buildPluginContext(
     gateways: gatewayAccessor,
     storage: createPluginStorage(userPluginId, userId),
     logger: logger.child({ plugin: pluginSlug, workflow: true }),
+    secrets: projectSecrets,
     ...(stepOverrides?.idempotencyKey ? { idempotencyKey: stepOverrides.idempotencyKey } : {}),
   };
 }

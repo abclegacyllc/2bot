@@ -18,11 +18,11 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 
 import {
-  activateVersion,
-  createStagingVersion,
-  getVersionWithManifest,
-  listVersions,
-  rollbackToVersion,
+    activateVersion,
+    createStagingVersion,
+    getVersionWithManifest,
+    listVersions,
+    rollbackToVersion,
 } from "@/modules/project/project-version.service";
 import { BadRequestError, ForbiddenError } from "@/shared/errors";
 

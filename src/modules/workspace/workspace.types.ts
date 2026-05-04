@@ -38,6 +38,13 @@ export interface DockerCreateOptions {
   networkName: string;
   labels: Record<string, string>;
   env: Record<string, string>;
+  /**
+   * Phase 7.3c: enable the user-facing HTTP listener inside the bridge agent.
+   * When true, an additional port is exposed and `WORKSPACE_HTTP_PORT` is
+   * passed to the container. The host-side port is allocated dynamically by
+   * Docker; retrieve it via `dockerService.getHttpPort()` after start.
+   */
+  enableHttpListener?: boolean;
 }
 
 /** Result from Docker container inspection */

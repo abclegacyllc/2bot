@@ -11,6 +11,7 @@ export default defineConfig({
     hookTimeout: 30000,
     pool: 'forks', // Run tests in separate processes
     // Note: singleFork removed - not available in Vitest v4
+    globalSetup: ['src/test-helpers/integration-global-setup.ts'],
   },
   resolve: {
     alias: {

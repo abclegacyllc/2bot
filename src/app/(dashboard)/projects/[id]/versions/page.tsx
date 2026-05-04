@@ -11,15 +11,15 @@
  * the route is invisible until the flag is flipped on.
  */
 
+import { useAuth } from "@/components/providers/auth-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/components/providers/auth-provider";
 import {
-  activateProjectVersion,
-  listProjectVersions,
-  rollbackProjectVersion,
-  type ProjectVersionListItem,
-  type ProjectVersionStatus,
+    activateProjectVersion,
+    listProjectVersions,
+    rollbackProjectVersion,
+    type ProjectVersionListItem,
+    type ProjectVersionStatus,
 } from "@/lib/api-client";
 import { Loader2, RefreshCw, RotateCcw, Zap } from "lucide-react";
 import { notFound, useParams } from "next/navigation";

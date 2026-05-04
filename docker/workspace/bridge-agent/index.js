@@ -28,6 +28,7 @@ const { HealthMonitor } = require('./health');
 const { LocalStore } = require('./local-store');
 const { createWebhookHandler } = require('./webhook-handler');
 const { MCPManager } = require('./mcp-manager');
+const { startHttpListener } = require('./http-listener');
 
 // ===========================================
 // Configuration
@@ -39,6 +40,13 @@ const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 // Bridge auth token. Set by platform when creating container. Mutable: the
 // platform can rotate it via the `system.rotate-token` action (Phase 3.2).
 let AUTH_TOKEN = process.env.BRIDGE_AUTH_TOKEN || null;
+
+// Phase 7.3: user-facing HTTP listener (HTTP_ROUTE resources). Disabled
+// when WORKSPACE_HTTP_PORT is unset (default).
+const HTTP_LISTENER_PORT = parseInt(process.env.WORKSPACE_HTTP_PORT || '0', 10);
+const PLATFORM_HOST = process.env.CREDENTIAL_API_HOST || '172.17.0.1';
+const PLATFORM_PORT = parseInt(process.env.CREDENTIAL_API_PORT || '3002', 10);
+const DEFAULT_PROJECT_ID = process.env.WORKSPACE_DEFAULT_PROJECT_ID || null;
 
 // ===========================================
 // Logger (lightweight, no dependencies)
@@ -725,6 +733,19 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   log.info(`  Auth:      ${AUTH_TOKEN ? 'required' : 'disabled'}`);
 });
 
+// Phase 7.3: optional user-facing HTTP listener for HTTP_ROUTE resources.
+// Disabled by default; enabled by setting WORKSPACE_HTTP_PORT in the
+// container env. Falls through to /internal/http-route-dispatch on the
+// platform, which is itself gated by FEATURE_PROJECT_RESOURCES.
+const httpListenerServer = startHttpListener({
+  port: HTTP_LISTENER_PORT,
+  platformHost: PLATFORM_HOST,
+  platformPort: PLATFORM_PORT,
+  getBridgeToken: () => AUTH_TOKEN,
+  getDefaultProjectId: () => DEFAULT_PROJECT_ID,
+  log,
+});
+
 // ===========================================
 // Graceful Shutdown
 // ===========================================
@@ -755,8 +776,16 @@ async function shutdown(signal) {
   // Close WebSocket server
   wss.close(() => {
     httpServer.close(() => {
-      log.info('Bridge agent stopped');
-      process.exit(0);
+      // Phase 7.3: also close the user-facing HTTP listener if started
+      if (httpListenerServer) {
+        httpListenerServer.close(() => {
+          log.info('Bridge agent stopped');
+          process.exit(0);
+        });
+      } else {
+        log.info('Bridge agent stopped');
+        process.exit(0);
+      }
     });
   });
 

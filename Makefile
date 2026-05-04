@@ -836,6 +836,14 @@ setup-nginx:                ## Setup nginx: symlinks site config + gateway map, 
 	else \
 		echo "  $(GREEN)✅ Gateway routes map already linked$(RESET)"; \
 	fi
+	@# 2b. Symlink apps-routes.map (Phase 7.3c — HTTP_ROUTE / *.2bot.org)
+	@if [ ! -L /etc/nginx/conf.d/apps-routes.map ] || \
+	   [ "$$(readlink -f /etc/nginx/conf.d/apps-routes.map)" != "$$(readlink -f nginx/apps-routes.map)" ]; then \
+		echo "  Linking nginx/apps-routes.map → /etc/nginx/conf.d/"; \
+		sudo ln -sf "$$(pwd)/nginx/apps-routes.map" /etc/nginx/conf.d/apps-routes.map; \
+	else \
+		echo "  $(GREEN)✅ Apps routes map already linked$(RESET)"; \
+	fi
 	@# 3. Add passwordless sudo for nginx reload (required by gateway-route.service)
 	@if [ ! -f /etc/sudoers.d/2bot-nginx ]; then \
 		echo "  Adding sudoers entry for passwordless nginx reload"; \

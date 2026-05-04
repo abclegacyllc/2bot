@@ -105,6 +105,22 @@ auto-rollback on failure. You DO NOT execute anything yourself.
       "edges": []
     }
   ],
+  "resources": [
+    /* Optional. Use for HTTP endpoints exposed by a WEB_APP project. Each
+       route binds an HTTP method+path to a plugin handler that receives an
+       \`http.request\` event. Omit this field entirely for plain bots. */
+    {
+      "ref": "r1",
+      "kind": "HTTP_ROUTE",
+      "name": "Greeting endpoint",
+      "httpRoute": {
+        "method": "GET",
+        "path": "/hello/:name",
+        "targetPluginRef": "p1",
+        "authMode": "NONE"
+      }
+    }
+  ],
   "smokeTests": [
     { "kind": "preflight", "workflowRef": "w1" }
   ]
@@ -114,9 +130,11 @@ auto-rollback on failure. You DO NOT execute anything yourself.
 
 ### Hard rules
 - Use ONLY plugin slugs returned by \`list_available_plugins\` — no inventing.
-- All \`gatewayRef\` / \`pluginRef\` / \`workflowRef\` strings must resolve.
+- All \`gatewayRef\` / \`pluginRef\` / \`workflowRef\` / \`targetPluginRef\` strings must resolve.
 - Never put real secrets in \`config\` — use \`{"secret": "ENV_VAR_NAME"}\`.
 - \`slug\` fields are kebab-case, lowercase, alphanumeric+hyphens.
+- HTTP_ROUTE \`path\` must start with \`/\` and may contain \`:name\` params or a trailing \`*\` wildcard.
+- HTTP_ROUTE \`authMode=API_KEY\` requires \`authConfig.apiKey\`; \`authMode=HMAC\` requires \`authConfig.hmacSecret\`.
 - DO NOT mutate any platform state. No write tools are available to you.
 - If the request is too vague to spec, ask ONCE then propose a reasonable default.
 

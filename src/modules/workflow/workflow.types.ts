@@ -374,6 +374,13 @@ export interface TemplateContext {
   steps: Record<number, unknown>;
   /** Environment variables (whitelisted) */
   env: Record<string, string>;
+  /**
+   * Project-scoped SECRET ProjectResources, keyed by their logical key
+   * (e.g. `OPENAI_API_KEY`). Loaded once per run from
+   * `loadProjectSecrets()`. Empty object when the workflow has no project
+   * or no SECRETs.
+   */
+  secrets: Record<string, string>;
   /** Execution context */
   ctx: {
     userId: string;

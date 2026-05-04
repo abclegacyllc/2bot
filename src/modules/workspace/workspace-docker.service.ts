@@ -19,6 +19,7 @@ import {
     BRIDGE_PORT,
     CONTAINER_LABELS,
     CONTAINER_STOP_TIMEOUT,
+    WORKSPACE_HTTP_PORT_INTERNAL,
     WORKSPACE_IMAGE,
     WORKSPACE_NETWORK,
 } from './workspace.constants';
@@ -154,9 +155,29 @@ class DockerService {
       `CREDENTIAL_API_PORT=${process.env.WORKSPACE_HOST_API_PORT || '3002'}`,
       // Storage default quota (per-plugin quotas are managed dynamically via WebSocket)
       `STORAGE_QUOTA_MB=${process.env.STORAGE_QUOTA_MB ?? '50'}`,
+      // Phase 7.3c: user-facing HTTP listener port inside the container.
+      // Disabled (`0`) by default; enabled with the fixed internal port whenever
+      // the caller opts in via `options.enableHttpListener`.
+      `WORKSPACE_HTTP_PORT=${options.enableHttpListener ? WORKSPACE_HTTP_PORT_INTERNAL : 0}`,
       // Pass custom env vars
       ...Object.entries(options.env || {}).map(([k, v]) => `${k}=${v}`),
     ];
+
+    // Phase 7.3c: optionally expose a second port for the user-facing HTTP
+    // listener. Docker assigns the host-side port dynamically (HostPort: '');
+    // the caller retrieves it via `getHttpPort()` after start.
+    const exposedPorts: Record<string, object> = {
+      [`${BRIDGE_PORT}/tcp`]: {},
+    };
+    const portBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> = {
+      [`${BRIDGE_PORT}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: '' }],
+    };
+    if (options.enableHttpListener) {
+      exposedPorts[`${WORKSPACE_HTTP_PORT_INTERNAL}/tcp`] = {};
+      portBindings[`${WORKSPACE_HTTP_PORT_INTERNAL}/tcp`] = [
+        { HostIp: '127.0.0.1', HostPort: '' },
+      ];
+    }
 
     // Build container config
     const container = await docker.createContainer({
@@ -167,9 +188,7 @@ class DockerService {
         [CONTAINER_LABELS.managed]: 'true',
         ...options.labels,
       },
-      ExposedPorts: {
-        [`${BRIDGE_PORT}/tcp`]: {},
-      },
+      ExposedPorts: exposedPorts,
       HostConfig: {
         // Resource limits
         Memory: options.ramMb * 1024 * 1024,  // bytes
@@ -207,10 +226,8 @@ class DockerService {
         // Restart policy (handled by our lifecycle service, not Docker)
         RestartPolicy: { Name: '' },
 
-        // Publish bridge port for platform access
-        PortBindings: {
-          [`${BRIDGE_PORT}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: '' }],  // Dynamic port
-        },
+        // Publish bridge port (and optional user-facing HTTP port) for platform access
+        PortBindings: portBindings,
 
         // Logging
         LogConfig: {
@@ -389,6 +406,23 @@ class DockerService {
     const info = await container.inspect();
 
     const portBindings = info.NetworkSettings?.Ports?.[`${BRIDGE_PORT}/tcp`];
+    const hostPort = portBindings?.[0]?.HostPort;
+
+    return hostPort ? parseInt(hostPort, 10) : null;
+  }
+
+  /**
+   * Get the host-side port bound to the container's user-facing HTTP listener
+   * (Phase 7.3c). Returns null when the container was created without
+   * `enableHttpListener` or before the mapping is published.
+   */
+  async getHttpPort(containerId: string): Promise<number | null> {
+    const docker = getDocker();
+    const container = docker.getContainer(containerId);
+    const info = await container.inspect();
+
+    const portBindings =
+      info.NetworkSettings?.Ports?.[`${WORKSPACE_HTTP_PORT_INTERNAL}/tcp`];
     const hostPort = portBindings?.[0]?.HostPort;
 
     return hostPort ? parseInt(hostPort, 10) : null;
