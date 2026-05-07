@@ -33,7 +33,7 @@ export type MessageBlock =
       /**
        * BuildSpec block. Rendered with a summary of the
        * proposed project (counts of gateways/plugins/workflows) plus an
-       * "Apply" button that POSTs the spec to `/api/ai-builder/apply`.
+       * "Apply" button that POSTs the spec to `/api/cursor/buildspec/apply`.
        */
       kind: "buildspec";
       /** Stable id so the block can transition status (idle → applying → applied/error). */
@@ -44,7 +44,7 @@ export type MessageBlock =
       summary?: string;
       /** Apply state machine. */
       status: "idle" | "applying" | "applied" | "rolled-back" | "error";
-      /** Result returned from `/api/ai-builder/apply`, set on success or rollback. */
+      /** Result returned from `/api/cursor/buildspec/apply`, set on success or rollback. */
       result?: unknown;
       /** Error message, set when status === "error". */
       error?: string;
@@ -62,6 +62,19 @@ export interface CursorChatMessage {
   modelUsed?: string;
   /** Credits consumed by this response (set on done) */
   creditsUsed?: number;
+  /**
+   * Per-turn metrics — set when this assistant message reaches done/error.
+   * Each user prompt produces one assistant message; these counters cover
+   * just that single turn (NOT the cumulative chat).
+   */
+  /** Total input tokens consumed by this single assistant turn. */
+  inputTokens?: number;
+  /** Total output tokens produced by this single assistant turn. */
+  outputTokens?: number;
+  /** Tool invocations made during this single assistant turn. */
+  toolUseCount?: number;
+  /** Wall-clock duration of this single assistant turn, in ms. */
+  durationMs?: number;
   status?: "thinking" | "working" | "success" | "error";
   timestamp: Date;
   /** Inline activity blocks (tool-call narrative chain) */
@@ -196,4 +209,20 @@ export interface CursorStreamReturn {
   // ── Conversation history (read-only for users) ──
   conversationSnapshots: import("../cursor-conversation-log").ConversationSnapshot[];
   fileActionCount: number;
+  // ── Session metrics (timer + tokens + tools) ──
+  /** Cumulative input tokens consumed by the current/last session. */
+  inputTokens: number;
+  /** Cumulative output tokens produced by the current/last session. */
+  outputTokens: number;
+  /** Cumulative tool invocations across the session. */
+  toolUseCount: number;
+  /** Wall-clock timestamp the current session started (ms epoch), or null. */
+  sessionStartedAt: number | null;
+  /**
+   * Live elapsed milliseconds for the current/last session.
+   * - While streaming: reflects `now() - sessionStartedAt`, ticking once per second.
+   * - After done/error: frozen on the server-reported `durationMs`.
+   * - Idle (no session yet, or chat cleared): `null`.
+   */
+  elapsedMs: number | null;
 }

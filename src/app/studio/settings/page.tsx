@@ -1,12 +1,6 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { SettingsContent } from "@/app/(dashboard)/settings/page";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioSettingsPage() {
-  return (
-    <StudioPageShell>
-      <SettingsContent />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default function StudioSettingsRedirect() {
+  permanentRedirect("/settings");
 }

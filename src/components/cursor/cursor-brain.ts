@@ -31,7 +31,7 @@ export interface WorkerStreamClientRequest {
   /** Workflow context for Studio AI operations */
   workflowContext?: WorkflowContext;
   /** Studio mode — controls tool availability and prompt behavior */
-  studioMode?: "agent" | "ask" | "plan";
+  studioMode?: "agent" | "ask" | "plan" | "build";
   /**
    * Declarative agent name from the dropdown (e.g. "agent" / "ask" / "plan").
    * The backend uses this to apply the agent's frontmatter (runtime + studioMode).

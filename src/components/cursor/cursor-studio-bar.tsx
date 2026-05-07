@@ -81,7 +81,7 @@ import { filterToolSuggestions, type ToolSuggestion } from "./tool-mention-sugge
 // Types
 // =============================================================================
 
-type StudioMode = "agent" | "ask" | "plan";
+type StudioMode = "agent" | "ask" | "plan" | "build";
 type BarPosition = "bottom" | "right" | "left";
 
 /**
@@ -209,6 +209,34 @@ function generateSessionId(): string {
   return `cs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Format a duration in ms as a tight session-counter string:
+ *   < 1m   → "47s"
+ *   < 1h   → "6m 16s"
+ *   else   → "2h 14m"
+ */
+function formatSessionDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m < 60) return s === 0 ? `${m}m` : `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return remM === 0 ? `${h}h` : `${h}h ${remM}m`;
+}
+
+/**
+ * Format a token count as a compact string with a SI suffix:
+ *   980 → "980", 1234 → "1.2k", 25000 → "25.0k", 1_750_000 → "1.8m"
+ */
+function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 1)}k`;
+  return `${(n / 1_000_000).toFixed(1)}m`;
+}
+
 // =============================================================================
 // User Message Bubble (Gemini-style right-aligned, collapsible)
 // =============================================================================
@@ -282,7 +310,6 @@ export function CursorStudioBar() {
   const barDataRef = useStudioBarDataRef(); // ref for latest fetchWorkflow callback
   const { pendingPrompt, clearPendingPrompt } = useStudioBarPendingPrompt();
   // ---- State ----
-  const hasBuildCapability = workflow !== null;
   const [modePreference, setModePreference] = useState<StudioMode>("agent");
   // All modes available everywhere — agent/plan will use generic AI when no workflow context
   const mode: StudioMode = modePreference;
@@ -673,7 +700,9 @@ export function CursorStudioBar() {
     replayEvents,
     resolveConfirmBlock,
     resolveAskBlock,
+    updateBuildSpecBlock,
     fileActionCount,
+    inputTokens, outputTokens, toolUseCount, elapsedMs,
   } = useCursorStream({
     storageKey,
     modelStorageKey,
@@ -1100,7 +1129,13 @@ export function CursorStudioBar() {
       message: trimmed,
       workflowContext: buildWorkflowContext() || undefined,
       studioMode: isFirstRepoAttach ? "agent" : modeRef.current,
-      agentName: isFirstRepoAttach ? "agent" : modeRef.current,
+      // "build" mode → the built-in `builder` agent (declarative). All other
+      // modes have an agent of the same name registered in the agent loader.
+      agentName: isFirstRepoAttach
+        ? "agent"
+        : modeRef.current === "build"
+          ? "builder"
+          : modeRef.current,
       ...(effectiveRepoUrl ? { repoUrl: effectiveRepoUrl } : {}),
       ...(isFirstRepoAttach ? { mode: "analyze-repo" as const } : {}),
       ...(pendingImages ? { imageParts: pendingImages } : {}),
@@ -1122,7 +1157,7 @@ export function CursorStudioBar() {
       return;
     }
     // Sync the dropdown if the target is one of the standard modes.
-    const STUDIO_MODES: StudioMode[] = ["agent", "ask", "plan"];
+    const STUDIO_MODES: StudioMode[] = ["agent", "ask", "plan", "build"];
     if ((STUDIO_MODES as string[]).includes(handoff.agent)) {
       setModePreference(handoff.agent as StudioMode);
     }
@@ -1143,6 +1178,56 @@ export function CursorStudioBar() {
       chatThreadId: activeSessionId,
     });
   }, [isStreaming, token, activeSessionId, addMessage, executeStream, buildWorkflowContext, revealBar, sessionRepoUrl]);
+
+  // ---- Apply BuildSpec from a Builder-mode chat block ----
+  // Mirrors the cursor-panel implementation: drives the buildspec block's
+  // lifecycle (idle → applying → applied | rolled-back | error) by calling
+  // POST /api/cursor/buildspec/apply via the lazy api-client loader.
+  const handleApplyBuildSpec = useCallback(
+    async (block: { id: string; spec: unknown }) => {
+      updateBuildSpecBlock(block.id, { status: "applying", error: undefined });
+      try {
+        const tk =
+          (typeof window !== "undefined" ? localStorage.getItem("token") : null) ||
+          token ||
+          undefined;
+        const { applyBuildSpec } = await import("@/lib/api-client");
+        const res = await applyBuildSpec(block.spec, {}, tk);
+        if (!res.success || !res.data) {
+          updateBuildSpecBlock(block.id, {
+            status: "error",
+            error: res.error?.message || "Apply failed",
+          });
+          return;
+        }
+        const data = res.data;
+        const status: "applied" | "rolled-back" | "error" =
+          data.status === "applied"
+            ? "applied"
+            : data.status === "rolled-back"
+              ? "rolled-back"
+              : "error";
+        updateBuildSpecBlock(block.id, {
+          status,
+          result: data,
+          error:
+            status === "error"
+              ? data.rollbackReason ||
+                (data.validationErrors
+                  ? Object.values(data.validationErrors).flat()[0]
+                  : undefined) ||
+                "Validation failed"
+              : undefined,
+        });
+      } catch (err) {
+        updateBuildSpecBlock(block.id, {
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [updateBuildSpecBlock, token],
+  );
 
   // ---- Stop streaming ----
   const handleStop = useCallback(() => {
@@ -1615,6 +1700,7 @@ export function CursorStudioBar() {
                             resolveAskBlock(sessionId, value, label);
                             void handleOptionSelect({ value, label });
                           }}
+                          onApplyBuildSpec={handleApplyBuildSpec}
                         />
                       ) : (
                         /* Fallback: plain content (for old messages / non-streaming) */
@@ -1634,13 +1720,22 @@ export function CursorStudioBar() {
                           {msg.detail}
                         </div>
                       )}
-                      {/* Model badge — shown on completed assistant messages */}
+                      {/* Model + per-turn metrics — completed/errored assistant messages */}
                       {msg.role === "assistant" && (msg.status === "success" || msg.status === "error") && (
                         <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/50">
-                          {(msg.modelUsed || msg.creditsUsed != null) && (
-                            <span>
+                          {(msg.modelUsed || typeof msg.creditsUsed === "number" || typeof msg.durationMs === "number" || (msg.inputTokens || msg.outputTokens) || msg.toolUseCount) && (
+                            <span title={
+                              typeof msg.inputTokens === "number" && typeof msg.outputTokens === "number"
+                                ? `${msg.inputTokens.toLocaleString()} in / ${msg.outputTokens.toLocaleString()} out`
+                                : undefined
+                            }>
                               {msg.modelUsed ? `· ${msg.modelUsed}` : "·"}
-                              {msg.creditsUsed != null ? ` | ${msg.creditsUsed.toFixed(1)} credits` : ""}
+                              {typeof msg.durationMs === "number" ? ` | ${formatSessionDuration(msg.durationMs)}` : ""}
+                              {(msg.inputTokens || msg.outputTokens)
+                                ? ` | ↓ ${formatTokens((msg.inputTokens ?? 0) + (msg.outputTokens ?? 0))} tokens`
+                                : ""}
+                              {msg.toolUseCount ? ` | ${msg.toolUseCount} tool ${msg.toolUseCount === 1 ? "use" : "uses"}` : ""}
+                              {typeof msg.creditsUsed === "number" ? ` | ${msg.creditsUsed.toFixed(1)} credits` : ""}
                             </span>
                           )}
                           {!isStreaming && (
@@ -1700,19 +1795,36 @@ export function CursorStudioBar() {
               </div>
             )}
 
-            {/* Credit usage (inline) */}
+            {/* Session counter (inline) — timer + tokens + tool uses + credits.
+                Shown after a session ends. While streaming, the credit bar
+                lives in the collapsed/expanded indicators above. */}
             {creditsUsed > 0 && !isStreaming && (
-              <div className="mt-2 border-t border-border/20 pt-2 flex items-center gap-2 text-[10px] text-muted-foreground/60">
-                <div className="h-1 flex-1 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all duration-500",
-                      creditsUsed / creditBudget > 0.85 ? "bg-destructive" : creditsUsed / creditBudget > 0.6 ? "bg-yellow-500" : "bg-primary",
-                    )}
-                    style={{ width: `${Math.min(100, (creditsUsed / creditBudget) * 100)}%` }}
-                  />
+              <div className="mt-2 border-t border-border/20 pt-2 space-y-1 text-[10px] text-muted-foreground/60">
+                <div className="flex items-center gap-2 font-mono">
+                  {elapsedMs !== null && (
+                    <span title="Session duration">{formatSessionDuration(elapsedMs)}</span>
+                  )}
+                  {(inputTokens > 0 || outputTokens > 0) && (
+                    <span title={`${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out`}>
+                      · ↓ {formatTokens(inputTokens + outputTokens)} tokens
+                    </span>
+                  )}
+                  {toolUseCount > 0 && (
+                    <span>· {toolUseCount} tool {toolUseCount === 1 ? "use" : "uses"}</span>
+                  )}
                 </div>
-                <span className="font-mono shrink-0">{creditsUsed.toFixed(1)}/{creditBudget} credits</span>
+                <div className="flex items-center gap-2">
+                  <div className="h-1 flex-1 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-500",
+                        creditsUsed / creditBudget > 0.85 ? "bg-destructive" : creditsUsed / creditBudget > 0.6 ? "bg-yellow-500" : "bg-primary",
+                      )}
+                      style={{ width: `${Math.min(100, (creditsUsed / creditBudget) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="font-mono shrink-0">{creditsUsed.toFixed(1)}/{creditBudget} credits</span>
+                </div>
               </div>
             )}
           </div>
@@ -1731,6 +1843,19 @@ export function CursorStudioBar() {
               <div className="flex items-center gap-1.5 mb-1 px-3 py-1 rounded-lg bg-primary/5 border border-primary/10">
                 <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
                 <span className="truncate text-[10px] text-foreground/70">Working...</span>
+                {elapsedMs !== null && (
+                  <span className="shrink-0 text-[9px] font-mono text-muted-foreground/60">
+                    {formatSessionDuration(elapsedMs)}
+                  </span>
+                )}
+                {(inputTokens > 0 || outputTokens > 0) && (
+                  <span
+                    className="shrink-0 text-[9px] font-mono text-muted-foreground/50"
+                    title={`${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out`}
+                  >
+                    · ↓ {formatTokens(inputTokens + outputTokens)}
+                  </span>
+                )}
                 {creditsUsed > 0 && (
                   <span className="shrink-0 text-[9px] font-mono text-muted-foreground/50 ml-auto">
                     {creditsUsed.toFixed(1)}/{creditBudget}
@@ -1759,6 +1884,19 @@ export function CursorStudioBar() {
               <div className="flex items-center gap-1.5 mb-1 px-3 py-1 rounded-lg bg-primary/5 border border-primary/10 max-w-md">
                 <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
                 <span className="truncate text-[10px] text-foreground/70">Working...</span>
+                {elapsedMs !== null && (
+                  <span className="shrink-0 text-[9px] font-mono text-muted-foreground/60">
+                    {formatSessionDuration(elapsedMs)}
+                  </span>
+                )}
+                {(inputTokens > 0 || outputTokens > 0) && (
+                  <span
+                    className="shrink-0 text-[9px] font-mono text-muted-foreground/50"
+                    title={`${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out`}
+                  >
+                    · ↓ {formatTokens(inputTokens + outputTokens)}
+                  </span>
+                )}
                 {creditsUsed > 0 && (
                   <span className="shrink-0 text-[9px] font-mono text-muted-foreground/50 ml-auto">
                     {creditsUsed.toFixed(1)}/{creditBudget}
@@ -2187,6 +2325,7 @@ export function CursorStudioBar() {
               {mode === "agent" && <><Wand2 className="h-3 w-3" />Agent</>}
               {mode === "ask" && <><MessageCircleQuestion className="h-3 w-3" />Ask</>}
               {mode === "plan" && <><ClipboardList className="h-3 w-3" />Plan</>}
+              {mode === "build" && <><Sparkles className="h-3 w-3" />Build</>}
               <ChevronDown className="h-3 w-3 opacity-50" />
             </Button>
 
@@ -2204,11 +2343,13 @@ export function CursorStudioBar() {
                       { value: "agent", label: "Agent", icon: Wand2, desc: "Autonomous builder" },
                       { value: "ask", label: "Ask", icon: MessageCircleQuestion, desc: "Ask questions" },
                       { value: "plan", label: "Plan", icon: ClipboardList, desc: "Plan changes" },
+                      { value: "build", label: "Build", icon: Sparkles, desc: "Plan & apply project changes" },
                     ];
                     // Map known agent names to icons; everything else gets Wand2.
                     const iconFor = (name: string): typeof Wand2 => {
                       if (name === "ask") return MessageCircleQuestion;
                       if (name === "plan") return ClipboardList;
+                      if (name === "build" || name === "builder") return Sparkles;
                       return Wand2;
                     };
                     const dynamic: Array<{ value: StudioMode; label: string; icon: typeof Wand2; desc: string }> =
@@ -2217,7 +2358,7 @@ export function CursorStudioBar() {
                             // Only show entries that map to a known StudioMode for now —
                             // will expand StudioMode to accept arbitrary names.
                             .filter((a): a is AgentDropdownEntry & { name: StudioMode } =>
-                              a.name === "agent" || a.name === "ask" || a.name === "plan",
+                              a.name === "agent" || a.name === "ask" || a.name === "plan" || a.name === "build",
                             )
                             .map((a) => ({
                               value: a.name,
@@ -2282,7 +2423,7 @@ export function CursorStudioBar() {
               size="sm"
               className="h-7 w-7 p-0 shrink-0 text-destructive hover:text-destructive"
               onClick={handleStop}
-              title="Stop"
+              title="Stop — halts the agent at the next safe checkpoint. Tokens already produced will still be charged."
             >
               <Square className="h-3.5 w-3.5" />
             </Button>

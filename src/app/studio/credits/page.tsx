@@ -1,12 +1,6 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { CreditsDashboardClient } from "@/app/(dashboard)/credits/client";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioCreditsPage() {
-  return (
-    <StudioPageShell>
-      <CreditsDashboardClient />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default function StudioCreditsRedirect() {
+  permanentRedirect("/credits");
 }

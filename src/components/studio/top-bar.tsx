@@ -60,11 +60,11 @@ function getUserInitials(name?: string | null, email?: string | null): string {
 }
 
 export function StudioTopBar() {
-  const { user, logout, context } = useAuth();
+  const { user, logout } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const billingHref = "/studio/billing";
+  const billingHref = "/billing";
 
   // Cmd+K / Ctrl+K shortcut
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -127,7 +127,7 @@ export function StudioTopBar() {
           className="hidden sm:flex text-muted-foreground hover:text-foreground gap-1.5 text-xs h-8"
           asChild
         >
-          <Link href="/studio/marketplace">
+          <Link href="/marketplace">
             <Store className="h-3.5 w-3.5" />
             <span className="hidden lg:inline">Marketplace</span>
           </Link>
@@ -185,32 +185,32 @@ export function StudioTopBar() {
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/studio/settings" className="flex items-center gap-2">
+              <Link href="/settings" className="flex items-center gap-2">
                 <User className="h-3.5 w-3.5" />
                 Profile
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link href="/studio/settings" className="flex items-center gap-2">
+              <Link href="/settings" className="flex items-center gap-2">
                 <Settings className="h-3.5 w-3.5" />
                 Settings
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/studio/workspace" className="flex items-center gap-2">
+              <Link href="/workspace" className="flex items-center gap-2">
                 <HardDrive className="h-3.5 w-3.5" />
                 Workspace
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link href="/studio/usage" className="flex items-center gap-2">
+              <Link href="/usage" className="flex items-center gap-2">
                 <BarChart3 className="h-3.5 w-3.5" />
                 Usage
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <Link href="/studio/credits" className="flex items-center gap-2">
+              <Link href="/credits" className="flex items-center gap-2">
                 <Coins className="h-3.5 w-3.5" />
                 Credits
               </Link>
@@ -261,7 +261,7 @@ export function StudioTopBar() {
             <SearchQuickLink
               icon={Store}
               label="Marketplace"
-              href="/studio/marketplace"
+              href="/marketplace"
               onNavigate={() => setSearchOpen(false)}
             />
             <SearchQuickLink
@@ -285,7 +285,7 @@ export function StudioTopBar() {
             <SearchQuickLink
               icon={Settings}
               label="Settings"
-              href="/studio/settings"
+              href="/settings"
               onNavigate={() => setSearchOpen(false)}
             />
 

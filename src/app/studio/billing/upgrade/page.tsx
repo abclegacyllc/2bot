@@ -1,12 +1,6 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { UpgradeContent } from "@/app/(dashboard)/billing/upgrade/page";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioUpgradePage() {
-  return (
-    <StudioPageShell>
-      <UpgradeContent />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default function StudioUpgradeRedirect() {
+  permanentRedirect("/billing/upgrade");
 }

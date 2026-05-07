@@ -40,10 +40,16 @@ const SESSION_TTL_SECONDS = 15 * 60; // 15 min
 
 /** Default correction queue TTL. */
 const CORRECTION_TTL_SECONDS = 30 * 60;
+/**
+ * Cancel-flag TTL — long enough to outlast any reasonable single agent
+ * loop, short enough to self-evict if the runner crashes before reading.
+ */
+const CANCEL_TTL_SECONDS = 5 * 60;
 
 /** Redis key namespaces. */
 const K_OWNER = (sessionId: string) => `cursor:sess:${sessionId}:owner`;
 const K_CORRECTIONS = (sessionId: string) => `cursor:sess:${sessionId}:corrections`;
+const K_CANCEL = (sessionId: string) => `cursor:sess:${sessionId}:cancel`;
 const CHAN_ANSWER = (replicaId: string) => `cursor:answer:${replicaId}`;
 
 interface SessionOwner {
@@ -144,6 +150,63 @@ export async function drainCorrectionsRedis(sessionId: string): Promise<string[]
 export async function clearCorrectionsRedis(sessionId: string): Promise<void> {
   try {
     await redis.del(K_CORRECTIONS(sessionId));
+  } catch {
+    // best-effort
+  }
+}
+
+// ===========================================
+// User-initiated cancel flag
+// ===========================================
+//
+// Distinct from the existing connection-close detection at the SSE route
+// (which keeps the runner alive so reconnects can resume). When the user
+// clicks Stop, the cancel flag is set in Redis, and the runner polls it
+// at safe checkpoints — between iterations + after each tool result — so
+// the next billable LLM call never fires.
+//
+// Cluster-safe: the key is fully qualified with the sessionId; SET / GET /
+// DEL are single-key ops. The cluster-mode caveat in `redis.ts` doesn't
+// apply.
+
+/**
+ * Mark a session as cancelled. Idempotent. The flag self-evicts after
+ * CANCEL_TTL_SECONDS so a forgotten flag doesn't poison a future session
+ * that happens to reuse the id (sessionIds are UUIDs so collisions are
+ * astronomically unlikely, but the TTL is cheap insurance).
+ */
+export async function setCancelFlagRedis(sessionId: string): Promise<void> {
+  try {
+    await redis.set(K_CANCEL(sessionId), "1", "EX", CANCEL_TTL_SECONDS);
+  } catch (err) {
+    log.warn({ err, sessionId }, "setCancelFlagRedis failed");
+  }
+}
+
+/**
+ * Read-and-clear the cancel flag for a session. Returns true exactly
+ * once if the flag was set; subsequent calls return false. Atomic via
+ * GETDEL so two concurrent runners can't both observe a "cancelled"
+ * state on the same session id.
+ *
+ * Returns false on Redis errors — failing closed (i.e. NOT cancelling on
+ * infra failure) is the safe default: a transient Redis blip should not
+ * abort a paying user's run mid-stream.
+ */
+export async function consumeCancelFlagRedis(sessionId: string): Promise<boolean> {
+  try {
+    const v = await redis.getdel(K_CANCEL(sessionId));
+    return v === "1";
+  } catch (err) {
+    log.warn({ err, sessionId }, "consumeCancelFlagRedis failed");
+    return false;
+  }
+}
+
+/** Clear the cancel flag without consuming it. Used in tests. */
+export async function clearCancelFlagRedis(sessionId: string): Promise<void> {
+  try {
+    await redis.del(K_CANCEL(sessionId));
   } catch {
     // best-effort
   }

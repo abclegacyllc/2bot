@@ -72,6 +72,16 @@ ql *
 leep *
 elect*
 t p = *
+# Stray single-letter / short artifact files left behind by mis-typed
+# pipe / redirection commands (`> et`, `> t123"`, etc).
+/et
+/t123*
+# One-off operational fix-up scripts that often hardcode prod IDs or
+# decrypted secrets. Keep them locally if you need to re-run, but never
+# check in. Prefer Prisma migrations or proper services for anything
+# repeatable.
+/scripts/fix-*.ts
+/scripts/fix-*.js
 
 # IDE / editor tools
 .qodo/

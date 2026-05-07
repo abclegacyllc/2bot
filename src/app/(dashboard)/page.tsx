@@ -231,11 +231,7 @@ function UpgradeBanner() {
 // Build-with-AI CTA (chat-first)
 // ===========================================
 
-const FEATURE_CHAT_FIRST_ENABLED =
-  (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() === "enabled";
-
 function BuildWithAiCta() {
-  if (!FEATURE_CHAT_FIRST_ENABLED) return null;
   return (
     <Card className="border-blue-500/30 bg-gradient-to-r from-blue-900/20 to-cyan-900/10">
       <CardContent className="py-6">

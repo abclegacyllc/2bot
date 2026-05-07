@@ -78,17 +78,15 @@ async function createWorkflow(
     throw new ConflictError(`Workflow slug "${data.slug}" already exists`);
   }
 
-  // Wave 2: auto-attach to default project. Gated behind
-  // FEATURE_AUTO_ATTACH_PROJECT until the NOT NULL migration is applied.
-  let projectId: string | null = null;
-  if ((process.env.FEATURE_AUTO_ATTACH_PROJECT ?? "disabled").toLowerCase() === "enabled") {
-    const { ensureDefaultProject } = await import("@/modules/project/project.service");
-    const defaultProject = await ensureDefaultProject({
-      userId: owner.userId,
-      organizationId: owner.organizationId ?? null,
-    });
-    projectId = defaultProject.id;
-  }
+  // Every workflow belongs to a Project. The Phase 5 NOT NULL migration
+  // (20260505000000_unified_studio_backfill_project_id) makes this mandatory;
+  // we always materialise/look-up the (user, org) default Project.
+  const { ensureDefaultProject } = await import("@/modules/project/project.service");
+  const defaultProject = await ensureDefaultProject({
+    userId: owner.userId,
+    organizationId: owner.organizationId ?? null,
+  });
+  const projectId = defaultProject.id;
 
   const workflow = await prisma.workflow.create({
     data: {
@@ -1183,6 +1181,7 @@ async function installPluginStep(
         userId: owner.userId,
         pluginId: plugin.id,
         organizationId: owner.organizationId ?? null,
+        projectId: workflow.projectId,
         gatewayId: effectiveGatewayId ?? null,
         config: data.config ? (data.config as object) : {},
         isEnabled: true,

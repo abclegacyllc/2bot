@@ -22,7 +22,7 @@ import type { GatewayOption } from "@/lib/api-client";
 import { getOrgGateways, getUserGateways } from "@/lib/api-client";
 import { apiUrl } from "@/shared/config/urls";
 import type { UserPlugin } from "@/shared/types/plugin";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import {
     createContext,
     useCallback,
@@ -77,8 +77,16 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
   const { token, context } = useAuth();
   const router = useRouter();
   const params = useParams();
+  const pathname = usePathname();
   const organizationId =
     context.type === "organization" ? context.organizationId : undefined;
+
+  // Project studio routes (`/studio/<projectId>/...`) supply their own left
+  // rail via a nested layout, so the bot sidebar is suppressed there. The
+  // sidebar still appears on the studio home (`/studio`) and the legacy bot
+  // editor (`/studio/bot/<botId>`).
+  const showBotSidebar =
+    pathname === "/studio" || pathname.startsWith("/studio/bot/");
 
   // Sidebar state — default collapsed, persisted in localStorage
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -162,7 +170,7 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
 
   const selectBot = useCallback(
     (id: string) => {
-      router.push(`/studio/${id}`);
+      router.push(`/studio/bot/${id}`);
     },
     [router]
   );
@@ -198,8 +206,8 @@ function StudioLayoutContent({ children }: { children: ReactNode }) {
 
         {/* Body: Sidebar + Main */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Bot Sidebar */}
-          <BotSidebar />
+          {/* Bot Sidebar — hidden on project studio routes */}
+          {showBotSidebar ? <BotSidebar /> : null}
 
           {/* Main Studio Area */}
           <main

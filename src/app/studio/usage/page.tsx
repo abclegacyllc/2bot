@@ -1,12 +1,6 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { UsageDashboardV2Client } from "@/app/(dashboard)/usage/client-v2";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioUsagePage() {
-  return (
-    <StudioPageShell>
-      <UsageDashboardV2Client />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default function StudioUsageRedirect() {
+  permanentRedirect("/usage");
 }

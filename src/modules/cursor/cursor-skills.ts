@@ -71,44 +71,117 @@ const errorRecovery: CursorSkill = {
 - If a tool returns "Blocked: ...", that action is forbidden — try a different approach or inform the user`,
 };
 
+/**
+ * agent-autonomy — a long skill (~2.3 KB before pruning) full of advice
+ * that references specific tool names. Pre-F-2 it rendered the full body
+ * for every agent regardless of which tools that agent actually had,
+ * which both wasted tokens AND confused models into trying to call tools
+ * that didn't exist (e.g. Builder hallucinating `write_file` because the
+ * skill said "Implement → write_file").
+ *
+ * The body is now assembled from sub-sections, each gated on a relevant
+ * tool being present in `ctx.toolNames`. When `ctx.toolNames` is absent
+ * (legacy callers that bypass the renderer) we fall back to the original
+ * full body to preserve old behaviour.
+ */
 const agentAutonomy: CursorSkill = {
   id: "agent-autonomy",
   label: "Autonomous agent behavior — never delegate to users",
   workers: ["assistant", "coder"],
-  build: () => `## Autonomous Agent Rules (CRITICAL)
+  build: (ctx) => {
+    const tools = ctx.toolNames;
+    const has = (name: string): boolean => (tools ? tools.has(name) : true);
+    const hasAny = (...names: string[]): boolean => names.some((n) => has(n));
+
+    // ── Always-on header: applies to any agent. No tool refs. ──
+    const sections: string[] = [];
+    sections.push(`## Autonomous Agent Rules (CRITICAL)
 You are an autonomous AI agent. You have tools — USE THEM PROACTIVELY.
 - NEVER ask the user to read files, run commands, check status, or perform any action you can do with your tools
 - NEVER list files/steps and ask "should I proceed?" — just proceed
-- NEVER say "I would need to..." or "I could..." — DO IT by calling the tool
-- If you need file contents → call read_file (or get_file_outline / get_function for efficiency)
-- If you need to search code → call search_files or search_codebase
-- If you need to check something → call the appropriate tool
-- If unsure which file to edit → call list_files then read_file to figure it out YOURSELF
-- Only use ask_user when you genuinely need USER INPUT that cannot be determined from available tools (e.g., a secret token, a preference choice, a name they want to use)
+- NEVER say "I would need to..." or "I could..." — DO IT by calling the tool`);
 
-## Reasoning Process (follow this for EVERY task)
-1. **UNDERSTAND** — Parse exactly what the user wants. Identify the deliverable.
-2. **EXPLORE** — Use tools to read relevant files, check current state, gather context. Batch read-only calls.
-3. **PLAN** — Call the \`think\` tool to outline your approach for any task involving more than a single simple action. Decide HOW to plan based on the situation:
+    // ── Read-tool guidance: only for agents that can actually read ──
+    const readBullets: string[] = [];
+    if (has("read_file") || has("get_file_outline") || has("get_function")) {
+      const variants = [
+        has("read_file") && "read_file",
+        has("get_file_outline") && "get_file_outline",
+        has("get_function") && "get_function",
+      ].filter(Boolean) as string[];
+      readBullets.push(`- If you need file contents → call ${variants.join(" / ")}`);
+    }
+    if (has("search_files") || has("search_codebase") || has("find_relevant_code")) {
+      const variants = [
+        has("search_files") && "search_files",
+        has("search_codebase") && "search_codebase",
+      ].filter(Boolean) as string[];
+      if (variants.length > 0) {
+        readBullets.push(`- If you need to search code → call ${variants.join(" or ")}`);
+      }
+    }
+    if (has("list_files") && has("read_file")) {
+      readBullets.push("- If unsure which file to edit → call list_files then read_file to figure it out YOURSELF");
+    }
+    if (has("ask_user")) {
+      readBullets.push("- Only use ask_user when you genuinely need USER INPUT that cannot be determined from available tools (e.g., a secret token, a preference choice, a name they want to use)");
+    }
+    if (readBullets.length > 0) {
+      sections.push(readBullets.join("\n"));
+    }
+
+    // ── Reasoning process: shape depends on which planning tools exist ──
+    const hasThink = has("think");
+    const hasUpdatePlan = has("update_plan");
+    const hasWrite = hasAny("write_file", "edit_file");
+    const hasFinish = has("finish");
+    if (hasThink || hasUpdatePlan || hasWrite || hasFinish) {
+      const lines: string[] = ["## Reasoning Process (follow this for EVERY task)"];
+      lines.push("1. **UNDERSTAND** — Parse exactly what the user wants. Identify the deliverable.");
+      lines.push("2. **EXPLORE** — Use tools to read relevant files, check current state, gather context. Batch read-only calls.");
+      if (hasThink && hasUpdatePlan) {
+        lines.push(`3. **PLAN** — Call the \`think\` tool to outline your approach for any task involving more than a single simple action. Decide HOW to plan based on the situation:
    - **Simple change (1–3 short steps)**: plan internally with \`think\` only. Do NOT call \`update_plan\` — a visible checklist for "edit one file" is noise.
    - **Multi-step work the user is watching live (5+ steps, plugin scaffold, refactor across files)**: call \`update_plan\` once after \`think\` to make progress visible.
    - **The user is in Plan-mode agent**: \`update_plan\` is the deliverable — always use it.
-   The goal is informed execution, not visible scaffolding. Plan internally by default; surface a checklist only when it genuinely helps the user track long work.
-4. **IMPLEMENT** — Execute your plan step by step. Create/edit files, run commands. Batch multiple write_file calls together when possible. If you used \`update_plan\`, refresh it only when 3+ items have changed — not after every file write.
-5. **VERIFY** — Read back modified files (use get_file_outline). Run \`node --check\` on entry files. Check logs after restart.
-6. **COMPLETE** — Call \`finish\` with an accurate summary of what was done.
+   The goal is informed execution, not visible scaffolding. Plan internally by default; surface a checklist only when it genuinely helps the user track long work.`);
+      } else if (hasThink) {
+        lines.push("3. **PLAN** — Call the `think` tool to outline your approach for any task involving more than a single simple action. Plan internally; do not surface a visible checklist.");
+      } else if (hasUpdatePlan) {
+        lines.push("3. **PLAN** — Call `update_plan` once for multi-step work the user is watching live, so progress is visible.");
+      }
+      if (hasWrite) {
+        const writeRef = has("write_file") ? "write_file" : "edit_file";
+        const updatePlanNudge = hasUpdatePlan ? ` If you used \`update_plan\`, refresh it only when 3+ items have changed — not after every file write.` : "";
+        lines.push(`4. **IMPLEMENT** — Execute your plan step by step. Create/edit files, run commands. Batch multiple ${writeRef} calls together when possible.${updatePlanNudge}`);
+        lines.push("5. **VERIFY** — Read back modified files (use get_file_outline). Run `node --check` on entry files. Check logs after restart.");
+      }
+      if (hasFinish) {
+        lines.push(`${hasWrite ? "6" : "4"}. **COMPLETE** — Call \`finish\` with an accurate summary of what was done.`);
+      }
+      sections.push(lines.join("\n"));
+      if (hasThink) {
+        sections.push("CRITICAL: Always call `think` before writing code for complex tasks. This dramatically improves output quality.");
+      }
+      if (hasUpdatePlan) {
+        sections.push("`update_plan` is OPTIONAL — use it when a visible checklist genuinely helps the user, skip it for short tasks. The agent is universal: it works with or without an explicit plan.");
+      }
+    }
 
-CRITICAL: Always call \`think\` before writing code for complex tasks. This dramatically improves output quality.
-\`update_plan\` is OPTIONAL — use it when a visible checklist genuinely helps the user, skip it for short tasks. The agent is universal: it works with or without an explicit plan.
-
-## Search Discipline (EQUALLY CRITICAL)
+    // ── Search discipline: only render for agents with search tools ──
+    if (hasAny("search_files", "search_codebase", "find_relevant_code")) {
+      sections.push(`## Search Discipline (EQUALLY CRITICAL)
 You MUST follow these rules to avoid wasting turns and credits:
 - **NEVER** call search_files twice for the same topic — if results came back, READ the files instead of searching again with different keywords
 - **NEVER** call search_files then find_relevant_code for the same query — pick ONE search tool
 - After ANY search returns results: your NEXT action must be \`get_file_outline\` or \`read_file\` on the found files — NOT another search
 - If search returned 0 results, try ONE alternative keyword, then STOP searching and work with what you have
 - If you already have file contents from auto-context or prior reads, do NOT search for code you've already seen
-- Gathering context should take at most 2-3 turns. If you've spent 3+ turns reading/searching without writing code, STOP exploring and START implementing`,
+- Gathering context should take at most 2-3 turns. If you've spent 3+ turns reading/searching without writing code, STOP exploring and START implementing`);
+    }
+
+    return sections.join("\n\n");
+  },
 };
 
 // ===========================================
@@ -127,15 +200,15 @@ const assistantCapabilities: CursorSkill = {
   id: "assistant-capabilities",
   label: "What the assistant can and cannot do",
   workers: ["assistant"],
-  build: () => `## What You Can Do
-Use your tools to accomplish tasks directly:
-- **Credits & Billing**: Check credit balance, billing info, usage statistics
-- **Gateways (Telegram bots)**: List, create, delete, update, check health status, view metrics
-- **Plugins**: List installed plugins, install from store, uninstall, start/stop, view config, search marketplace, clone
-- **Workspace**: Start, stop, restart, check status, view logs and resource metrics
-- **Navigation**: Open any dashboard page
-- **User Interaction**: Ask the user questions when you need info (e.g., bot token)
-- **Diagnostics**: Explain error messages, list available plugin templates
+  build: (ctx) => {
+    const tools = ctx.toolNames;
+    const has = (n: string): boolean => (tools ? tools.has(n) : true);
+    // Without `hand_off_to_coder` (e.g. Builder/Plan/Ask) the "what you
+    // CANNOT do" section is misleading — those agents have their own
+    // ways of handling code work. Render only the capabilities header
+    // when handoff isn't available.
+    const handoffSection = has("hand_off_to_coder")
+      ? `
 
 ## What You CANNOT Do
 You are NOT a developer. When the user wants to:
@@ -144,20 +217,55 @@ You are NOT a developer. When the user wants to:
 - Review, analyze, or audit code quality
 - Add features, fix bugs, or refactor code
 
-→ Use the \`hand_off_to_coder\` tool immediately. Pass ALL user context — the plugin name, what they want done, any details they provided.`,
+→ Use the \`hand_off_to_coder\` tool immediately. Pass ALL user context — the plugin name, what they want done, any details they provided.`
+      : "";
+
+    return `## What You Can Do
+Use your tools to accomplish tasks directly:
+- **Credits & Billing**: Check credit balance, billing info, usage statistics
+- **Gateways (Telegram bots)**: List, create, delete, update, check health status, view metrics
+- **Plugins**: List installed plugins, install from store, uninstall, start/stop, view config, search marketplace, clone
+- **Workspace**: Start, stop, restart, check status, view logs and resource metrics
+- **Navigation**: Open any dashboard page
+- **User Interaction**: Ask the user questions when you need info (e.g., bot token)
+- **Diagnostics**: Explain error messages, list available plugin templates${handoffSection}`;
+  },
 };
 
 const assistantRules: CursorSkill = {
   id: "assistant-rules",
   label: "Behavioral rules for the assistant",
   workers: ["assistant"],
-  build: () => `## Rules
-1. For gateway creation, you MUST use \`ask_user\` to get the bot token (it's a secret)
-2. For destructive actions (delete gateway/plugin), confirm with the user first via \`ask_user\`
-3. When you don't need any tool, just respond naturally with text — your text becomes the chat message
-4. If a request is ambiguous between platform-help and code-work, default to asking the user
-5. You can chain multiple tool calls in one turn (e.g., list_gateways then navigate_page)
-6. You have limited turns (10 max) — be efficient, don't waste turns on unnecessary confirmations
+  build: (ctx) => {
+    const tools = ctx.toolNames;
+    const has = (n: string): boolean => (tools ? tools.has(n) : true);
+    const hasAskUser = has("ask_user");
+    const hasGateways = has("create_gateway") || has("delete_gateway") || has("list_gateways");
+    const hasPlugins = has("uninstall_plugin") || has("delete_plugin");
+
+    // Numbered rules — only include those the agent can actually act on.
+    const rules: string[] = [];
+    let idx = 1;
+    if (hasAskUser && hasGateways) {
+      rules.push(`${idx++}. For gateway creation, you MUST use \`ask_user\` to get the bot token (it's a secret)`);
+    }
+    if (hasAskUser && (hasGateways || hasPlugins)) {
+      rules.push(`${idx++}. For destructive actions (delete gateway/plugin), confirm with the user first via \`ask_user\``);
+    }
+    rules.push(`${idx++}. When you don't need any tool, just respond naturally with text — your text becomes the chat message`);
+    rules.push(`${idx++}. If a request is ambiguous between platform-help and code-work, default to asking the user`);
+    if (has("list_gateways") && has("navigate_page")) {
+      rules.push(`${idx++}. You can chain multiple tool calls in one turn (e.g., list_gateways then navigate_page)`);
+    } else {
+      rules.push(`${idx++}. You can chain multiple tool calls in one turn`);
+    }
+    rules.push(`${idx++}. You have limited turns — be efficient, don't waste turns on unnecessary confirmations`);
+
+    let body = `## Rules\n${rules.join("\n")}`;
+
+    // ask_user usage block — only if the tool exists
+    if (hasAskUser) {
+      body += `
 
 ## ask_user Best Practices
 When calling \`ask_user\`, ALWAYS provide \`options\` with clear multiple-choice answers:
@@ -166,7 +274,11 @@ When calling \`ask_user\`, ALWAYS provide \`options\` with clear multiple-choice
 - The LAST option must always be: { "label": "Other (type my own)", "value": "__freetext__" }
 - Keep option labels short (3-8 words) — avoid long explanations
 - Example: question: "Which gateway do you want to use?" + options: [ { label: "MyTelegramBot", value: "gw_abc" }, { label: "TestBot", value: "gw_xyz" }, { label: "Other (type my own)", value: "__freetext__" } ]
-- For sensitive info (tokens/secrets), set sensitive: true and skip options — free-text only`,
+- For sensitive info (tokens/secrets), set sensitive: true and skip options — free-text only`;
+    }
+
+    return body;
+  },
 };
 
 const navigationRoutes: CursorSkill = {
@@ -174,9 +286,11 @@ const navigationRoutes: CursorSkill = {
   label: "Available dashboard routes for navigate_page",
   workers: ["assistant"],
   build: () => `## Dashboard Routes
-Main pages: \`/\`, \`/bots\`, \`/workspace\`, \`/credits\`, \`/billing\`, \`/usage\`, \`/settings\`, \`/organizations\`, \`/invites\`, \`/studio\`, \`/marketplace\`
-Sub-pages: \`/gateways/create\`, \`/gateways/<id>\`, \`/plugins/create\`, \`/billing/upgrade\`, \`/billing/workspace\`
-Studio routes: \`/studio/<botId>\`, \`/studio/settings\`, \`/studio/workspace\`, \`/studio/credits\`, \`/studio/billing\`, \`/studio/billing/upgrade\`, \`/studio/billing/workspace\`, \`/studio/usage\`, \`/studio/marketplace\`, \`/studio/marketplace/<slug>\`, \`/studio/marketplace/installed\`
+Main pages: \`/\`, \`/bots\`, \`/workspace\`, \`/credits\`, \`/billing\`, \`/usage\`, \`/settings\`, \`/organizations\`, \`/invites\`, \`/studio\`, \`/marketplace\`, \`/projects\`
+Sub-pages: \`/gateways/create\`, \`/gateways/<id>\`, \`/plugins/create\`, \`/billing/upgrade\`, \`/billing/workspace\`, \`/marketplace/<slug>\`, \`/marketplace/installed\`
+Studio routes: \`/studio/bot/<botId>\` (legacy bot editor), \`/studio/<projectId>\` (unified project studio: architecture, workflows, resources, plugins, gateways, versions, chat, settings)
+Workflow editor: \`/studio/<projectId>/workflows/<workflowId>\`
+Project routes: \`/projects/<id>\`, \`/projects/<id>/architecture\`, \`/projects/<id>/resources\`, \`/projects/<id>/versions\` (legacy — redirect to studio in Phase 5)
 Org routes: \`/organizations/<orgSlug>/bots\`, \`.../gateways\`, \`.../plugins\`, \`.../members\`, \`.../workspace\`, \`.../billing\`, \`.../credits\`, \`.../usage\`, \`.../settings\`, \`.../departments\`, \`.../quotas\`, \`.../monitoring\``,
 };
 

@@ -179,33 +179,26 @@ orgCreditsRouter.get(
       limit: pageSize,
       offset,
       type,
+      category,
     });
 
     if (!result) {
       throw new NotFoundError("Organization credit wallet not found");
     }
 
-    // Filter by category if specified (from metadata)
-    const filteredTransactions = category
-      ? result.transactions.filter((t) => {
-          const meta = t.metadata as Record<string, unknown> | null;
-          return meta?.category === category;
-        })
-      : result.transactions;
-
-    // Adjust total when category filter reduces results
-    const filteredTotal = category ? filteredTransactions.length : result.total;
-
-    // Map metadata.category to top-level category field
-    const mappedTransactions = filteredTransactions.map((t) => {
-      const meta = t.metadata as Record<string, unknown> | null;
+    // Map DB category column (with metadata fallback for legacy rows)
+    const mappedTransactions = result.transactions.map((t) => {
+      const resolvedCategory =
+        t.category
+          ? (t.category as CreditUsageCategory)
+          : ((t.metadata as Record<string, unknown> | null)?.category as CreditUsageCategory | undefined);
       return {
         id: t.id,
         type: t.type,
         amount: t.amount,
         balanceAfter: t.balanceAfter,
         description: t.description,
-        category: (meta?.category as CreditUsageCategory) || undefined,
+        category: resolvedCategory,
         createdAt: t.createdAt,
       };
     });
@@ -214,7 +207,7 @@ orgCreditsRouter.get(
       success: true,
       data: {
         transactions: mappedTransactions,
-        total: filteredTotal,
+        total: result.total,
         page,
         pageSize,
         walletType: result.walletType,

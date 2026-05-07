@@ -14,6 +14,7 @@ import {
     type AgentSummary,
 } from "@/modules/cursor/agents";
 import { pushCorrection, resolveUserAnswer, runWorkerStream, tryResolveUserAnswerCrossReplica, type WorkerStreamRequest } from "@/modules/cursor/cursor-worker-runner";
+import { getSessionOwner, setCancelFlagRedis } from "@/modules/cursor/cursor-session-store";
 import { BadRequestError, RateLimitError } from "@/shared/errors";
 import { Router, type Request, type Response } from "express";
 
@@ -388,6 +389,51 @@ cursorRouter.post(
     }
 
     res.json({ success: true, data: { message: "Correction queued" } });
+  }),
+);
+
+/**
+ * POST /api/cursor/worker-cancel
+ *
+ * User-initiated stop. Sets a cancel flag in Redis that the agent loop
+ * polls between iterations and between sequential tool calls — so the
+ * next billable LLM call does not fire and any in-flight tool chain bails
+ * out at the next safe checkpoint.
+ *
+ * Distinct from closing the SSE connection: a closed connection keeps the
+ * runner alive on the server (so the user can reconnect and resume).
+ * Cancel actively halts the runner and stops billing.
+ *
+ * Auth: only the session owner can cancel their own session. We resolve
+ * the session's userId from `getSessionOwner` and reject if it doesn't
+ * match the authenticated user. Org membership is enforced upstream via
+ * the same auth middleware that runs on /worker-stream.
+ *
+ * Body: { sessionId: string }
+ *
+ * Idempotent — repeated calls just refresh the flag's TTL.
+ */
+cursorRouter.post(
+  "/worker-cancel",
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw new BadRequestError("Not authenticated");
+
+    const { sessionId } = req.body as { sessionId?: string };
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new BadRequestError("sessionId is required");
+    }
+
+    // Authorise: only the session's owning user can cancel it.
+    const owner = await getSessionOwner(sessionId);
+    if (owner && owner.userId !== req.user.id) {
+      // Mirror the not-found shape rather than 403 to avoid leaking the
+      // existence of someone else's session id.
+      res.json({ success: true, data: { message: "No active session" } });
+      return;
+    }
+
+    await setCancelFlagRedis(sessionId);
+    res.json({ success: true, data: { message: "Cancel signal sent" } });
   }),
 );
 

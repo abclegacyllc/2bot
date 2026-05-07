@@ -18,10 +18,10 @@
 import { logger } from "@/lib/logger";
 import { getCurrentBillingPeriod } from "@/modules/2bot-ai-provider";
 import {
-    creditService,
-    twoBotAICreditService,
-    type CreditUsageCategory,
-    type WalletType
+  creditService,
+  twoBotAICreditService,
+  type CreditUsageCategory,
+  type WalletType
 } from "@/modules/credits";
 import { BadRequestError, InternalError } from "@/shared/errors";
 import { formatCredits } from "@/shared/lib/format";
@@ -161,30 +161,22 @@ creditsRouter.get(
       limit: pageSize, 
       offset, 
       type,
-      // Category filter will be applied in service layer
+      category,
     });
 
-    // Filter by category if specified (from metadata)
-    const filteredTransactions = category
-      ? result.transactions.filter((t) => {
-          const meta = t.metadata as Record<string, unknown> | null;
-          return meta?.category === category;
-        })
-      : result.transactions;
-
-    // Adjust total when category filter reduces results
-    const filteredTotal = category ? filteredTransactions.length : result.total;
-
-    // Map metadata.category to top-level category field
-    const mappedTransactions = filteredTransactions.map((t) => {
-      const meta = t.metadata as Record<string, unknown> | null;
+    // Map DB category column (with metadata fallback for legacy rows)
+    const mappedTransactions = result.transactions.map((t) => {
+      const resolvedCategory =
+        t.category
+          ? (t.category as CreditUsageCategory)
+          : ((t.metadata as Record<string, unknown> | null)?.category as CreditUsageCategory | undefined);
       return {
         id: t.id,
         type: t.type,
         amount: t.amount,
         balanceAfter: t.balanceAfter,
         description: t.description,
-        category: (meta?.category as CreditUsageCategory) || undefined,
+        category: resolvedCategory,
         createdAt: t.createdAt,
       };
     });
@@ -193,7 +185,7 @@ creditsRouter.get(
       success: true,
       data: {
         transactions: mappedTransactions,
-        total: filteredTotal,
+        total: result.total,
         page,
         pageSize,
         walletType: result.walletType,

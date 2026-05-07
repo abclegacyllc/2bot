@@ -1,12 +1,11 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { MarketplaceDetailContent } from "@/app/(dashboard)/marketplace/[slug]/page";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioMarketplaceDetailPage() {
-  return (
-    <StudioPageShell>
-      <MarketplaceDetailContent basePath="/studio/marketplace" />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default async function StudioMarketplaceDetailRedirect({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  permanentRedirect(`/marketplace/${slug}`);
 }

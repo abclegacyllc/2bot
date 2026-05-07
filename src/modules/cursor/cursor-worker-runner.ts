@@ -22,6 +22,7 @@
 import crypto from "crypto";
 
 import { logger } from "@/lib/logger";
+import { cursorCancelTotal } from "@/lib/metrics";
 import { prisma } from "@/lib/prisma";
 import {
     checkSessionLimits,
@@ -31,8 +32,13 @@ import {
 import * as agentSessionService from "@/modules/2bot-ai-agent/agent-session.service";
 import { canResolveTwoBotAIModel, twoBotAIProvider } from "@/modules/2bot-ai-provider";
 import { getRegistryEntry } from "@/modules/2bot-ai-provider/model-registry";
-import { withRetry } from "@/modules/2bot-ai-provider/retry.util";
-import type { TextGenerationMessage, ToolDefinition } from "@/modules/2bot-ai-provider/types";
+import type {
+    TextGenerationMessage,
+    TextGenerationRequest,
+    TextGenerationResponse,
+    ToolCallResult,
+    ToolDefinition,
+} from "@/modules/2bot-ai-provider/types";
 import type { BridgeClient } from "@/modules/workspace/bridge-client.service";
 
 import type { UIAction } from "@/components/cursor/cursor.types";
@@ -56,6 +62,7 @@ import {
     clearCorrectionsRedis,
     drainCorrectionsRedis,
     publishAnswerToOwner,
+    consumeCancelFlagRedis,
     pushCorrectionRedis,
     registerSession as registerSessionRedis,
     startAnswerSubscriber,
@@ -103,7 +110,7 @@ export interface WorkerStreamRequest {
   /** Optional: workflow context for Studio AI operations */
   workflowContext?: WorkflowContext;
   /** Optional: studio mode — controls tool availability and prompt behavior */
-  studioMode?: "agent" | "ask" | "plan";
+  studioMode?: "agent" | "ask" | "plan" | "build";
   /**
    * Optional: declarative agent name (e.g. "agent" / "ask" / "plan").
    * When supplied, the agent's `runtime` and `studioMode` from its frontmatter
@@ -199,7 +206,7 @@ export interface SuspendedSessionState {
   lastAssistantText?: string;
 
   // Original request params (needed for tool defs, model routing, etc.)
-  studioMode?: "agent" | "ask" | "plan";
+  studioMode?: "agent" | "ask" | "plan" | "build";
   hasWorkflowContext: boolean;
   workflowContext?: WorkflowContext;
   modelId?: string;
@@ -409,14 +416,34 @@ function extractPluginContext(message: string): {
 // Context Window Pruning
 // ===========================================
 
-/** Iteration threshold after which pruning kicks in */
-const PRUNE_AFTER_ITERATION = 2;
+/**
+ * Iteration threshold after which pruneMessages kicks in. Assistant-runtime
+ * agents (Builder/Ask/Plan + chat-only assistants) typically finish in 1-3
+ * iterations, so we want pruning to fire after the FIRST iteration — turn
+ * 2's context already contains a tool-call/tool-result loop worth
+ * compressing. Coder runtime keeps the legacy threshold of 2 because its
+ * runs are write-heavy and the recent file context matters more.
+ */
+const PRUNE_AFTER_ITERATION_ASSISTANT = 1;
+const PRUNE_AFTER_ITERATION_CODER = 2;
 
 /** Number of recent exchange pairs to keep intact */
 const KEEP_RECENT_PAIRS = 3;
 
 /** Chars threshold for compacting a read_file result that has already been consumed */
 const READ_FILE_COMPACT_THRESHOLD = 800;
+
+/**
+ * Chars threshold above which a stale tool result (any tool, any older
+ * exchange) gets aggressively trimmed. Lower than `compactConsumedReads`'s
+ * historical 2000 because for non-write agents the goal is to drop
+ * everything the LLM has already "read past" without dropping useful
+ * headers (tool name, file path, count).
+ */
+const STALE_TOOL_RESULT_THRESHOLD = 1500;
+
+/** Char count to keep at the head of a compacted stale tool result. */
+const STALE_TOOL_RESULT_HEAD_CHARS = 400;
 
 /** Max chars for the "smart digest" of a file (outline + key sections) */
 const SMART_DIGEST_MAX_CHARS = 3000;
@@ -745,6 +772,69 @@ function compactConsumedReads(messages: TextGenerationMessage[]): void {
         msg.content = `${firstLines}\n... [${toolName} output compacted from ${totalLines} lines — result was already processed in earlier steps]`;
       }
     }
+  }
+}
+
+/**
+ * Kind-agnostic tool-result compaction.
+ *
+ * Compaction strategy:
+ *   - Find the most recent assistant turn and treat anything before it as
+ *     "stale" (the LLM has already produced output based on those results).
+ *   - For every stale tool-result message above
+ *     `STALE_TOOL_RESULT_THRESHOLD` chars, keep the first
+ *     `STALE_TOOL_RESULT_HEAD_CHARS` chars (which preserves the result
+ *     header — tool name, file path, success/error marker) and replace
+ *     the rest with a one-line "[content trimmed]" notice.
+ *   - Idempotent: already-trimmed messages contain the trimmer footer and
+ *     are skipped, so a multi-iteration run doesn't re-walk them every
+ *     turn.
+ *
+ * Why this exists ON TOP OF `compactConsumedReads`:
+ *   `compactConsumedReads` only collapses read_file/get_function results
+ *   when a corresponding write occurs later — useless for assistant-runtime
+ *   agents (Builder, Ask, Plan) that have no write tools. Their long
+ *   `list_available_plugins` / `list_user_plugins` / `read_file` dumps
+ *   used to sit in context across every iteration. This pass is the
+ *   catch-all for those cases, with a more conservative truncation than
+ *   `compactConsumedReads` so the LLM still sees enough head-context to
+ *   know what tool ran and on what target.
+ *
+ * Mutates `messages` in place.
+ */
+const STALE_TRIMMER_FOOTER = "[content trimmed — already processed in earlier steps]";
+
+function compactStaleToolResults(messages: TextGenerationMessage[]): void {
+  // Find the most recent assistant turn — anything older than this is
+  // "stale" by definition (a tool-call/result pair the LLM has already
+  // produced text/calls based on).
+  let lastAssistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "assistant") {
+      lastAssistantIdx = i;
+      break;
+    }
+  }
+  if (lastAssistantIdx <= 0) return; // no prior turns
+
+  for (let i = 0; i < lastAssistantIdx; i++) {
+    const msg = messages[i]!;
+    if (msg.role !== "user") continue;
+    if (msg.content.length < STALE_TOOL_RESULT_THRESHOLD) continue;
+    // Skip non-tool-result user messages (the original prompt, ask_user
+    // answers, correction injections). Recognise tool results by the
+    // existing `[✅ TOOL RESULT: …]` / `[❌ TOOL ERROR: …]` /
+    // `[⚠️ SYSTEM ERROR …]` prefix the runner emits when it appends
+    // tool output to the conversation.
+    if (!/^\[(?:✅ TOOL RESULT|❌ TOOL ERROR|⚠️ SYSTEM ERROR)/.test(msg.content)) {
+      continue;
+    }
+    // Idempotent: already-trimmed messages carry the trimmer footer.
+    if (msg.content.includes(STALE_TRIMMER_FOOTER)) continue;
+
+    const head = msg.content.slice(0, STALE_TOOL_RESULT_HEAD_CHARS);
+    const droppedChars = msg.content.length - head.length;
+    msg.content = `${head}\n... ${STALE_TRIMMER_FOOTER} (${droppedChars} chars omitted)`;
   }
 }
 
@@ -3618,33 +3708,122 @@ async function _executeToolInner(
  */
 const LITE_ROUTING_MODEL = "2bot-ai-code-lite";
 
+// ===========================================
+// Streaming helper
+// ===========================================
+//
+// Wraps `twoBotAIProvider.textGenerationStream` so the agent loop can:
+//   1. forward each text delta to the SSE stream as it arrives (incremental
+//      UI updates — the user sees text appear progressively instead of in
+//      one block at end-of-call), AND
+//   2. still receive a complete `TextGenerationResponse` shape at the end,
+//      compatible with the existing tool-call / broken-model / lite-routing
+//      branches downstream.
+//
+// Tool-call assembly: the provider yields `toolUse` deltas as Anthropic-style
+// streaming chunks (id + name on first chunk, argumentsDelta on each
+// subsequent input_json_delta). We aggregate them per `index` and JSON-parse
+// the full args once the stream is done.
+//
+// Retry strategy: the underlying provider already handles failover BEFORE
+// the first chunk is sent (`/2bot-ai.provider.ts`), so we don't wrap with
+// `withRetry` here — once a chunk has been forwarded to the user we can no
+// longer safely "rewind" the response. Mid-stream failures bubble up to the
+// runner, which is the same behaviour the non-streaming path had after its
+// retry budget was exhausted.
+
+interface PartialToolUse {
+  id: string;
+  name: string;
+  argsJson: string;
+}
+
+async function* streamLLMCallWithDeltas(
+  request: TextGenerationRequest,
+): AsyncGenerator<{ kind: "delta"; text: string }, TextGenerationResponse> {
+  const generator = twoBotAIProvider.textGenerationStream(request);
+  const toolUseByIndex = new Map<number, PartialToolUse>();
+
+  type ChunkT = Awaited<ReturnType<typeof generator.next>> extends IteratorResult<infer Y, infer R>
+    ? IteratorResult<Y, R>
+    : never;
+  let result: ChunkT;
+  while (!(result = (await generator.next()) as ChunkT).done) {
+    const chunk = result.value;
+    if (chunk.delta) {
+      yield { kind: "delta", text: chunk.delta };
+    }
+    if (chunk.toolUse) {
+      const idx = chunk.toolUse.index;
+      const existing = toolUseByIndex.get(idx) ?? { id: "", name: "", argsJson: "" };
+      if (chunk.toolUse.id) existing.id = chunk.toolUse.id;
+      if (chunk.toolUse.name) existing.name = chunk.toolUse.name;
+      if (chunk.toolUse.argumentsDelta) existing.argsJson += chunk.toolUse.argumentsDelta;
+      toolUseByIndex.set(idx, existing);
+    }
+  }
+
+  // result.value is the TextGenerationResponse the provider produced after
+  // the stream completed (incl. usage, model, creditsUsed, finishReason).
+  const finalResp = result.value as TextGenerationResponse;
+
+  // Assemble tool calls from aggregated deltas, in stream order.
+  const toolCalls: ToolCallResult[] = [];
+  const sortedIndexes = Array.from(toolUseByIndex.keys()).sort((a, b) => a - b);
+  for (const idx of sortedIndexes) {
+    const partial = toolUseByIndex.get(idx);
+    if (!partial || !partial.id || !partial.name) continue;
+    let args: Record<string, unknown> = {};
+    if (partial.argsJson) {
+      try {
+        args = JSON.parse(partial.argsJson) as Record<string, unknown>;
+      } catch {
+        // Provider streamed malformed partial JSON — best effort: empty
+        // args and let the tool fail downstream with a clear message.
+      }
+    }
+    toolCalls.push({ id: partial.id, name: partial.name, arguments: args });
+  }
+
+  return {
+    ...finalResp,
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
+  };
+}
+
 function getModelForWorker(
   workerType: CursorWorkerType,
   requestModelId: string | undefined,
   useRoutingModel: boolean,
   allowLiteRouting?: boolean,
 ): string {
-  // If no explicit model selected, always use auto (already cheapest)
-  if (!requestModelId) return "auto";
+  const fallback = requestModelId || "auto";
 
   // agent-driven lite-routing toggle. When the caller passes a
   // resolved config we trust it; otherwise fall back to the legacy rule
   // (coder=off, assistant=on).
   const liteAllowed = allowLiteRouting ?? workerType !== "coder";
-  if (!liteAllowed) return requestModelId;
+  if (!liteAllowed) return fallback;
 
-  // For routing iterations (tool-only, no substantial text), use lite model
-  // This saves 40-70% on input token costs for planning/routing turns
-  // Falls back to user's model if lite can't resolve (e.g., no providers configured)
+  // For routing iterations (tool-only, no substantial text), use the lite
+  // model — saves 40-70% on input token costs for planning/routing turns.
+  // Falls back to the user's model (or "auto") if lite can't resolve
+  // (e.g. no providers configured for the lite slug).
+  //
+  // Previously, callers without an explicit model returned "auto" right
+  // away and never reached this branch — meaning users on the implicit/
+  // default plan never got the lite-routing discount that explicit-model
+  // users did. Now both paths share the same routing rule.
   if (useRoutingModel) {
     try {
       if (canResolveTwoBotAIModel(LITE_ROUTING_MODEL)) return LITE_ROUTING_MODEL;
-    } catch { /* fallback to user model */ }
-    return requestModelId;
+    } catch { /* fallback to user model / auto */ }
+    return fallback;
   }
 
-  // For code generation and substantive replies, use the user's chosen model
-  return requestModelId;
+  // For code generation and substantive replies, use the user's chosen
+  // model (or "auto" when none was specified).
+  return fallback;
 }
 
 // ===========================================
@@ -3764,6 +3943,7 @@ export async function* runWorkerStream(
       };
       return;
     }
+
   }
 
   // ── Resume: load suspended session from DB ───────────
@@ -3829,10 +4009,13 @@ export async function* runWorkerStream(
   // If agentName is supplied, the agent's frontmatter takes precedence over the heuristic.
   // if agentName is missing but studioMode is set, map studioMode → agent of the same name
   // so legacy callers (raw API, suspend/resume) get the same declarative agent the dropdown sends.
+  // Special case: studioMode "build" → the built-in agent named "builder".
+  const studioModeAgentName =
+    request.studioMode === "build" ? "builder" : request.studioMode;
   const requestedAgent = request.agentName
     ? getAgent(request.agentName)
-    : request.studioMode
-      ? getAgent(request.studioMode)
+    : studioModeAgentName
+      ? getAgent(studioModeAgentName)
       : undefined;
   if (request.agentName && !requestedAgent) {
     slog.warn(
@@ -4135,6 +4318,9 @@ export async function* runWorkerStream(
           fileCount: 0,
           filesWritten: [],
           creditsUsed: totalCreditsUsed,
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          toolUseCount: totalToolCalls,
           modelUsed: lastModelUsed || undefined,
           durationMs: Date.now() - startedAt.getTime(),
           entry: "",
@@ -4199,6 +4385,9 @@ export async function* runWorkerStream(
               pluginName: pluginName || repoName, pluginSlug: pluginSlug || repoName,
               summary, fileCount: 0, filesWritten: [],
               creditsUsed: totalCreditsUsed,
+              inputTokens: totalInputTokens,
+              outputTokens: totalOutputTokens,
+              toolUseCount: totalToolCalls,
               modelUsed: lastModelUsed || undefined,
               durationMs: Date.now() - startedAt.getTime(), entry: "",
             };
@@ -4668,10 +4857,31 @@ You are in PLAN mode. The user wants a step-by-step plan for changes.
         }
 
         // Inject prior conversation turns so the AI remembers the ongoing conversation.
-        // Capped at 20 messages (10 exchanges) to keep token cost bounded.
-        const historyMessages: TextGenerationMessage[] = (request.conversationHistory ?? [])
-          .slice(-20)
-          .map((m) => ({ role: m.role, content: m.content }));
+        // Two-axis cap: at most 20 turns AND at most ~24 KB of total content.
+        // Long tool dumps in history (e.g. a previous `list_available_plugins`
+        // result) used to slip through the count cap and bloat every new
+        // request — this trim drops the oldest oversized assistant turns
+        // first while keeping the most recent exchanges intact.
+        const HISTORY_MAX_CHARS = 24_000;
+        const HISTORY_MAX_TURNS = 20;
+        const rawHistory = request.conversationHistory ?? [];
+        const recentTurns = rawHistory.slice(-HISTORY_MAX_TURNS);
+        let historyChars = 0;
+        const trimmedHistory: TextGenerationMessage[] = [];
+        for (let i = recentTurns.length - 1; i >= 0; i--) {
+          const m = recentTurns[i]!;
+          const len = (m.content ?? "").length;
+          if (historyChars + len > HISTORY_MAX_CHARS && trimmedHistory.length > 0) {
+            // Older turns past the budget get dropped wholesale rather than
+            // partially truncated — partial truncation would corrupt
+            // assistant tool-call/tool-result pairs.
+            break;
+          }
+          historyChars += len;
+          trimmedHistory.push({ role: m.role, content: m.content });
+        }
+        trimmedHistory.reverse();
+        const historyMessages: TextGenerationMessage[] = trimmedHistory;
 
         // Detect continuation phrases — user asking the AI to resume incomplete work.
         // When we have conversation history and the message is just "continue" (or similar),
@@ -4838,6 +5048,36 @@ You are in PLAN mode. The user wants a step-by-step plan for changes.
       const MAX_MUTATION_FAILURES = 2;
       // Track whether last response was tool-only (no substantial text) for smart model routing
       let lastResponseWasToolOnly = false;
+      // ── Iteration-0 lite-routing heuristic ───────────────
+      // Short, code-free user messages are almost always Q&A or routing
+      // ("what does this do?", "show me the workflow", "how do I add a
+      // step?"). Starting iteration 0 on the lite model keeps the first
+      // call cheap; if the LLM produces substantial text the loop exits
+      // immediately and we never pay the full-model price. If the LLM
+      // calls a tool, the existing `useRoutingModel` path keeps lite for
+      // subsequent routing turns and switches to the user's chosen model
+      // for the substantive reply, exactly as before.
+      //
+      // Coder runtime opts out — code generation needs the full model on
+      // every turn, even short prompts ("fix the bug", "add a /weather
+      // command"). For that runtime the heuristic is a net loss.
+      const SHORT_PROMPT_CHAR_LIMIT = 200;
+      const looksLikeCodeOrPath =
+        typeof message === "string"
+        && (
+          /[`{}();]|=>|->|::|\bfn\s|\bdef\s|\bfunction\s|\bclass\s|\bimport\s/.test(message)
+          || /(\.[a-z]{1,5}\b)|(\/[A-Za-z0-9_-]+\/)/.test(message)
+        );
+      const startInLiteRouting =
+        currentWorker !== "coder"
+        && !isResume
+        && typeof message === "string"
+        && message.trim().length > 0
+        && message.trim().length < SHORT_PROMPT_CHAR_LIMIT
+        && !looksLikeCodeOrPath;
+      if (startInLiteRouting) {
+        lastResponseWasToolOnly = true; // forces lite-routing for iter 0
+      }
       // Track consecutive text-only responses to avoid infinite nudge loops
       let consecutiveTextOnlyReplies = 0;
       const MAX_TEXT_ONLY_NUDGES = 2;
@@ -4917,6 +5157,20 @@ You are in PLAN mode. The user wants a step-by-step plan for changes.
 
         totalIterations++;
 
+        // ── User-cancel checkpoint #1: between iterations ──
+        // Catches the common case: user clicks Stop while the model is
+        // about to start the NEXT iteration (e.g. after a tool result).
+        // The most expensive thing we can prevent is the next LLM call,
+        // so this is the highest-leverage place to poll.
+        if (await consumeCancelFlagRedis(sessionId)) {
+          slog.info({ sessionId, iteration: totalIterations }, "User cancelled mid-stream — exiting agent loop");
+          cursorCancelTotal.inc({ phase: "between_iterations" });
+          finishSummary = "Stopped by user.";
+          abnormalStopReason = "user_cancelled";
+          yield { type: "status" as const, message: "Stopped." };
+          break;
+        }
+
         // Check for mid-stream user corrections and inject them as messages
         const corrections = await drainCorrections(sessionId);
         if (corrections.length > 0) {
@@ -4936,40 +5190,143 @@ You are in PLAN mode. The user wants a step-by-step plan for changes.
           iteration: totalIterations,
           totalCreditsUsed,
           creditBudget: agentConfig.maxCreditsPerSession,
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          toolUseCount: totalToolCalls,
         };
 
         try {
-          // Prune old messages to cap context window growth
-          if (totalIterations > PRUNE_AFTER_ITERATION) {
+          // Prune old messages to cap context window growth.
+          // Assistant-runtime agents prune one iteration earlier than coder
+          // runs because their typical chains are short — a single tool-
+          // call/tool-result pair is already worth compressing on iter 2.
+          const pruneThreshold =
+            currentWorker === "coder"
+              ? PRUNE_AFTER_ITERATION_CODER
+              : PRUNE_AFTER_ITERATION_ASSISTANT;
+          if (totalIterations > pruneThreshold) {
             yield { type: "status" as const, message: "Compacting context…" };
             messages = pruneMessages(messages);
           }
 
-          // Compact read_file results for files that have since been written
+          // Two-stage tool-result compaction:
+          //   (a) `compactConsumedReads` — aggressive collapse of read_file
+          //       results AFTER a corresponding write_file/edit_file (the
+          //       LLM has already consumed the content; one-line summary
+          //       is enough). Only useful for write-capable runs.
+          //   (b) `compactStaleToolResults` — kind-agnostic head-trim of
+          //       ANY tool result older than the most recent exchange,
+          //       above STALE_TOOL_RESULT_THRESHOLD chars. Catches the
+          //       cases (a) misses on read-only agents (Builder, Ask,
+          //       Plan): old `list_available_plugins`/`list_user_plugins`/
+          //       `read_file` dumps that just sit in context.
           compactConsumedReads(messages);
+          compactStaleToolResults(messages);
 
-          yield { type: "status" as const, message: totalIterations > 0 ? `Thinking... (step ${totalIterations + 1})` : "Thinking..." };
+          // Off-by-one fix: `totalIterations` is incremented BEFORE this
+          // line, so on the first iteration the value is already 1 — show
+          // a bare "Thinking..." then. The "(step N)" suffix only makes
+          // sense from the second iteration onwards (multi-step run).
+          yield {
+            type: "status" as const,
+            message:
+              totalIterations > 1
+                ? `Thinking... (step ${totalIterations})`
+                : "Thinking...",
+          };
 
           const workerModel = getModelForWorker(currentWorker, effectiveModelId, lastResponseWasToolOnly, agentConfig.allowLiteRouting);
-          const response = await withRetry(
-            () => twoBotAIProvider.textGeneration({
-              messages,
-              model: workerModel,
-              temperature: agentConfig.temperature,
-              maxTokens: 4096,
-              stream: false,
-              userId,
-              tools: toolDefs,
-              toolChoice: "auto",
-              feature: "cursor",
-              capability: "code-generation",
-              traceId: sessionId,
-            }),
-            {
-              maxRetries: 2,
-              operationName: `cursor-${currentWorker}-ai-call`,
-            },
-          );
+
+          // ── Mid-LLM-call abort plumbing ──
+          // Couple a short-interval cancel-flag poller to an AbortController.
+          // When the user clicks Stop *during* a token stream (vs between
+          // iterations), the poller observes the flag, aborts the
+          // controller, and the Anthropic adapter — which now forwards
+          // `abortSignal` to `client.messages.stream()` — bails out with
+          // an AbortError. Without this, output tokens kept streaming
+          // (and billing) until the next iteration boundary.
+          //
+          // The poller uses `consumeCancelFlagRedis` (atomic GETDEL), so
+          // whichever checkpoint sees the flag first consumes it; the
+          // other will read empty next time. No double-cancel risk.
+          const llmAbort = new AbortController();
+          let midStreamCancelled = false;
+          let cancelPollerStop = false;
+          const cancelPoller = (async () => {
+            while (!cancelPollerStop) {
+              if (await consumeCancelFlagRedis(sessionId)) {
+                midStreamCancelled = true;
+                cursorCancelTotal.inc({ phase: "mid_stream" });
+                slog.info({ sessionId }, "Mid-stream cancel — aborting LLM call");
+                llmAbort.abort();
+                return;
+              }
+              await new Promise((r) => setTimeout(r, 250));
+            }
+          })();
+
+          // Stream the LLM call. Each text delta is forwarded as a
+          // `text_delta` SSE event so the user sees text appear
+          // progressively. After the stream completes the helper returns
+          // a fully-assembled `TextGenerationResponse` (incl. aggregated
+          // tool calls and usage), so all downstream branches —
+          // broken-model detection, soft-budget guard, lite-routing flip,
+          // tool execution — work unchanged.
+          const llmStream = streamLLMCallWithDeltas({
+            messages,
+            model: workerModel,
+            temperature: agentConfig.temperature,
+            maxTokens: 4096,
+            stream: true,
+            userId,
+            tools: toolDefs,
+            toolChoice: "auto",
+            feature: "cursor",
+            capability: "code-generation",
+            traceId: sessionId,
+            abortSignal: llmAbort.signal,
+          });
+          let response: TextGenerationResponse | undefined;
+          try {
+            type StreamItr = Awaited<ReturnType<typeof llmStream.next>>;
+            let streamResult: StreamItr;
+            while (!(streamResult = (await llmStream.next()) as StreamItr).done) {
+              const ev = streamResult.value;
+              if (ev.kind === "delta" && ev.text) {
+                yield { type: "text_delta" as const, delta: ev.text };
+              }
+            }
+            response = streamResult.value as TextGenerationResponse;
+          } catch (err) {
+            // The stream errored. If the controller was aborted, this is
+            // the expected user-cancel path — convert it to a clean exit.
+            // Otherwise re-throw so the outer error handling kicks in
+            // (model unavailable / network / etc.).
+            if (llmAbort.signal.aborted) {
+              midStreamCancelled = true;
+            } else {
+              throw err;
+            }
+          } finally {
+            // Always shut the poller down so it can't outlive this loop
+            // iteration. `cancelPoller` resolves once the flag fires or
+            // `cancelPollerStop` flips — joining it here means no leaked
+            // setTimeout / Redis reads after the iteration completes.
+            cancelPollerStop = true;
+            await cancelPoller.catch(() => { /* poller is best-effort */ });
+          }
+
+          if (midStreamCancelled) {
+            finishSummary = "Stopped by user.";
+            abnormalStopReason = "user_cancelled";
+            yield { type: "status" as const, message: "Stopped." };
+            break;
+          }
+          // After the cancellation guard above, `response` is guaranteed
+          // to have been assigned by the stream-drain loop.
+          if (!response) {
+            throw new Error("LLM stream completed without returning a response");
+          }
 
           totalCreditsUsed += response.creditsUsed ?? 0;
           totalInputTokens += response.usage.inputTokens;
@@ -5583,6 +5940,19 @@ You are in PLAN mode. The user wants a step-by-step plan for changes.
           } else {
           // ── Sequential execution (writes, control flow, or single tool) ───
           for (const tc of toolCalls) {
+            // ── User-cancel checkpoint #2: between sequential tool calls ──
+            // For long sequential chains (e.g. read_file + edit_file +
+            // write_file in one iteration), allow the user to bail out
+            // mid-chain without waiting for every tool to finish.
+            if (await consumeCancelFlagRedis(sessionId)) {
+              slog.info({ sessionId }, "User cancelled mid-tool-chain — exiting agent loop");
+              cursorCancelTotal.inc({ phase: "between_tools" });
+              finishSummary = "Stopped by user.";
+              abnormalStopReason = "user_cancelled";
+              yield { type: "status" as const, message: "Stopped." };
+              workerFinished = true;
+              break;
+            }
             const toolArgs = tc.arguments as Record<string, unknown>;
 
             // ── ask_user: suspend session, close stream ──
@@ -6799,7 +7169,7 @@ You are in PLAN mode. The user wants a step-by-step plan for changes.
     // Builder agent emits a `<buildspec>...</buildspec>` block
     // inside its finish summary. Extract it and yield a `buildspec` SSE event
     // so the chat surface can render an Apply card. Validation happens
-    // client-side (POST /ai-builder/validate) before apply.
+    // client-side (POST /cursor/buildspec/validate) before apply.
     if (requestedAgent?.frontmatter.name === "builder") {
       try {
         const { extractBuildSpec } = await import("./buildspec-extract");
@@ -6844,6 +7214,9 @@ You are in PLAN mode. The user wants a step-by-step plan for changes.
       filesWritten: Object.keys(writtenFiles),
       fileList: Object.keys(writtenFiles).map((f) => f.split("/").pop() || f).join(", "),
       creditsUsed: totalCreditsUsed,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      toolUseCount: totalToolCalls,
       modelUsed: lastModelUsed || undefined,
       durationMs,
       entry: "index.js",
@@ -6865,6 +7238,8 @@ export const __testables = {
   restoreFileReadCache,
   getCachedFileRead,
   setCachedFileRead,
+  compactStaleToolResults,
+  streamLLMCallWithDeltas,
   /** Greeting regex used by runWorkerStream's short-circuit. Mirror, not source. */
   greetingPattern: /^(hi+|hey+|hello+|yo+|sup|ok+|okay|thanks?|thank you|cool|nice|great|👋|wassup|good morning|good afternoon|good evening)\b[\s.!,]*$/i,
   /** Diagnosis claim pattern used in the main loop. Mirror, not source. */

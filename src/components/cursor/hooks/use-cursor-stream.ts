@@ -138,6 +138,36 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
   const [currentIteration, setCurrentIteration] = useState<number>(0);
   const [creditBudget, setCreditBudget] = useState<number>(200);
   const [activeWorker, setActiveWorker] = useState<{ type: CursorWorkerType; displayName: string } | null>(null);
+  /** Cumulative input tokens consumed by the current/last session. */
+  const [inputTokens, setInputTokens] = useState<number>(0);
+  /** Cumulative output tokens produced by the current/last session. */
+  const [outputTokens, setOutputTokens] = useState<number>(0);
+  /** Cumulative tool invocations across the session. */
+  const [toolUseCount, setToolUseCount] = useState<number>(0);
+  /**
+   * Wall-clock timestamp the current session started (ms epoch).
+   * Set on `session_start`, cleared on chat clear; preserved between
+   * iterations so the timer never resets mid-session.
+   */
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
+  /** Frozen elapsed time in ms — set on `done`/`error`, null while live. */
+  const [sessionFinalDurationMs, setSessionFinalDurationMs] = useState<number | null>(null);
+  /**
+   * Tick state — increments once per second while streaming so UI components
+   * that derive elapsed time from `sessionStartedAt` re-render.
+   */
+  /**
+   * Live elapsed milliseconds for the current/last session.
+   *
+   * - While streaming: `now() - sessionStartedAt`, ticking once per second.
+   * - After done/error: the frozen `sessionFinalDurationMs`.
+   * - Idle (no session yet, or chat cleared): `null`.
+   *
+   * Held in state and updated inside an effect — keeps `Date.now()` out of
+   * the render path (React Compiler treats it as impure) without losing
+   * the per-second update cadence.
+   */
+  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     try { return localStorage.getItem(modelStorageKey) ?? "auto"; } catch { return "auto"; }
   });
@@ -173,6 +203,11 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     setCreditBudget(200);
     setActiveWorker(null);
     setAskUserPending(null);
+    setInputTokens(0);
+    setOutputTokens(0);
+    setToolUseCount(0);
+    setSessionStartedAt(null);
+    setSessionFinalDurationMs(null);
     // Load session repo for new storageKey
     try { setSessionRepoUrlState(localStorage.getItem(`${storageKey}-repo`) ?? ""); } catch { /* ignore */ }
   }
@@ -180,6 +215,12 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
   // ── Refs ──
   const assistantMsgIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  /**
+   * Active server-side session id, captured from `session_start` events.
+   * Used by `cancelStream` to send a POST /cursor/worker-cancel so the
+   * runner halts billing instead of just closing the SSE on the client.
+   */
+  const activeSessionIdRef = useRef<string | null>(null);
   /** Keep latest values accessible inside handleWorkerEvent without dep cycle */
   const currentIterationRef = useRef(currentIteration);
   const creditBudgetRef = useRef(creditBudget);
@@ -197,6 +238,8 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
   const onWorkerEventRef = useRef(onWorkerEvent);
   /** Stable ref for token */
   const tokenRef = useRef(token);
+  /** Stable ref for sessionStartedAt — avoids stale-closure inside event handlers. */
+  const sessionStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     currentIterationRef.current = currentIteration;
@@ -208,6 +251,7 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     storageKeyRef.current = storageKey;
     messageLimitRef.current = messageLimit;
     messagesRef.current = messages;
+    sessionStartedAtRef.current = sessionStartedAt;
     // Keep sync tracker in sync with actual message state
     for (const m of messages) {
       if (m.blocks && m.blocks.length > 0) msgsWithBlocksRef.current.add(m.id);
@@ -417,6 +461,13 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     try { localStorage.removeItem(`${storageKey}-repo`); } catch { /* ignore */ }
     setSessionRepoUrlState("");
     clearConversationLog(storageKey);
+    // Reset session-metric state so the header doesn't keep showing stale
+    // counters from the cleared conversation.
+    setSessionStartedAt(null);
+    setSessionFinalDurationMs(null);
+    setInputTokens(0);
+    setOutputTokens(0);
+    setToolUseCount(0);
   }, [storageKey, suspendedStorageKey]);
 
   // ── Model change handler ──
@@ -480,6 +531,15 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     (rawEvent: Record<string, unknown>) => {
       const event = rawEvent as unknown as CursorAgentEvent;
       const msgId = assistantMsgIdRef.current;
+
+      // Capture the sessionId so `cancelStream` can hit the server-side
+      // cancel endpoint. The runner emits sessionId on session_start /
+      // worker_start / done events; any of them is enough to record the
+      // most recent active session.
+      const evtSessionId = (rawEvent as { sessionId?: unknown }).sessionId;
+      if (typeof evtSessionId === "string" && evtSessionId.length > 0) {
+        activeSessionIdRef.current = evtSessionId;
+      }
 
       switch (event.type) {
         case "worker_start": {
@@ -573,9 +633,16 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
                 : event.reasoning;
             }
             updateMessage(msgId, updates);
-            // Append AI's reasoning as inline text block
+            // Append AI's reasoning as inline text block — but skip if the
+            // last block is already a streaming text block (text_delta
+            // path, F-7), to avoid duplicating the same content.
             if (event.text.length > 10) {
-              appendBlock(msgId, { kind: "text", text: event.text });
+              const msg = messagesRef.current.find((m) => m.id === msgId);
+              const lastBlock = msg?.blocks?.[msg.blocks.length - 1];
+              const alreadyStreamed = lastBlock?.kind === "text";
+              if (!alreadyStreamed) {
+                appendBlock(msgId, { kind: "text", text: event.text });
+              }
             }
           }
           if (event.text.length > 30) {
@@ -587,6 +654,43 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
               iteration: currentIterationRef.current,
             }]);
           }
+          break;
+        }
+
+        case "text_delta": {
+          // F-7: incremental text from a streaming LLM response. Append to
+          // the most recent text block on the assistant message; create
+          // one if the last block isn't text (typically right after an
+          // iteration_start status block or a tool_result).
+          if (!msgId || !event.delta) break;
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== msgId) return m;
+              const blocks = m.blocks ? [...m.blocks] : [];
+              const lastIdx = blocks.length - 1;
+              const last = lastIdx >= 0 ? blocks[lastIdx] : undefined;
+              if (last && last.kind === "text") {
+                blocks[lastIdx] = { ...last, text: last.text + event.delta };
+              } else {
+                blocks.push({ kind: "text", text: event.delta });
+              }
+              msgsWithBlocksRef.current.add(msgId);
+              // Mirror the running text into `content` so any non-block
+              // renderer (history, search) still has the gist. Cap to
+              // 300 chars to keep React update cost bounded on long
+              // streaming responses; the full text lives in the block.
+              const liveText = blocks
+                .filter((b): b is { kind: "text"; text: string } => b.kind === "text")
+                .map((b) => b.text)
+                .join("\n");
+              return {
+                ...m,
+                blocks,
+                content: liveText.slice(-300),
+                status: "working",
+              };
+            }),
+          );
           break;
         }
 
@@ -690,6 +794,11 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
             if (event.creditBudget && event.creditBudget > 0) {
               setCreditBudget(event.creditBudget);
             }
+            // Update the running token + tool-use totals so the UI reflects
+            // mid-session progress without waiting for the `done` event.
+            if (typeof event.inputTokens === "number") setInputTokens(event.inputTokens);
+            if (typeof event.outputTokens === "number") setOutputTokens(event.outputTokens);
+            if (typeof event.toolUseCount === "number") setToolUseCount(event.toolUseCount);
             // Inline step separator block
             if (event.iteration > 1 && msgId) {
               appendBlock(msgId, {
@@ -826,7 +935,7 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
         }
 
         case "buildspec": {
-          // AI Builder produced a structured BuildSpec.
+          // The Cursor Builder agent produced a structured BuildSpec.
           // Render as an inline block with an Apply button. The user-facing
           // chat surface owns the apply lifecycle (idle → applying → applied).
           if (msgId) {
@@ -921,18 +1030,56 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
                 finalContent = summary;
               }
 
+              const startedAt = sessionStartedAtRef.current;
+              const turnDurationMs =
+                typeof event.durationMs === "number"
+                  ? event.durationMs
+                  : startedAt !== null
+                    ? Math.max(0, Date.now() - startedAt)
+                    : undefined;
+
               const updated = prev.map(m => m.id === msgId ? {
                 ...m,
                 blocks,
                 ...(finalContent !== undefined ? { content: finalContent } : {}),
                 detail,
                 modelUsed: modelUsed || undefined,
-                creditsUsed: event.creditsUsed != null ? Number(event.creditsUsed) : undefined,
+                creditsUsed:
+                  event.creditsUsed !== null && event.creditsUsed !== undefined
+                    ? Number(event.creditsUsed)
+                    : undefined,
+                // Per-turn metrics — stamped onto THIS assistant message so the
+                // bubble can show its own duration + token + tool counts even
+                // after the user sends another prompt.
+                inputTokens: typeof event.inputTokens === "number" ? event.inputTokens : undefined,
+                outputTokens: typeof event.outputTokens === "number" ? event.outputTokens : undefined,
+                toolUseCount: typeof event.toolUseCount === "number" ? event.toolUseCount : undefined,
+                durationMs: turnDurationMs,
                 status: (isSuccess ? "success" : "error") as "success" | "error",
               } : m);
               saveMessages(updated, storageKeyRef.current, messageLimitRef.current);
               return updated;
             });
+          }
+          // Capture final session metrics from the `done` event so the
+          // header timer + token counter freeze on accurate values.
+          if (typeof event.inputTokens === "number") setInputTokens(event.inputTokens);
+          if (typeof event.outputTokens === "number") setOutputTokens(event.outputTokens);
+          if (typeof event.toolUseCount === "number") setToolUseCount(event.toolUseCount);
+          if (typeof event.durationMs === "number") {
+            setSessionFinalDurationMs(event.durationMs);
+          }
+          // Session is finished — drop the active id so a subsequent Stop
+          // click doesn't fire a no-op cancel against a session that's
+          // already closed.
+          activeSessionIdRef.current = null;
+          // Backfill the cumulative credits display with the post-final-
+          // iteration value. Without this the progress bar reads the
+          // `iteration_start` snapshot from BEFORE the last LLM call, so
+          // it lagged the per-message bubble (which carries the final).
+          if (event.creditsUsed !== null && event.creditsUsed !== undefined) {
+            const finalCredits = Number(event.creditsUsed);
+            if (Number.isFinite(finalCredits)) setCreditsUsed(finalCredits);
           }
           setActiveWorker(null);
           break;
@@ -947,12 +1094,30 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
             if (recentErrors.length > 0) parts.push(`Failed: ${recentErrors.map((e) => e.description).join(" → ")}`);
             const totalOps = activityLogRef.current.filter((a) => a.kind === "tool").length;
             if (totalOps > 0) parts.push(`${totalOps} operations total`);
+            const startedAt = sessionStartedAtRef.current;
+            const turnDurationMs =
+              startedAt !== null ? Math.max(0, Date.now() - startedAt) : undefined;
             updateMessage(msgId, {
               content: event.message || "Something went wrong.",
               detail: parts.length > 0 ? parts.join(" · ") : undefined,
               status: "error",
+              // Stamp whatever we have so far so the bubble can still display
+              // a per-turn counter alongside the error notice.
+              ...(event.creditsUsed !== null && event.creditsUsed !== undefined
+                ? { creditsUsed: Number(event.creditsUsed) }
+                : {}),
+              durationMs: turnDurationMs,
             });
           }
+          // Freeze the timer when the stream errors so the header stops
+          // counting up — keep the running token / tool totals as-is.
+          {
+            const startedAt = sessionStartedAtRef.current;
+            if (typeof startedAt === "number") {
+              setSessionFinalDurationMs(Math.max(0, Date.now() - startedAt));
+            }
+          }
+          activeSessionIdRef.current = null;
           setActiveWorker(null);
           break;
         }
@@ -987,6 +1152,17 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
       } catch { /* non-critical */ }
 
       setIsStreaming(true);
+
+      // Per-TURN counters (one prompt → one assistant turn). Reset every
+      // time the user sends a new message so the live overlay shows just
+      // this turn's metrics, not the whole chat. Mid-turn updates arrive
+      // via `iteration_start`; finals via `done` (and are also stamped on
+      // the assistant message itself for the per-bubble badge).
+      setSessionStartedAt(Date.now());
+      setSessionFinalDurationMs(null);
+      setInputTokens(0);
+      setOutputTokens(0);
+      setToolUseCount(0);
 
       const msgId = addMessage({
         role: "assistant",
@@ -1069,9 +1245,45 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     [executeStream, suspendedStorageKey],
   );
 
-  /** Cancel the active stream */
+  /**
+   * Cancel the active stream.
+   *
+   * Two-phase stop: (1) fire-and-forget POST to `/cursor/worker-cancel`
+   * with the active sessionId so the server-side runner halts the agent
+   * loop and stops billing — this is the part that actually saves money.
+   * (2) Close the local SSE so the UI snaps out of the streaming state
+   * immediately, even if the network call is slow.
+   *
+   * Closing the SSE alone (the old behaviour) only stops the client from
+   * RECEIVING events; the runner kept executing tools and consuming
+   * tokens because the route handler keeps the generator alive for
+   * reconnect-on-disconnect support.
+   */
   const cancelStream = useCallback(() => {
-    // Finalize any in-flight assistant message so the spinner stops
+    // Phase 1: tell the server to stop. Best-effort — we don't await
+    // because the SSE close should not depend on this request landing.
+    const sessionId = activeSessionIdRef.current;
+    const tk = tokenRef.current;
+    if (sessionId) {
+      void fetch(apiUrl("/cursor/worker-cancel"), {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(tk ? { Authorization: `Bearer ${tk}` } : {}),
+        },
+        body: JSON.stringify({ sessionId }),
+      }).catch(() => {
+        // Network failure on the cancel call is non-fatal — the SSE-close
+        // path still removes the user-facing streaming state. The cancel
+        // flag's TTL means a stuck server-side run will eventually time
+        // out on its own credit budget anyway.
+      });
+    }
+
+    // Phase 2: client-side cleanup — finalize the in-flight message so
+    // the spinner stops, abort the SSE, drop the suspended-session
+    // checkpoint.
     if (assistantMsgIdRef.current) {
       updateMessage(assistantMsgIdRef.current, { status: "success" });
     }
@@ -1081,6 +1293,7 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     setActiveWorker(null);
     setAskUserPending(null);
     assistantMsgIdRef.current = null;
+    activeSessionIdRef.current = null;
     try { localStorage.removeItem(suspendedStorageKey); } catch { /* ignore */ }
   }, [suspendedStorageKey, updateMessage]);
 
@@ -1253,6 +1466,42 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     setFileActionCount(fileActionsRef.current.length);
   }, []);
 
+  // Drive `elapsedMs` from a single effect so `Date.now()` stays out of
+  // the render path. Three cases the effect resolves:
+  //   1. session ended (`sessionFinalDurationMs !== null`) → write the
+  //      frozen value once and stop ticking.
+  //   2. no session yet → write `null` and stop ticking.
+  //   3. live → seed immediately, then tick once per second until one of
+  //      the above conditions takes over.
+  // Using state (vs. deriving each render) keeps React Compiler's purity
+  // checker happy without the timerTick + useMemo dance. The synchronous
+  // initial setElapsedMs is intentional — without it the header timer
+  // would read `null` for the first second of every streaming turn.
+  useEffect(() => {
+    if (sessionFinalDurationMs !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setElapsedMs(sessionFinalDurationMs);
+      return;
+    }
+    if (sessionStartedAt === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setElapsedMs(null);
+      return;
+    }
+    // Wall-clock-derived state: by definition cannot be computed from
+    // props/state during render (Date.now() is impure), so the rule's
+    // usual advice doesn't apply. Seed once synchronously so the header
+    // doesn't read `null` for the first second of every streaming turn,
+    // then tick once per second.
+    const tick = () => {
+      setElapsedMs(Math.max(0, Date.now() - sessionStartedAt));
+    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [sessionStartedAt, sessionFinalDurationMs]);
+
   return {
     messages,
     isStreaming,
@@ -1292,5 +1541,10 @@ export function useCursorStream(config: CursorStreamConfig): CursorStreamReturn 
     updateBuildSpecBlock,
     conversationSnapshots: getSnapshots(storageKey),
     fileActionCount,
+    inputTokens,
+    outputTokens,
+    toolUseCount,
+    sessionStartedAt,
+    elapsedMs,
   };
 }

@@ -178,7 +178,8 @@ class CreditService {
       wallet.id,
       amount,
       options.description,
-      metadata
+      metadata,
+      options.category
     );
 
     creditLogger.info(
@@ -233,11 +234,12 @@ class CreditService {
    */
   async getPersonalTransactions(
     userId: string,
-    options: { limit?: number; offset?: number; type?: string } = {}
+    options: { limit?: number; offset?: number; type?: string; category?: CreditUsageCategory } = {}
   ): Promise<{
     transactions: Array<{
       id: string;
       type: string;
+      category: string | null;
       amount: number;
       balanceAfter: number;
       description: string | null;
@@ -327,7 +329,8 @@ class CreditService {
       wallet.id,
       amount,
       options.description,
-      metadata
+      metadata,
+      options.category
     );
 
     creditLogger.info(
@@ -387,11 +390,12 @@ class CreditService {
    */
   async getOrgTransactions(
     organizationId: string,
-    options: { limit?: number; offset?: number; type?: string } = {}
+    options: { limit?: number; offset?: number; type?: string; category?: CreditUsageCategory } = {}
   ): Promise<{
     transactions: Array<{
       id: string;
       type: string;
+      category: string | null;
       amount: number;
       balanceAfter: number;
       description: string | null;

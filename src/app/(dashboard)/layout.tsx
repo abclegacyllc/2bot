@@ -59,16 +59,11 @@ const sharedNavItemsBase = [
   { path: "/workspace", label: "Workspace", icon: Box },
 ];
 
-// Chat-first surfaces (Projects) — only shown when the
-// NEXT_PUBLIC_FEATURE_CHAT_FIRST flag is enabled.
-const CHAT_FIRST_ENABLED =
-  (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() === "enabled";
-const chatFirstNavItemsBase = CHAT_FIRST_ENABLED
-  ? [
-      { path: "/chat", label: "Chat", icon: MessageSquare },
-      { path: "/projects", label: "Projects", icon: FolderKanban },
-    ]
-  : [];
+// Chat-first surfaces (Projects) — always-on after the unified Studio rollout.
+const chatFirstNavItemsBase = [
+  { path: "/chat", label: "Chat", icon: MessageSquare },
+  { path: "/projects", label: "Projects", icon: FolderKanban },
+];
 
 // Build shared nav items based on context
 const buildSharedNavItems = (isOrgContext: boolean, orgSlug: string) => 

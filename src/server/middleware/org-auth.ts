@@ -118,8 +118,48 @@ export async function requireOrgAdmin(
 }
 
 /**
+ * Middleware that validates the optional `x-organization-id` header.
+ *
+ * Routes that use header-based org scoping (`/api/projects`, `/api/workflows`,
+ * `/api/project-resources`, `/api/project-versions`, `/api/cursor/buildspec`) accept
+ * an `x-organization-id` header to scope queries and writes to an organization.
+ * Without this check a caller could pass any orgId, causing service-layer
+ * writes (project creation, workflow apply, credit usage) to be tagged to an
+ * organization the caller is not a member of.
+ *
+ * If the header is absent the request proceeds in personal scope.
+ * If the header is present, active membership is required.
+ *
+ * @throws {403} If the user is not an active member of the supplied org
+ */
+export async function requireOrgHeaderMembership(
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const raw = req.headers["x-organization-id"];
+    const orgId = typeof raw === "string" ? raw.trim() : "";
+    if (!orgId) {
+      next();
+      return;
+    }
+
+    if (!req.user) {
+      throw new ForbiddenError("Authentication required");
+    }
+
+    const membership = await organizationService.requireMembership(req.user.id, orgId);
+    req.orgMembership = membership;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Middleware to require org owner role
- * 
+ *
  * Validates user is authenticated AND is the OWNER of the org.
  *
  * @throws {401} If user not authenticated

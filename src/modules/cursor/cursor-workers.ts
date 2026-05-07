@@ -89,6 +89,15 @@ export interface WorkerPromptContext {
   agentMemories?: string;
   /** Active chat plan — markdown body produced by the Plan agent via update_plan(summary) */
   chatPlan?: string;
+  /**
+   * Concrete tool names the active agent can invoke this turn — used by
+   * skills to short-circuit advice that references tools the agent does
+   * not have. Always populated when called from the agent runtime; may be
+   * undefined for legacy code paths that bypass the renderer (in which
+   * case skills should treat the absence as "all tools possibly present"
+   * to preserve old behaviour).
+   */
+  toolNames?: ReadonlySet<string>;
   /** Workflow context — present when user is in Studio and interacting with a workflow */
   workflowContext?: {
     workflowId: string;

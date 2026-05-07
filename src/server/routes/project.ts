@@ -31,9 +31,11 @@ import { BadRequestError, ValidationError } from "@/shared/errors";
 
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
+import { requireOrgHeaderMembership } from "../middleware/org-auth";
 
 export const projectRouter = Router();
 projectRouter.use(requireAuth);
+projectRouter.use(requireOrgHeaderMembership);
 
 // ===========================================
 // Helpers

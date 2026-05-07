@@ -399,17 +399,15 @@ class PluginService {
     const isDirectoryPlugin = isDirectoryLayout(plugin.slug);
     const platform = gatewayType ? gatewayTypeToPlatform(gatewayType) : undefined;
 
-    // Wave 2: auto-attach to default project. Gated behind
-    // FEATURE_AUTO_ATTACH_PROJECT until the NOT NULL migration is applied.
-    let projectId: string | null = null;
-    if ((process.env.FEATURE_AUTO_ATTACH_PROJECT ?? "disabled").toLowerCase() === "enabled") {
-      const { ensureDefaultProject } = await import("@/modules/project/project.service");
-      const defaultProject = await ensureDefaultProject({
-        userId: ctx.userId,
-        organizationId: ctx.organizationId ?? null,
-      });
-      projectId = defaultProject.id;
-    }
+    // Every install belongs to a Project. The Phase 5 NOT NULL migration
+    // (20260505000000_unified_studio_backfill_project_id) makes this
+    // mandatory; we always materialise/look-up the (user, org) default.
+    const { ensureDefaultProject } = await import("@/modules/project/project.service");
+    const defaultProject = await ensureDefaultProject({
+      userId: ctx.userId,
+      organizationId: ctx.organizationId ?? null,
+    });
+    const projectId = defaultProject.id;
 
     const userPlugin = await prisma.userPlugin.create({
       data: {
@@ -447,6 +445,16 @@ class PluginService {
       { userPluginId: userPlugin.id, pluginSlug: plugin.slug },
       "Plugin installed"
     );
+
+    // Invalidate Cursor's `list_available_plugins` cache for this user so
+    // the next agent call sees the new install instead of waiting on TTL.
+    // Best-effort — the helper swallows Redis errors.
+    void (async () => {
+      const { invalidateListPluginsCacheForUser } = await import(
+        "@/modules/cursor/cursor-workflow-tools"
+      );
+      await invalidateListPluginsCacheForUser(ctx.userId);
+    })();
 
     // Ensure workspace container is running before writing template
     try {
@@ -642,6 +650,15 @@ class PluginService {
       { userPluginId, pluginSlug: plugin.slug, catalogDeleted: shouldDeleteCatalogEntry },
       shouldDeleteCatalogEntry ? "Custom plugin uninstalled and catalog entry deleted" : "Plugin uninstalled"
     );
+
+    // Invalidate Cursor's `list_available_plugins` cache so the next
+    // agent call doesn't suggest a plugin that no longer exists.
+    void (async () => {
+      const { invalidateListPluginsCacheForUser } = await import(
+        "@/modules/cursor/cursor-workflow-tools"
+      );
+      await invalidateListPluginsCacheForUser(ctx.userId);
+    })();
 
     // Remove plugin code from workspace container (non-blocking)
     void pluginDeployService.undeployFromWorkspace(
@@ -1081,6 +1098,14 @@ class PluginService {
     // Check plan limits
     await enforcePluginLimit(ctx);
 
+    // Resolve / create the default Project (Phase 5 — projectId is NOT NULL).
+    const { ensureDefaultProject } = await import("@/modules/project/project.service");
+    const defaultProject = await ensureDefaultProject({
+      userId: ctx.userId,
+      organizationId: ctx.organizationId ?? null,
+    });
+    const projectId = defaultProject.id;
+
     // Ensure slug is unique (prefix with user ID to avoid collisions)
     const fullSlug = `custom-${ctx.userId.slice(0, 8)}-${data.slug}`;
 
@@ -1207,6 +1232,7 @@ class PluginService {
           userId: ctx.userId,
           pluginId: plugin.id,
           organizationId: ctx.organizationId ?? null,
+          projectId,
           config: encryptedConfig,
           gatewayId: data.gatewayId ?? null,
           isEnabled: true,
@@ -1309,6 +1335,14 @@ class PluginService {
 
     // Check plan limits
     await enforcePluginLimit(ctx);
+
+    // Resolve / create the default Project (Phase 5 — projectId is NOT NULL).
+    const { ensureDefaultProject } = await import("@/modules/project/project.service");
+    const defaultProject = await ensureDefaultProject({
+      userId: ctx.userId,
+      organizationId: ctx.organizationId ?? null,
+    });
+    const projectId = defaultProject.id;
 
     // Step 1: Ensure workspace container is running
     const containerDbId = await workspaceService.ensureContainerRunning(ctx, ctx.organizationId);
@@ -1445,6 +1479,7 @@ class PluginService {
           userId: ctx.userId,
           pluginId: plugin.id,
           organizationId: ctx.organizationId ?? null,
+          projectId,
           config: encryptedConfig,
           gatewayId: data.gatewayId ?? null,
           isEnabled: true,
@@ -1513,6 +1548,14 @@ class PluginService {
 
     // Check plan limits
     await enforcePluginLimit(ctx);
+
+    // Resolve / create the default Project (Phase 5 — projectId is NOT NULL).
+    const { ensureDefaultProject } = await import("@/modules/project/project.service");
+    const defaultProject = await ensureDefaultProject({
+      userId: ctx.userId,
+      organizationId: ctx.organizationId ?? null,
+    });
+    const projectId = defaultProject.id;
 
     // Ensure workspace container is running
     const containerDbId = await workspaceService.ensureContainerRunning(ctx, ctx.organizationId);
@@ -1623,6 +1666,7 @@ class PluginService {
           userId: ctx.userId,
           pluginId: plugin.id,
           organizationId: ctx.organizationId ?? null,
+          projectId,
           config: encryptedConfig,
           gatewayId: data.gatewayId ?? null,
           isEnabled: true,

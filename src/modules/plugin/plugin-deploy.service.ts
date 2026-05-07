@@ -54,7 +54,7 @@ const DANGEROUS_PATTERNS = [
  * Checks for JavaScript syntax errors and dangerous patterns.
  * @throws Error if code fails validation
  */
-function validatePluginCode(code: string, pluginSlug: string): void {
+export function validatePluginCode(code: string, pluginSlug: string): void {
   // Check for dangerous patterns
   for (const { pattern, reason } of DANGEROUS_PATTERNS) {
     if (pattern.test(code)) {

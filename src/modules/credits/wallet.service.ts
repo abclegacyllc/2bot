@@ -21,6 +21,7 @@ import { prisma } from "@/lib/prisma";
 import { ORG_PLAN_LIMITS, type OrgPlanType } from "@/shared/constants/org-plans";
 import { PLAN_LIMITS, type CreditClaimType, type PlanType } from "@/shared/constants/plans";
 import type { CreditWallet as PrismaCreditWallet } from "@prisma/client";
+import type { CreditUsageCategory } from "./credit.service";
 
 const log = logger.child({ module: "credit-wallet" });
 
@@ -262,7 +263,8 @@ class CreditWalletService {
     walletId: string,
     amount: number,
     description: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    category?: CreditUsageCategory
   ): Promise<{ newBalance: number; transactionId: string }> {
     const result = await prisma.$transaction(async (tx) => {
       // Atomic check-and-decrement: only updates if balance >= amount
@@ -287,6 +289,7 @@ class CreditWalletService {
         data: {
           creditWalletId: walletId,
           type: "usage",
+          category: category ?? (metadata?.category as string | undefined) ?? null,
           amount: -amount,
           balanceAfter: wallet.balance,
           description,
@@ -317,7 +320,8 @@ class CreditWalletService {
     walletId: string,
     fractionalCredits: number,
     description: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    category?: CreditUsageCategory
   ): Promise<{ 
     creditsDeducted: number; 
     newBalance: number; 
@@ -368,6 +372,7 @@ class CreditWalletService {
           data: {
             creditWalletId: walletId,
             type: "usage",
+            category: category ?? (metadata?.category as string | undefined) ?? null,
             amount: -creditsToDeduct,
             balanceAfter: wallet.balance,
             description,
@@ -422,7 +427,8 @@ class CreditWalletService {
     amount: number,
     type: "purchase" | "bonus" | "grant" | "refund" | "allocation",
     description: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    category?: CreditUsageCategory
   ): Promise<{ newBalance: number; transactionId: string }> {
     // purchase / grant / bonus all contribute to lifetime earned credits.
     // refund restores balance but doesn't change lifetime (it was already spent).
@@ -442,6 +448,7 @@ class CreditWalletService {
         data: {
           creditWalletId: walletId,
           type,
+          category: category ?? (metadata?.category as string | undefined) ?? null,
           amount,
           balanceAfter: wallet.balance,
           description,
@@ -465,11 +472,12 @@ class CreditWalletService {
    */
   async getTransactions(
     walletId: string,
-    options: { limit?: number; offset?: number; type?: string } = {}
+    options: { limit?: number; offset?: number; type?: string; category?: CreditUsageCategory } = {}
   ): Promise<{
     transactions: Array<{
       id: string;
       type: string;
+      category: string | null;
       amount: number;
       balanceAfter: number;
       description: string | null;
@@ -481,6 +489,7 @@ class CreditWalletService {
     const where = {
       creditWalletId: walletId,
       ...(options.type ? { type: options.type } : {}),
+      ...(options.category ? { category: options.category } : {}),
     };
 
     const [transactions, total] = await Promise.all([
@@ -492,6 +501,7 @@ class CreditWalletService {
         select: {
           id: true,
           type: true,
+          category: true,
           amount: true,
           balanceAfter: true,
           description: true,

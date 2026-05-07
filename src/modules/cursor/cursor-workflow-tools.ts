@@ -13,12 +13,79 @@
 
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { redis } from "@/lib/redis";
 import { executeWorkflow } from "@/modules/workflow/workflow.executor";
 import { workflowService } from "@/modules/workflow/workflow.service";
 import { getBridgeClient, withBridgeRetry } from "./cursor-bridge";
 import type { WorkflowContext } from "./cursor-worker-runner";
 
 const wfLog = logger.child({ module: "cursor", capability: "workflow-tools" });
+
+/**
+ * Redis TTL for cached `list_available_plugins` results, in seconds.
+ * Short by design: catalog/install changes during a chat session should
+ * become visible quickly, but the same call within a single agent loop
+ * (which can re-invoke the tool 2-3 times) should hit cache.
+ */
+const LIST_PLUGINS_CACHE_TTL_SEC = parseInt(
+  process.env.CURSOR_LIST_PLUGINS_CACHE_TTL_SEC ?? "60",
+  10,
+);
+
+function listPluginsCacheKey(userId: string, query: string): string {
+  // Bake a v1 prefix so we can roll the format without touching Redis.
+  // Hash-tag the userId so the key shape stays cluster-safe (single slot
+  // per user).
+  return `cursor:list-plugins:v1:{${userId}}:${query.toLowerCase().trim()}`;
+}
+
+/**
+ * Invalidate every cached `list_available_plugins` entry for a user.
+ *
+ * Called from plugin install/uninstall paths so a freshly-installed plugin
+ * (or a removal) shows up in the next agent call instead of waiting for
+ * the 60-second TTL. Cluster-safe: the key prefix has the userId
+ * hash-tagged, so the SCAN runs on a single slot.
+ *
+ * Best-effort — never throws. Cache misses are cheap; re-populating from
+ * the next DB query is the worst case.
+ */
+export async function invalidateListPluginsCacheForUser(userId: string): Promise<void> {
+  const pattern = `cursor:list-plugins:v1:{${userId}}:*`;
+  try {
+    // ioredis exposes scanStream on both single-node and cluster clients.
+    // Cast through a structural shim to avoid a hard dep on ioredis types.
+    const client = redis as unknown as {
+      scanStream?: (opts: { match: string; count: number }) => NodeJS.ReadableStream;
+    };
+    if (typeof client.scanStream !== "function") {
+      // Fallback: best-effort DEL of the empty-query key (the most common
+      // shape — Builder typically calls with no query). Other entries
+      // self-evict on TTL.
+      await redis.del(listPluginsCacheKey(userId, ""));
+      return;
+    }
+    const stream = client.scanStream({ match: pattern, count: 100 });
+    const matched: string[] = [];
+    for await (const keys of stream as AsyncIterable<string[]>) {
+      for (const k of keys) matched.push(k);
+    }
+    if (matched.length > 0) {
+      // Chunk to bound the per-call payload size. All keys share the
+      // same hash slot (per F-8 hash-tag design) so DEL is cluster-safe.
+      const chunkSize = 100;
+      for (let i = 0; i < matched.length; i += chunkSize) {
+        const chunk = matched.slice(i, i + chunkSize);
+        await redis.del(...chunk);
+      }
+    }
+  } catch (err) {
+    wfLog.warn(
+      { err, userId },
+      "invalidateListPluginsCacheForUser failed — relying on TTL expiry",
+    );
+  }
+}
 
 /**
  * Extract config field names from a plugin's configSchema for compact display.
@@ -182,6 +249,25 @@ export async function executeWorkflowTool(
     case "list_available_plugins": {
       const query = (args.query as string) || "";
 
+      // Read-through Redis cache. Cache HIT == direct return of the formatted
+      // string we built last time. Same caller, same query, within
+      // CURSOR_LIST_PLUGINS_CACHE_TTL_SEC, so the result is identical and
+      // we avoid both the DB hit AND the per-row formatting work.
+      const cacheKey = listPluginsCacheKey(ctx.userId, query);
+      try {
+        const cached = await redis.get(cacheKey);
+        if (typeof cached === "string" && cached.length > 0) {
+          return { result: cached };
+        }
+      } catch (err) {
+        // Redis outage — fall through to DB. Don't fail the tool call on
+        // cache infrastructure problems.
+        wfLog.warn(
+          { err, cacheKey },
+          "list_available_plugins cache GET failed — falling back to DB",
+        );
+      }
+
       try {
         // Get user's installed plugins that can be used as workflow steps
         const userPlugins = await prisma.userPlugin.findMany({
@@ -226,18 +312,30 @@ export async function executeWorkflowTool(
           );
         }
 
-        if (plugins.length === 0) {
-          return { result: query ? `No installed plugins match "${query}".` : "No installed plugins found." };
+        const result =
+          plugins.length === 0
+            ? query
+              ? `No installed plugins match "${query}".`
+              : "No installed plugins found."
+            : `Available plugins (${plugins.length}):\n${plugins
+                .map((p) => {
+                  const cfg = p.configFields ? ` [config: ${p.configFields}]` : "";
+                  return `- ${p.name} (slug: ${p.slug}, id: ${p.id}) — ${p.description || p.category}${cfg}`;
+                })
+                .join("\n")}`;
+
+        // Best-effort write to cache. SET-EX so the entry self-evicts even
+        // if our explicit invalidation paths miss.
+        try {
+          await redis.set(cacheKey, result, "EX", LIST_PLUGINS_CACHE_TTL_SEC);
+        } catch (err) {
+          wfLog.warn(
+            { err, cacheKey },
+            "list_available_plugins cache SET failed — cache will repopulate on next call",
+          );
         }
 
-        const list = plugins
-          .map((p) => {
-            const cfg = p.configFields ? ` [config: ${p.configFields}]` : "";
-            return `- ${p.name} (slug: ${p.slug}, id: ${p.id}) — ${p.description || p.category}${cfg}`;
-          })
-          .join("\n");
-
-        return { result: `Available plugins (${plugins.length}):\n${list}` };
+        return { result };
       } catch (err) {
         return { result: `Error listing plugins: ${(err as Error).message}` };
       }

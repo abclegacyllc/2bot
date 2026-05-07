@@ -12,6 +12,7 @@ export { asyncHandler, errorHandler, notFoundHandler } from "./error-handler";
 // URL-based org auth - validates membership from URL params
 export {
     requireOrgAdmin as requireOrgAdminUrl,
+    requireOrgHeaderMembership,
     requireOrgMember,
     requireOrgOwner as requireOrgOwnerUrl
 } from "./org-auth";

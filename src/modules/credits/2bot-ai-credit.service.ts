@@ -40,7 +40,7 @@ import {
 import { allocationService, usageTracker } from "@/modules/resource";
 import { BadRequestError } from "@/shared/errors";
 import { createServiceContext, type TokenPayloadForContext } from "@/shared/types/context";
-import { creditService, type CreditCheckResult } from "./credit.service";
+import { creditService, type CreditCheckResult, type CreditUsageCategory } from "./credit.service";
 import { creditWalletService, type WalletType } from "./wallet.service";
 
 // Re-export types for backwards compatibility
@@ -364,7 +364,8 @@ class TwoBotAICreditService {
       {
         ...this.getUsageMetadata(data),
         category: "ai_usage",
-      }
+      },
+      "ai_usage"
     );
 
     // Record precise fractional usage for analytics
@@ -443,7 +444,8 @@ class TwoBotAICreditService {
         ...this.getUsageMetadata(data),
         category: "ai_usage",
         userId: data.userId,
-      }
+      },
+      "ai_usage"
     );
 
     // Record precise fractional usage for analytics (with org context)
@@ -696,11 +698,12 @@ class TwoBotAICreditService {
    */
   async getTransactions(
     userId: string,
-    options: { limit?: number; offset?: number; type?: string } = {}
+    options: { limit?: number; offset?: number; type?: string; category?: CreditUsageCategory } = {}
   ): Promise<{
     transactions: Array<{
       id: string;
       type: string;
+      category: string | null;
       amount: number;
       balanceAfter: number;
       description: string | null;
@@ -718,11 +721,12 @@ class TwoBotAICreditService {
    */
   async getOrgTransactions(
     organizationId: string,
-    options: { limit?: number; offset?: number; type?: string } = {}
+    options: { limit?: number; offset?: number; type?: string; category?: CreditUsageCategory } = {}
   ): Promise<{
     transactions: Array<{
       id: string;
       type: string;
+      category: string | null;
       amount: number;
       balanceAfter: number;
       description: string | null;

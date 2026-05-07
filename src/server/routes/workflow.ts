@@ -38,11 +38,13 @@ import { BadRequestError, ValidationError } from "@/shared/errors";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
+import { requireOrgHeaderMembership } from "../middleware/org-auth";
 
 export const workflowRouter = Router();
 
 // All routes require authentication
 workflowRouter.use(requireAuth);
+workflowRouter.use(requireOrgHeaderMembership);
 
 // ===========================================
 // Helpers

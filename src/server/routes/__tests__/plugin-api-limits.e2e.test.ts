@@ -38,6 +38,10 @@ vi.mock('@/lib/prisma', () => ({
     organization: {
       findUnique: vi.fn(),
     },
+    project: {
+      findFirst: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+      create: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+    },
   },
 }));
 
@@ -64,6 +68,11 @@ vi.mock('@/lib/audit', () => ({
 vi.mock('@/lib/encryption', () => ({
   encrypt: vi.fn((data: unknown) => `encrypted:${JSON.stringify(data)}`),
   decryptJson: vi.fn(() => ({})),
+}));
+
+vi.mock('@/modules/project/project.service', () => ({
+  ensureDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+  getDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
 }));
 
 // Import after mocking

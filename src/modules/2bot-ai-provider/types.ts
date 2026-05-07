@@ -200,6 +200,18 @@ export interface TextGenerationRequest {
   capability?: AICapability;
   /** Trace ID for request correlation across logs and billing records */
   traceId?: string;
+  /**
+   * Optional cancellation signal. When aborted, the underlying provider
+   * call (or stream) should bail out as quickly as possible and surface
+   * an `AbortError`. Only honoured by adapters that pass it through to
+   * their SDK — currently the Anthropic stream path. Other adapters
+   * silently ignore.
+   *
+   * Plumbed through for the F-7 mid-LLM-call cancel feature so the user's
+   * Stop button can halt an in-flight token stream instead of waiting
+   * for the next iteration boundary.
+   */
+  abortSignal?: AbortSignal;
 }
 
 export interface TextGenerationResponse {

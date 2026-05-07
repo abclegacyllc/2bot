@@ -1,12 +1,6 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { BillingContent } from "@/app/(dashboard)/billing/page";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioBillingPage() {
-  return (
-    <StudioPageShell>
-      <BillingContent basePath="/studio/billing" />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default function StudioBillingRedirect() {
+  permanentRedirect("/billing");
 }

@@ -73,10 +73,42 @@ async function loadWorkerBrain() {
   return { streamWorker: mod.streamWorker, sendWorkerAnswer: mod.sendWorkerAnswer };
 }
 
-/** lazy AI Builder helpers (avoid bundling on every page). */
-async function loadAiBuilder() {
+/**
+ * Lazy BuildSpec apply helper. The Cursor Builder agent emits a BuildSpec
+ * inside the chat stream; clicking "Apply" calls this. Imported lazily to
+ * keep the api-client module out of the initial bundle.
+ */
+async function loadBuildSpecApply() {
   const mod = await import("@/lib/api-client");
   return { applyBuildSpec: mod.applyBuildSpec };
+}
+
+// ===========================================
+// Session-counter formatters
+// ===========================================
+
+/**
+ * Format ms as a tight session-counter string: "47s" / "6m 16s" / "2h 14m".
+ */
+function formatSessionDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m < 60) return s === 0 ? `${m}m` : `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return remM === 0 ? `${h}h` : `${h}h ${remM}m`;
+}
+
+/**
+ * Compact token formatter: "980" / "25.0k" / "1.8m".
+ */
+function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(1)}m`;
 }
 
 // ===========================================
@@ -432,6 +464,7 @@ export function CursorPanel() {
     resolveAskBlock,
     updateBuildSpecBlock,
     conversationSnapshots, fileActionCount,
+    inputTokens, outputTokens, toolUseCount, elapsedMs,
   } = stream;
 
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -446,7 +479,7 @@ export function CursorPanel() {
       try {
         const tk =
           (typeof window !== "undefined" ? localStorage.getItem("token") : null) || undefined;
-        const { applyBuildSpec } = await loadAiBuilder();
+        const { applyBuildSpec } = await loadBuildSpecApply();
         const res = await applyBuildSpec(block.spec, {}, tk);
         if (!res.success || !res.data) {
           updateBuildSpecBlock(block.id, {
@@ -959,7 +992,18 @@ export function CursorPanel() {
               {askUserPending ? "Waiting for your answer..." : (
                 <>
                   Step {currentIteration || 1}
-                  {creditsUsed > 0 && <span className="text-[10px] opacity-60">· {creditsUsed.toFixed(1)}/{creditBudget} credits</span>}
+                  {elapsedMs !== null && (
+                    <span className="text-[10px] opacity-60 font-mono">· {formatSessionDuration(elapsedMs)}</span>
+                  )}
+                  {(inputTokens > 0 || outputTokens > 0) && (
+                    <span
+                      className="text-[10px] opacity-60 font-mono"
+                      title={`${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out`}
+                    >· ↓ {formatTokens(inputTokens + outputTokens)}</span>
+                  )}
+                  {creditsUsed > 0 && (
+                    <span className="text-[10px] opacity-60">· {creditsUsed.toFixed(1)}/{creditBudget} credits</span>
+                  )}
                 </>
               )}
             </span>
@@ -1182,13 +1226,22 @@ export function CursorPanel() {
                     </div>
                   ) : null}
 
-                  {/* Model badge + Retry — shown on completed/errored assistant messages */}
+                  {/* Model + per-turn metrics + Retry — completed/errored assistant messages */}
                   {msg.role === "assistant" && (msg.status === "success" || msg.status === "error") && (
                     <div className="mt-1.5 flex items-center gap-2 text-[10px] text-muted-foreground/50">
-                      {(msg.modelUsed || msg.creditsUsed != null) && (
-                        <span>
+                      {(msg.modelUsed || typeof msg.creditsUsed === "number" || typeof msg.durationMs === "number" || (msg.inputTokens || msg.outputTokens) || msg.toolUseCount) && (
+                        <span title={
+                          typeof msg.inputTokens === "number" && typeof msg.outputTokens === "number"
+                            ? `${msg.inputTokens.toLocaleString()} in / ${msg.outputTokens.toLocaleString()} out`
+                            : undefined
+                        }>
                           {msg.modelUsed ? `· ${msg.modelUsed}` : "·"}
-                          {msg.creditsUsed != null ? ` | ${msg.creditsUsed.toFixed(1)} credits` : ""}
+                          {typeof msg.durationMs === "number" ? ` | ${formatSessionDuration(msg.durationMs)}` : ""}
+                          {(msg.inputTokens || msg.outputTokens)
+                            ? ` | ↓ ${formatTokens((msg.inputTokens ?? 0) + (msg.outputTokens ?? 0))} tokens`
+                            : ""}
+                          {msg.toolUseCount ? ` | ${msg.toolUseCount} tool ${msg.toolUseCount === 1 ? "use" : "uses"}` : ""}
+                          {typeof msg.creditsUsed === "number" ? ` | ${msg.creditsUsed.toFixed(1)} credits` : ""}
                         </span>
                       )}
                       {!isRunning && (
@@ -1245,23 +1298,40 @@ export function CursorPanel() {
       </div>
 
       {/* ── Terminal Allow/Skip (command consent) ── */}
-      {/* Credit usage (inline) */}
+      {/* Session counter (inline) — timer + tokens + tool uses + credits.
+          Shown after a session ends; the live header above carries the
+          same fields while streaming. */}
       {creditsUsed > 0 && !isRunning && (
-        <div className="mx-3 mt-1 mb-1 flex items-center gap-2 text-[10px] text-muted-foreground/60">
-          <div className="h-1 flex-1 rounded-full bg-muted/30 overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${Math.min(100, (creditsUsed / creditBudget) * 100)}%`,
-                background: creditsUsed > creditBudget * 0.8
-                  ? "var(--cursor-error, #ef4444)"
-                  : creditsUsed > creditBudget * 0.5
-                    ? "#f59e0b"
-                    : "var(--cursor-primary, #3b82f6)",
-              }}
-            />
+        <div className="mx-3 mt-1 mb-1 space-y-1 text-[10px] text-muted-foreground/60">
+          <div className="flex items-center gap-2 font-mono">
+            {elapsedMs !== null && (
+              <span title="Session duration">{formatSessionDuration(elapsedMs)}</span>
+            )}
+            {(inputTokens > 0 || outputTokens > 0) && (
+              <span title={`${inputTokens.toLocaleString()} in / ${outputTokens.toLocaleString()} out`}>
+                · ↓ {formatTokens(inputTokens + outputTokens)} tokens
+              </span>
+            )}
+            {toolUseCount > 0 && (
+              <span>· {toolUseCount} tool {toolUseCount === 1 ? "use" : "uses"}</span>
+            )}
           </div>
-          <span className="font-mono shrink-0">{creditsUsed.toFixed(1)}/{creditBudget} credits</span>
+          <div className="flex items-center gap-2">
+            <div className="h-1 flex-1 rounded-full bg-muted/30 overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(100, (creditsUsed / creditBudget) * 100)}%`,
+                  background: creditsUsed > creditBudget * 0.8
+                    ? "var(--cursor-error, #ef4444)"
+                    : creditsUsed > creditBudget * 0.5
+                      ? "#f59e0b"
+                      : "var(--cursor-primary, #3b82f6)",
+                }}
+              />
+            </div>
+            <span className="font-mono shrink-0">{creditsUsed.toFixed(1)}/{creditBudget} credits</span>
+          </div>
         </div>
       )}
 
@@ -1632,7 +1702,7 @@ export function CursorPanel() {
               aria-label="Cancel current action"
               className="flex h-10 w-10 items-center justify-center rounded-xl text-white transition-colors"
               style={{ background: "var(--cursor-error)" }}
-              title="Cancel"
+              title="Cancel — halts the agent at the next safe checkpoint. Tokens already produced will still be charged."
             >
               <Square className="h-4 w-4" />
             </button>

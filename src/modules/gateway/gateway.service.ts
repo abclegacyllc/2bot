@@ -188,18 +188,15 @@ class GatewayService {
     // Encrypt credentials
     const credentialsEnc = encrypt(data.credentials);
 
-    // Wave 2: every resource gets attached to a project. Gated
-    // behind FEATURE_AUTO_ATTACH_PROJECT until the NOT NULL migration in
-    // prisma/migrations/_drafts/finalize_project_layer.sql is applied.
-    let projectId: string | null = null;
-    if ((process.env.FEATURE_AUTO_ATTACH_PROJECT ?? "disabled").toLowerCase() === "enabled") {
-      const { ensureDefaultProject } = await import("@/modules/project/project.service");
-      const defaultProject = await ensureDefaultProject({
-        userId: ctx.userId,
-        organizationId: ctx.organizationId ?? null,
-      });
-      projectId = defaultProject.id;
-    }
+    // Every gateway belongs to a Project. The Phase 5 NOT NULL migration
+    // (20260505000000_unified_studio_backfill_project_id) makes this
+    // mandatory; we always materialise/look-up the (user, org) default.
+    const { ensureDefaultProject } = await import("@/modules/project/project.service");
+    const defaultProject = await ensureDefaultProject({
+      userId: ctx.userId,
+      organizationId: ctx.organizationId ?? null,
+    });
+    const projectId = defaultProject.id;
 
     const gateway = await prisma.$transaction(async (tx) => {
       const created = await tx.gateway.create({

@@ -1,30 +1,20 @@
 "use client";
 
 /**
- * Chat-first dashboard surface — Wave 2
+ * Chat-first dashboard surface
  *
  * Dedicated chat landing page that lets a user describe what they want
- * and have the AI builder propose a BuildSpec. The actual chat UX is the
+ * and have Cursor propose a BuildSpec. The actual chat UX is the
  * already-mounted floating CursorPanel (bottom-right of the dashboard);
  * this page is the on-ramp / explainer for the new flow.
- *
- * Hidden behind FEATURE_CHAT_FIRST=enabled (NEXT_PUBLIC_FEATURE_CHAT_FIRST).
  */
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FolderKanban, MessageSquare, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-
-const FEATURE_CHAT_FIRST_ENABLED =
-  (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() === "enabled";
 
 export default function ChatPage() {
-  if (!FEATURE_CHAT_FIRST_ENABLED) {
-    notFound();
-  }
-
   return (
     <div className="container mx-auto max-w-4xl space-y-6 p-6">
       <div className="space-y-2">

@@ -1,12 +1,6 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { WorkspaceContent } from "@/app/(dashboard)/workspace/page";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioWorkspacePage() {
-  return (
-    <StudioPageShell>
-      <WorkspaceContent />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default function StudioWorkspaceRedirect() {
+  permanentRedirect("/workspace");
 }

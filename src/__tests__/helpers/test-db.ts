@@ -108,10 +108,16 @@ export async function createTestGateway(
     type?: string;
   } = {}
 ) {
+  const { ensureDefaultProject } = await import('@/modules/project/project.service');
+  const project = await ensureDefaultProject({
+    userId,
+    organizationId: options.organizationId ?? null,
+  });
   return await prisma.gateway.create({
     data: {
       userId,
       organizationId: options.organizationId || null,
+      projectId: project.id,
       name: options.name || generateTestId('Gateway'),
       type: (options.type as any) || 'AI',
       status: 'DISCONNECTED',
@@ -151,11 +157,17 @@ export async function installTestPlugin(
     organizationId?: string;
   } = {}
 ) {
+  const { ensureDefaultProject } = await import('@/modules/project/project.service');
+  const project = await ensureDefaultProject({
+    userId,
+    organizationId: options.organizationId ?? null,
+  });
   return await prisma.userPlugin.create({
     data: {
       userId,
       pluginId,
       organizationId: options.organizationId || null,
+      projectId: project.id,
       config: {},
       isEnabled: true,
     },

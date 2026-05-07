@@ -209,6 +209,9 @@ model User {
   // Admin domain blacklist
   adminBlockedDomains AdminBlockedDomain[] @relation("AdminBlockedDomains")
 
+  // AI BuildSpec async runs
+  buildspecRuns BuildSpecRun[]
+
   @@index([email])
   @@index([stripeCustomerId])
   @@index([deletedAt])
@@ -349,6 +352,9 @@ model Organization {
 
   // MCP integrations (Phase 2)
   mcpServerConfigs MCPServerConfig[]
+
+  // AI BuildSpec async runs
+  buildspecRuns BuildSpecRun[]
 
   @@index([slug])
   @@index([databaseType])
@@ -719,8 +725,8 @@ model Gateway {
   // Organization Support (if owned by org, not individual user)
   organizationId String? @map("organization_id")
 
-  // Project Support (Phase 6.2: every gateway belongs to a Project; nullable during rollout)
-  projectId String? @map("project_id")
+  // Project Support (Phase 6.2: every gateway belongs to a Project — backfilled and enforced NOT NULL in Phase 5 unified-studio rollout)
+  projectId String @map("project_id")
 
   name   String
   type   GatewayType
@@ -751,7 +757,7 @@ model Gateway {
   // Relations
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization       Organization?       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project            Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  project            Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   workspaceContainer WorkspaceContainer? @relation(fields: [workspaceContainerId], references: [id], onDelete: SetNull)
   workflows          Workflow[]
   workflowSteps      WorkflowStep[]
@@ -931,10 +937,10 @@ model CreditTransaction {
   // Wallet reference
   creditWalletId String? @map("credit_wallet_id")
 
-  type         String  // 'purchase', 'usage', 'refund', 'bonus', 'grant', 'allocation'
+  type         String // 'purchase', 'usage', 'refund', 'bonus', 'grant', 'allocation'
   category     String? @map("category") // 'ai_usage', 'marketplace', 'premium_feature', 'subscription', 'transfer', 'other'
   amount       Int // Positive = credit, Negative = debit
-  balanceAfter Int    @map("balance_after")
+  balanceAfter Int     @map("balance_after")
 
   description String
   metadata    Json? // { stripeId?, aiProvider?, model?, itemId?, walletType? }
@@ -1080,8 +1086,8 @@ model UserPlugin {
   // Organization Support (same pattern as Gateway)
   organizationId String? @map("organization_id")
 
-  // Project Support (Phase 6.2: every install belongs to a Project; nullable during rollout)
-  projectId String? @map("project_id")
+  // Project Support (Phase 6.2: every install belongs to a Project — backfilled and enforced NOT NULL in Phase 5 unified-studio rollout)
+  projectId String @map("project_id")
 
   // User's configuration for this plugin (validated against Plugin.configSchema)
   config Json @default("{}")
@@ -1124,7 +1130,7 @@ model UserPlugin {
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   plugin       Plugin        @relation(fields: [pluginId], references: [id])
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   gateway      Gateway?      @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
   aiUsages     AIUsage[]
   httpRoutes   HttpRoute[]   @relation("HttpRouteHandler")
@@ -1393,7 +1399,7 @@ model HttpRoute {
   // Phase 7.3c: optional Workflow target. When set, an inbound request
   // fires a WEBHOOK-triggered Workflow run instead of executing a UserPlugin.
   // Mutually exclusive with targetUserPluginId at the validator level.
-  targetWorkflowId   String? @map("target_workflow_id")
+  targetWorkflowId String? @map("target_workflow_id")
 
   // Auth
   authMode   HttpAuthMode @default(NONE) @map("auth_mode")
@@ -1717,8 +1723,8 @@ model Workflow {
   // Kept during transition; reads should fall back to workflowGateways.
   gatewayId String? @map("gateway_id")
 
-  // Project Support (Phase 6.2: every workflow belongs to a Project; nullable during rollout)
-  projectId String? @map("project_id")
+  // Project Support (Phase 6.2: every workflow belongs to a Project — backfilled and enforced NOT NULL in Phase 5 unified-studio rollout)
+  projectId String @map("project_id")
 
   // Status
   status    WorkflowStatus @default(DRAFT)
@@ -1738,7 +1744,7 @@ model Workflow {
   gateway          Gateway?          @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
   organization     Organization?     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   department       Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  project          Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   steps            WorkflowStep[]
   edges            WorkflowEdge[]
   runs             WorkflowRun[]
@@ -2855,4 +2861,56 @@ model WorkspaceEmbedding {
   @@unique([workspaceId, filePath, chunkIndex])
   @@index([workspaceId])
   @@map("workspace_embeddings")
+}
+
+// ===========================================
+// AI BuildSpec Async Runs
+// Persisted state for asynchronous applyBuildSpec executions.
+// Created on enqueue; updated by the BullMQ worker as it progresses.
+// ===========================================
+enum BuildSpecRunStatus {
+  QUEUED
+  RUNNING
+  APPLIED
+  ROLLED_BACK
+  VALIDATION_FAILED
+  FAILED
+}
+
+model BuildSpecRun {
+  id             String  @id @default(cuid())
+  userId         String  @map("user_id")
+  organizationId String? @map("organization_id")
+
+  status BuildSpecRunStatus @default(QUEUED)
+
+  // Apply options preserved on enqueue (the worker picks them up).
+  source                 String  @default("api")
+  dryRun                 Boolean @default(false) @map("dry_run")
+  rollbackOnSmokeFailure Boolean @default(true) @map("rollback_on_smoke_failure")
+
+  // Inputs and outputs (full BuildSpecApplyResult shape on success).
+  spec   Json
+  result Json?
+
+  // Convenience pointer to the project the apply touched/created (if any).
+  projectId String? @map("project_id")
+
+  // Error narrative for FAILED status (exception path); rollback details
+  // for ROLLED_BACK status live inside `result`.
+  error String?
+
+  // Lifecycle
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, organizationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("buildspec_runs")
 }

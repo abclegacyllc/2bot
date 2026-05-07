@@ -22,11 +22,26 @@ const PLACEHOLDER_RE = /\{\{\s*skill:([a-z0-9-]+)\s*\}\}/g;
  * Render an agent's markdown body into a final system prompt by resolving
  * every `{{skill:id}}` placeholder. Adjacent blank lines are collapsed so
  * dropped placeholders do not leave large gaps in the prompt.
+ *
+ * The active agent's tool list is threaded through `ctx.toolNames` so
+ * skills can drop advice that references tools the agent does not have
+ * (e.g. the "always call `think` first" rule has no business firing on a
+ * Builder that doesn't expose `think`). See F-2 in the token-efficiency
+ * audit for the design rationale.
  */
 export function renderAgentPrompt(
   agent: AgentDefinition,
   ctx: WorkerPromptContext,
 ): string {
+  // Augment ctx with the resolved toolNames so every skill `build()` call
+  // sees a stable, agent-specific Set. Done by shallow-cloning so we do
+  // not mutate the caller's ctx — the same ctx may be reused across
+  // multiple calls within a turn (e.g. logs / handoff contexts).
+  const resolvedCtx: WorkerPromptContext = {
+    ...ctx,
+    toolNames: ctx.toolNames ?? new Set(agent.toolNames),
+  };
+
   const resolved = agent.body.replace(PLACEHOLDER_RE, (_match, id: string) => {
     const skill = getSkill(id);
     if (!skill) {
@@ -37,7 +52,7 @@ export function renderAgentPrompt(
       }
       return "";
     }
-    const text = skill.build(ctx);
+    const text = skill.build(resolvedCtx);
     return text ?? "";
   });
   // Collapse 3+ consecutive newlines (left behind by empty skills) to 2.

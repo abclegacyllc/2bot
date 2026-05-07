@@ -814,11 +814,18 @@ async function buildPluginContext(
           { pluginId, pluginSlug, userId },
           "Plugin not installed for user — auto-creating installation for workflow execution"
         );
+        // Phase 5: projectId is NOT NULL — materialise/look-up the default Project.
+        const { ensureDefaultProject } = await import("@/modules/project/project.service");
+        const defaultProject = await ensureDefaultProject({
+          userId,
+          organizationId: organizationId ?? null,
+        });
         const created = await prisma.userPlugin.create({
           data: {
             userId,
             pluginId,
             organizationId: organizationId ?? null,
+            projectId: defaultProject.id,
             gatewayId: gatewayId ?? null,
             config: {},
             isEnabled: true,

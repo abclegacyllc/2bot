@@ -248,12 +248,31 @@ describe("tool resolver", () => {
     expect(names.has("finish")).toBe(true);
   });
 
-  it("adds workflow-edit tools to non-coder agents when workflow context is open", () => {
+  it("adds workflow-edit tools to non-coder agents UNLESS they opted out via workflowAware:false", () => {
+    // F-11: Ask, Plan, Builder explicitly set `workflowAware: false` so the
+    // resolver does NOT auto-merge the workflow-edit bundle for them — saves
+    // ~6-8 KB of tool schema per call when the user is in Studio. Verify the
+    // opt-out holds, then verify legacy non-coder agents (no workflowAware
+    // set) still get the tools to preserve compatibility.
     const ask = getAgent("ask")!;
-    const without = resolveAgentTools(ask, { hasWorkflowContext: false }).map(
+    const askWithWf = resolveAgentTools(ask, { hasWorkflowContext: true }).map(
       (d) => d.name,
     );
-    const withWf = resolveAgentTools(ask, { hasWorkflowContext: true }).map(
+    expect(askWithWf).not.toContain("add_workflow_step");
+
+    // Build a synthetic agent without `workflowAware` set — should still
+    // get the workflow-edit bundle merged when in workflow context.
+    const legacyAssistant = {
+      ...ask,
+      frontmatter: {
+        ...ask.frontmatter,
+        workflowAware: undefined,
+      },
+    };
+    const without = resolveAgentTools(legacyAssistant, { hasWorkflowContext: false }).map(
+      (d) => d.name,
+    );
+    const withWf = resolveAgentTools(legacyAssistant, { hasWorkflowContext: true }).map(
       (d) => d.name,
     );
     expect(without).not.toContain("add_workflow_step");
@@ -343,5 +362,33 @@ body`),
     expect(rendered.length).toBeGreaterThan(0);
     // Spot-check: assistant identity skill should be expanded (no raw {{skill:}} left).
     expect(rendered).not.toMatch(/\{\{\s*skill:/);
+  });
+});
+
+describe("studioMode: build", () => {
+  it("builder agent is registered and declares studioMode: build", () => {
+    const builder = getAgent("builder");
+    expect(builder).toBeDefined();
+    expect(builder!.frontmatter.studioMode).toBe("build");
+  });
+
+  it("builder is exposed in the user-invocable dropdown", () => {
+    const visible = listUserInvocableAgents().map((a) => a.frontmatter.name);
+    expect(visible).toContain("builder");
+  });
+
+  it("frontmatter loader accepts studioMode: build", () => {
+    const agent = loadAgent(
+      `---\nname: build-test\ndescription: x\nstudioMode: build\n---\nbody`,
+    );
+    expect(agent.frontmatter.studioMode).toBe("build");
+  });
+
+  it("frontmatter loader rejects unknown studioMode values", () => {
+    expect(() =>
+      loadAgent(
+        `---\nname: bad\ndescription: x\nstudioMode: nope\n---\nbody`,
+      ),
+    ).toThrow(AgentLoadError);
   });
 });

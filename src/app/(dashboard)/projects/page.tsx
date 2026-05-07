@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * Projects list page — Wave 1
+ * Projects list page
  *
  * Renders the user's (or current org's) projects as a grid of cards.
- * Hidden behind FEATURE_CHAT_FIRST=enabled (read on the client via the
- * NEXT_PUBLIC_FEATURE_CHAT_FIRST env). The Express `/projects` route is
- * always available; only the dashboard surface is gated.
+ * Always-on after the unified Studio rollout; cards link directly into
+ * `/studio/[id]` (or the org-scoped variant).
  */
 
 import { CreateProjectDialog } from "@/components/dashboard/create-project-dialog";
@@ -15,21 +14,13 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
 import { useProjects } from "@/hooks/use-project";
 import { FolderPlus, RefreshCw } from "lucide-react";
-import { notFound } from "next/navigation";
-
-const FEATURE_CHAT_FIRST_ENABLED =
-  (process.env.NEXT_PUBLIC_FEATURE_CHAT_FIRST ?? "disabled").toLowerCase() === "enabled";
 
 export default function ProjectsPage() {
   const { context } = useAuth();
   const { projects, isLoading, error, refresh } = useProjects();
 
-  if (!FEATURE_CHAT_FIRST_ENABLED) {
-    notFound();
-  }
-
   const orgSlug = context.type === "organization" ? context.organizationSlug : null;
-  const hrefBase = orgSlug ? `/organizations/${orgSlug}/projects` : "/projects";
+  const hrefBase = orgSlug ? `/organizations/${orgSlug}/studio` : "/studio";
 
   return (
     <div className="container mx-auto max-w-6xl space-y-6 p-6">

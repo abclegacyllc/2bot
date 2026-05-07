@@ -73,7 +73,7 @@ export interface AgentFrontmatter {
    * Optional studio-mode hint that maps onto the existing
    * `request.studioMode` field. Used for prompt-shape adjustments.
    */
-  studioMode?: "agent" | "ask" | "plan";
+  studioMode?: "agent" | "ask" | "plan" | "build";
 
   // ── Agent-owned execution config ──
   // These let an agent declare its own runtime behavior so the runner
@@ -116,6 +116,17 @@ export interface AgentFrontmatter {
    * Defaults: coder=true, assistant=false.
    */
   pluginEdit?: boolean;
+  /**
+   * When the user is editing a workflow in the Studio, the resolver
+   * auto-merges the `workflow-edit` bundle (~12 tools) onto the agent's
+   * toolset. Set this to `false` for read-only / proposer agents (Builder,
+   * Ask, Plan) that should NOT receive write tools just because there's
+   * workflow context — saves ~6-8 KB of tool-schema bloat per call.
+   *
+   * Defaults: coder=opt-in via runtime, assistant agents fall back to
+   * `runtime !== "coder"` (legacy behaviour) when this field is undefined.
+   */
+  workflowAware?: boolean;
 }
 
 /** A single post-completion handoff button */

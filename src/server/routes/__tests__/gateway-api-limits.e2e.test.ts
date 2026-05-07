@@ -56,6 +56,11 @@ vi.mock('@/lib/audit', () => ({
   },
 }));
 
+vi.mock('@/modules/project/project.service', () => ({
+  ensureDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+  getDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+}));
+
 // Import after mocking
 import { prisma } from '@/lib/prisma';
 import { gatewayService } from '@/modules/gateway/gateway.service';

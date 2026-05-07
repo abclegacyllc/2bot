@@ -39,7 +39,17 @@ export function resolveAgentTools(
   // When a workflow is open in the Studio, surface workflow-edit tools to
   // mutating agents that did not already opt in via a bundle / explicit name.
   // This mirrors the legacy behaviour of `getWorkerTools()` for the assistant.
-  if (options.hasWorkflowContext && agent.frontmatter.runtime !== "coder") {
+  //
+  // Read-only / proposer agents (Builder, Ask, Plan) can opt out via
+  // `workflowAware: false` in their frontmatter so the ~12 workflow-edit
+  // tool schemas (~6-8 KB) are not appended to every call just because the
+  // user happens to be in Studio. When `workflowAware` is unset, fall back
+  // to the legacy "non-coder gets the merge" rule for compatibility.
+  const explicitOptOut = agent.frontmatter.workflowAware === false;
+  const eligibleByDefault =
+    agent.frontmatter.workflowAware === true ||
+    (agent.frontmatter.workflowAware === undefined && agent.frontmatter.runtime !== "coder");
+  if (options.hasWorkflowContext && !explicitOptOut && eligibleByDefault) {
     const extras = expandToolList(["workflow-edit"]);
     for (const name of extras) {
       if (!names.includes(name)) names.push(name);

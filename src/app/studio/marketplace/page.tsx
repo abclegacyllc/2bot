@@ -1,12 +1,7 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { MarketplaceContent } from "@/app/(dashboard)/marketplace/page";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioMarketplacePage() {
-  return (
-    <StudioPageShell>
-      <MarketplaceContent basePath="/studio/marketplace" />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: dashboard is the single source of truth for the
+// marketplace. This route exists only to redirect legacy bookmarks.
+export default function StudioMarketplaceRedirect() {
+  permanentRedirect("/marketplace");
 }

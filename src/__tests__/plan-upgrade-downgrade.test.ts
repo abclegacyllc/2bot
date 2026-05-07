@@ -51,6 +51,11 @@ vi.mock('@/lib/audit', () => ({
   },
 }));
 
+vi.mock('@/modules/project/project.service', () => ({
+  ensureDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+  getDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+}));
+
 import { prisma } from '@/lib/prisma';
 
 const mockedPrisma = prisma as any;

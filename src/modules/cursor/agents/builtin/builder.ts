@@ -1,5 +1,5 @@
 /**
- * Built-in: Builder — proposes a BuildSpec for the AI Builder orchestrator.
+ * Built-in: Builder — proposes a BuildSpec for the Cursor BuildSpec orchestrator.
  *
  * / 7.1 producer side. The agent investigates the user's request,
  * asks clarifying questions if needed, and emits a final BuildSpec inside
@@ -8,7 +8,7 @@
  * event so the chat surface can render an Apply card.
  *
  * The agent does NOT mutate anything — it produces a plan only. Apply happens
- * via POST /api/ai-builder/apply when the user clicks the Apply button.
+ * via POST /api/cursor/buildspec/apply when the user clicks the Apply button.
  *
  * @module modules/cursor/agents/builtin/builder
  */
@@ -20,13 +20,14 @@ displayName: Builder
 userInvocable: true
 disableModelInvocation: true
 runtime: assistant
-studioMode: plan
+studioMode: build
 maxCredits: 25
 maxIterations: 100
 temperature: 0.3
 liteRouting: true
 needsWorkspace: false
 pluginEdit: false
+workflowAware: false
 tools:
   - workspace-read
   - code-intel
@@ -34,8 +35,6 @@ tools:
   - diagnostics
   - memory-read
   - ask_user
-  - think
-  - update_plan
   - finish
   - fetch_url
   - list_available_plugins
@@ -179,25 +178,30 @@ auto-rollback on failure. You DO NOT execute anything yourself.
 - DO NOT mutate any platform state. No write tools are available to you.
 - If the request is too vague to spec, ask ONCE then propose a reasonable default.
 
-{{skill:agent-autonomy}}
-
-{{skill:current-task}}
-
 {{skill:prior-session-context}}
 
 {{skill:platform-context}}
 
 {{skill:user-state}}
 
-{{skill:auto-context}}
-
 {{skill:user-preferences}}
 
 {{skill:agent-memory}}
 
-{{skill:output-format}}
-
-{{skill:error-recovery}}
-
 {{skill:workflow-context}}
 `;
+// Removed for token efficiency:
+//   {{skill:current-task}}    — duplicates the user message into the system
+//                                prompt; Anthropic reads the user turn fine
+//                                without it. Removing also lets the system
+//                                prompt cache hit across similar messages.
+//   {{skill:agent-autonomy}}  — references search_files / write_file rules
+//                                Builder doesn't have. Confused the LLM into
+//                                emitting "let me check first" preambles.
+//   {{skill:auto-context}}    — Builder has needsWorkspace: false, so this
+//                                always renders empty content but bills as
+//                                a section header.
+//   {{skill:output-format}}   — duplicates the "Hard rules" section above.
+//   {{skill:error-recovery}}  — coder-loop recovery guidance; Builder is a
+//                                proposer with no edit tools, no recovery
+//                                loop to govern.

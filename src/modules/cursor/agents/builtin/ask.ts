@@ -24,6 +24,7 @@ temperature: 0.4
 liteRouting: true
 needsWorkspace: false
 pluginEdit: false
+workflowAware: false
 tools:
   - workspace-read
   - code-intel

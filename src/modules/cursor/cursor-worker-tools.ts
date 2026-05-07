@@ -1704,7 +1704,7 @@ export const ALL_TOOL_NAMES: readonly string[] = Object.keys(ALL_TOOLS);
  */
 export function getWorkerTools(
   workerType: CursorWorkerType,
-  options?: { hasWorkflowContext?: boolean; studioMode?: "agent" | "ask" | "plan" },
+  options?: { hasWorkflowContext?: boolean; studioMode?: "agent" | "ask" | "plan" | "build" },
 ): WorkerToolDefinition[] {
   // Ask mode: read-only diagnostic tools — can investigate but not mutate
   if (options?.studioMode === "ask") {
@@ -1718,8 +1718,8 @@ export function getWorkerTools(
   // Conditionally add workflow tools when workflow context is present
   if (options?.hasWorkflowContext) {
     if (workerType === "assistant") {
-      // Plan mode: add workflow tools but only read-only ones
-      if (options.studioMode === "plan") {
+      // Plan mode and Build mode: add workflow tools but only read-only ones
+      if (options.studioMode === "plan" || options.studioMode === "build") {
         toolNames.push("list_available_plugins");
       } else {
         toolNames.push(...WORKFLOW_TOOL_NAMES);

@@ -144,6 +144,26 @@ export const projectVersionsAppliedTotal = new Counter({
 });
 
 /**
+ * Cursor user-initiated cancel events.
+ *
+ * Labels:
+ *   - phase: where the cancel was observed
+ *       - "between_iterations" — between agent loop iterations (cheaper)
+ *       - "between_tools"      — mid-tool-chain inside one iteration
+ *       - "mid_stream"         — aborted an in-flight LLM stream
+ *
+ * Used to spot UX problems: a high cancel rate (especially mid-stream)
+ * usually means the agent is taking too long, the model is broken, or
+ * the user changed their mind — each suggests a different remediation.
+ */
+export const cursorCancelTotal = new Counter({
+  name: "bot_cursor_cancel_total",
+  help: "Cursor user-initiated cancel events by phase.",
+  labelNames: ["phase"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
  * Bridge cost-context RPC calls.
  * Labels:
  *   - action: "credits" | "plan" | "estimate"

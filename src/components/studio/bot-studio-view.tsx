@@ -277,7 +277,14 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
     try {
       const result = await getWorkflows({ gatewayId: gateway.id, organizationId }, token ?? undefined);
       if (result.success && result.data && result.data.length > 0) {
-        setWorkflow(result.data[0] ?? null);
+        // Prefer the workflow requested via `?workflowId=` (set by the
+        // project-studio bridge at /studio/[projectId]/workflows/[wfId]).
+        // Falls back to the first workflow when no match.
+        const requestedWorkflowId = searchParams.get("workflowId");
+        const requested = requestedWorkflowId
+          ? result.data.find((w) => w.id === requestedWorkflowId)
+          : null;
+        setWorkflow(requested ?? result.data[0] ?? null);
       } else if (!autoCreatedRef.current) {
         autoCreatedRef.current = true;
         const slug = generateSlug(gateway.name);
@@ -300,7 +307,7 @@ export function BotStudioView({ gateway, plugins: gatewayPlugins }: BotStudioVie
     } finally {
       setIsLoadingWorkflow(false);
     }
-  }, [token, gateway.id, gateway.name, gateway.type, organizationId]);
+  }, [token, gateway.id, gateway.name, gateway.type, organizationId, searchParams]);
 
   // Undo support
   const { pushUndo } = useWorkflowUndo({

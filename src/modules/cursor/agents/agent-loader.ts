@@ -120,6 +120,7 @@ function validateFrontmatter(
     fullModelAfterTurn: pickPositiveNumber(name, raw, "fullModelAfterTurn"),
     needsWorkspace: pickBoolean(raw, "needsWorkspace"),
     pluginEdit: pickBoolean(raw, "pluginEdit"),
+    workflowAware: pickBoolean(raw, "workflowAware"),
   };
   return fm;
 }
@@ -209,13 +210,13 @@ function pickRuntime(
 function pickStudioMode(
   agentName: string,
   raw: Frontmatter,
-): "agent" | "ask" | "plan" | undefined {
+): "agent" | "ask" | "plan" | "build" | undefined {
   const v = raw["studioMode"];
   if (v === undefined || v === null) return undefined;
-  if (v !== "agent" && v !== "ask" && v !== "plan") {
+  if (v !== "agent" && v !== "ask" && v !== "plan" && v !== "build") {
     throw new AgentLoadError(
       agentName,
-      "`studioMode` must be one of: agent, ask, plan",
+      "`studioMode` must be one of: agent, ask, plan, build",
     );
   }
   return v;

@@ -1,12 +1,6 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { InstalledPluginsContent } from "@/app/(dashboard)/marketplace/installed/page";
-import { StudioPageShell } from "@/components/studio/studio-page-shell";
-
-export default function StudioInstalledPluginsPage() {
-  return (
-    <StudioPageShell>
-      <InstalledPluginsContent basePath="/studio/marketplace" />
-    </StudioPageShell>
-  );
+// Phase 1 — Unified Studio: redirect legacy bookmark to canonical dashboard URL.
+export default function StudioInstalledRedirect() {
+  permanentRedirect("/marketplace/installed");
 }

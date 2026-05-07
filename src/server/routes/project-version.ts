@@ -28,10 +28,11 @@ import { BadRequestError, ForbiddenError } from "@/shared/errors";
 
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
+import { requireOrgHeaderMembership } from "../middleware/org-auth";
 
 export const projectVersionRouter = Router({ mergeParams: true });
 
-// Feature-flag gate (mirrors ai-builder pattern)
+// Feature-flag gate (mirrors cursor-buildspec pattern)
 projectVersionRouter.use((req, _res, next) => {
   const flag = process.env.FEATURE_PROJECT_VERSIONS ?? "disabled";
   if (flag === "disabled") {
@@ -41,6 +42,7 @@ projectVersionRouter.use((req, _res, next) => {
 });
 
 projectVersionRouter.use(requireAuth);
+projectVersionRouter.use(requireOrgHeaderMembership);
 
 // ===========================================
 // Helpers

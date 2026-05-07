@@ -39,10 +39,15 @@ import {
     updateScheduleSidecar,
     updateSecretSidecar,
 } from "@/modules/project-resource/project-resource.service";
+import {
+    getCachedProjectTopology,
+    invalidateTopologyCache,
+} from "@/modules/project-resource/topology-cache";
 import { BadRequestError, ForbiddenError } from "@/shared/errors";
 
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
+import { requireOrgHeaderMembership } from "../middleware/org-auth";
 
 export const projectResourceRouter = Router({ mergeParams: true });
 
@@ -56,6 +61,7 @@ projectResourceRouter.use((req, _res, next) => {
 });
 
 projectResourceRouter.use(requireAuth);
+projectResourceRouter.use(requireOrgHeaderMembership);
 
 // ===========================================
 // Helpers
@@ -254,6 +260,7 @@ projectResourceRouter.post(
         metadata: body.metadata ?? null,
         gatewayId: body.gatewayId ?? null,
       });
+      await invalidateTopologyCache(owner, projectId);
       res.status(201).json({ success: true, data: resource });
       return;
     }
@@ -270,6 +277,7 @@ projectResourceRouter.post(
         metadata: body.metadata ?? null,
         httpRoute: body.httpRoute,
       });
+      await invalidateTopologyCache(owner, projectId);
       res.status(201).json({ success: true, data: resource });
       return;
     }
@@ -286,6 +294,7 @@ projectResourceRouter.post(
         metadata: body.metadata ?? null,
         schedule: body.schedule,
       });
+      await invalidateTopologyCache(owner, projectId);
       res.status(201).json({ success: true, data: resource });
       return;
     }
@@ -302,6 +311,7 @@ projectResourceRouter.post(
         metadata: body.metadata ?? null,
         secret: body.secret,
       });
+      await invalidateTopologyCache(owner, projectId);
       res.status(201).json({ success: true, data: resource });
       return;
     }
@@ -320,6 +330,7 @@ projectResourceRouter.post(
           typeof createExternalApiResource
         >[1]["externalApi"],
       });
+      await invalidateTopologyCache(owner, projectId);
       res.status(201).json({ success: true, data: resource });
       return;
     }
@@ -336,6 +347,7 @@ projectResourceRouter.post(
         metadata: body.metadata ?? null,
         database: body.database,
       });
+      await invalidateTopologyCache(owner, projectId);
       res.status(201).json({ success: true, data: resource });
       return;
     }
@@ -362,6 +374,7 @@ projectResourceRouter.patch(
   "/:resourceId",
   asyncHandler(async (req: Request, res: Response) => {
     const owner = getOwner(req);
+    const projectId = getParam(req, "projectId");
     const resourceId = getParam(req, "resourceId");
     const body = UpdateBodySchema.parse(req.body ?? {});
     const resource = await updateProjectResource(owner, resourceId, {
@@ -390,6 +403,7 @@ projectResourceRouter.patch(
     if (body.database) {
       await updateDatabaseSidecar(owner, resourceId, body.database);
     }
+    await invalidateTopologyCache(owner, projectId);
     res.json({ success: true, data: resource });
   }),
 );
@@ -398,8 +412,10 @@ projectResourceRouter.post(
   "/:resourceId/archive",
   asyncHandler(async (req: Request, res: Response) => {
     const owner = getOwner(req);
+    const projectId = getParam(req, "projectId");
     const resourceId = getParam(req, "resourceId");
     const resource = await archiveProjectResource(owner, resourceId);
+    await invalidateTopologyCache(owner, projectId);
     res.json({ success: true, data: resource });
   }),
 );
@@ -408,8 +424,41 @@ projectResourceRouter.delete(
   "/:resourceId",
   asyncHandler(async (req: Request, res: Response) => {
     const owner = getOwner(req);
+    const projectId = getParam(req, "projectId");
     const resourceId = getParam(req, "resourceId");
     await deleteProjectResource(owner, resourceId);
+    await invalidateTopologyCache(owner, projectId);
     res.status(204).end();
+  }),
+);
+
+// ===========================================
+// Project Topology Router
+// ===========================================
+//
+// Sibling router mounted at /projects/:projectId/topology that returns the
+// aggregated graph view (nodes + edges) used by the Architecture Canvas UI.
+// Reuses the same FEATURE_PROJECT_RESOURCES gate and auth middleware.
+// ===========================================
+
+export const projectTopologyRouter = Router({ mergeParams: true });
+
+projectTopologyRouter.use((req, _res, next) => {
+  const flag = process.env.FEATURE_PROJECT_RESOURCES ?? "disabled";
+  if (flag === "disabled") {
+    return next(new ForbiddenError("FEATURE_PROJECT_RESOURCES is disabled"));
+  }
+  next();
+});
+
+projectTopologyRouter.use(requireAuth);
+
+projectTopologyRouter.get(
+  "/",
+  asyncHandler(async (req: Request, res: Response) => {
+    const owner = getOwner(req);
+    const projectId = getParam(req, "projectId");
+    const topology = await getCachedProjectTopology(owner, projectId);
+    res.json({ success: true, data: topology });
   }),
 );

@@ -13,13 +13,13 @@ import { adminGuard } from "../middleware/admin-guard";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
 import { twoBotAIRouter } from "./2bot-ai";
 import { adminRouter } from "./admin";
-import { aiBuilderRouter } from "./ai-builder";
 // ai-usage routes removed — dead code (replaced by /credits/* routes)
 import { alertRouter } from "./alerts";
 import { authRouter } from "./auth";
 import { billingRouter } from "./billing";
 import { creditsRouter } from "./credits";
 import { cursorRouter } from "./cursor";
+import { cursorBuildspecRouter } from "./cursor-buildspec";
 import { gatewayRouter } from "./gateway";
 import { healthRouter } from "./health";
 import { invitesRouter } from "./invites";
@@ -30,7 +30,7 @@ import { organizationRouter } from "./organization";
 import { orgsRouter } from "./orgs";
 import { pluginRouter } from "./plugin";
 import { projectRouter } from "./project";
-import { projectResourceRouter } from "./project-resource";
+import { projectResourceRouter, projectTopologyRouter } from "./project-resource";
 import { projectVersionRouter } from "./project-version";
 import { quotaRouter, resourcesRouter } from "./resources";
 import { supportRouter } from "./support";
@@ -197,9 +197,16 @@ router.use("/projects/:projectId/versions", projectVersionRouter);
 router.use("/projects/:projectId/resources", projectResourceRouter);
 
 /**
- * AI BuildSpec Orchestrator - gated by FEATURE_AI_BUILDER
+ * Project Topology route - aggregated graph for Architecture Canvas
+ * Gated by FEATURE_PROJECT_RESOURCES.
  */
-router.use("/ai-builder", aiBuilderRouter);
+router.use("/projects/:projectId/topology", projectTopologyRouter);
+
+/**
+ * Cursor BuildSpec Orchestrator — apply layer for the unified Cursor chat.
+ * Gated by FEATURE_CURSOR_BUILDSPEC (or legacy FEATURE_AI_BUILDER fallback).
+ */
+router.use("/cursor/buildspec", cursorBuildspecRouter);
 
 /**
  * Workspace routes

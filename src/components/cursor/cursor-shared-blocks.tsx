@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 
 /**
  * Cursor Shared Message Block Components
@@ -13,7 +13,7 @@ import React from "react";
  */
 
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Check, Copy, History, Loader2, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Copy, History, Loader2, RotateCcw, X } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -711,7 +711,17 @@ interface BuildSpecLike {
   gateways?: unknown[];
   plugins?: unknown[];
   workflows?: unknown[];
+  resources?: unknown[];
   smokeTests?: unknown[];
+}
+
+interface ResourceDetailItem {
+  /** Stable react key */
+  key: string;
+  /** Primary label shown to the user */
+  label: string;
+  /** Optional muted-foreground secondary line */
+  meta?: string;
 }
 
 function describeBuildSpec(spec: unknown): {
@@ -722,25 +732,145 @@ function describeBuildSpec(spec: unknown): {
   gateways: number;
   plugins: number;
   workflows: number;
+  resources: number;
   smokeTests: number;
+  details: {
+    gateways: ResourceDetailItem[];
+    workflows: ResourceDetailItem[];
+    plugins: ResourceDetailItem[];
+    resources: ResourceDetailItem[];
+    smokeTests: ResourceDetailItem[];
+  };
 } {
   const s = (typeof spec === "object" && spec !== null ? spec : {}) as BuildSpecLike;
   const project = s.project ?? {};
+
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+  const obj = (v: unknown): Record<string, unknown> =>
+    (typeof v === "object" && v !== null ? v : {}) as Record<string, unknown>;
+
+  const gateways = Array.isArray(s.gateways) ? s.gateways : [];
+  const workflows = Array.isArray(s.workflows) ? s.workflows : [];
+  const plugins = Array.isArray(s.plugins) ? s.plugins : [];
+  const resources = Array.isArray(s.resources) ? s.resources : [];
+  const smokeTests = Array.isArray(s.smokeTests) ? s.smokeTests : [];
+
   return {
     name: typeof project.name === "string" ? project.name : "Untitled project",
     slug: typeof project.slug === "string" ? project.slug : null,
     kind: typeof project.kind === "string" ? project.kind : null,
     description: typeof project.description === "string" ? project.description : null,
-    gateways: Array.isArray(s.gateways) ? s.gateways.length : 0,
-    plugins: Array.isArray(s.plugins) ? s.plugins.length : 0,
-    workflows: Array.isArray(s.workflows) ? s.workflows.length : 0,
-    smokeTests: Array.isArray(s.smokeTests) ? s.smokeTests.length : 0,
+    gateways: gateways.length,
+    plugins: plugins.length,
+    workflows: workflows.length,
+    resources: resources.length,
+    smokeTests: smokeTests.length,
+    details: {
+      gateways: gateways.map((g, i) => {
+        const o = obj(g);
+        const ref = str(o.ref) ?? `gw-${i}`;
+        if (str(o.source) === "existing") {
+          return { key: ref, label: str(o.id) ?? "(unknown id)", meta: "existing reference" };
+        }
+        return { key: ref, label: str(o.name) ?? ref, meta: str(o.type) };
+      }),
+      workflows: workflows.map((w, i) => {
+        const o = obj(w);
+        const ref = str(o.ref) ?? `wf-${i}`;
+        const slug = str(o.slug);
+        const trigger = str(o.triggerType);
+        const meta = [slug ? `/${slug}` : null, trigger].filter(Boolean).join(" · ") || undefined;
+        return { key: ref, label: str(o.name) ?? ref, meta };
+      }),
+      plugins: plugins.map((p, i) => {
+        const o = obj(p);
+        const ref = str(o.ref) ?? `pl-${i}`;
+        if (str(o.source) === "generated") {
+          return { key: ref, label: str(o.name) ?? ref, meta: "generated" };
+        }
+        return { key: ref, label: str(o.pluginSlug) ?? ref, meta: "marketplace" };
+      }),
+      resources: resources.map((r, i) => {
+        const o = obj(r);
+        const ref = str(o.ref) ?? `res-${i}`;
+        const kind = str(o.kind);
+        let meta: string | undefined = kind;
+        if (kind === "HTTP_ROUTE") {
+          const route = obj(o.httpRoute);
+          const m = str(route.method);
+          const path = str(route.path);
+          if (m && path) meta = `${m} ${path}`;
+        } else if (kind === "SCHEDULE") {
+          const sch = obj(o.schedule);
+          meta = str(sch.cron) ? `cron: ${str(sch.cron)}` : kind;
+        } else if (kind === "SECRET") {
+          const sec = obj(o.secret);
+          meta = str(sec.key) ? `key: ${str(sec.key)}` : kind;
+        }
+        return { key: ref, label: str(o.name) ?? ref, meta };
+      }),
+      smokeTests: smokeTests.map((t, i) => {
+        const o = obj(t);
+        const ref = str(o.ref) ?? `st-${i}`;
+        const kind = str(o.kind) ?? "preflight";
+        const wfRef = str(o.workflowRef);
+        return { key: ref, label: kind, meta: wfRef ? `→ ${wfRef}` : undefined };
+      }),
+    },
   };
+}
+
+function ResourceGroup({
+  title,
+  items,
+  compact,
+}: {
+  title: string;
+  items: ResourceDetailItem[];
+  compact?: boolean;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <p
+        className={cn(
+          "font-semibold uppercase tracking-wide text-muted-foreground",
+          compact ? "text-[10px]" : "text-[11px]",
+        )}
+      >
+        {title} ({items.length})
+      </p>
+      <ul className="mt-1 space-y-0.5">
+        {items.map((it) => (
+          <li
+            key={it.key}
+            className={cn(
+              "flex items-baseline gap-2",
+              compact ? "text-[11px]" : "text-xs",
+            )}
+          >
+            <span className="text-green-500">+</span>
+            <span className="font-medium text-foreground">{it.label}</span>
+            {it.meta ? (
+              <span className="text-muted-foreground font-mono text-[10px]">{it.meta}</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function InlineBuildSpecBlock({ block, onApply, compact }: InlineBuildSpecBlockProps) {
   const s = getSizes(compact);
   const info = describeBuildSpec(block.spec);
+  const [showDetails, setShowDetails] = useState(false);
+  const totalDetail =
+    info.details.gateways.length +
+    info.details.workflows.length +
+    info.details.plugins.length +
+    info.details.resources.length +
+    info.details.smokeTests.length;
   const isApplying = block.status === "applying";
   const isApplied = block.status === "applied";
   const isError = block.status === "error";
@@ -837,6 +967,36 @@ function InlineBuildSpecBlock({ block, onApply, compact }: InlineBuildSpecBlockP
             </span>
           ) : null}
         </div>
+
+        {totalDetail > 0 ? (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setShowDetails((v) => !v)}
+              className={cn(
+                "inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors",
+                compact ? "text-[11px]" : "text-xs",
+              )}
+              aria-expanded={showDetails}
+            >
+              {showDetails ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              {showDetails ? "Hide details" : "View details"}
+            </button>
+            {showDetails ? (
+              <div className="mt-1 rounded border border-border/40 bg-background/40 px-2 py-1.5">
+                <ResourceGroup title="Gateways" items={info.details.gateways} compact={compact} />
+                <ResourceGroup title="Workflows" items={info.details.workflows} compact={compact} />
+                <ResourceGroup title="Plugins" items={info.details.plugins} compact={compact} />
+                <ResourceGroup title="Resources" items={info.details.resources} compact={compact} />
+                <ResourceGroup title="Smoke tests" items={info.details.smokeTests} compact={compact} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {block.error ? (
           <p className={cn("mt-2 text-red-500", compact ? "text-[11px]" : "text-xs")}>

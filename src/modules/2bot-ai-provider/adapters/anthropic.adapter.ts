@@ -141,15 +141,50 @@ function formatMessageForAnthropic(m: TextGenerationRequest["messages"][0]): {
 // ===========================================
 
 /**
+ * Minimum total tool-defs character count below which caching the tool
+ * block isn't worth the overhead. Each Anthropic ephemeral cache lookup
+ * has a fixed cost — only worth it when there's substantial reuse value.
+ */
+const CACHE_MIN_TOOLS_LENGTH = 1500;
+
+/**
  * Convert ToolDefinition[] to Anthropic tool format.
  * Anthropic uses { name, description, input_schema } instead of OpenAI's function wrapper.
+ *
+ * When the total tool-defs payload is large, attaches an ephemeral
+ * `cache_control` marker to the LAST tool. Anthropic caches the prefix
+ * up to (and including) the most recent marker, so this lets
+ * `[system] (mark) [tools] (mark)` re-use the entire system + tools block
+ * across iterations of the same agent loop within the 5-minute TTL.
+ *
+ * Without the second marker, the system text was cached but the tools
+ * block re-tokenized every iteration even though it never changes.
  */
 function formatToolsForAnthropic(tools: ToolDefinition[]): Anthropic.Tool[] {
-  return tools.map((tool) => ({
+  const formatted: Anthropic.Tool[] = tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.parameters as Anthropic.Tool.InputSchema,
   }));
+
+  if (formatted.length === 0) return formatted;
+
+  // Cheap upper-bound size estimate — sum description lengths + a flat
+  // schema-overhead allowance per tool. Avoids a JSON.stringify on every
+  // request just to decide whether to cache.
+  let approxLen = 0;
+  for (const t of tools) {
+    approxLen += (t.description?.length ?? 0) + 256;
+    if (approxLen >= CACHE_MIN_TOOLS_LENGTH) break;
+  }
+  if (approxLen < CACHE_MIN_TOOLS_LENGTH) return formatted;
+
+  const last = formatted[formatted.length - 1];
+  formatted[formatted.length - 1] = {
+    ...last,
+    cache_control: { type: "ephemeral" as const },
+  } as Anthropic.Tool;
+  return formatted;
 }
 
 /**
@@ -202,6 +237,13 @@ function mapAnthropicFinishReason(
 const CACHE_MIN_SYSTEM_LENGTH = 1000;
 
 /**
+ * Minimum total conversation-content character count below which marking
+ * the conversation tail isn't worth the per-request overhead. Chosen so
+ * single-message turns fall through; long tool-result chains qualify.
+ */
+const CACHE_MIN_CONVERSATION_LENGTH = 2000;
+
+/**
  * Format system prompt for Anthropic with optional prompt caching.
  *
  * For long system prompts (>1000 chars), uses the block-array format with
@@ -225,6 +267,80 @@ function formatSystemForAnthropic(
   ];
 }
 
+/**
+ * Estimate the total content size of a conversation message. Cheap upper
+ * bound — used to decide whether the conversation tail is worth caching.
+ */
+function estimateMessageChars(m: Anthropic.MessageParam): number {
+  if (typeof m.content === "string") return m.content.length;
+  if (!Array.isArray(m.content)) return 0;
+  let n = 0;
+  for (const block of m.content) {
+    if (block.type === "text") n += (block.text ?? "").length;
+    else if (block.type === "image") n += 200; // base64 size doesn't matter for cache decision
+    else if (block.type === "tool_use") n += JSON.stringify(block.input ?? {}).length + 64;
+    else if (block.type === "tool_result") {
+      const c = (block as { content?: unknown }).content;
+      n += typeof c === "string" ? c.length : JSON.stringify(c ?? "").length;
+    }
+  }
+  return n;
+}
+
+/**
+ * Attach an ephemeral `cache_control` marker to the LAST content block of
+ * the LAST message in the conversation. Combined with the system + tools
+ * markers, this gives Anthropic a 3-stage prefix:
+ *
+ *   [system] (mark1) [tools] (mark2) [conversation through last turn] (mark3) [next call]
+ *
+ * On iteration N+1 the entire prefix that iteration N had already written
+ * is now a cache hit (10% of input price), so we only pay full price for
+ * whatever the new turn appends. For Coder runs that re-tokenize 10-20 KB
+ * of unchanged tool history every iteration, this is a 5-10x cost cut on
+ * the conversation tail.
+ *
+ * Skips marking when the conversation is too small (no benefit) or when
+ * the last message has no content blocks we can attach a marker to.
+ */
+function applyConversationCacheMarker(
+  messages: Anthropic.MessageParam[],
+): Anthropic.MessageParam[] {
+  if (messages.length === 0) return messages;
+  const totalChars = messages.reduce((acc, m) => acc + estimateMessageChars(m), 0);
+  if (totalChars < CACHE_MIN_CONVERSATION_LENGTH) return messages;
+
+  const last = messages[messages.length - 1];
+  if (!last) return messages;
+
+  // Normalise to block-array form so we have somewhere to attach
+  // cache_control. Anthropic accepts a string OR an array — we pick array
+  // when we want to mark a block.
+  let blocks: Anthropic.ContentBlockParam[];
+  if (typeof last.content === "string") {
+    if (last.content.length === 0) return messages;
+    blocks = [{ type: "text", text: last.content }];
+  } else if (Array.isArray(last.content) && last.content.length > 0) {
+    blocks = [...last.content] as Anthropic.ContentBlockParam[];
+  } else {
+    return messages;
+  }
+
+  const tailIdx = blocks.length - 1;
+  const tail = blocks[tailIdx];
+  if (!tail) return messages;
+  // Anthropic's cache_control is valid on text, image, tool_use, tool_result.
+  blocks[tailIdx] = {
+    ...tail,
+    cache_control: { type: "ephemeral" as const },
+  } as Anthropic.ContentBlockParam;
+
+  return [
+    ...messages.slice(0, -1),
+    { ...last, content: blocks },
+  ];
+}
+
 // ===========================================
 // Text Generation
 // ===========================================
@@ -244,7 +360,9 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
     const createParams: Anthropic.MessageCreateParamsNonStreaming = {
       model: mapModelId(request.model),
       system: formatSystemForAnthropic(systemMessage?.content),
-      messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
+      messages: applyConversationCacheMarker(
+        conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
+      ),
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
     };
@@ -304,6 +422,17 @@ export async function anthropicTextGeneration(request: TextGenerationRequest): P
   }
 }
 
+// =============================================================================
+// Test-only exports — internal cache-marker helpers, exposed so unit tests
+// can verify the F-1 / F-4 cache layout without round-tripping through the
+// network. Do NOT import these from production code.
+// =============================================================================
+export const __testables = {
+  formatToolsForAnthropic,
+  applyConversationCacheMarker,
+  formatSystemForAnthropic,
+};
+
 /**
  * Streaming text generation
  * Yields chunks as they arrive from Anthropic
@@ -322,7 +451,9 @@ export async function* anthropicTextGenerationStream(
     const streamParams: Anthropic.MessageCreateParamsStreaming = {
       model: mapModelId(request.model),
       system: formatSystemForAnthropic(systemMessage?.content),
-      messages: conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
+      messages: applyConversationCacheMarker(
+        conversationMessages.map(formatMessageForAnthropic) as Anthropic.MessageParam[],
+      ),
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
       stream: true,
@@ -335,7 +466,16 @@ export async function* anthropicTextGenerationStream(
       if (toolChoice) streamParams.tool_choice = toolChoice;
     }
 
-    const stream = await client.messages.stream(streamParams);
+    // Pass the caller's AbortSignal through to the underlying SDK call.
+    // Anthropic's `messages.stream()` accepts request-level options as a
+    // second arg; on abort it rejects pending reads with an AbortError
+    // and the for-await loop below propagates it. Without this, a user
+    // Stop click could only halt the runner BETWEEN iterations — the
+    // current LLM stream would continue to bill output tokens.
+    const stream = await client.messages.stream(
+      streamParams,
+      request.abortSignal ? { signal: request.abortSignal } : undefined,
+    );
 
     let messageId = "";
     let totalContent = "";

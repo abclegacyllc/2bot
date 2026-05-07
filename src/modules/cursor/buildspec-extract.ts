@@ -8,9 +8,9 @@
  *
  * The extractor is intentionally permissive at parse time — it returns the
  * raw object plus a short summary string. Validation against the BuildSpec
- * zod schema happens client-side via POST /ai-builder/validate (or server-
+ * zod schema happens client-side via POST /cursor/buildspec/validate (or server-
  * side at apply time). This keeps the runner cheap and decoupled from
- * `@/modules/ai-builder`.
+ * `@/modules/cursor/buildspec`.
  *
  * @module modules/cursor/buildspec-extract
  */

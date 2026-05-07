@@ -30,6 +30,7 @@ export type CursorAgentEvent =
   | CursorAgentSessionStart
   | CursorAgentIterationStart
   | CursorAgentThinking
+  | CursorAgentTextDelta
   | CursorAgentToolStart
   | CursorAgentToolResult
   | CursorAgentCodePreview
@@ -58,7 +59,7 @@ export type CursorAgentEvent =
   | CursorModelConfirmEvent
   // Post-completion hand-off buttons (declarative agents)
   | CursorAgentHandoffsEvent
-  // Wave 2: structured BuildSpec produced by the AI builder agent
+  // Wave 2: structured BuildSpec produced by the Cursor Builder agent
   | CursorAgentBuildSpecEvent;
 
 // --- Individual event types ---
@@ -80,6 +81,12 @@ export interface CursorAgentIterationStart {
   totalCreditsUsed: number;
   /** Max credits allowed for this session (varies by worker + plan + repo mode) */
   creditBudget?: number;
+  /** Cumulative input tokens consumed so far (running total). */
+  inputTokens?: number;
+  /** Cumulative output tokens produced so far (running total). */
+  outputTokens?: number;
+  /** Cumulative count of tool invocations so far. */
+  toolUseCount?: number;
 }
 
 /** AI is reasoning (text content from the LLM before tool calls) */
@@ -88,6 +95,25 @@ export interface CursorAgentThinking {
   text: string;
   /** Internal chain-of-thought from reasoning models (separate from visible text) */
   reasoning?: string;
+}
+
+/**
+ * Incremental text chunk from a streaming LLM response.
+ *
+ * Emitted by the runner as tokens arrive from the model — UI consumers
+ * append `delta` to the current assistant turn's live text block instead
+ * of replacing the whole content (the latter is what `thinking` does and
+ * is unsuitable for streaming because it would flicker the rendered text).
+ *
+ * After the stream completes the runner emits one final `thinking` event
+ * with the full assembled text, so consumers that DON'T handle
+ * `text_delta` (older clients, tests, log replay) still see a complete
+ * message — they just miss the per-token animation.
+ */
+export interface CursorAgentTextDelta {
+  type: "text_delta";
+  /** Text fragment to append to the current assistant message in order. */
+  delta: string;
 }
 
 /** Agent is about to execute a tool */
@@ -163,6 +189,12 @@ export interface CursorAgentDone {
   filesWritten: string[];
   /** Total credits consumed */
   creditsUsed: number;
+  /** Total input tokens consumed (sum across iterations). */
+  inputTokens?: number;
+  /** Total output tokens produced. */
+  outputTokens?: number;
+  /** Total tool invocations across the session. */
+  toolUseCount?: number;
   /** The actual AI model used (provider model ID) */
   modelUsed?: string;
   /** Total duration in ms */
@@ -368,10 +400,10 @@ export interface CursorAgentHandoffsEvent {
 /**
  * BuildSpec event.
  *
- * Emitted by the AI Builder agent when it has produced a complete BuildSpec
+ * Emitted by the Cursor Builder agent when it has produced a complete BuildSpec
  * for the user to review. The frontend renders this as a structured block
  * with a summary (counts of gateways/plugins/workflows) and an "Apply" button
- * that POSTs the spec to `/api/ai-builder/apply`.
+ * that POSTs the spec to `/api/cursor/buildspec/apply`.
  *
  * The full spec is sent verbatim so the frontend can pass it back to apply
  * without any round-trip through SSE state.

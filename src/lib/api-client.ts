@@ -1120,7 +1120,7 @@ export function archiveProject(
 }
 
 // ===========================================
-// AI Builder (/ 7.1 Wave 2)
+// Cursor BuildSpec apply (consolidated under /cursor/buildspec/*)
 // ===========================================
 
 export interface BuildSpecApplyOptions {
@@ -1145,6 +1145,8 @@ export interface BuildSpecApplyResult {
     gateways: Record<string, string>;
     plugins: Record<string, string>;
     workflows: Record<string, string>;
+    /** ProjectResource ids created during apply (HTTP_ROUTE / SCHEDULE / SECRET / EXTERNAL_API / DATABASE). */
+    resources: Record<string, string>;
   };
   smokeResults: BuildSpecSmokeResult[];
   rollbackReason?: string;
@@ -1152,8 +1154,9 @@ export interface BuildSpecApplyResult {
 }
 
 /**
- * Apply a BuildSpec. Server gates on FEATURE_AI_BUILDER and may return 403
- * with code "AI_BUILDER_DISABLED" when the flag is off.
+ * Apply a BuildSpec produced by the Cursor Builder agent. The endpoint is
+ * gated on FEATURE_CURSOR_BUILDSPEC (or the legacy FEATURE_AI_BUILDER) and
+ * returns 403 when disabled.
  */
 export function applyBuildSpec(
   spec: unknown,
@@ -1161,20 +1164,20 @@ export function applyBuildSpec(
   token?: string,
 ): Promise<ApiResponse<BuildSpecApplyResult>> {
   return apiPost<BuildSpecApplyResult>(
-    "/ai-builder/apply",
+    "/cursor/buildspec/apply",
     { spec, options },
     token,
   );
 }
 
 /**
- * Validate a BuildSpec without mutating anything.
+ * Validate a BuildSpec without mutating anything. Same gate as apply.
  */
 export function validateBuildSpec(
   spec: unknown,
   token?: string,
 ): Promise<ApiResponse<{ ok: true } | { ok: false; errors: Record<string, string[]> }>> {
-  return apiPost("/ai-builder/validate", { spec }, token);
+  return apiPost("/cursor/buildspec/validate", { spec }, token);
 }
 
 // ====================================================================
@@ -1567,5 +1570,38 @@ export function deleteProjectResource(
   return apiDelete<void>(
     `/projects/${projectId}/resources/${resourceId}`,
     token,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project Topology (Architecture Canvas)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type {
+    DatabaseNode,
+    ExternalApiNode,
+    GatewayNode,
+    HttpRouteNode,
+    PluginNode,
+    ProjectTopology,
+    ScheduleNode,
+    SecretNode,
+    TopologyEdge,
+    TopologyEdgeKind,
+    TopologyNode,
+    TopologyNodeKind,
+    TopologyProjectMeta,
+    WorkflowNode
+} from "@/modules/project-resource/project-topology.service";
+
+import type { ProjectTopology } from "@/modules/project-resource/project-topology.service";
+
+export function getProjectTopology(
+  projectId: string,
+  token?: string,
+): Promise<ApiResponse<ProjectTopology>> {
+  return apiRequest<ProjectTopology>(
+    `/projects/${projectId}/topology`,
+    { method: "GET", token },
   );
 }

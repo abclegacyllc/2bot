@@ -83,6 +83,46 @@ describe('Cursor Tool Definitions', () => {
 });
 
 // ===========================================
+// studioMode tool filter
+// ===========================================
+
+describe('getWorkerTools — studioMode filter', () => {
+  it('build mode mirrors plan mode: read-only + list_available_plugins, no full workflow mutations', () => {
+    const planNames = getWorkerTools('assistant', {
+      hasWorkflowContext: true,
+      studioMode: 'plan',
+    }).map((t) => t.name);
+    const buildNames = getWorkerTools('assistant', {
+      hasWorkflowContext: true,
+      studioMode: 'build',
+    }).map((t) => t.name);
+
+    expect(buildNames).toEqual(planNames);
+    expect(buildNames).toContain('list_available_plugins');
+    // Workflow-mutation tools must not leak into build mode.
+    expect(buildNames).not.toContain('add_workflow_step');
+    expect(buildNames).not.toContain('delete_workflow_step');
+  });
+
+  it('agent mode keeps full workflow mutation tools (regression guard)', () => {
+    const agentNames = getWorkerTools('assistant', {
+      hasWorkflowContext: true,
+      studioMode: 'agent',
+    }).map((t) => t.name);
+    expect(agentNames).toContain('add_workflow_step');
+  });
+
+  it('ask mode is read-only regardless of workflow context', () => {
+    const askNames = getWorkerTools('assistant', {
+      hasWorkflowContext: true,
+      studioMode: 'ask',
+    }).map((t) => t.name);
+    expect(askNames).not.toContain('write_file');
+    expect(askNames).not.toContain('add_workflow_step');
+  });
+});
+
+// ===========================================
 // ToolStartMeta Types
 // ===========================================
 

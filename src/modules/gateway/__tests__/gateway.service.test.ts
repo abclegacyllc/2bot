@@ -62,6 +62,11 @@ vi.mock('@/lib/plan-limits', () => ({
   enforceGatewayLimit: vi.fn(),
 }));
 
+vi.mock('@/modules/project/project.service', () => ({
+  ensureDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+  getDefaultProject: vi.fn().mockResolvedValue({ id: 'proj-default-test', isDefault: true }),
+}));
+
 // Import after mocking
 import { enforceGatewayLimit } from '@/lib/plan-limits';
 import { prisma } from '@/lib/prisma';
