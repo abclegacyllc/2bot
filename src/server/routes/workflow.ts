@@ -38,11 +38,11 @@ import { BadRequestError, ValidationError } from "@/shared/errors";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
-import { requireOrgHeaderMembership } from "../middleware/org-auth";
+import { getValidatedOrgId, requireOrgHeaderMembership } from "../middleware/org-auth";
 
 export const workflowRouter = Router();
 
-// All routes require authentication
+// All routes require authentication, then org-header membership is verified.
 workflowRouter.use(requireAuth);
 workflowRouter.use(requireOrgHeaderMembership);
 
@@ -57,9 +57,7 @@ function getUserId(req: Request): string {
 
 function getOwner(req: Request) {
   const userId = getUserId(req);
-  // Org context from header (optional)
-  const organizationId = req.headers["x-organization-id"] as string | undefined;
-  return { userId, organizationId: organizationId || undefined };
+  return { userId, organizationId: getValidatedOrgId(req) };
 }
 
 function getParam(req: Request, name: string): string {

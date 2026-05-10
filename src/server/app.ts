@@ -8,6 +8,7 @@ import { workflowService } from "@/modules/workflow/workflow.service";
 import cors from "cors";
 import express, { type Express } from "express";
 import helmet from "helmet";
+import { initializeAccountAnonymizerCron } from "./cron/account-anonymizer-cron";
 import { initializeBridgeTokenRotationCron } from "./cron/bridge-token-rotation-cron";
 import { initializeCreditCron } from "./cron/credit-cron";
 import { initializeHealthMonitorCron } from "./cron/health-monitor-cron";
@@ -16,6 +17,7 @@ import { initializePricingMonitorCron } from "./cron/pricing-monitor-cron";
 import { initializeRunRetentionCron } from "./cron/run-retention-cron";
 import { corsOptions } from "./middleware/cors";
 import { errorHandler } from "./middleware/error-handler";
+import { attachSentryHandlers } from "./sentry";
 import { metricsMiddleware } from "./middleware/metrics";
 import { rateLimitMiddleware } from "./middleware/rate-limit";
 import { pinoHttpMiddleware } from "./middleware/request-logger";
@@ -95,6 +97,11 @@ export function createApp(): Express {
   // Log configured prefix
   serverLogger.info({ apiPrefix: API_PREFIX || "(root)" }, "API routes configured");
 
+  // Wave 4.6 — Sentry's error handler must run BEFORE the app's own
+  // errorHandler so it sees the raw exception, not the formatted JSON.
+  // No-op when SENTRY_DSN isn't set.
+  attachSentryHandlers(app);
+
   // Error handling (must be last)
   app.use(errorHandler);
 
@@ -154,6 +161,9 @@ export function startServer(app: Express): ReturnType<Express['listen']> {
 
     // Initialize bridge token rotation cron (rotates BRIDGE_AUTH_TOKEN daily)
     initializeBridgeTokenRotationCron();
+
+    // Wave 2.2 — anonymise accounts whose 30-day grace window has elapsed
+    initializeAccountAnonymizerCron();
 
     // Initialize SCHEDULE ProjectResource tick loop (Phase 7.4 — gated by
     // FEATURE_PROJECT_RESOURCES).

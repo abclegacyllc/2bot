@@ -76,17 +76,109 @@ async function resolveProxyUrl(): Promise<string> {
 // ===========================================
 // Docker Client (singleton)
 // ===========================================
+//
+// Wave 3.3 — Two transport modes:
+//
+//   1. Unix socket (default): `unix:///var/run/docker.sock` or set
+//      `DOCKER_SOCKET=/path/to/sock`. Gives the API server full Docker
+//      access — fine on a single-tenant host but dangerous in the
+//      DinD-as-attack-surface threat model.
+//
+//   2. TCP via docker-socket-proxy: set `DOCKER_HOST=tcp://docker-proxy:2375`
+//      pointing at a `tecnativa/docker-socket-proxy` sidecar that only
+//      exposes the verbs we need (containers, networks, volumes —
+//      see docker-compose.yml). Recommended in prod; the proxy mounts
+//      the real socket read-only and acts as an L7 firewall in front
+//      of the Docker API.
 
 let dockerClient: Docker | null = null;
 
 function getDocker(): Docker {
   if (!dockerClient) {
-    // Connect via Unix socket (default for local Docker)
-    const socketPath = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
-    dockerClient = new Docker({ socketPath });
-    log.info({ socketPath }, 'Docker client initialized');
+    const dockerHost = process.env.DOCKER_HOST;
+    if (dockerHost && /^tcp:\/\//.test(dockerHost)) {
+      // TCP form: tcp://host:port (e.g. behind docker-socket-proxy)
+      const url = new URL(dockerHost);
+      const port = url.port ? Number(url.port) : 2375;
+      dockerClient = new Docker({ host: url.hostname, port, protocol: 'http' });
+      log.info({ dockerHost: `${url.hostname}:${port}` }, 'Docker client initialized (TCP)');
+    } else {
+      // Unix socket (default)
+      const socketPath = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
+      dockerClient = new Docker({ socketPath });
+      log.info({ socketPath }, 'Docker client initialized (socket)');
+    }
   }
   return dockerClient;
+}
+
+// ===========================================
+// Wave 3.1 / 3.2 — workspace hardening config
+// ===========================================
+//
+// Resource and capability defaults for every workspace container.
+// Anything tunable lives in env vars so a hot-deploy can tighten or
+// loosen without a code change.
+//
+// PidsLimit — caps the number of processes per container. Stops fork
+//   bombs and accidental npm install runaway. Scales with cpuCores so
+//   a single-core MICRO container isn't starved.
+// NOFILE / NPROC — soft+hard ulimits inside the container. Match the
+//   defaults Docker would set anyway (1024/65536 for nofile) but pin
+//   them so a host with looser ulimits doesn't widen the surface.
+// OomScoreAdj — kernel OOM killer prefers workspace containers over
+//   the host process. 500 = strongly prefer; 1000 = always pick first.
+//
+// Capability add-list — the workspace base image runs as USER node
+// (uid 1000). The original CHOWN / DAC_OVERRIDE / SETUID / SETGID set
+// is over-permissive for that image but is kept as the default for
+// backwards compat. To tighten in prod set:
+//   WORKSPACE_CAP_ADD=""        (drop everything; only CapDrop=ALL)
+// or:
+//   WORKSPACE_CAP_ADD="CHOWN"   (most-likely-needed cap if anything is)
+// and watch the workspace fleet for breakage before fully cutting over.
+
+function pidsLimitFor(cpuCores: number): number {
+  const fromEnv = process.env.WORKSPACE_PIDS_LIMIT;
+  if (fromEnv) {
+    const n = parseInt(fromEnv, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  // 256 procs per core, clamped to [256, 4096]. A 0.5-core MICRO gets 256.
+  const scaled = Math.round(Math.max(0.5, cpuCores) * 256);
+  return Math.min(4096, Math.max(256, scaled));
+}
+
+function ulimitsFor(): Array<{ Name: string; Soft: number; Hard: number }> {
+  const nofile = parseInt(process.env.WORKSPACE_ULIMIT_NOFILE || '65536', 10);
+  const nproc = parseInt(process.env.WORKSPACE_ULIMIT_NPROC || '4096', 10);
+  return [
+    { Name: 'nofile', Soft: nofile, Hard: nofile },
+    { Name: 'nproc', Soft: nproc, Hard: nproc },
+  ];
+}
+
+function oomScoreAdj(): number {
+  const fromEnv = process.env.WORKSPACE_OOM_SCORE_ADJ;
+  if (fromEnv) {
+    const n = parseInt(fromEnv, 10);
+    if (Number.isFinite(n) && n >= -1000 && n <= 1000) return n;
+  }
+  return 500;
+}
+
+function capAdd(): string[] {
+  const raw = process.env.WORKSPACE_CAP_ADD;
+  if (raw === undefined) {
+    // Default kept identical to pre-Wave-3 behaviour for backwards compat.
+    // See comment above for the recommended tightening sequence.
+    return ['CHOWN', 'DAC_OVERRIDE', 'SETUID', 'SETGID'];
+  }
+  // Empty string ("") → drop all add-caps. Any non-empty list is comma-separated.
+  return raw
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
 }
 
 // ===========================================
@@ -148,8 +240,13 @@ class DockerService {
       `HTTPS_PROXY=${proxyUrl}`,
       `http_proxy=${proxyUrl}`,
       `https_proxy=${proxyUrl}`,
-      `NO_PROXY=localhost,127.0.0.1,.local,${process.env.WORKSPACE_HOST_API_IP || '172.20.0.1'}`,
-      `no_proxy=localhost,127.0.0.1,.local,${process.env.WORKSPACE_HOST_API_IP || '172.20.0.1'}`,
+      // Wave 3.5 — drop the wildcard `.local` entry. NO_PROXY is a routing
+      // hint, not a security boundary (egress is enforced by Squid + iptables),
+      // but `.local` made it trivial to bypass the proxy for any
+      // user-controlled hostname ending in `.local`. The remaining entries
+      // are loopback + the hard-coded host API IP.
+      `NO_PROXY=localhost,127.0.0.1,${process.env.WORKSPACE_HOST_API_IP || '172.20.0.1'}`,
+      `no_proxy=localhost,127.0.0.1,${process.env.WORKSPACE_HOST_API_IP || '172.20.0.1'}`,
       // Credential REST fallback: host API server accessible from container
       `CREDENTIAL_API_HOST=${process.env.WORKSPACE_HOST_API_IP || '172.20.0.1'}`,
       `CREDENTIAL_API_PORT=${process.env.WORKSPACE_HOST_API_PORT || '3002'}`,
@@ -194,7 +291,15 @@ class DockerService {
         Memory: options.ramMb * 1024 * 1024,  // bytes
         MemoryReservation: Math.floor(options.ramMb * 0.5) * 1024 * 1024,
         NanoCpus: Math.floor(options.cpuCores * 1e9),  // nanoseconds
-        
+
+        // Wave 3.1 — fork-bomb cap and per-container ulimits. PidsLimit
+        // scales with cpuCores; nofile/nproc default to safe values that
+        // can be tuned via env. OomScoreAdj makes the kernel prefer
+        // killing workspace containers over the host process.
+        PidsLimit: pidsLimitFor(options.cpuCores),
+        Ulimits: ulimitsFor(),
+        OomScoreAdj: oomScoreAdj(),
+
         // Storage limit: StorageOpt only works on XFS with pquota.
         // On ext4/overlay2 (our server), it throws an error, so we skip it.
         // Disk usage is monitored via bridge agent health.js instead.
@@ -219,9 +324,11 @@ class DockerService {
         //     chroot/setns/unshare(NEWNS) under unprivileged containers.
         SecurityOpt: ['no-new-privileges:true'],
 
-        // Drop all capabilities except what's needed
+        // Drop all capabilities; add back only what's needed.
+        // Wave 3.2 — the add-list is now env-tunable via WORKSPACE_CAP_ADD;
+        // see the `capAdd()` helper above for the recommended tightening.
         CapDrop: ['ALL'],
-        CapAdd: ['CHOWN', 'DAC_OVERRIDE', 'SETUID', 'SETGID'],
+        CapAdd: capAdd(),
 
         // Restart policy (handled by our lifecycle service, not Docker)
         RestartPolicy: { Name: '' },

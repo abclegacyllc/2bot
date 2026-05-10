@@ -1,0 +1,42 @@
+# CODEOWNERS — automatic reviewer assignment.
+#
+# A path matches the LAST applicable rule. Place general rules first,
+# narrow ones at the end.
+#
+# This file is intentionally lean. We don't auto-assign every PR;
+# we use this to tag the right humans for the highest-risk paths.
+
+# Default: at least one platform reviewer.
+*                                   @abcdev
+
+# === High-blast-radius paths (two-person review per CONTRIBUTING.md §2.3) ===
+
+# Crypto + auth — never merge without a second pair of eyes.
+/src/lib/encryption.ts              @abcdev
+/src/lib/jwt.ts                     @abcdev
+/src/lib/password.ts                @abcdev
+/src/modules/auth/                  @abcdev
+/src/server/middleware/             @abcdev
+
+# Schema migrations — irreversible in prod.
+/prisma/schema.prisma               @abcdev
+/prisma/migrations/                 @abcdev
+
+# Billing — subtle bugs cost money.
+/src/modules/billing/               @abcdev
+/src/server/routes/stripe-webhook.ts @abcdev
+
+# Workspace isolation — a bug here = multi-tenant escape.
+/src/modules/workspace/             @abcdev
+/docker/workspace/                  @abcdev
+/docker/squid-proxy/                @abcdev
+
+# Deploy + infra config.
+/docker-compose.yml                 @abcdev
+/Dockerfile*                        @abcdev
+/nginx/                             @abcdev
+/scripts/deploy/                    @abcdev
+/.github/workflows/                 @abcdev
+
+# Operational runbooks — out-of-date docs become wrong faster than code.
+/docs/operations/                   @abcdev

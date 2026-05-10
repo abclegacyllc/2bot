@@ -22,6 +22,10 @@ import crypto from "crypto";
 
 import { decryptIfEncrypted, encrypt } from "@/lib/encryption";
 import { logger } from "@/lib/logger";
+import {
+    bridgeTokenRotationMaxFailuresGauge,
+    bridgeTokenRotationTotal,
+} from "@/lib/metrics";
 import { prisma } from "@/lib/prisma";
 import { withDistributedLock } from "@/lib/redis-lock";
 import { bridgeClientManager } from "@/modules/workspace/bridge-client.service";
@@ -29,6 +33,22 @@ import { dockerService } from "@/modules/workspace/workspace-docker.service";
 import { BRIDGE_AUTH_TOKEN_LENGTH } from "@/modules/workspace/workspace.constants";
 
 const log = logger.child({ module: "bridge-token-rotation-cron" });
+
+/**
+ * Wave 3.6 — per-container streak of consecutive failed rotations. We
+ * keep this in module-scope memory rather than the DB because the cron
+ * runs under a distributed lock (single replica per tick), so a Map is
+ * correct, durable enough for an alert signal, and avoids a write per
+ * container per tick. On replica restart the streak resets to 0 — that
+ * means we'd miss a long-standing failure across a deploy, which is OK
+ * since the next failed tick re-arms the alert quickly.
+ */
+const consecutiveFailures = new Map<string, number>();
+
+const FAILURE_ALERT_THRESHOLD = parseInt(
+  process.env.BRIDGE_TOKEN_FAILURE_ALERT_THRESHOLD || "3",
+  10,
+);
 
 // Default 24h. Tunable via env so ops can dial it tighter for high-security tenants.
 const ROTATION_INTERVAL_MS = parseInt(
@@ -95,17 +115,23 @@ async function runRotation(): Promise<void> {
 
   if (containers.length === 0) {
     log.debug("No running containers — token rotation idle");
+    bridgeTokenRotationMaxFailuresGauge.set(0);
     return;
   }
 
   // Verify Docker actually shows them running. If a row is RUNNING in the DB
   // but the container is gone, skip.
   const summary = { rotated: 0, skipped: 0, failed: 0 };
+  const seenIds = new Set<string>();
+  let maxStreak = 0;
+  let alertWorthyContainerId: string | null = null;
+
   for (const c of containers) {
     if (!c.containerId) {
       summary.skipped++;
       continue;
     }
+    seenIds.add(c.id);
     try {
       const info = await dockerService.inspectContainer(c.containerId);
       if (!info.running) {
@@ -119,9 +145,44 @@ async function runRotation(): Promise<void> {
 
     const result = await rotateOne(c);
     summary[result]++;
+    bridgeTokenRotationTotal.inc({ result });
+
+    // Wave 3.6 — track per-container consecutive failures.
+    if (result === "failed") {
+      const next = (consecutiveFailures.get(c.id) ?? 0) + 1;
+      consecutiveFailures.set(c.id, next);
+      if (next > maxStreak) {
+        maxStreak = next;
+        alertWorthyContainerId = c.id;
+      }
+    } else if (result === "rotated") {
+      // Reset streak on success.
+      consecutiveFailures.delete(c.id);
+    }
+    // "skipped" leaves the streak alone — it's a transient state, not a
+    // signal that anything is wrong with the rotation path itself.
   }
 
-  log.info({ summary, total: containers.length }, "Bridge token rotation cycle complete");
+  // Garbage-collect streak entries for containers that no longer exist
+  // in the snapshot — otherwise a one-off failed rotation on a now-gone
+  // workspace pins the gauge open forever.
+  for (const id of consecutiveFailures.keys()) {
+    if (!seenIds.has(id)) consecutiveFailures.delete(id);
+  }
+
+  bridgeTokenRotationMaxFailuresGauge.set(maxStreak);
+  if (maxStreak >= FAILURE_ALERT_THRESHOLD) {
+    log.error(
+      {
+        containerDbId: alertWorthyContainerId,
+        consecutiveFailures: maxStreak,
+        threshold: FAILURE_ALERT_THRESHOLD,
+      },
+      "Bridge token rotation has failed for a container 3+ cycles in a row — investigate",
+    );
+  }
+
+  log.info({ summary, total: containers.length, maxStreak }, "Bridge token rotation cycle complete");
 }
 
 export function initializeBridgeTokenRotationCron(): void {

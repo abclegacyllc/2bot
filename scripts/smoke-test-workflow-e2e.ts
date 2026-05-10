@@ -13,7 +13,10 @@
 import jwt from "jsonwebtoken";
 
 const API = "http://localhost:3002";
-const JWT_SECRET = process.env.JWT_SECRET ?? "2bot-super-secret-key-for-jwt-tokens-min-32-chars";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is required (load .env.local before running this script).");
+}
 
 // -- Config -----------------------------------------------------------------
 // Use admin@2bot.org user + active session
@@ -576,7 +579,7 @@ async function main() {
     const health = await fetch(`${API}/health`);
     const hData = await health.json() as { success: boolean };
     assert(hData.success, "Server is healthy");
-  } catch (e) {
+  } catch (_e) {
     fail(`Server unreachable at ${API}`);
     process.exit(1);
   }

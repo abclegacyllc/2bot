@@ -108,6 +108,41 @@ function getFallbackLimiter(key: string, config: RateLimitConfig): RateLimiterMe
 }
 
 /**
+ * Wave 1.3: paths that must fail-closed when Redis is unhealthy.
+ *
+ * For these routes we never fall back to per-replica in-memory limiters
+ * (which an attacker can multiply N× across replicas), and we never wait
+ * for the hard-fail window to elapse — if Redis can't enforce the limit,
+ * we refuse the request immediately. This is the brute-force attack
+ * surface (auth, password reset, billing) plus webhooks (replay risk).
+ */
+const SENSITIVE_PATH_PREFIXES = [
+  // Authentication — both /api-prefixed and enterprise (root) mounts
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/refresh",
+  "/api/auth/mfa",
+  "/api/auth/password",
+  "/auth/login",
+  "/auth/register",
+  "/auth/refresh",
+  "/auth/mfa",
+  "/auth/password",
+  // Billing (Stripe customer portal, checkout sessions, subscription mgmt)
+  "/api/billing",
+  "/billing",
+  // Webhooks — replays must hit Redis-backed idempotency, not memory
+  "/api/webhooks",
+  "/webhooks",
+];
+
+export function isSensitiveRoute(path: string): boolean {
+  return SENSITIVE_PATH_PREFIXES.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
+}
+
+/**
  * Get or create a rate limiter for the given config
  */
 function getLimiter(key: string, config: RateLimitConfig): RateLimiterRedis {
@@ -176,21 +211,34 @@ export function rateLimitMiddleware() {
     const config = IP_RATE_LIMITS[endpointKey] ?? defaultConfig;
     const limiterKey = IP_RATE_LIMITS[endpointKey] ? endpointKey : 'default';
 
+    const sensitive = isSensitiveRoute(req.path);
+
     try {
       // Circuit breaker: if Redis is unhealthy, use in-memory fallback.
       // Hard-fail mode: after the breaker has been open longer than
       // BREAKER_HARD_FAIL_MS, return 503 so the client can back off, rather
       // than letting attackers exploit a long Redis outage indefinitely.
+      //
+      // Sensitive routes (auth/billing/webhooks) skip the in-memory fallback
+      // entirely — those endpoints are brute-force / replay surfaces and a
+      // per-replica counter is not a meaningful limit. Fail-closed now, and
+      // the user retries when Redis recovers.
       if (shouldUseFallback()) {
-        if (isHardFailing()) {
+        if (sensitive || isHardFailing()) {
           rateLimitLogger.warn(
-            { ip: clientIP, openedAt: breakerOpenedAt },
-            "Rate limit hard-fail: Redis unavailable too long — returning 503",
+            { ip: clientIP, sensitive, openedAt: breakerOpenedAt },
+            sensitive
+              ? "Rate limit fail-closed: sensitive route while Redis breaker open"
+              : "Rate limit hard-fail: Redis unavailable too long — returning 503",
           );
-          res.setHeader("Retry-After", 30);
+          rateLimitRejectionsTotal.inc({
+            route: endpointKey,
+            scope: sensitive ? "sensitive-fail-closed" : "hard-fail",
+          });
+          res.setHeader("Retry-After", sensitive ? 5 : 30);
           return next(new RateLimitError(
             "Rate limiter temporarily unavailable. Please retry shortly.",
-            30,
+            sensitive ? 5 : 30,
           ));
         }
         const fallback = getFallbackLimiter(limiterKey, config);
@@ -228,9 +276,22 @@ export function rateLimitMiddleware() {
           retryAfter
         ));
       } else {
-        // Redis error — record breaker failure, fall back to in-memory limiter
-        // for THIS request rather than failing open entirely.
+        // Redis error — record breaker failure. For sensitive routes we
+        // refuse the request immediately rather than fall back to a
+        // per-replica in-memory counter (Wave 1.3).
         recordRedisFailure();
+        if (sensitive) {
+          rateLimitLogger.warn(
+            { err: error, ip: clientIP, route: endpointKey },
+            "Rate limit fail-closed: sensitive route Redis error",
+          );
+          rateLimitRejectionsTotal.inc({ route: endpointKey, scope: "sensitive-fail-closed" });
+          res.setHeader("Retry-After", 5);
+          return next(new RateLimitError(
+            "Rate limiter temporarily unavailable. Please retry shortly.",
+            5,
+          ));
+        }
         rateLimitLogger.warn(
           { err: error, breakerState, consecutiveFailures },
           "Rate limiter Redis error — using in-memory fallback for this request",

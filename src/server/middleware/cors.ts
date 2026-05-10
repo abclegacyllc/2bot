@@ -71,13 +71,24 @@ const allowedOrigins = [
 ].filter(Boolean) as string[];
 
 /**
- * Parse CORS_ORIGINS environment variable (comma-separated list)
- * This allows runtime configuration without code changes
+ * Parse a comma-separated origin list from an env var.
+ */
+function parseOriginList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * Additional origins from runtime env vars. CORS_ORIGINS applies to all
+ * environments; DEV_ALLOWED_ORIGINS only applies outside production
+ * (use it for tunnel URLs, codespaces, etc).
  */
 function getAdditionalOrigins(): string[] {
-  const corsOrigins = process.env.CORS_ORIGINS;
-  if (!corsOrigins) return [];
-  return corsOrigins.split(',').map(origin => origin.trim()).filter(Boolean);
+  const extra = parseOriginList(process.env.CORS_ORIGINS);
+  if (!isProduction) {
+    extra.push(...parseOriginList(process.env.DEV_ALLOWED_ORIGINS));
+  }
+  return extra;
 }
 
 /**
@@ -89,32 +100,32 @@ function getAllowedOrigins(): string[] {
 
 /**
  * CORS configuration
- * 
+ *
  * Supports:
  * - Static allowed origins (hardcoded for known domains)
  * - Environment variable configured origins
  * - CORS_ORIGINS runtime configuration (comma-separated)
- * - Development mode allows all origins
+ *
+ * Both production and development use a strict allow-list. To add an
+ * extra dev origin (e.g. a tunneled URL), set DEV_ALLOWED_ORIGINS or
+ * CORS_ORIGINS — never an unconditional allow-all.
  */
 export const corsOptions: CorsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, etc.)
+    // Allow requests with no origin (mobile apps, curl, server-to-server).
     if (!origin) {
       callback(null, true);
       return;
     }
 
     const origins = getAllowedOrigins();
-    
     if (origins.includes(origin)) {
       callback(null, true);
-    } else if (process.env.NODE_ENV === "development") {
-      // Allow all origins in development
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error("Not allowed by CORS"));
+      return;
     }
+
+    console.warn(`CORS blocked origin: ${origin}`);
+    callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

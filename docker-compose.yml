@@ -69,6 +69,67 @@ services:
       - 2bot-network
 
   # ===========================================
+  # docker-socket-proxy — restricted Docker API surface (Wave 3.3, optional)
+  # ===========================================
+  # Wraps /var/run/docker.sock with an L7 firewall that only exposes the
+  # Docker API verbs the API server needs. This is the recommended way to
+  # run the workspace orchestrator in production: a container escape
+  # inside docker-proxy still cannot reach `volumes:create` or `system:df`
+  # or any of the other dangerous endpoints.
+  #
+  # Enable with:  docker compose --profile hardened up -d docker-proxy
+  # Then set in the API server's env:
+  #   DOCKER_HOST=tcp://2bot-docker-proxy:2375
+  # (and unset DOCKER_SOCKET if you had it.)
+  #
+  # Allow-list mirrors what workspace-docker.service.ts and bridge-client
+  # actually call. If you add a new dockerode call site, audit and update
+  # the env vars below before flipping the flag.
+  # ===========================================
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.3
+    container_name: 2bot-docker-proxy
+    profiles: ["hardened"]
+    restart: unless-stopped
+    privileged: false
+    read_only: true
+    environment:
+      # Allowed verbs (1 = allow, missing = deny). Be conservative.
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      EXEC: 1
+      # Explicitly forbid everything else.
+      AUTH: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      EVENTS: 0
+      INFO: 0
+      NODES: 0
+      PLUGINS: 0
+      POST: 1
+      SECRETS: 0
+      SERVICES: 0
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 0
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    # Bind only to the workspace network — never publish on the host.
+    networks:
+      - 2bot-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2375/_ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ===========================================
   # PgBouncer - Connection Pooling (Optional)
   # ===========================================
   # Enable for multi-replica deployments to bound total Postgres connections.

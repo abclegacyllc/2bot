@@ -46,6 +46,38 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+// ===========================================
+// Wave 2.1 — MFA validation
+// ===========================================
+
+/**
+ * Either a 6-digit TOTP code or a normalisable recovery code
+ * ("ABCDE-FGHJK"). The MFA service does its own canonicalisation, so we
+ * only enforce a permissive shape here.
+ */
+const mfaCodeSchema = z
+  .string()
+  .min(6, "MFA code is required")
+  .max(20, "MFA code is too long")
+  .trim();
+
+/** Body for POST /auth/mfa/challenge — login second step. */
+export const mfaChallengeSchema = z.object({
+  mfaToken: z.string().min(20, "MFA token is required"),
+  code: mfaCodeSchema,
+});
+
+/** Body for POST /auth/mfa/confirm — finishing enrollment. */
+export const mfaConfirmSchema = z.object({
+  code: mfaCodeSchema,
+});
+
+/** Body for POST /auth/mfa/disable — re-auth + 2nd factor. */
+export const mfaDisableSchema = z.object({
+  password: z.string().min(1, "Password is required"),
+  code: mfaCodeSchema,
+});
+
 /**
  * Forgot password request validation
  */

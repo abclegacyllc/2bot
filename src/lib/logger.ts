@@ -1,3 +1,4 @@
+import { trace } from "@opentelemetry/api";
 import pino from "pino";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -5,30 +6,74 @@ const isDevelopment = process.env.NODE_ENV === "development";
 const logLevel = process.env.LOG_LEVEL ?? (isProduction ? "info" : "debug");
 
 /**
- * Sensitive keys to redact from logs
+ * Wave 4.1 — fish the active OTel trace id off the current async-local
+ * context so every log line is correlatable with a trace in Tempo /
+ * Honeycomb / Jaeger.
+ *
+ * `@opentelemetry/api` is a thin always-loadable shim — when no SDK is
+ * registered (`OTEL_ENABLED=false`) `getActiveSpan()` returns null and
+ * this function returns undefined, so pino's mixin adds no fields.
+ */
+function activeTraceFields(): { traceId: string; spanId: string } | undefined {
+  const span = trace.getActiveSpan();
+  if (!span) return undefined;
+  const ctx = span.spanContext();
+  if (!ctx?.traceId) return undefined;
+  return { traceId: ctx.traceId, spanId: ctx.spanId };
+}
+
+/**
+ * Paths that get redacted before any log line is emitted.
+ *
+ * Pattern: prefer narrow, well-named paths over broad keys. A bare key
+ * like `"text"` or `"id"` matches every nested occurrence in every log
+ * line and tends to nuke useful debug data; nested or wildcard paths
+ * (`*.messages[*].content`) only redact the field at that location.
  */
 const REDACT_PATHS = [
+  // Auth / credentials
   "password",
   "newPassword",
   "currentPassword",
   "token",
   "accessToken",
   "refreshToken",
+  "sessionToken",
   "apiKey",
   "secret",
   "authorization",
   "cookie",
+  // TOTP / MFA (Wave 2)
+  "totpSecret",
+  "totpRecoveryCode",
+  "totpRecoveryCodes",
+  "recoveryCode",
+  "recoveryCodes",
+  // Cryptographic material
+  "privateKey",
+  "serviceAccountKey",
+  // Header-level redactions
   "req.headers.authorization",
   "req.headers.cookie",
+  "req.headers['x-stripe-signature']",
+  "req.headers['stripe-signature']",
   "res.headers['set-cookie']",
-  // AI Privacy Redaction
-  "messages",
-  "content",
-  "input",
-  "output",
-  "prompt",
-  "completion",
-  "text", // Common field for text content
+  // Auth flow body fields (don't blanket-redact the bare key — too broad)
+  "req.body.password",
+  "req.body.newPassword",
+  "req.body.currentPassword",
+  "req.body.token",
+  "req.body.refreshToken",
+  "req.body.code", // OTP / email verification / reset codes
+  "req.body.sig",  // generic signature payloads
+  "req.body.totpCode",
+  // AI message content (chat conversations) — narrow paths only.
+  // Bare `text`/`content`/`prompt`/`completion` were redacting useful
+  // fields; restrict to known PII shapes.
+  "messages[*].content",
+  "*.messages[*].content",
+  "req.body.messages[*].content",
+  "res.body.messages[*].content",
 ];
 
 /**
@@ -84,6 +129,10 @@ export const logger = pino({
     paths: REDACT_PATHS,
     censor: "[REDACTED]",
   },
+  // Wave 4.1: stamp every log line with the active OTel trace id (when
+  // there is one). pino's `mixin` runs synchronously per log call, so
+  // there's no cost when no trace is active.
+  mixin: () => activeTraceFields() ?? {},
   ...(isDevelopment && {
     transport: {
       target: "pino-pretty",

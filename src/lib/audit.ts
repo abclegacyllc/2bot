@@ -93,9 +93,9 @@ export const auditActions = {
    * Log failed login attempt
    */
   loginFailed: (
-    email: string, 
-    ipAddress?: string, 
-    userAgent?: string, 
+    email: string,
+    ipAddress?: string,
+    userAgent?: string,
     reason?: string
   ) => audit(
     { ipAddress, userAgent },
@@ -106,6 +106,88 @@ export const auditActions = {
       status: 'failure',
     }
   ),
+
+  // ==========================================
+  // Wave 2.1 — MFA Events
+  // ==========================================
+
+  /** Login passed password but a TOTP challenge was issued. */
+  mfaChallengeIssued: (ctx: AuditContext) => audit(ctx, {
+    action: 'user.mfa.challenge.issued',
+    resource: 'user',
+    resourceId: ctx.userId,
+  }),
+
+  /** User passed the MFA challenge step. */
+  mfaChallengePassed: (ctx: AuditContext, via: 'totp' | 'recovery-code') => audit(ctx, {
+    action: 'user.mfa.challenge.passed',
+    resource: 'user',
+    resourceId: ctx.userId,
+    metadata: { via },
+  }),
+
+  /** MFA challenge or enroll-confirm rejected — wrong code. */
+  mfaCodeRejected: (ctx: AuditContext, stage: 'challenge' | 'confirm' | 'disable') => audit(ctx, {
+    action: 'user.mfa.code.rejected',
+    resource: 'user',
+    resourceId: ctx.userId,
+    metadata: { stage },
+    status: 'failure',
+  }),
+
+  /** A user started MFA enrollment (secret persisted, not yet active). */
+  mfaEnrollStarted: (ctx: AuditContext) => audit(ctx, {
+    action: 'user.mfa.enroll.started',
+    resource: 'user',
+    resourceId: ctx.userId,
+  }),
+
+  /** Enrollment confirmed; MFA is now in force for this user. */
+  mfaEnrolled: (ctx: AuditContext) => audit(ctx, {
+    action: 'user.mfa.enrolled',
+    resource: 'user',
+    resourceId: ctx.userId,
+  }),
+
+  /** A user disabled their MFA enrollment. */
+  mfaDisabled: (ctx: AuditContext) => audit(ctx, {
+    action: 'user.mfa.disabled',
+    resource: 'user',
+    resourceId: ctx.userId,
+  }),
+
+  // ==========================================
+  // Wave 2.2 — Account lifecycle (GDPR)
+  // ==========================================
+
+  /** A user requested an export of their personal data. */
+  accountExportRequested: (ctx: AuditContext) => audit(ctx, {
+    action: 'user.account.export.requested',
+    resource: 'user',
+    resourceId: ctx.userId,
+  }),
+
+  /** A user requested account deletion (begins 30-day grace window). */
+  accountDeletionRequested: (ctx: AuditContext, scheduledFor: Date) => audit(ctx, {
+    action: 'user.account.deletion.requested',
+    resource: 'user',
+    resourceId: ctx.userId,
+    metadata: { scheduledFor: scheduledFor.toISOString() },
+  }),
+
+  /** A user cancelled a pending deletion within the grace window. */
+  accountDeletionCancelled: (ctx: AuditContext) => audit(ctx, {
+    action: 'user.account.deletion.cancelled',
+    resource: 'user',
+    resourceId: ctx.userId,
+  }),
+
+  /** Cron-driven anonymization stamped a tombstone. */
+  accountAnonymized: (ctx: AuditContext) => audit(ctx, {
+    action: 'user.account.anonymized',
+    resource: 'user',
+    resourceId: ctx.userId,
+  }),
   
   /**
    * Log user registration

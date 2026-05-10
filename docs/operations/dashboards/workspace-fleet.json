@@ -1,0 +1,64 @@
+{
+  "title": "2bot — Workspace Fleet",
+  "uid": "2bot-workspace",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["2bot", "workspace"],
+  "timezone": "browser",
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Workspace containers by status",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max by (status) (bot_workspace_containers)", "legendFormat": "{{status}}" }
+      ],
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Containers in ERROR",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max(bot_workspace_containers{status=\"error\"})" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ {"color":"green","value":null}, {"color":"yellow","value":1}, {"color":"red","value":10} ] } } },
+      "gridPos": { "h": 8, "w": 4, "x": 16, "y": 0 }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Bridge rotation streak (max consecutive failures)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max(bot_bridge_token_rotation_max_consecutive_failures)" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ {"color":"green","value":null}, {"color":"yellow","value":1}, {"color":"red","value":3} ] } } },
+      "gridPos": { "h": 8, "w": 4, "x": 20, "y": 0 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Bridge rotation results (per cycle)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (result) (increase(bot_bridge_token_rotation_total[1h]))", "legendFormat": "{{result}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Bridge pending RPC requests",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max(bot_bridge_pending_requests)", "legendFormat": "pending" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    }
+  ]
+}

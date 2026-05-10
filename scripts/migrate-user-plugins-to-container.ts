@@ -19,15 +19,16 @@
  */
 
 import { PrismaPg } from "@prisma/adapter-pg";
-import { Prisma, PrismaClient } from "@prisma/client";
+import { PrismaClient, type Prisma } from "@prisma/client";
 import "dotenv/config";
 import { Pool } from "pg";
 import { bridgeClientManager } from "../src/modules/workspace/bridge-client.service";
 import { getPluginEntryPath, isDirectoryLayout } from "../src/modules/plugin/plugin-deploy.service";
 
-const connectionString =
-  process.env.DATABASE_URL ||
-  "postgresql://postgres:2BotDevPg2026Secure@localhost:5432/2bot_production?schema=public";
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error("DATABASE_URL is required (load .env.local before running this script).");
+}
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });

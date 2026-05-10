@@ -11,6 +11,7 @@ import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { adminGuard } from "../middleware/admin-guard";
 import { asyncHandler, notFoundHandler } from "../middleware/error-handler";
+import { requireOrgHeaderMembership } from "../middleware/org-auth";
 import { twoBotAIRouter } from "./2bot-ai";
 import { adminRouter } from "./admin";
 // ai-usage routes removed — dead code (replaced by /credits/* routes)
@@ -36,6 +37,7 @@ import { quotaRouter, resourcesRouter } from "./resources";
 import { supportRouter } from "./support";
 import { ticketsRouter } from "./tickets";
 import { usageRouter } from "./usage";
+import { accountRouter } from "./account";
 import { userRouter } from "./user";
 import { webhookRouter } from "./webhook";
 import { workflowRouter } from "./workflow";
@@ -56,6 +58,15 @@ import { workspaceRouter } from "./workspace";
 const isDevMode = process.env.NODE_ENV !== 'production';
 
 export const router = Router();
+
+/**
+ * Wave 1.2: validate the optional `x-organization-id` header on every
+ * request that reaches the API. Public routes (no auth) silently ignore
+ * the header; authenticated routes get the user's membership verified
+ * before any handler runs. This makes org-scoping safe-by-default
+ * instead of opt-in per route.
+ */
+router.use(requireOrgHeaderMembership);
 
 // ===========================================
 // ALWAYS AVAILABLE ROUTES
@@ -79,6 +90,11 @@ router.use("/auth", authRouter);
  * User routes - Personal resources
  */
 router.use("/user", userRouter);
+
+/**
+ * Wave 2.2 — GDPR account lifecycle (export / delete / cancel-deletion)
+ */
+router.use("/account", accountRouter);
 
 /**
  * Organization routes - Org resources by ID

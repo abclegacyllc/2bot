@@ -7,13 +7,28 @@
  * @module modules/auth/auth.service
  */
 
-import { generateToken, verifyToken } from "@/lib/jwt";
+import {
+    generateMfaChallengeToken,
+    generateToken,
+    verifyMfaChallengeToken,
+    verifyToken,
+} from "@/lib/jwt";
 import { hashPassword, isPasswordSecure, verifyPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
 import type { OrgPlan, OrgRole, PlanType, Session, User } from "@prisma/client";
+import {
+    consumeRecoveryCode,
+    generateRecoveryCodes,
+    isMfaEnabled,
+    startEnrollment as startTotpEnrollment,
+    verifyTotp,
+    type MfaEnrollmentArtifacts,
+} from "./mfa.service";
 import type {
     AuthResponse,
     LoginRequest,
+    LoginResult,
+    MfaChallengeResponse,
     RegisterRequest,
     SafeUser,
     SwitchContextRequest,
@@ -55,7 +70,14 @@ export type AuthErrorCode =
   | "TOKEN_EXPIRED"
   | "TOKEN_USED"
   | "INVALID_REQUEST"
-  | "NOT_MEMBER";
+  | "NOT_MEMBER"
+  // Wave 2.1 — MFA flow errors
+  | "MFA_CHALLENGE_INVALID"
+  | "MFA_CODE_INVALID"
+  | "MFA_NOT_ENROLLED"
+  | "MFA_ALREADY_ENROLLED"
+  // Wave 2.1 closeout — per-org MFA enforcement
+  | "MFA_ENROLLMENT_REQUIRED";
 
 /**
  * Convert User to SafeUser (remove sensitive fields)
@@ -148,7 +170,7 @@ class AuthService {
    * @returns Auth response with user and token
    * @throws AuthError if credentials invalid or user inactive
    */
-  async login(data: LoginRequest, meta?: SessionMeta): Promise<AuthResponse> {
+  async login(data: LoginRequest, meta?: SessionMeta): Promise<LoginResult> {
     // Find user by email with memberships
     const user = await prisma.user.findUnique({
       where: { email: data.email.toLowerCase() },
@@ -184,23 +206,70 @@ class AuthService {
       throw new AuthError("Invalid email or password", "INVALID_CREDENTIALS");
     }
 
-    // Update last login
+    // Wave 2.1: if the user has finished MFA enrollment, password alone is
+    // not enough — issue a short-lived challenge token instead of a real
+    // session. The client follows up with `completeMfaChallenge`.
+    if (isMfaEnabled(user)) {
+      return this.issueMfaChallenge(user.id);
+    }
+
+    // Wave 2.1 closeout — per-org enforcement. If the user is an active
+    // member of any org with `mfaRequired = true` but has not enrolled,
+    // refuse the login. The org admin can either disable the requirement
+    // temporarily or issue an enrollment-grace flow (future work).
+    const orgRequiresMfa = user.memberships.some(
+      (m) => m.status === "ACTIVE" && m.organization && m.organization.id,
+    );
+    if (orgRequiresMfa) {
+      // We loaded memberships above with `select: organization { id, name, slug }`
+      // — re-query the orgs to see which (if any) require MFA. This is one
+      // small extra query in the rare path where the user has any
+      // memberships at all.
+      const requiringOrg = await prisma.organization.findFirst({
+        where: {
+          mfaRequired: true,
+          memberships: {
+            some: { userId: user.id, status: "ACTIVE" },
+          },
+        },
+        select: { id: true, name: true },
+      });
+      if (requiringOrg) {
+        throw new AuthError(
+          `Organization "${requiringOrg.name}" requires MFA. Please enrol before signing in.`,
+          "MFA_ENROLLMENT_REQUIRED",
+        );
+      }
+    }
+
+    // No MFA — proceed with the existing session-issuance path.
+    return this.completeLogin(user, meta, /*mfa*/ false);
+  }
+
+  /**
+   * Internal: build an `AuthResponse` once we've decided the caller is
+   * authorised. Used by the no-MFA login path *and* by the post-challenge
+   * path (`completeMfaChallenge`), so both produce identical session shapes.
+   */
+  private async completeLogin(
+    user: User,
+    meta: SessionMeta | undefined,
+    mfaPassed: boolean,
+  ): Promise<AuthResponse> {
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
 
-    // Create session
     const session = await this.createSession(user.id, meta);
 
-    // Simplified token - context determined by URL
-    // Organizations are fetched via /api/user/organizations
     const payload: TokenPayload = {
       userId: user.id,
       email: user.email,
       plan: user.plan,
       sessionId: session.id,
       role: user.role,
+      mfa: mfaPassed,
     };
     const token = generateToken(payload);
 
@@ -209,6 +278,85 @@ class AuthService {
       token,
       expiresAt: session.expiresAt.toISOString(),
     };
+  }
+
+  /**
+   * Wave 2.1: issue an `MfaChallengeResponse` for a user who has finished
+   * TOTP enrollment. The challenge token is signed under a different
+   * audience (see `lib/jwt`) so it cannot be used as a session bearer.
+   */
+  private issueMfaChallenge(userId: string): MfaChallengeResponse {
+    // Pre-allocate a session id; we don't write the Session row until the
+    // client passes the second factor. Using the same id end-to-end means
+    // the audit trail can correlate "challenge issued" → "session created".
+    const challengeSessionId = `mfa-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    const mfaToken = generateMfaChallengeToken({
+      userId,
+      sessionId: challengeSessionId,
+      scope: "mfa-challenge",
+    });
+
+    // 5 min ttl matches MFA_CHALLENGE_EXPIRES_IN in lib/jwt.
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+    return {
+      mfaRequired: true,
+      mfaToken,
+      expiresAt,
+    };
+  }
+
+  /**
+   * Wave 2.1: exchange an MFA challenge token + a 6-digit TOTP code (or a
+   * recovery code) for a real session.
+   *
+   * @param mfaToken   The bearer returned by `login` when `mfaRequired: true`
+   * @param code       6-digit TOTP code OR a recovery code (with or without hyphen/casing)
+   * @param meta       Session metadata (forwarded into the new Session row)
+   * @throws AuthError MFA_CHALLENGE_INVALID / MFA_CODE_INVALID / USER_INACTIVE
+   */
+  async completeMfaChallenge(
+    mfaToken: string,
+    code: string,
+    meta?: SessionMeta,
+  ): Promise<AuthResponse> {
+    const challenge = verifyMfaChallengeToken(mfaToken);
+    if (!challenge) {
+      throw new AuthError("Invalid or expired MFA token", "MFA_CHALLENGE_INVALID");
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: challenge.userId } });
+    if (!user) {
+      throw new AuthError("Invalid or expired MFA token", "MFA_CHALLENGE_INVALID");
+    }
+    if (!user.isActive) {
+      throw new AuthError("Account is deactivated", "USER_INACTIVE");
+    }
+    if (!isMfaEnabled(user)) {
+      // The user disabled MFA between login() and now, or never had it.
+      // Treat as challenge-invalid rather than silently succeeding.
+      throw new AuthError("MFA is not enrolled for this account", "MFA_CHALLENGE_INVALID");
+    }
+
+    const totpOk = user.totpSecret ? verifyTotp(user.totpSecret, code) : false;
+
+    if (!totpOk) {
+      // Try the submitted code as a recovery code.
+      const recoveryIndex = await consumeRecoveryCode(user.totpRecoveryCodes, code);
+      if (recoveryIndex === null) {
+        throw new AuthError("Invalid MFA code", "MFA_CODE_INVALID");
+      }
+      // Splice the consumed code out atomically.
+      const remaining = [...user.totpRecoveryCodes];
+      remaining.splice(recoveryIndex, 1);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { totpRecoveryCodes: remaining },
+      });
+    }
+
+    return this.completeLogin(user, meta, /*mfa*/ true);
   }
 
   /**
@@ -611,6 +759,128 @@ class AuthService {
 
     // Optionally revoke all other sessions (user stays logged in on current device)
     // await this.revokeAllSessions(userId);
+  }
+
+  // ============================================================
+  // Wave 2.1 — TOTP MFA flows
+  // ============================================================
+
+  /**
+   * Begin TOTP enrollment for an authenticated user.
+   *
+   * Persists the encrypted secret on the user row but leaves
+   * `totpEnabledAt` NULL — MFA is not yet active until the user proves
+   * they can read codes off the secret by calling `confirmMfaEnrollment`.
+   *
+   * Re-running this for a user who is already enrolled (totpEnabledAt set)
+   * throws MFA_ALREADY_ENROLLED. Re-running mid-enrollment (secret set,
+   * not yet confirmed) is allowed and rotates the secret — a user who
+   * lost their phone partway through can simply restart.
+   */
+  async startMfaEnrollment(userId: string, email: string): Promise<MfaEnrollmentArtifacts> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { totpEnabledAt: true },
+    });
+    if (!user) throw new AuthError("User not found", "USER_NOT_FOUND");
+    if (user.totpEnabledAt) {
+      throw new AuthError("MFA is already enrolled", "MFA_ALREADY_ENROLLED");
+    }
+
+    const artifacts = await startTotpEnrollment({ email });
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        totpSecret: artifacts.encryptedSecret,
+        totpEnabledAt: null,
+        // Do not generate recovery codes yet — they're only useful once
+        // the user has confirmed the enrollment with a real code.
+        totpRecoveryCodes: [],
+      },
+    });
+
+    return artifacts;
+  }
+
+  /**
+   * Finish TOTP enrollment by submitting the first valid code.
+   *
+   * On success: sets `totpEnabledAt` and writes a fresh batch of recovery
+   * codes. The plaintext recovery codes are returned **once** so the
+   * client can show them to the user — they are NOT recoverable later.
+   */
+  async confirmMfaEnrollment(
+    userId: string,
+    code: string,
+  ): Promise<{ recoveryCodes: string[] }> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { totpSecret: true, totpEnabledAt: true },
+    });
+    if (!user) throw new AuthError("User not found", "USER_NOT_FOUND");
+    if (!user.totpSecret) {
+      throw new AuthError("No MFA enrollment in progress", "MFA_NOT_ENROLLED");
+    }
+    if (user.totpEnabledAt) {
+      throw new AuthError("MFA is already enrolled", "MFA_ALREADY_ENROLLED");
+    }
+
+    const ok = verifyTotp(user.totpSecret, code);
+    if (!ok) {
+      throw new AuthError("Invalid MFA code", "MFA_CODE_INVALID");
+    }
+
+    const { plaintext, hashes } = await generateRecoveryCodes();
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        totpEnabledAt: new Date(),
+        totpRecoveryCodes: hashes,
+      },
+    });
+
+    return { recoveryCodes: plaintext };
+  }
+
+  /**
+   * Disable MFA for an authenticated user. Requires both the current
+   * password (re-auth) and a valid TOTP code (or recovery code) to make
+   * accidental or coerced disabling harder.
+   */
+  async disableMfa(
+    userId: string,
+    password: string,
+    code: string,
+  ): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new AuthError("User not found", "USER_NOT_FOUND");
+    if (!isMfaEnabled(user)) {
+      throw new AuthError("MFA is not enrolled", "MFA_NOT_ENROLLED");
+    }
+
+    const passwordOk = await verifyPassword(password, user.passwordHash);
+    if (!passwordOk) {
+      throw new AuthError("Invalid password", "INVALID_CREDENTIALS");
+    }
+
+    let secondFactorOk = user.totpSecret ? verifyTotp(user.totpSecret, code) : false;
+    if (!secondFactorOk) {
+      const idx = await consumeRecoveryCode(user.totpRecoveryCodes, code);
+      secondFactorOk = idx !== null;
+    }
+    if (!secondFactorOk) {
+      throw new AuthError("Invalid MFA code", "MFA_CODE_INVALID");
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        totpSecret: null,
+        totpEnabledAt: null,
+        totpRecoveryCodes: [],
+      },
+    });
   }
 }
 

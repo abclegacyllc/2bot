@@ -9,15 +9,21 @@
 import { auditActions } from "@/lib/audit";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { AuthError, authService } from "@/modules/auth/auth.service";
-import type { AuthResponse, ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SafeUser, SwitchContextRequest, SwitchContextResponse } from "@/modules/auth/auth.types";
+import type { AuthResponse, ForgotPasswordRequest, LoginRequest, LoginResult, RegisterRequest, ResetPasswordRequest, SafeUser, SwitchContextRequest, SwitchContextResponse } from "@/modules/auth/auth.types";
+import { isMfaChallenge } from "@/modules/auth/auth.types";
 import { forgotPasswordSchema, loginSchema, registerSchema, resetPasswordSchema, switchContextSchema, validateSchema } from "@/modules/auth/auth.validation";
 import { BadRequestError, ConflictError, UnauthorizedError, ValidationError } from "@/shared/errors";
 import type { ApiResponse } from "@/shared/types";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
+import { authMfaRouter } from "./auth-mfa";
 
 export const authRouter = Router();
+
+// Wave 2.1 — mount MFA endpoints under /auth/mfa/*. The sub-router is
+// gated by FEATURE_MFA internally; mounting it always is safe.
+authRouter.use("/mfa", authMfaRouter);
 
 /**
  * Extract session metadata from request
@@ -96,7 +102,7 @@ authRouter.post(
  */
 authRouter.post(
   "/login",
-  asyncHandler(async (req: Request, res: Response<ApiResponse<AuthResponse>>) => {
+  asyncHandler(async (req: Request, res: Response<ApiResponse<LoginResult>>) => {
     // Validate input
     const validation = validateSchema<LoginRequest>(loginSchema, req.body);
     if (!validation.success) {
@@ -106,12 +112,21 @@ authRouter.post(
     try {
       const result = await authService.login(validation.data, getSessionMeta(req));
 
-      // Audit: Login success
-      void auditActions.loginSuccess({
-        userId: result.user.id,
-        ipAddress: req.ip,
-        userAgent: req.headers["user-agent"],
-      });
+      if (isMfaChallenge(result)) {
+        // Wave 2.1 — password OK but the user has MFA enabled. The
+        // session is NOT created yet; the client must follow up with
+        // POST /auth/mfa/challenge.
+        void auditActions.mfaChallengeIssued({
+          ipAddress: req.ip,
+          userAgent: req.headers["user-agent"],
+        });
+      } else {
+        void auditActions.loginSuccess({
+          userId: result.user.id,
+          ipAddress: req.ip,
+          userAgent: req.headers["user-agent"],
+        });
+      }
 
       res.json({
         success: true,
@@ -138,6 +153,16 @@ authRouter.post(
             "Account inactive"
           );
           throw new UnauthorizedError("Account is deactivated");
+        }
+        if (error.code === "MFA_ENROLLMENT_REQUIRED") {
+          // Wave 2.1 closeout — org enforces MFA but the user hasn't enrolled.
+          void auditActions.loginFailed(
+            validation.data.email,
+            req.ip,
+            req.headers["user-agent"],
+            "MFA enrollment required by organization"
+          );
+          throw new UnauthorizedError(error.message);
         }
       }
       throw error;

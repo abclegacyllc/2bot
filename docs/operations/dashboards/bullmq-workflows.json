@@ -1,0 +1,66 @@
+{
+  "title": "2bot — BullMQ Workflows",
+  "uid": "2bot-bullmq",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["2bot", "workflows", "bullmq"],
+  "timezone": "browser",
+  "time": { "from": "now-3h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Queue depth by state",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max by (state) (bot_queue_depth{queue=\"workflow-runs\"})", "legendFormat": "{{state}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Failed jobs (DLQ proxy)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max(bot_queue_depth{queue=\"workflow-runs\",state=\"failed\"})" }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ {"color":"green","value":null}, {"color":"yellow","value":1}, {"color":"red","value":50} ] } } },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Workflow runs (rate per minute) by status",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (status) (rate(bot_workflow_runs_total[$__rate_interval])) * 60", "legendFormat": "{{status}}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Workflow run duration p95 / p99 (ms)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, status) (rate(bot_workflow_run_duration_ms_bucket[5m])))", "legendFormat": "p95 {{status}}" },
+        { "expr": "histogram_quantile(0.99, sum by (le, status) (rate(bot_workflow_run_duration_ms_bucket[5m])))", "legendFormat": "p99 {{status}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Plugin executions + errors",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum (rate(bot_plugin_executions_total[$__rate_interval]))", "legendFormat": "starts/s" },
+        { "expr": "sum by (kind) (rate(bot_plugin_errors_total[$__rate_interval]))", "legendFormat": "errors {{kind}}/s" }
+      ],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 }
+    }
+  ]
+}

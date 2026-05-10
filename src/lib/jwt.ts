@@ -6,11 +6,11 @@
  * @module lib/jwt
  */
 
-import type { TokenPayload } from "@/modules/auth/auth.types";
+import type { MfaChallengePayload, TokenPayload } from "@/modules/auth/auth.types";
 import jwt, { type SignOptions } from "jsonwebtoken";
 
 // Re-export for convenience
-export type { TokenPayload } from "@/modules/auth/auth.types";
+export type { MfaChallengePayload, TokenPayload } from "@/modules/auth/auth.types";
 
 /**
  * JWT Configuration
@@ -39,6 +39,11 @@ function getJwtSecret(): string {
 const JWT_EXPIRES_IN = "7d";
 const JWT_ISSUER = "2bot";
 const JWT_AUDIENCE = "2bot-api";
+
+// Wave 2.1 — separate audience for short-lived MFA challenge tokens so
+// they cannot be confused with normal session tokens.
+const MFA_CHALLENGE_AUDIENCE = "2bot-mfa-challenge";
+const MFA_CHALLENGE_EXPIRES_IN = "5m";
 
 /**
  * Token options interface
@@ -96,6 +101,7 @@ export function verifyToken(token: string): TokenPayload | null {
       plan: decoded.plan,
       sessionId: decoded.sessionId,
       role: decoded.role ?? 'MEMBER',
+      mfa: (decoded as DecodedToken & { mfa?: boolean }).mfa ?? false,
     };
   } catch {
     return null;
@@ -140,4 +146,47 @@ export function isTokenExpired(token: string): boolean {
   const expiration = getTokenExpiration(token);
   if (!expiration) return true;
   return expiration.getTime() < Date.now();
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2.1 — MFA challenge tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * Issue a short-lived bearer that the client exchanges (with a TOTP code)
+ * for a real session via /auth/mfa/challenge. Keep the lifetime tight —
+ * 5 min is generous enough for a real user, short enough to be useless
+ * to a thief.
+ */
+export function generateMfaChallengeToken(payload: MfaChallengePayload): string {
+  return jwt.sign(payload, getJwtSecret(), {
+    expiresIn: MFA_CHALLENGE_EXPIRES_IN,
+    issuer: JWT_ISSUER,
+    audience: MFA_CHALLENGE_AUDIENCE,
+  });
+}
+
+/**
+ * Verify an MFA challenge bearer and return its payload, or null on any
+ * failure (expired, wrong audience, tampered, missing fields).
+ */
+export function verifyMfaChallengeToken(token: string): MfaChallengePayload | null {
+  try {
+    const decoded = jwt.verify(token, getJwtSecret(), {
+      issuer: JWT_ISSUER,
+      audience: MFA_CHALLENGE_AUDIENCE,
+    }) as MfaChallengePayload & { iat: number; exp: number; iss: string; aud: string };
+
+    if (decoded.scope !== "mfa-challenge") return null;
+    if (typeof decoded.userId !== "string" || !decoded.userId) return null;
+    if (typeof decoded.sessionId !== "string" || !decoded.sessionId) return null;
+
+    return {
+      userId: decoded.userId,
+      sessionId: decoded.sessionId,
+      scope: "mfa-challenge",
+    };
+  } catch {
+    return null;
+  }
 }

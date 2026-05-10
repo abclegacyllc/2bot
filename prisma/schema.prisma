@@ -133,13 +133,28 @@ model User {
   // Role System (for admin, developer, support)
   role UserRole @default(MEMBER)
 
-  // Security (for future 2FA, account lockout)
+  // Security
   failedLoginCount   Int       @default(0) @map("failed_login_count")
   lockedUntil        DateTime? @map("locked_until")
   lastPasswordChange DateTime? @map("last_password_change")
 
+  // TOTP MFA (Wave 2.1) — secret is encrypted at rest via lib/encryption.ts;
+  // recovery codes are bcrypt hashes (one-shot consumption). totpEnabledAt
+  // distinguishes "enrollment in progress" (NULL) from "active" (timestamp).
+  totpSecret        String?   @map("totp_secret")
+  totpEnabledAt     DateTime? @map("totp_enabled_at")
+  totpRecoveryCodes String[]  @default([]) @map("totp_recovery_codes")
+
   // Soft Delete Support
   deletedAt DateTime? @map("deleted_at")
+
+  // Wave 2.2 — GDPR account lifecycle. `deletionScheduledFor` is set at
+  // request time (deletedAt + 30d). `anonymizedAt` is set by the cron
+  // that actually scrubs PII. Once `anonymizedAt` is non-null the row
+  // is a tombstone retained only for FK integrity and billing
+  // compliance.
+  deletionScheduledFor DateTime? @map("deletion_scheduled_for")
+  anonymizedAt         DateTime? @map("anonymized_at")
 
   // Subscription (personal workspace)
   plan             PlanType      @default(FREE)
@@ -326,6 +341,10 @@ model Organization {
   databaseUrl    String?      @map("database_url") // Encrypted if dedicated
   databaseRegion String?      @map("database_region") // 'us-east', 'eu-west'
 
+  // Wave 2.1 — when true, ACTIVE members of this org cannot complete login
+  // without a confirmed TOTP enrollment. Enforced in the auth service.
+  mfaRequired Boolean @default(false) @map("mfa_required")
+
   // Status
   isActive Boolean @default(true) @map("is_active")
 
@@ -359,6 +378,7 @@ model Organization {
   @@index([slug])
   @@index([databaseType])
   @@index([isActive])
+  @@index([mfaRequired])
   @@map("organizations")
 }
 

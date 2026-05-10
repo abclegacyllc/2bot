@@ -120,17 +120,29 @@ export async function requireOrgAdmin(
 /**
  * Middleware that validates the optional `x-organization-id` header.
  *
- * Routes that use header-based org scoping (`/api/projects`, `/api/workflows`,
- * `/api/project-resources`, `/api/project-versions`, `/api/cursor/buildspec`) accept
- * an `x-organization-id` header to scope queries and writes to an organization.
- * Without this check a caller could pass any orgId, causing service-layer
- * writes (project creation, workflow apply, credit usage) to be tagged to an
- * organization the caller is not a member of.
+ * Wave 1.2: this middleware is now mounted **globally** at the top of
+ * the main API router, so every authenticated request that carries the
+ * header has its membership verified before any route handler runs.
+ * Without that, routes that read `req.headers["x-organization-id"]`
+ * directly were trusting a user-controlled value (IDOR risk).
  *
- * If the header is absent the request proceeds in personal scope.
- * If the header is present, active membership is required.
+ * Behaviour:
+ *   - No `x-organization-id` header → noop, request continues in
+ *     personal scope.
+ *   - Header present + unauthenticated request → silently noop. The
+ *     header has no meaning without an authenticated user; we don't
+ *     reject the request because public routes (e.g. `/auth/login`)
+ *     may legitimately receive forged headers from clients we don't
+ *     control.
+ *   - Header present + authenticated request → membership is required.
+ *     A 403 is raised if the user is not an active member of the
+ *     supplied org. The membership is attached to `req.orgMembership`.
  *
- * @throws {403} If the user is not an active member of the supplied org
+ * Idempotent: running this twice on the same request (e.g. once
+ * globally and once per-router) is safe — the second call hits the
+ * same membership row.
+ *
+ * @throws {403} authenticated user is not an active member of the org
  */
 export async function requireOrgHeaderMembership(
   req: Request,
@@ -145,8 +157,13 @@ export async function requireOrgHeaderMembership(
       return;
     }
 
+    // Public routes may receive a forged header. The membership check
+    // is only meaningful when we know who the caller is — silently
+    // ignore the header for unauthenticated requests so we don't
+    // block legitimate public traffic.
     if (!req.user) {
-      throw new ForbiddenError("Authentication required");
+      next();
+      return;
     }
 
     const membership = await organizationService.requireMembership(req.user.id, orgId);
@@ -155,6 +172,44 @@ export async function requireOrgHeaderMembership(
   } catch (error) {
     next(error);
   }
+}
+
+/**
+ * Wave 1.2: safe accessor for the `x-organization-id` header.
+ *
+ * Routes that scope work by the header (project, workflow, project-resource,
+ * project-version, cursor-buildspec) used to read it directly. That worked
+ * only as long as the route also mounted `requireOrgHeaderMembership` —
+ * forgetting the mount silently turned the route into an IDOR.
+ *
+ * This helper makes the membership check a hard precondition: it returns
+ * `undefined` when the header is absent (personal scope), the verified
+ * orgId when the membership middleware has run, and throws otherwise. The
+ * exception is loud and obvious so a missing middleware mount fails the
+ * request instead of becoming a silent escalation.
+ *
+ * Usage in a route handler:
+ *
+ *   const orgId = getValidatedOrgId(req);
+ *   const owner = orgId
+ *     ? { kind: "ORG", id: orgId }
+ *     : { kind: "USER", id: req.user!.id };
+ */
+export function getValidatedOrgId(req: Request): string | undefined {
+  const raw = req.headers["x-organization-id"];
+  const orgId = typeof raw === "string" ? raw.trim() : "";
+  if (!orgId) return undefined;
+
+  if (!req.orgMembership) {
+    // Either the route forgot to mount requireOrgHeaderMembership, or the
+    // middleware ran before req.user was populated (i.e. mounted in the
+    // wrong order). Refuse the request rather than trusting the header.
+    throw new ForbiddenError(
+      "Organization membership not verified for this request",
+    );
+  }
+
+  return orgId;
 }
 
 /**

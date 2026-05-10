@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Pre-commit hook: blocks commits that introduce known secret patterns.
+#
+# Strategy: if `gitleaks` is on PATH, use it (recommended). Otherwise fall
+# back to a fast grep against a small list of obvious-secret patterns so
+# the hook still has teeth on machines where gitleaks isn't installed.
+#
+# Install with: make install-hooks
+# Bypass once with: git commit --no-verify   (do NOT bypass routinely)
+
+set -u
+
+# Only scan files that are actually being committed.
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
+
+# 1) Prefer gitleaks if it is installed locally.
+if command -v gitleaks >/dev/null 2>&1; then
+  # `gitleaks protect --staged` scans only what's about to be committed.
+  if ! gitleaks protect --staged --redact --no-banner --verbose; then
+    echo ""
+    echo "✗ pre-commit: gitleaks found a secret in the staged change."
+    echo "  Remove the secret, or — if it's a false positive — add an entry to .gitleaksignore."
+    exit 1
+  fi
+  exit 0
+fi
+
+# 2) Fallback: grep for high-signal secret patterns. Cheap but better than nothing.
+#    Skip binary files, lockfiles, and the .env.example template.
+fail=0
+match=$(echo "$staged_files" | grep -vE '^(.*\.lock|.*\.lock\.json|.*\.png|.*\.jpg|.*\.jpeg|.*\.pdf|\.env\.example)$' || true)
+if [ -n "$match" ]; then
+  patterns='(sk_live_[A-Za-z0-9]{20,}|sk_test_[A-Za-z0-9]{20,}|sk-ant-api[0-9]{2}-[A-Za-z0-9_-]{40,}|sk-or-v1-[A-Za-z0-9]{40,}|tgp_v1_[A-Za-z0-9_-]{40,}|fw_[A-Za-z0-9_]{20,}|re_[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36,}|-----BEGIN (RSA |EC |OPENSSH |PRIVATE )KEY-----|[0-9]{9,11}:AA[A-Za-z0-9_-]{30,})'
+  if echo "$match" | xargs -I{} grep -lEH "$patterns" {} 2>/dev/null | head -5 | grep -q .; then
+    echo "✗ pre-commit: a secret-shaped string was found in your staged changes."
+    echo "  Files with matches:"
+    echo "$match" | xargs -I{} grep -lE "$patterns" {} 2>/dev/null
+    echo ""
+    echo "  If this is a false positive, install gitleaks for finer rules:"
+    echo "    https://github.com/gitleaks/gitleaks#installing"
+    fail=1
+  fi
+fi
+
+exit $fail

@@ -240,6 +240,11 @@ describe('authService.login', () => {
       password: 'SecurePass123',
     });
 
+    // mockUser does not have totpEnabledAt set, so login returns the
+    // AuthResponse branch of the LoginResult union.
+    if ('mfaRequired' in result) {
+      throw new Error('expected AuthResponse, got MfaChallengeResponse');
+    }
     expect(result.user.email).toBe('test@example.com');
     expect(result.token).toBeDefined();
     expect(result.expiresAt).toBeDefined();

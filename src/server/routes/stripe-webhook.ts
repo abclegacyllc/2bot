@@ -81,6 +81,22 @@ router.post(
       return res.status(503).json({ error: 'Webhook secret not configured' });
     }
 
+    // Wave 1.7: middleware-order guard.
+    // Stripe signature verification needs the raw request body. If
+    // express.json() ran before this route, req.body is already a parsed
+    // object and constructEvent() would throw a confusing low-level error.
+    // Refuse to proceed with a clear message so misconfiguration is
+    // obvious in logs and dashboards.
+    if (!Buffer.isBuffer(req.body)) {
+      webhookLogger.error(
+        { bodyType: typeof req.body },
+        'Stripe webhook received non-Buffer body — express.raw() is not mounted before this route',
+      );
+      return res
+        .status(500)
+        .json({ error: 'Webhook misconfigured: raw body required' });
+    }
+
     let event: Stripe.Event;
 
     try {
@@ -113,9 +129,10 @@ router.post(
 // ===========================================
 
 /**
- * Main event router
+ * Main event router (exported for unit tests; the public surface is the
+ * POST handler above that does signature verification first).
  */
-async function handleStripeEvent(event: Stripe.Event): Promise<void> {
+export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;

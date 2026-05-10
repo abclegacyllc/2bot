@@ -18,6 +18,18 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 dotenv.config({ path: path.resolve(process.cwd(), `.env.${nodeEnv}`) });
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
+// Wave 4.1 — must run BEFORE any imports that touch the libraries OTel
+// auto-instruments (http, express, ioredis, pg, prisma, …). Gated by
+// OTEL_ENABLED so dev runs are unaffected.
+import { startOtel } from "./otel";
+startOtel();
+
+// Wave 4.6 — Sentry on the Express side. Like OTel it must be initialised
+// before the first request handler is registered so the integration can
+// patch http internals.
+import { startSentry } from "./sentry";
+startSentry();
+
 import { loggers } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { pluginIpcService } from "@/modules/plugin/plugin-ipc.service";
@@ -30,6 +42,7 @@ import { workspaceMetricsService } from "@/modules/workspace/workspace-metrics.s
 import { egressProxyService } from "@/modules/workspace/workspace-squid.service";
 import { createApp, startServer } from "./app";
 import { initializeGatewayProviders } from "./init-providers";
+import { startMetricsPoller, stopMetricsPoller } from "./metrics-poller";
 import { initWorkspaceWebSocket } from "./ws/workspace-terminal";
 
 const serverLogger = loggers.server;
@@ -58,6 +71,9 @@ containerLifecycleService.start();
 
 // Start workspace metrics collection (periodic resource usage polling)
 workspaceMetricsService.start();
+
+// Wave 4.2 — periodic gauge updates (workspace count + BullMQ queue depth)
+startMetricsPoller();
 
 // Start egress proxy service (log parsing + proxy container management)
 egressProxyService.start().catch(err => {
@@ -113,6 +129,7 @@ const gracefulShutdown = async (signal: string) => {
       serverLogger.info("Stopping workspace services...");
       containerLifecycleService.stop();
       workspaceMetricsService.stop();
+      stopMetricsPoller();
       egressProxyService.stop();
       await bridgeLeaseService.stop();
       serverLogger.info('Bridge leases released.');

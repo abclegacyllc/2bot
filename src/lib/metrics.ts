@@ -191,6 +191,47 @@ export const bridgePendingRequestsGauge = new Gauge({
   registers: [metricsRegistry],
 });
 
+// ─── BullMQ queue depth (Wave 4.2) ─────────────────────────────────────────
+//
+// Updated by the periodic poller in `src/server/metrics-poller.ts`.
+// One time-series per queue + state, so a single dashboard panel can plot
+// "workflow waiting / active / failed" over time.
+//
+// state ∈ "waiting" | "active" | "delayed" | "failed" | "completed"
+
+export const queueDepthGauge = new Gauge({
+  name: "bot_queue_depth",
+  help: "BullMQ jobs by queue and state.",
+  labelNames: ["queue", "state"] as const,
+  registers: [metricsRegistry],
+});
+
+// ─── Bridge token rotation (Wave 3.6) ─────────────────────────────────────
+
+/**
+ * Bridge auth-token rotation attempts, by terminal result.
+ * Labels:
+ *   - result: "rotated" | "skipped" | "failed"
+ */
+export const bridgeTokenRotationTotal = new Counter({
+  name: "bot_bridge_token_rotation_total",
+  help: "Bridge auth token rotation attempts by result.",
+  labelNames: ["result"] as const,
+  registers: [metricsRegistry],
+});
+
+/**
+ * Worst per-container consecutive-failure streak observed in the most
+ * recent rotation cycle. Alert when this is >= 3 — that's "the same
+ * container has missed three rotations in a row," which usually means
+ * the bridge is unreachable or the workspace is wedged.
+ */
+export const bridgeTokenRotationMaxFailuresGauge = new Gauge({
+  name: "bot_bridge_token_rotation_max_consecutive_failures",
+  help: "Max consecutive bridge-token rotation failures across containers in the last cycle.",
+  registers: [metricsRegistry],
+});
+
 // ─── Rate limiter / circuit breaker ────────────────────────────────────────
 
 export const rateLimitRejectionsTotal = new Counter({

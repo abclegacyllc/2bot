@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: mailto:security@2bot.org
+    about: Don't open a public GitHub issue for a security vulnerability. Email us instead.
+  - name: Operational runbooks
+    url: https://github.com/abcdev/2bot/tree/main/docs/operations
+    about: Look here first for incident response, db restore, secret rotation, and similar.

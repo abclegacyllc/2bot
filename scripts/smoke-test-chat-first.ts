@@ -23,7 +23,10 @@
 import jwt from "jsonwebtoken";
 
 const API = process.env.SMOKE_API ?? "http://localhost:3002";
-const JWT_SECRET = process.env.JWT_SECRET ?? "2bot-super-secret-key-for-jwt-tokens-min-32-chars";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is required (load .env.local before running this script).");
+}
 const USER_ID = process.env.SMOKE_USER_ID ?? "cmlgj11hd0001jlky7n1rx2ci"; // admin@2bot.org
 const SESSION_ID = process.env.SMOKE_SESSION_ID ?? "cmmlrn8nb00005kkyavqmd7br";
 

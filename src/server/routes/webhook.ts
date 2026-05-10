@@ -601,8 +601,10 @@ const discordWebhookRateLimiter = createRateLimiter({
 /**
  * Verify Discord interaction signature using Ed25519.
  * Discord sends X-Signature-Ed25519 and X-Signature-Timestamp headers.
+ *
+ * Exported for unit tests; the route handler below is the public surface.
  */
-async function verifyDiscordSignature(
+export async function verifyDiscordSignature(
   publicKey: string,
   signature: string,
   timestamp: string,
@@ -894,8 +896,10 @@ const slackWebhookRateLimiter = createRateLimiter({
  * Verify Slack request signature using HMAC-SHA256.
  * Slack sends X-Slack-Signature and X-Slack-Request-Timestamp headers.
  * See: https://api.slack.com/authentication/verifying-requests-from-slack
+ *
+ * Exported for unit tests; the route handler below is the public surface.
  */
-async function verifySlackSignature(
+export async function verifySlackSignature(
   signingSecret: string,
   signature: string,
   timestamp: string,
@@ -1204,8 +1208,10 @@ const whatsAppWebhookRateLimiter = createRateLimiter({
 /**
  * Verify WhatsApp webhook signature using HMAC-SHA256.
  * Meta sends X-Hub-Signature-256 header with format: sha256=<hex>
+ *
+ * Exported for unit tests; the route handler below is the public surface.
  */
-async function verifyWhatsAppSignature(
+export async function verifyWhatsAppSignature(
   appSecret: string,
   signature: string,
   body: string,

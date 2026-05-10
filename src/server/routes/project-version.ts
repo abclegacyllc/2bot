@@ -28,7 +28,7 @@ import { BadRequestError, ForbiddenError } from "@/shared/errors";
 
 import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
-import { requireOrgHeaderMembership } from "../middleware/org-auth";
+import { getValidatedOrgId, requireOrgHeaderMembership } from "../middleware/org-auth";
 
 export const projectVersionRouter = Router({ mergeParams: true });
 
@@ -50,8 +50,7 @@ projectVersionRouter.use(requireOrgHeaderMembership);
 
 function getOwner(req: Request) {
   if (!req.user) throw new BadRequestError("User not authenticated");
-  const orgHeader = req.headers["x-organization-id"];
-  const organizationId = typeof orgHeader === "string" && orgHeader ? orgHeader : null;
+  const organizationId = getValidatedOrgId(req) ?? null;
   return { userId: req.user.id, organizationId };
 }
 

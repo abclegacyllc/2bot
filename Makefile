@@ -19,7 +19,7 @@
         workspace-image proxy-image \
         deploy backup backup-source ssl-setup \
         install update health status shell-db shell-redis help \
-        check-ports check-docker check-deps
+        check-ports check-docker check-deps install-hooks scan-secrets
 
 # Colors for output
 CYAN := \033[36m
@@ -661,6 +661,19 @@ typecheck: check-deps       ## Run TypeScript type checking
 
 check: lint format-check typecheck test  ## Full code quality check (lint + format + types + test)
 	@echo "$(GREEN)✅ All checks passed$(RESET)"
+
+# ===========================================
+# SECURITY / GIT HOOKS
+# ===========================================
+
+install-hooks:              ## Install git pre-commit hooks (.githooks/) — point core.hooksPath at them
+	@git config core.hooksPath .githooks
+	@echo "$(GREEN)✅ Git hooks installed.$(RESET) core.hooksPath = .githooks"
+	@echo "   Optional: install gitleaks for stricter scanning — https://github.com/gitleaks/gitleaks"
+
+scan-secrets:               ## Run gitleaks against the working tree (requires gitleaks on PATH)
+	@command -v gitleaks >/dev/null 2>&1 || { echo "$(RED)gitleaks not installed.$(RESET) See https://github.com/gitleaks/gitleaks"; exit 1; }
+	gitleaks detect --redact --no-banner --verbose
 
 # ===========================================
 # BUILD

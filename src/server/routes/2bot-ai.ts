@@ -55,10 +55,38 @@ import { requireAuth } from "../middleware/auth";
 import { asyncHandler } from "../middleware/error-handler";
 export const twoBotAIRouter = Router();
 
-// Multer for file uploads (STT)
+// Audio MIME types accepted by the STT endpoint. Anything else is rejected
+// at upload time so we don't waste bandwidth on bogus uploads.
+const ALLOWED_STT_MIMETYPES = new Set([
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/mp4",
+  "audio/m4a",
+  "audio/x-m4a",
+  "audio/opus",
+  "audio/aac",
+  "audio/flac",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/webm",
+  "audio/ogg",
+]);
+
+// Multer for file uploads (STT). Wave 1.5 hardening:
+// - 25 MB cap (was already there)
+// - exactly one file per request
+// - mimetype allow-list (rejects non-audio uploads up front)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+  limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 16 },
+  fileFilter: (_req, file, cb) => {
+    if (!ALLOWED_STT_MIMETYPES.has(file.mimetype)) {
+      cb(new Error(`Unsupported audio mimetype: ${file.mimetype}`));
+      return;
+    }
+    cb(null, true);
+  },
 });
 
 // Helper to get MIME type for audio formats
