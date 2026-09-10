@@ -1,6 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Building2, Mail, MapPin } from 'lucide-react';
-import { COMPANY, FOUNDER } from './content';
+import { COMPANY, TEAM, TEAM_NOTE } from './content';
 
 export function TeamSection() {
   return (
@@ -18,25 +18,34 @@ export function TeamSection() {
           </p>
         </div>
 
+        {/* People, founder first.  The company/address block used to sit in
+            this grid as the second cell; it now lives below the closing line,
+            so the two cells here are the two people and the row stays even. */}
         <div className="mx-auto mt-16 grid max-w-4xl grid-cols-1 gap-8 lg:grid-cols-2">
-          {/* Founder card */}
-          <Card className="border-border bg-card/50">
-            <CardContent className="flex flex-col items-center p-8 text-center sm:flex-row sm:items-start sm:text-left">
-              {/* Avatar placeholder */}
-              <div className="mb-4 flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-600 to-blue-600 sm:mb-0 sm:mr-6">
-                <span className="text-2xl font-bold text-white">{FOUNDER.initials}</span>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-foreground">{FOUNDER.name}</h3>
-                <p className="text-sm text-purple-400">{FOUNDER.role}</p>
-                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                  {FOUNDER.bio}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          {TEAM.map((person) => (
+            <Card key={person.name} className="border-border bg-card/50">
+              <CardContent className="flex h-full flex-col items-center p-8 text-center sm:flex-row sm:items-start sm:text-left">
+                <div className="mb-4 flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-600 to-blue-600 sm:mb-0 sm:mr-6">
+                  <span className="text-2xl font-bold text-white">{person.initials}</span>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-foreground">{person.name}</h3>
+                  <p className="text-sm text-purple-400">{person.role}</p>
+                  <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                    {person.bio}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
 
-          {/* Company card */}
+        {/* Sits closer to the people it describes than to the address block. */}
+        <p className="mx-auto mt-8 max-w-4xl text-center text-sm text-muted-foreground">
+          {TEAM_NOTE}
+        </p>
+
+        <div className="mx-auto mt-12 max-w-4xl">
           <Card className="border-border bg-card/50">
             <CardContent className="flex flex-col gap-5 p-8">
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-purple-400/10">

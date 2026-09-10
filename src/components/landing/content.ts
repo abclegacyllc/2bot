@@ -93,13 +93,32 @@ export const NAV_LINKS: NavLink[] = [
 // Founder & company
 // ──────────────────────────────────────────────
 
-export const FOUNDER = {
+const ALONUR = {
   name: 'Alonur Komilov',
   role: 'Founder & CEO',
   initials: 'AK',
   bio: 'Full-stack engineer passionate about developer tools and automation. Built 2Bot to make backend workflow building accessible to everyone — from solo creators to enterprise teams.',
-  icon: User,
 } as const;
+
+const BAXTINUR = {
+  name: 'Baxtinur Komilov',
+  role: 'Finance & Marketing',
+  initials: 'BK',
+  bio: 'Baxtinur runs finance and marketing for ABC Legacy LLC.',
+} as const;
+
+/** Founder first — this array order is the render order. */
+export const TEAM = [ALONUR, BAXTINUR] as const;
+
+/** Where the company is registered vs where the people actually are. */
+export const TEAM_NOTE =
+  'ABC Legacy LLC is registered in Wyoming, USA. The team works from Tashkent, Uzbekistan.';
+
+/**
+ * @deprecated single-founder shape — use TEAM. Kept as the same object so a
+ * consumer added concurrently on another branch keeps compiling.
+ */
+export const FOUNDER = { ...ALONUR, icon: User } as const;
 
 export const COMPANY = {
   name: 'ABC Legacy LLC',
