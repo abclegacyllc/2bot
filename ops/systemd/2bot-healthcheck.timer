@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the 2bot public health gate every 60s
+
+[Timer]
+# 60s after boot, then every 60s. Persistent=false on purpose: a missed
+# check while the box was off is not worth a thundering restart at boot.
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5s
+Unit=2bot-healthcheck.service
+
+[Install]
+WantedBy=timers.target

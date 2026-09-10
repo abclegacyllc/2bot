@@ -11,7 +11,7 @@ export function TeamSection() {
             Who we are
           </h2>
           <p className="mt-2 text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Built by engineers, for builders
+            Built by an engineer, for builders
           </p>
           <p className="mt-6 text-lg leading-8 text-muted-foreground">
             {COMPANY.description}

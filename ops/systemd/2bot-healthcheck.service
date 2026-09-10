@@ -1,0 +1,12 @@
+[Unit]
+Description=2bot public health gate (probes www.2bot.org through Cloudflare)
+
+[Service]
+Type=oneshot
+ExecStart=/home/abcdev/projects/2bot/scripts/healthcheck.sh
+# The probe itself must never be what takes the box down.
+MemoryMax=128M
+CPUQuota=25%
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=2bot-healthcheck

@@ -1,0 +1,43 @@
+[Unit]
+# 2bot ran as bare `nohup` background processes with no supervisor: nothing
+# restarted them on crash and NOTHING started them at boot.  The 2026-09-08
+# reboot took them down and they stayed down until a human ran `make start`
+# ~47h later, while 4truck (systemd, enabled) and 2bot's own Docker deps
+# (restart=unless-stopped) both came back by themselves.  This unit closes
+# that gap.
+Description=2bot Express API (tsx, port 3002)
+After=network-online.target
+Wants=network-online.target
+# Never give up.  These belong in [Unit], not [Service]: with the default
+# (5 starts / 10s) a fast crash-loop exhausts the budget and systemd leaves
+# the service dead — the exact failure mode this whole change exists to fix.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/abcdev/projects/2bot
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/bash -c 'set -a; . ./.env 2>/dev/null; . ./.env.production 2>/dev/null; . ./.env.local 2>/dev/null; set +a; exec env SERVER_PORT=3002 npx tsx src/server/start.ts'
+
+Restart=always
+RestartSec=5
+
+# Caps sized so 2bot cannot starve 4truck on this shared box (12 cores,
+# 47Gi RAM; 4truck currently uses ~1.8Gi and is uncapped).  Each 2bot
+# service is using ~65MB today, so these are ~15-20x headroom while the
+# three together can never exceed 3.5Gi / 6 of 12 cores.
+MemoryMax=1500M
+MemoryHigh=1500M
+CPUQuota=200%
+
+# stdout/stderr go to the journal, which persists and rotates.  The old
+# setup wrote to /tmp with `>` (truncate), so every restart destroyed the
+# previous crash evidence and /tmp is volatile across reboots.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=2bot-api
+
+[Install]
+WantedBy=default.target
