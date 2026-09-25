@@ -42,9 +42,9 @@ const features = [
     bgColor: "bg-amber-400/10",
   },
   {
-    name: "Enterprise Security",
+    name: "Security",
     description:
-      "End-to-end encryption, role-based access control, and enterprise-grade security infrastructure for your business.",
+      "Encryption in transit (TLS 1.2+) and at rest (AES-256), role-based access control, and secure password hashing.",
     icon: Shield,
     color: "text-red-400",
     bgColor: "bg-red-400/10",
