@@ -98,17 +98,19 @@ const ALONUR = {
   role: 'Founder & CEO',
   initials: 'AK',
   bio: 'Full-stack engineer passionate about developer tools and automation. Built 2Bot to make backend workflow building accessible to everyone — from solo creators to enterprise teams.',
+  linkedin: 'https://www.linkedin.com/in/alonurkomilov',
 } as const;
 
-const BAXTINUR = {
-  name: 'Baxtinur Komilov',
-  role: 'Finance & Marketing',
+const BAKHTINUR = {
+  name: 'Bakhtinur Komilov',
+  role: 'Co-Founder, Finance & Operations',
   initials: 'BK',
-  bio: 'Baxtinur runs finance and marketing for ABC Legacy LLC.',
+  bio: 'Handles finance and day-to-day operations at ABC LEGACY LLC, and supports marketing for 4truck and 2bot.',
+  linkedin: 'https://www.linkedin.com/in/bakhtinurkomilov',
 } as const;
 
 /** Founder first — this array order is the render order. */
-export const TEAM = [ALONUR, BAXTINUR] as const;
+export const TEAM = [ALONUR, BAKHTINUR] as const;
 
 /** Where the company is registered vs where the people actually are. */
 export const TEAM_NOTE =

@@ -34,6 +34,14 @@ export function TeamSection() {
                   <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                     {person.bio}
                   </p>
+                  <a
+                    href={person.linkedin}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-block text-sm text-purple-400 transition-colors hover:text-foreground"
+                  >
+                    LinkedIn
+                  </a>
                 </div>
               </CardContent>
             </Card>
