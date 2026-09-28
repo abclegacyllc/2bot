@@ -112,9 +112,8 @@ const BAKHTINUR = {
 /** Founder first — this array order is the render order. */
 export const TEAM = [ALONUR, BAKHTINUR] as const;
 
-/** Where the company is registered vs where the people actually are. */
-export const TEAM_NOTE =
-  'ABC Legacy LLC is registered in Wyoming, USA. The team works from Tashkent, Uzbekistan.';
+/** Where the company is registered. */
+export const TEAM_NOTE = 'ABC Legacy LLC is registered in Wyoming, USA.';
 
 /**
  * @deprecated single-founder shape — use TEAM. Kept as the same object so a
