@@ -1,0 +1,27 @@
+# gitleaks configuration — CI (.github/workflows/ci.yml, "Secret Scan") and
+# `make scan-secrets` pick this up from the repo root.
+#
+# Default rules stay on. The allowlist below names three test fixtures by
+# exact value so the scanner does not fail the build on them. Add new
+# fixtures here one by one, with the file they live in; never allowlist a
+# whole directory, since a real credential pasted into a test would then go
+# unnoticed.
+
+title = "2bot gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures that look like credentials but are not"
+regexes = [
+  # src/server/routes/__tests__/webhook-signatures.test.ts — the example
+  # signing secret from Slack's own "Verifying requests" documentation.
+  '''8f742231b10e8888abcd99cdcdf2a9ee''',
+  # src/modules/auth/__tests__/mfa.service.test.ts — JWT_SECRET set for the
+  # encryption-key derivation fallback under test.
+  '''test-jwt-secret-for-mfa-tests-min-32-chars''',
+  # src/modules/gateway/__tests__/gateway.validation.test.ts — a malformed
+  # Telegram bot token the validator is expected to reject.
+  '''1234567890ABCdefGHIjklMN''',
+]
