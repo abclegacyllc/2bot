@@ -55,7 +55,9 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts",
     ".next-admin/types/**/*.ts",
-    ".next-admin/dev/types/**/*.ts"
+    ".next-admin/dev/types/**/*.ts",
+    ".next-b/types/**/*.ts",
+    ".next-b/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

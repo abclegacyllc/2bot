@@ -16,6 +16,9 @@
 # next.js
 /.next/
 /.next-admin/
+# second production build slot + live-slot pointer (see scripts/next-start.sh)
+/.next-b/
+/.next-active
 /out/
 
 # production

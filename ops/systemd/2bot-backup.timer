@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the 2bot database backup nightly
+
+[Timer]
+# 02:45 keeps clear of the Semi_Telematics cron backup at 03:30.
+# Persistent=true on purpose (unlike the health timer): a backup missed while
+# the box was off should run as soon as it is back.
+OnCalendar=*-*-* 02:45:00
+RandomizedDelaySec=5min
+Persistent=true
+Unit=2bot-backup.service
+
+[Install]
+WantedBy=timers.target

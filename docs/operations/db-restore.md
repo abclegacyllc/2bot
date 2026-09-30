@@ -23,7 +23,7 @@ production. See §6.
 
 | Source | Frequency | Retention | Off-site? |
 |---|---|---|---|
-| `pg_dump` of `2bot_production` | manual / on-demand | local only | **no** |
+| `pg_dump` of `2bot_production` (`scripts/deploy/backup.sh`) | nightly 02:45 (`2bot-backup.timer`) + `make backup` | 14 days, local disk | **no** |
 | Docker volume `postgres_data` | implicit (no snapshot) | n/a | no |
 | `prisma/migrations/` (DDL history) | every commit | git | yes (GitHub) |
 
@@ -43,7 +43,7 @@ Before you destroy anything, verify the backup is good:
 ls -lh /home/abcdev/projects/2bot/backups/
 
 # 2. Pick the most recent (or the one immediately before the incident).
-DUMP=/home/abcdev/projects/2bot/backups/2bot-YYYYMMDD-HHMM.sql.gz
+DUMP=/home/abcdev/projects/2bot/backups/2bot_backup_YYYYMMDD_HHMMSS.sql.gz
 
 # 3. Read the header to confirm it's the right database and not corrupt.
 zcat "$DUMP" | head -50

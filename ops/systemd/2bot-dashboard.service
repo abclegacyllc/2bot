@@ -19,7 +19,9 @@ Type=simple
 WorkingDirectory=/home/abcdev/projects/2bot
 Environment=NODE_ENV=production
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/bin/bash -c 'set -a; . ./.env 2>/dev/null; . ./.env.production 2>/dev/null; . ./.env.local 2>/dev/null; set +a; exec npx next start -p 3001'
+# Serves whichever build slot .next-active names (.next or .next-b), so
+# `make start` can build the idle slot while this one keeps serving.
+ExecStart=/home/abcdev/projects/2bot/scripts/next-start.sh 3001
 
 Restart=always
 RestartSec=5

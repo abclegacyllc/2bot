@@ -19,7 +19,8 @@
         workspace-image proxy-image \
         deploy backup backup-source ssl-setup \
         install update health status shell-db shell-redis help \
-        check-ports check-docker check-deps install-hooks scan-secrets
+        check-ports check-docker check-deps install-hooks scan-secrets \
+        install-services restart-quick rollback wait-prod logs-prod
 
 # Colors for output
 CYAN := \033[36m
@@ -40,24 +41,24 @@ DC := docker-compose -p 2bot
 
 check-ports:                ## Check if required ports are available
 	@echo "$(CYAN)Checking port availability...$(RESET)"
+	@# ss, not fuser: without root, fuser cannot see the docker-proxy processes
+	@# that own 5432/6379, so it reported running databases as "not running".
 	@for port_desc in "3000:Landing prod" "3001:Dashboard prod" "3002:Express API prod" "3005:Dashboard dev" "3006:Express API dev" "3007:Admin dev"; do \
 		port=$${port_desc%%:*}; desc=$${port_desc#*:}; \
-		if fuser $${port}/tcp >/dev/null 2>&1 || sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
+		if ss -tln | grep -q ":$${port} "; then \
 			echo "$(YELLOW)⚠️  Port $$port is in use ($$desc)$(RESET)"; \
 		else \
 			echo "$(GREEN)✅ Port $$port is available ($$desc)$(RESET)"; \
 		fi; \
 	done
-	@if fuser 5432/tcp >/dev/null 2>&1; then \
-		echo "$(GREEN)✅ Port 5432 is in use (Postgres running)$(RESET)"; \
-	else \
-		echo "$(YELLOW)⚠️  Port 5432 is free (Postgres not running)$(RESET)"; \
-	fi
-	@if fuser 6379/tcp >/dev/null 2>&1; then \
-		echo "$(GREEN)✅ Port 6379 is in use (Redis running)$(RESET)"; \
-	else \
-		echo "$(YELLOW)⚠️  Port 6379 is free (Redis not running)$(RESET)"; \
-	fi
+	@for port_desc in "5432:Postgres" "6379:Redis"; do \
+		port=$${port_desc%%:*}; desc=$${port_desc#*:}; \
+		if ss -tln | grep -q ":$${port} "; then \
+			echo "$(GREEN)✅ Port $$port is in use ($$desc running)$(RESET)"; \
+		else \
+			echo "$(YELLOW)⚠️  Port $$port is free ($$desc not running)$(RESET)"; \
+		fi; \
+	done
 
 check-docker:               ## Check Docker status
 	@echo "$(CYAN)Checking Docker status...$(RESET)"
@@ -86,16 +87,37 @@ status:                     ## Show status of all services
 	@echo "$(CYAN)Docker Containers:$(RESET)"
 	@$(DC) ps 2>/dev/null || echo "  No containers running"
 	@echo ""
-	@echo "$(CYAN)Node Processes:$(RESET)"
-	@if pgrep -f "next-server" >/dev/null 2>&1; then \
-		echo "  $(GREEN)✅ Next.js is running$(RESET)"; \
+	@echo "$(CYAN)Production (systemd --user):$(RESET)"
+	@for u in 2bot-landing 2bot-dashboard 2bot-api; do \
+		st=$$(systemctl --user is-active $$u 2>/dev/null); \
+		since=$$(systemctl --user show $$u -p ActiveEnterTimestamp --value 2>/dev/null); \
+		n=$$(systemctl --user show $$u -p NRestarts --value 2>/dev/null); \
+		if [ "$$st" = active ]; then \
+			echo "  $(GREEN)✅ $$u$(RESET) up since $$since (crash restarts: $${n:-0})"; \
+		else \
+			echo "  $(RED)❌ $$u: $$st$(RESET)"; \
+		fi; \
+	done
+	@s=$$(cat .next-active 2>/dev/null); case "$$s" in .next|.next-b) ;; *) s=.next ;; esac; \
+	echo "  Frontend build slot: $$s ($$(cat $$s/BUILD_ID 2>/dev/null || echo 'no build'))"
+	@last=$$(ls -t backups/2bot_backup_[0-9]*_[0-9]*.sql.gz 2>/dev/null | head -1); \
+	if [ -n "$$last" ]; then \
+		echo "  Last DB backup: $$(basename $$last) ($$(du -h $$last | cut -f1))"; \
 	else \
-		echo "  $(YELLOW)○  Next.js is not running$(RESET)"; \
+		echo "  $(RED)❌ No nightly DB backup found in backups/$(RESET)"; \
 	fi
-	@if pgrep -f "tsx.*server" >/dev/null 2>&1; then \
-		echo "  $(GREEN)✅ Express API server is running$(RESET)"; \
+	@systemctl --user list-timers '2bot-*' --no-pager 2>/dev/null | sed -n '1,3p' | sed 's/^/  /'
+	@echo ""
+	@echo "$(CYAN)Dev processes:$(RESET)"
+	@if pgrep -f "next dev" >/dev/null 2>&1; then \
+		echo "  $(GREEN)✅ next dev is running$(RESET)"; \
 	else \
-		echo "  $(YELLOW)○  Express API server is not running$(RESET)"; \
+		echo "  $(YELLOW)○  next dev is not running$(RESET)"; \
+	fi
+	@if pgrep -f "tsx watch" >/dev/null 2>&1; then \
+		echo "  $(GREEN)✅ tsx watch (API dev) is running$(RESET)"; \
+	else \
+		echo "  $(YELLOW)○  tsx watch (API dev) is not running$(RESET)"; \
 	fi
 	@echo ""
 	@echo "$(CYAN)Port Status:$(RESET)"
@@ -103,25 +125,40 @@ status:                     ## Show status of all services
 	@echo ""
 
 # ===========================================
-# PRODUCTION (local process - no Docker)
+# PRODUCTION (systemd user units -- see ops/systemd/README.md)
 # ===========================================
+# Production runs as systemd user units with Restart=always.  Never start it
+# with nohup or stop it by killing its port: systemd brings a killed process
+# back within 5s, so the old kill-by-port + nohup flow ended up fighting the
+# units for 3000-3002.  Everything below goes through systemctl.
+#
+# The frontend has two build slots, .next and .next-b; .next-active names the
+# live one (see scripts/next-start.sh).  `make start` builds into the idle slot
+# while production keeps serving, then flips the pointer and restarts, so a
+# deploy costs seconds of restart instead of ~4 minutes of broken pages.
 
-start: check-deps check-docker  ## Build and start production servers (no HMR, no auto-refresh)
-	@echo "$(CYAN)Starting 2Bot in production mode...$(RESET)"
-	@# Kill any stale processes on production ports (regular + root-owned)
-	@for port in 3000 3001 3002; do \
-		pids=$$(fuser $${port}/tcp 2>/dev/null || true); \
-		if [ -n "$$pids" ]; then \
-			echo "$(YELLOW)⚠️  Killing stale process(es) on port $$port: $$pids$(RESET)"; \
-			kill -9 $$pids 2>/dev/null || true; \
-			sleep 1; \
-		fi; \
-		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
-			echo "$(YELLOW)⚠️  Root-owned process on port $$port — killing with sudo$(RESET)"; \
-			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
-			sleep 1; \
-		fi; \
-	done
+PROD_UNITS  := 2bot-landing 2bot-dashboard 2bot-api
+PROD_TIMERS := 2bot-healthcheck.timer 2bot-backup.timer
+SYSTEMCTL   := systemctl --user
+UNIT_DIR    := $(HOME)/.config/systemd/user
+# Sets $$s to the live slot (.next when there is no pointer yet).
+LIVE_SLOT_SH := s=$$(cat .next-active 2>/dev/null); case "$$s" in .next|.next-b) ;; *) s=.next ;; esac
+
+install-services:           ## Install/refresh the systemd units from ops/systemd (idempotent)
+	@mkdir -p $(UNIT_DIR)
+	@changed=""; \
+	for f in ops/systemd/*.service ops/systemd/*.timer; do \
+		dest=$(UNIT_DIR)/$$(basename $$f); \
+		if ! cmp -s "$$f" "$$dest"; then install -m 644 "$$f" "$$dest"; changed="$$changed $$(basename $$f)"; fi; \
+	done; \
+	if [ -n "$$changed" ]; then echo "$(CYAN)Updated units:$$changed$(RESET)"; $(SYSTEMCTL) daemon-reload; fi
+	@$(SYSTEMCTL) enable --quiet $(PROD_UNITS) $(PROD_TIMERS)
+	@if [ "$$(loginctl show-user $$USER -p Linger --value 2>/dev/null)" != yes ]; then \
+		echo "$(YELLOW)⚠️  Linger is off: production will NOT come back after a reboot. Run: loginctl enable-linger $$USER$(RESET)"; \
+	fi
+
+start: check-deps check-docker install-services  ## Build into the idle slot, then restart production (downtime: seconds)
+	@echo "$(CYAN)Deploying 2Bot to production...$(RESET)"
 	@# Build workspace + proxy Docker images (ensures SDK changes are baked in)
 	@echo "$(CYAN)Building workspace container image...$(RESET)"
 	@docker build -t 2bot-workspace:latest -f docker/workspace/Dockerfile.workspace docker/workspace
@@ -129,87 +166,77 @@ start: check-deps check-docker  ## Build and start production servers (no HMR, n
 	@echo "$(CYAN)Building egress proxy image...$(RESET)"
 	@docker build -t 2bot-proxy:latest -f docker/squid-proxy/Dockerfile.proxy docker/squid-proxy
 	@echo "$(GREEN)✅ Proxy image built$(RESET)"
-	@# Start infrastructure
 	@make dev-infra
 	@echo ""
-	@# Build frontend for production
-	@echo "$(CYAN)Building Next.js for production (this takes 2-3 minutes)...$(RESET)"
-	@npm run build
-	@echo "$(GREEN)✅ Next.js build complete$(RESET)"
-	@echo ""
-	@# Create log directory
-	@mkdir -p /tmp/2bot-logs
-	@echo "$(CYAN)Starting production servers in background...$(RESET)"
-	@# Start landing/marketing site (port 3000 for www.2bot.org)
-	@echo "Starting Landing site on port 3000..."
-	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.production 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=production nohup npx next start -p 3000 > /tmp/2bot-logs/landing.log 2>&1 & echo $$! > /tmp/2bot-logs/landing.pid'
-	@# Wait for landing to start (up to 10 seconds)
-	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if ss -tlnp 2>/dev/null | grep -q ":3000 "; then \
-			break; \
-		fi; \
-		sleep 1; \
-	done
-	@# Verify landing started
-	@if ss -tlnp 2>/dev/null | grep -q ":3000 "; then \
-		echo "$(GREEN)✅ Landing site running on http://localhost:3000$(RESET)"; \
-	else \
-		echo "$(RED)❌ Landing site failed to start. Check /tmp/2bot-logs/landing.log$(RESET)"; \
-		cat /tmp/2bot-logs/landing.log | tail -20; \
-	fi
-	@# Start backend (production mode, port 3002)
-	@echo "Starting Express API server on port 3002..."
-	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.production 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=production SERVER_PORT=3002 nohup npx tsx src/server/start.ts > /tmp/2bot-logs/backend.log 2>&1 & echo $$! > /tmp/2bot-logs/backend.pid'
-	@# Wait for backend to start (up to 20 seconds — includes bridge recovery + provider validation)
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
-		if ss -tlnp 2>/dev/null | grep -q ":3002 "; then \
-			break; \
-		fi; \
-		sleep 1; \
-	done
-	@# Verify backend started
-	@if ss -tlnp 2>/dev/null | grep -q ":3002 "; then \
-		echo "$(GREEN)✅ Express API running on http://localhost:3002$(RESET)"; \
-	else \
-		echo "$(RED)❌ Express API failed to start. Check /tmp/2bot-logs/backend.log$(RESET)"; \
-		cat /tmp/2bot-logs/backend.log | tail -20; \
+	@# The live slot keeps serving for the whole build.  A failed build has
+	@# already wiped the idle slot, so it is removed rather than left for
+	@# `make rollback` to switch to.
+	@$(LIVE_SLOT_SH); idle=$$([ "$$s" = .next ] && echo .next-b || echo .next); \
+	echo "$(CYAN)Building Next.js into idle slot $$idle (live: $$s, still serving; ~4 minutes)...$(RESET)"; \
+	if ! NEXT_DIST_DIR=$$idle npm run build; then \
+		rm -rf "$$idle"; \
+		echo "$(RED)❌ Build failed. Production is untouched and still serving $$s.$(RESET)"; \
 		exit 1; \
-	fi
-	@# Start frontend in production mode (port 3001)
-	@echo "Starting Next.js (production) on port 3001..."
-	@bash -c 'set -a; source .env.local 2>/dev/null; source .env.production 2>/dev/null; source .env 2>/dev/null; set +a; NODE_ENV=production nohup npx next start -p 3001 > /tmp/2bot-logs/frontend.log 2>&1 & echo $$! > /tmp/2bot-logs/frontend.pid'
-	@# Wait for frontend to start (up to 15 seconds)
-	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
-		if ss -tlnp 2>/dev/null | grep -q ":3001 "; then \
-			break; \
-		fi; \
-		sleep 1; \
-	done
-	@# Verify frontend started
-	@if ss -tlnp 2>/dev/null | grep -q ":3001 "; then \
-		echo "$(GREEN)✅ Next.js (production) running on http://localhost:3001$(RESET)"; \
-	else \
-		echo "$(RED)❌ Next.js failed to start. Check /tmp/2bot-logs/frontend.log$(RESET)"; \
-		cat /tmp/2bot-logs/frontend.log | tail -20; \
-		exit 1; \
-	fi
+	fi; \
+	echo "$$idle" > .next-active.tmp && mv .next-active.tmp .next-active; \
+	echo "$(GREEN)✅ Built $$idle ($$(cat $$idle/BUILD_ID)); it is now the live slot$(RESET)"
+	@echo "$(CYAN)Restarting production services...$(RESET)"
+	@$(SYSTEMCTL) restart $(PROD_UNITS)
+	@$(SYSTEMCTL) start $(PROD_TIMERS)
+	@make --no-print-directory wait-prod
 	@echo ""
-	@echo "$(GREEN)🚀 Production environment started successfully!$(RESET)"
+	@echo "$(GREEN)🚀 Production deployed$(RESET)"
 	@echo ""
 	@echo "   Landing:   http://localhost:3000  → www.2bot.org"
 	@echo "   Dashboard: http://localhost:3001  → dash.2bot.org"
 	@echo "   API:       http://localhost:3002  → api.2bot.org"
-	@echo "   Health:    http://localhost:3002/health"
 	@echo ""
 	@echo "$(CYAN)Note: Admin panel runs only in dev mode (make dev)$(RESET)"
 	@echo ""
-	@echo "   View logs:  make logs-dev"
-	@echo "   Stop all:   make stop"
-	@echo "   Restart:    make restart"
+	@echo "   Logs:      make logs-prod"
+	@echo "   Status:    make status"
+	@echo "   Undo:      make rollback   (frontend back to the previous build)"
 
-restart: stop-prod start    ## Rebuild and restart production servers (dev stays running)
+restart: start              ## Same as start: build the idle slot, then restart production
 
-deploy: restart              ## Alias for restart (build + deploy changes to production)
+deploy: start               ## Alias for start (build + deploy changes to production)
+
+restart-quick: install-services  ## Restart production WITHOUT rebuilding (API code or .env changes)
+	@$(SYSTEMCTL) restart $(PROD_UNITS)
+	@$(SYSTEMCTL) start $(PROD_TIMERS)
+	@make --no-print-directory wait-prod
+
+rollback:                   ## Point the frontend back at the previous build slot and restart it (API untouched)
+	@$(LIVE_SLOT_SH); prev=$$([ "$$s" = .next ] && echo .next-b || echo .next); \
+	if [ ! -f "$$prev/BUILD_ID" ]; then \
+		echo "$(RED)❌ No previous build in $$prev to roll back to$(RESET)"; exit 1; \
+	fi; \
+	echo "$(CYAN)Switching frontend build slot: $$s -> $$prev ($$(cat $$prev/BUILD_ID))$(RESET)"; \
+	echo "$$prev" > .next-active.tmp && mv .next-active.tmp .next-active
+	@$(SYSTEMCTL) restart 2bot-landing 2bot-dashboard
+	@make --no-print-directory wait-prod
+
+wait-prod:
+	@fail=0; \
+	for spec in "2bot-landing|http://127.0.0.1:3000/" "2bot-dashboard|http://127.0.0.1:3001/" "2bot-api|http://127.0.0.1:3002/health"; do \
+		unit=$${spec%%|*}; url=$${spec#*|}; code=000; \
+		for i in $$(seq 1 60); do \
+			code=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$$url") || true; \
+			[ "$$code" = 200 ] && break; \
+			sleep 1; \
+		done; \
+		if [ "$$code" = 200 ]; then \
+			echo "$(GREEN)✅ $$unit answering on $$url$(RESET)"; \
+		else \
+			echo "$(RED)❌ $$unit not answering on $$url (HTTP $$code). Last log lines:$(RESET)"; \
+			journalctl --user -u $$unit -n 20 --no-pager -o cat; \
+			fail=1; \
+		fi; \
+	done; \
+	if [ $$fail != 0 ]; then echo "$(YELLOW)Frontend broken after a deploy? make rollback$(RESET)"; exit 1; fi
+
+logs-prod:                  ## Follow production logs (journal)
+	@journalctl --user -u 2bot-landing -u 2bot-dashboard -u 2bot-api -f
 
 # ===========================================
 # DEVELOPMENT
@@ -377,8 +404,8 @@ dev-backend: check-deps     ## Start Express API dev server only (port 3006)
 	@echo "$(CYAN)Starting Express API dev server on port 3006...$(RESET)"
 	SERVER_PORT=3006 npm run dev:server
 
-stop:                       ## Stop all services (dev and production)
-	@echo "$(CYAN)Stopping all services...$(RESET)"
+stop: stop-prod             ## Stop all services (dev and production)
+	@echo "$(CYAN)Stopping dev services and stragglers...$(RESET)"
 	@# Helper: kill a PID and ALL its descendants (children, grandchildren, etc.)
 	@# tsx watch spawns child node processes that survive if only the parent is killed
 	@kill_tree() { \
@@ -389,9 +416,6 @@ stop:                       ## Stop all services (dev and production)
 		fi; \
 	}; \
 	for pidfile in \
-		/tmp/2bot-logs/landing.pid \
-		/tmp/2bot-logs/frontend.pid \
-		/tmp/2bot-logs/backend.pid \
 		/tmp/2bot-logs/dev-frontend.pid \
 		/tmp/2bot-logs/dev-backend.pid \
 		/tmp/2bot-logs/dev-admin.pid; do \
@@ -487,39 +511,26 @@ stop-dev:                   ## Stop only dev servers (ports 3005/3006/3007)
 	done
 	@echo "$(GREEN)✅ Dev servers stopped$(RESET)"
 
-stop-prod:                  ## Stop only production servers (ports 3000/3001/3002)
+stop-prod:                  ## Stop production (systemd units + health timer); they still start at boot
 	@echo "$(CYAN)Stopping production services...$(RESET)"
-	@# Kill by PID files first (with full process tree)
-	@kill_tree() { \
-		local pid=$$1; \
-		local descendants=$$(pstree -p "$$pid" 2>/dev/null | grep -oP '\(\K[0-9]+' || true); \
-		if [ -n "$$descendants" ]; then kill -9 $$descendants 2>/dev/null || true; fi; \
-	}; \
-	for pidfile in /tmp/2bot-logs/landing.pid /tmp/2bot-logs/frontend.pid /tmp/2bot-logs/backend.pid; do \
-		if [ -f "$$pidfile" ]; then \
-			pid=$$(cat "$$pidfile" 2>/dev/null); \
-			if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
-				kill_tree "$$pid"; \
-			fi; \
-			rm -f "$$pidfile"; \
-		fi; \
-	done
+	@# Health timer first: it restarts the services after two failed public
+	@# probes, which would quietly undo this stop about two minutes later.
+	@$(SYSTEMCTL) stop 2bot-healthcheck.timer $(PROD_UNITS) 2>/dev/null || true
+	@# Leftovers from the pre-systemd nohup era.  Their PID files are never
+	@# trusted: after weeks the kernel reuses those PIDs for other processes.
+	@rm -f /tmp/2bot-logs/landing.pid /tmp/2bot-logs/frontend.pid /tmp/2bot-logs/backend.pid
 	@for port in 3000 3001 3002; do \
 		pids=$$(fuser $${port}/tcp 2>/dev/null || true); \
 		if [ -n "$$pids" ]; then \
-			echo "Killing orphaned process(es) on port $$port..."; \
-			kill -9 $$pids 2>/dev/null || true; \
+			echo "Killing leftover non-systemd process(es) on port $$port:$$pids"; \
+			kill $$pids 2>/dev/null || true; \
 		fi; \
-	done
-	@sleep 1
-	@# Escalate with sudo if root-owned processes survive
-	@for port in 3000 3001 3002; do \
 		if sudo -n fuser $${port}/tcp >/dev/null 2>&1; then \
-			echo "$(YELLOW)Root-owned process on port $$port — killing with sudo$(RESET)"; \
+			echo "$(YELLOW)⚠️  Root-owned process on port $$port — killing with sudo$(RESET)"; \
 			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
 		fi; \
 	done
-	@echo "$(GREEN)✅ Production servers stopped$(RESET)"
+	@echo "$(GREEN)✅ Production stopped. Bring it back with: make restart-quick (no rebuild) or make start$(RESET)"
 
 stop-all: stop              ## Stop everything including Docker containers
 	@echo "$(CYAN)Stopping Docker containers...$(RESET)"
@@ -527,23 +538,19 @@ stop-all: stop              ## Stop everything including Docker containers
 	@echo "$(GREEN)✅ All services stopped$(RESET)"
 
 stop-frontend:              ## Stop only Next.js (dev or production)
-	@if pgrep -f "next dev" >/dev/null 2>&1 || pgrep -f "next start" >/dev/null 2>&1 || pgrep -f "next-server" >/dev/null 2>&1; then \
+	@# Health timer first, or it restarts everything two minutes later.
+	@$(SYSTEMCTL) stop 2bot-healthcheck.timer 2bot-landing 2bot-dashboard 2>/dev/null || true
+	@if pgrep -f "next dev" >/dev/null 2>&1; then \
 		pkill -f "next dev" 2>/dev/null || true; \
-		pkill -f "next start" 2>/dev/null || true; \
-		pkill -f "next-server" 2>/dev/null || true; \
-		echo "$(GREEN)✅ Next.js stopped$(RESET)"; \
-	else \
-		echo "$(YELLOW)Next.js is not running$(RESET)"; \
 	fi
+	@echo "$(GREEN)✅ Next.js stopped (production + dev). Health timer paused; make restart-quick resumes it$(RESET)"
 
 stop-backend:               ## Stop only Express API (dev or production)
-	@if pgrep -f "tsx watch" >/dev/null 2>&1 || pgrep -f "tsx.*server" >/dev/null 2>&1; then \
+	@$(SYSTEMCTL) stop 2bot-healthcheck.timer 2bot-api 2>/dev/null || true
+	@if pgrep -f "tsx watch" >/dev/null 2>&1; then \
 		pkill -f "tsx watch" 2>/dev/null || true; \
-		pkill -f "tsx.*server" 2>/dev/null || true; \
-		echo "$(GREEN)✅ Express API stopped$(RESET)"; \
-	else \
-		echo "$(YELLOW)Express API is not running$(RESET)"; \
 	fi
+	@echo "$(GREEN)✅ Express API stopped (production + dev). Health timer paused; make restart-quick resumes it$(RESET)"
 
 logs:                       ## View Docker container logs
 	$(DC) logs -f
@@ -693,9 +700,13 @@ build-backend: check-deps   ## Build Express API for production
 clean:                      ## Clean all build caches for a fresh build (keeps DB, source, node_modules)
 	@echo "$(CYAN)Cleaning build artifacts and caches...$(RESET)"
 	@echo ""
-	@# Next.js build output + dev cache (both main and admin instances)
-	@rm -rf .next .next-admin
-	@echo "  Removed .next/ .next-admin/"
+	@# Next.js build output + dev caches.  The LIVE production slot is kept:
+	@# deleting it would break the running site, and `make start` builds into
+	@# the idle slot from scratch anyway.
+	@s=$$(cat .next-active 2>/dev/null); case "$$s" in .next|.next-b) ;; *) s=.next ;; esac; \
+	idle=$$([ "$$s" = .next ] && echo .next-b || echo .next); \
+	rm -rf "$$idle" "$$s/dev" .next-admin; \
+	echo "  Removed $$idle/ $$s/dev/ .next-admin/ (kept live production slot $$s/)"
 	@# TypeScript incremental build info
 	@rm -f tsconfig.tsbuildinfo
 	@echo "  Removed tsconfig.tsbuildinfo"
@@ -897,12 +908,15 @@ shell-redis:                ## Open Redis CLI
 
 health:                     ## Quick health check of all services
 	@echo "$(CYAN)Health Check:$(RESET)"
-	@curl -sf http://localhost:3000/ >/dev/null 2>&1 && \
-		echo "  $(GREEN)✅ Frontend: OK$(RESET)" || \
-		echo "  $(RED)❌ Frontend: DOWN$(RESET)"
-	@curl -sf http://localhost:3001/health >/dev/null 2>&1 && \
-		echo "  $(GREEN)✅ API: OK$(RESET)" || \
-		echo "  $(RED)❌ API: DOWN$(RESET)"
+	@for spec in "Landing|http://127.0.0.1:3000/" "Dashboard|http://127.0.0.1:3001/" "API|http://127.0.0.1:3002/health" "Public site|https://www.2bot.org/"; do \
+		name=$${spec%%|*}; url=$${spec#*|}; \
+		code=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$$url") || true; \
+		if [ "$$code" = 200 ]; then \
+			echo "  $(GREEN)✅ $$name: OK$(RESET)"; \
+		else \
+			echo "  $(RED)❌ $$name: HTTP $$code ($$url)$(RESET)"; \
+		fi; \
+	done
 	@$(DC) exec -T postgres pg_isready -U postgres >/dev/null 2>&1 && \
 		echo "  $(GREEN)✅ Postgres: OK$(RESET)" || \
 		echo "  $(RED)❌ Postgres: DOWN$(RESET)"

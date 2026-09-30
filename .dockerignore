@@ -10,6 +10,8 @@ node_modules
 # Build outputs
 .next
 .next-admin
+.next-b
+.next-active
 dist
 build
 out

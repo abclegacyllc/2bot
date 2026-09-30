@@ -49,11 +49,48 @@ That is why the original outage could never be diagnosed after the fact.
 
 ## Install
 
-    cp ops/systemd/*.service ops/systemd/*.timer ~/.config/systemd/user/
-    systemctl --user daemon-reload
-    systemctl --user enable --now 2bot-landing 2bot-dashboard 2bot-api
-    systemctl --user enable --now 2bot-healthcheck.timer
-    loginctl enable-linger abcdev   # required for boot survival
+    make install-services           # copies ops/systemd/* to ~/.config/systemd/user, reloads, enables
+    loginctl enable-linger abcdev   # required for boot survival (install-services warns if off)
+
+`make start` runs `install-services` first, so editing a unit here and
+deploying is enough; the installed copy is never edited by hand.
+
+## Deploying: `make start` / `make restart`
+
+Both do the same thing, and neither kills anything by port. Killing a port
+was the pre-systemd habit, and with `Restart=always` systemd just brings the
+process back 5s later, so the Makefile ended up fighting the units.
+
+The frontend has **two build slots**, `.next` and `.next-b`; `.next-active`
+names the live one and `scripts/next-start.sh` serves it. A deploy:
+
+1. builds into the **idle** slot while the live one keeps serving (~4 min);
+   if the build fails, production is untouched;
+2. flips `.next-active` to the new slot;
+3. `systemctl --user restart` the three services, then waits for all three
+   to answer 200 (the downtime is this restart: a few seconds).
+
+A slot cannot just be renamed after building. Next bakes the dist dir into
+every page module (`distDir:".next-b"`), so a build only runs from the
+directory it was built into. That's why this uses a pointer, not a rename.
+
+| | |
+|---|---|
+| `make restart-quick` | restart without rebuilding (API code or `.env` changes; the API runs from source via tsx) |
+| `make rollback` | point the frontend back at the previous slot and restart it; the API is untouched, so roll it back with git |
+| `make stop-prod` | stop the services **and the health timer**; otherwise the timer restarts them two minutes later |
+| `make status` / `make health` / `make logs-prod` | read-only |
+
+## Backups
+
+`2bot-backup.timer` runs `scripts/deploy/backup.sh` nightly at 02:45:
+plain-SQL `pg_dump` of `2bot_production`, gzipped, to `backups/`, kept 14
+days. A dump only counts if it ends with pg_dump's completion marker.
+Hand-named snapshots (`2bot_backup_pre_*`) are never pruned. `make backup`
+runs it on demand. The backups sit **on the same disk**, so they don't
+survive losing the box; off-site copies are still to do.
+
+    journalctl --user -u 2bot-backup --since yesterday
 
 ## Health gate
 

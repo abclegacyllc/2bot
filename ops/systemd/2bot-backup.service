@@ -1,0 +1,17 @@
+[Unit]
+# Nothing backed up 2bot_production between 2026-04-27 and 2026-09-30: the only
+# DB cron on this box belongs to another project, and `make backup` silently
+# wrote empty files.  See scripts/deploy/backup.sh.
+Description=2bot nightly database backup (pg_dump of 2bot_production)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/abcdev/projects/2bot
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/abcdev/projects/2bot/scripts/deploy/backup.sh
+# A backup must never compete with live traffic on a shared box.
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=2bot-backup

@@ -40,9 +40,12 @@ const INTERVAL_MS = INTERVAL_SECS * 1000;
 const INITIAL_DELAY_MS = 20 * 1000;
 const MEMORY_WARN_MB = Number(process.env.HEALTH_MONITOR_MEMORY_WARN_MB || "512");
 
-// URLs for HTTP probes — server-side so use internal localhost addresses
+// URLs for HTTP probes — server-side so use internal localhost addresses.
+// Routes sit at root unless API_PREFIX is set (same rule as app.ts); a
+// hard-coded "/api" here 404'd every minute and still read as "ok".
 const API_PORT = parseInt(process.env.SERVER_PORT || "3002", 10);
-const API_HEALTH_URL = `http://127.0.0.1:${API_PORT}/api/health/ready`;
+const API_PREFIX = process.env.API_PREFIX ?? "";
+const API_HEALTH_URL = `http://127.0.0.1:${API_PORT}${API_PREFIX}/health/ready`;
 const FRONTEND_URL = process.env.NEXT_PUBLIC_DASHBOARD_URL || "https://dash.2bot.org";
 const ADMIN_URL = process.env.NEXT_PUBLIC_ADMIN_URL || "https://admin.2bot.org";
 
@@ -271,12 +274,18 @@ function buildChangeNotification(
 
 // ─── HTTP Probe ──────────────────────────────────────────────────────────────
 
-async function httpProbe(url: string, timeoutMs = 5000): Promise<ServiceStatus> {
+/**
+ * `requireOk` demands a 2xx. Use it for our own health endpoint, where a 404
+ * means the probe is wrong, not that the service is fine. Public pages keep
+ * the lenient rule because auth redirects and 4xx there are normal.
+ */
+async function httpProbe(url: string, { timeoutMs = 5000, requireOk = false } = {}): Promise<ServiceStatus> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const res = await fetch(url, { method: "HEAD", signal: controller.signal });
     clearTimeout(timer);
+    if (requireOk) return res.ok ? "ok" : "error";
     return res.ok || res.status < 500 ? "ok" : "error";
   } catch {
     return "error";
@@ -306,7 +315,7 @@ async function checkHealth(): Promise<HealthState> {
     // Redis
     isRedisReady().then((ready) => (ready ? "ok" : "error") as ServiceStatus).catch(() => "error" as ServiceStatus),
     // API self-check (only available once server is running)
-    httpProbe(API_HEALTH_URL),
+    httpProbe(API_HEALTH_URL, { requireOk: true }),
     // Frontend (Next.js dashboard)
     httpProbe(FRONTEND_URL),
     // Admin panel
