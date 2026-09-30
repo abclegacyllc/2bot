@@ -23,6 +23,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# One deploy at a time. Two concurrent ones would build into the same idle
+# slot and flip pointers under each other (two sessions deployed seven
+# minutes apart on 2026-09-30). Read-only commands don't need the lock.
+case ${1:-} in
+    deploy|quick|env|rollback|clean-idle)
+        exec 9>.deploy.lock
+        if ! flock -n 9; then
+            echo "Another deploy is running (lock: .deploy.lock). Wait for it to finish." >&2
+            exit 1
+        fi
+        ;;
+esac
+
 CYAN='\033[36m' GREEN='\033[32m' YELLOW='\033[33m' RED='\033[31m' RESET='\033[0m'
 say()  { echo -e "${CYAN}$*${RESET}"; }
 ok()   { echo -e "${GREEN}✅ $*${RESET}"; }

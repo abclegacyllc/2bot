@@ -100,3 +100,4 @@ t p = *
 # Server logs and PID files
 /tmp/2bot-logs/
 Vetex AI code review.txt
+/.deploy.lock
