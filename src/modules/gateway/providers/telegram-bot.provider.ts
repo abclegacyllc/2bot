@@ -147,13 +147,16 @@ export class TelegramBotProvider extends BaseGatewayProvider<
       "getWebhookInfo"
     );
 
-    const needsSetWebhook = currentWebhook.url !== desiredWebhookUrl;
-
     // The webhook secret lives in the encrypted credentials. Rows written
     // before that carried it in the plaintext config blob; pick it up from
     // there once, and persistWebhookSecret moves it across.
     const legacySecret = config?.webhookSecretToken;
     let webhookSecretToken = credentials.webhookSecretToken || legacySecret;
+
+    // setWebhook is needed when the URL is wrong, and also when the gateway
+    // has no secret at all: without one the inbound route accepts every
+    // delivery, and Telegram only learns a secret through setWebhook.
+    const needsSetWebhook = currentWebhook.url !== desiredWebhookUrl || !webhookSecretToken;
 
     if (needsSetWebhook) {
       // Default allowed updates covering all event types plugins might need

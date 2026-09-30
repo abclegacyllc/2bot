@@ -146,6 +146,30 @@ describe("TelegramBotProvider webhook secret", () => {
     expect(data.config).not.toHaveProperty("webhookSecretToken");
   });
 
+  it("assigns a secret to a gateway whose URL is already correct but has none", async () => {
+    // Pre-secret rows: the inbound route accepts every delivery for these
+    // until Telegram is handed a secret, which only setWebhook can do.
+    registeredWebhookUrl = WEBHOOK_URL;
+    mockedPrisma.gateway.findUnique.mockResolvedValue({
+      credentialsEnc: 'encrypted:{"botToken":"123:ABC"}',
+      config: {},
+    });
+
+    await connect({ botToken: "123:ABC" }, {});
+
+    const [call] = setWebhookCalls();
+    expect(call?.body?.url).toBe(WEBHOOK_URL);
+    const secret = call?.body?.secret_token;
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(mockedPrisma.gateway.update).toHaveBeenCalledWith({
+      where: { id: GATEWAY_ID },
+      data: {
+        credentialsEnc: `encrypted:{"botToken":"123:ABC","webhookSecretToken":"${secret}"}`,
+        config: {},
+      },
+    });
+  });
+
   it("re-points the webhook with the stored secret and does not rewrite the row", async () => {
     registeredWebhookUrl = "https://old.example.invalid/telegram/x";
 
