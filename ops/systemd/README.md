@@ -57,29 +57,46 @@ deploying is enough; the installed copy is never edited by hand.
 
 ## Deploying: `make start` / `make restart`
 
-Both do the same thing, and neither kills anything by port. Killing a port
-was the pre-systemd habit, and with `Restart=always` systemd just brings the
-process back 5s later, so the Makefile ended up fighting the units.
+Both do the same thing, through `scripts/prod.sh`, and neither kills
+anything by port. Killing a port was the pre-systemd habit, and with
+`Restart=always` systemd just brings the process back 5s later, so the
+Makefile ended up fighting the units.
 
-The frontend has **two build slots**, `.next` and `.next-b`; `.next-active`
-names the live one and `scripts/next-start.sh` serves it. A deploy:
+Two components, each with **two build slots** and a pointer file naming the
+live one:
 
-1. builds into the **idle** slot while the live one keeps serving (~4 min);
-   if the build fails, production is untouched;
-2. flips `.next-active` to the new slot;
-3. `systemctl --user restart` the three services, then waits for all three
-   to answer 200 (the downtime is this restart: a few seconds).
+| | slots | pointer | started by |
+|---|---|---|---|
+| frontend | `.next`, `.next-b` | `.next-active` | `scripts/next-start.sh` |
+| API | `dist`, `dist-b` (compiled with `tsc`) | `.dist-active` | `scripts/api-start.sh` |
 
-A slot cannot just be renamed after building. Next bakes the dist dir into
-every page module (`distDir:".next-b"`), so a build only runs from the
-directory it was built into. That's why this uses a pointer, not a rename.
+A deploy:
+
+1. builds into the **idle** slots while the live ones keep serving; if a
+   build fails, production is untouched;
+2. flips the pointers, keeping the old values in `<pointer>.prev`;
+3. `systemctl --user restart`s the services and waits for all three to
+   answer 200.
+
+Measured downtime is this restart only: ~2s for landing/dashboard, ~5s for
+the compiled API (it was 33-41s while the API compiled itself with `tsx` at
+every start).
+
+A frontend slot cannot just be renamed after building. Next bakes the dist
+dir into every page module (`distDir:".next-b"`), so a build only runs from
+the directory it was built into. That's why this uses a pointer, not a rename.
 
 | | |
 |---|---|
-| `make restart-quick` | restart without rebuilding (API code or `.env` changes; the API runs from source via tsx) |
-| `make rollback` | point the frontend back at the previous slot and restart it; the API is untouched, so roll it back with git |
+| `make restart-quick` | compile the API (~90s) and restart; the frontend is untouched. Use it for API code changes |
+| `make restart-env` | restart without building anything (`.env` changes) |
+| `make rollback` | undo the last deploy: only the components it changed go back to their previous build (`.last-deploy`); running it again rolls forward |
 | `make stop-prod` | stop the services **and the health timer**; otherwise the timer restarts them two minutes later |
 | `make status` / `make health` / `make logs-prod` | read-only |
+
+**Escape hatch for the API:** `echo tsx > .dist-active && make restart-env`
+runs the TypeScript source through `tsx` exactly as before compiled builds
+existed (~40s restarts).
 
 ## Backups
 

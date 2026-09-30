@@ -5,7 +5,7 @@
 # ~47h later, while 4truck (systemd, enabled) and 2bot's own Docker deps
 # (restart=unless-stopped) both came back by themselves.  This unit closes
 # that gap.
-Description=2bot Express API (tsx, port 3002)
+Description=2bot Express API (port 3002)
 After=network-online.target
 Wants=network-online.target
 # Never give up.  These belong in [Unit], not [Service]: with the default
@@ -19,7 +19,9 @@ Type=simple
 WorkingDirectory=/home/abcdev/projects/2bot
 Environment=NODE_ENV=production
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/bin/bash -c 'set -a; . ./.env 2>/dev/null; . ./.env.production 2>/dev/null; . ./.env.local 2>/dev/null; set +a; exec env SERVER_PORT=3002 npx tsx src/server/start.ts'
+# Runs the compiled build .dist-active names; falls back to tsx on the
+# TypeScript source when there is none (see the script).
+ExecStart=/home/abcdev/projects/2bot/scripts/api-start.sh
 
 Restart=always
 RestartSec=5

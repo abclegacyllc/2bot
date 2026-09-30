@@ -35,6 +35,7 @@
     "src/components/**/*",
     "src/app/**/*",
     "src/lib/api-client.ts",
+    "src/lib/theme-engine.ts",
     "src/hooks/**/*"
   ]
 }

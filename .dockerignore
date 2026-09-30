@@ -11,7 +11,10 @@ node_modules
 .next
 .next-admin
 .next-b
-.next-active
+.next-active*
+dist-b
+.dist-active*
+.last-deploy
 dist
 build
 out

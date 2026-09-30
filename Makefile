@@ -20,7 +20,7 @@
         deploy backup backup-source ssl-setup \
         install update health status shell-db shell-redis help \
         check-ports check-docker check-deps install-hooks scan-secrets \
-        install-services restart-quick rollback wait-prod logs-prod
+        install-services restart-quick restart-env rollback wait-prod logs-prod
 
 # Colors for output
 CYAN := \033[36m
@@ -98,8 +98,7 @@ status:                     ## Show status of all services
 			echo "  $(RED)❌ $$u: $$st$(RESET)"; \
 		fi; \
 	done
-	@s=$$(cat .next-active 2>/dev/null); case "$$s" in .next|.next-b) ;; *) s=.next ;; esac; \
-	echo "  Frontend build slot: $$s ($$(cat $$s/BUILD_ID 2>/dev/null || echo 'no build'))"
+	@scripts/prod.sh slots | sed 's/^/  /'
 	@last=$$(ls -t backups/2bot_backup_[0-9]*_[0-9]*.sql.gz 2>/dev/null | head -1); \
 	if [ -n "$$last" ]; then \
 		echo "  Last DB backup: $$(basename $$last) ($$(du -h $$last | cut -f1))"; \
@@ -132,17 +131,15 @@ status:                     ## Show status of all services
 # back within 5s, so the old kill-by-port + nohup flow ended up fighting the
 # units for 3000-3002.  Everything below goes through systemctl.
 #
-# The frontend has two build slots, .next and .next-b; .next-active names the
-# live one (see scripts/next-start.sh).  `make start` builds into the idle slot
-# while production keeps serving, then flips the pointer and restarts, so a
-# deploy costs seconds of restart instead of ~4 minutes of broken pages.
+# Deploys go through scripts/prod.sh.  The frontend (.next | .next-b) and the
+# API (dist | dist-b, compiled with tsc) each have two build slots: a deploy
+# builds the idle one while production keeps serving, then flips a pointer
+# and restarts, so it costs seconds of restart instead of minutes of build.
 
 PROD_UNITS  := 2bot-landing 2bot-dashboard 2bot-api
 PROD_TIMERS := 2bot-healthcheck.timer 2bot-backup.timer
 SYSTEMCTL   := systemctl --user
 UNIT_DIR    := $(HOME)/.config/systemd/user
-# Sets $$s to the live slot (.next when there is no pointer yet).
-LIVE_SLOT_SH := s=$$(cat .next-active 2>/dev/null); case "$$s" in .next|.next-b) ;; *) s=.next ;; esac
 
 install-services:           ## Install/refresh the systemd units from ops/systemd (idempotent)
 	@mkdir -p $(UNIT_DIR)
@@ -157,7 +154,7 @@ install-services:           ## Install/refresh the systemd units from ops/system
 		echo "$(YELLOW)⚠️  Linger is off: production will NOT come back after a reboot. Run: loginctl enable-linger $$USER$(RESET)"; \
 	fi
 
-start: check-deps check-docker install-services  ## Build into the idle slot, then restart production (downtime: seconds)
+start: check-deps check-docker install-services  ## Build frontend + API into idle slots, then restart production (downtime: seconds)
 	@echo "$(CYAN)Deploying 2Bot to production...$(RESET)"
 	@# Build workspace + proxy Docker images (ensures SDK changes are baked in)
 	@echo "$(CYAN)Building workspace container image...$(RESET)"
@@ -168,22 +165,7 @@ start: check-deps check-docker install-services  ## Build into the idle slot, th
 	@echo "$(GREEN)✅ Proxy image built$(RESET)"
 	@make dev-infra
 	@echo ""
-	@# The live slot keeps serving for the whole build.  A failed build has
-	@# already wiped the idle slot, so it is removed rather than left for
-	@# `make rollback` to switch to.
-	@$(LIVE_SLOT_SH); idle=$$([ "$$s" = .next ] && echo .next-b || echo .next); \
-	echo "$(CYAN)Building Next.js into idle slot $$idle (live: $$s, still serving; ~4 minutes)...$(RESET)"; \
-	if ! NEXT_DIST_DIR=$$idle npm run build; then \
-		rm -rf "$$idle"; \
-		echo "$(RED)❌ Build failed. Production is untouched and still serving $$s.$(RESET)"; \
-		exit 1; \
-	fi; \
-	echo "$$idle" > .next-active.tmp && mv .next-active.tmp .next-active; \
-	echo "$(GREEN)✅ Built $$idle ($$(cat $$idle/BUILD_ID)); it is now the live slot$(RESET)"
-	@echo "$(CYAN)Restarting production services...$(RESET)"
-	@$(SYSTEMCTL) restart $(PROD_UNITS)
-	@$(SYSTEMCTL) start $(PROD_TIMERS)
-	@make --no-print-directory wait-prod
+	@scripts/prod.sh deploy
 	@echo ""
 	@echo "$(GREEN)🚀 Production deployed$(RESET)"
 	@echo ""
@@ -195,45 +177,23 @@ start: check-deps check-docker install-services  ## Build into the idle slot, th
 	@echo ""
 	@echo "   Logs:      make logs-prod"
 	@echo "   Status:    make status"
-	@echo "   Undo:      make rollback   (frontend back to the previous build)"
+	@echo "   Undo:      make rollback   (back to the previous builds)"
 
-restart: start              ## Same as start: build the idle slot, then restart production
+restart: start              ## Same as start: build the idle slots, then restart production
 
 deploy: start               ## Alias for start (build + deploy changes to production)
 
-restart-quick: install-services  ## Restart production WITHOUT rebuilding (API code or .env changes)
-	@$(SYSTEMCTL) restart $(PROD_UNITS)
-	@$(SYSTEMCTL) start $(PROD_TIMERS)
-	@make --no-print-directory wait-prod
+restart-quick: install-services  ## Compile the API (~90s) and restart production; frontend untouched
+	@scripts/prod.sh quick
 
-rollback:                   ## Point the frontend back at the previous build slot and restart it (API untouched)
-	@$(LIVE_SLOT_SH); prev=$$([ "$$s" = .next ] && echo .next-b || echo .next); \
-	if [ ! -f "$$prev/BUILD_ID" ]; then \
-		echo "$(RED)❌ No previous build in $$prev to roll back to$(RESET)"; exit 1; \
-	fi; \
-	echo "$(CYAN)Switching frontend build slot: $$s -> $$prev ($$(cat $$prev/BUILD_ID))$(RESET)"; \
-	echo "$$prev" > .next-active.tmp && mv .next-active.tmp .next-active
-	@$(SYSTEMCTL) restart 2bot-landing 2bot-dashboard
-	@make --no-print-directory wait-prod
+restart-env: install-services  ## Restart production without building anything (.env changes)
+	@scripts/prod.sh env
+
+rollback:                   ## Undo the last deploy: its components go back to their previous builds
+	@scripts/prod.sh rollback
 
 wait-prod:
-	@fail=0; \
-	for spec in "2bot-landing|http://127.0.0.1:3000/" "2bot-dashboard|http://127.0.0.1:3001/" "2bot-api|http://127.0.0.1:3002/health"; do \
-		unit=$${spec%%|*}; url=$${spec#*|}; code=000; \
-		for i in $$(seq 1 60); do \
-			code=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$$url") || true; \
-			[ "$$code" = 200 ] && break; \
-			sleep 1; \
-		done; \
-		if [ "$$code" = 200 ]; then \
-			echo "$(GREEN)✅ $$unit answering on $$url$(RESET)"; \
-		else \
-			echo "$(RED)❌ $$unit not answering on $$url (HTTP $$code). Last log lines:$(RESET)"; \
-			journalctl --user -u $$unit -n 20 --no-pager -o cat; \
-			fail=1; \
-		fi; \
-	done; \
-	if [ $$fail != 0 ]; then echo "$(YELLOW)Frontend broken after a deploy? make rollback$(RESET)"; exit 1; fi
+	@scripts/prod.sh wait
 
 logs-prod:                  ## Follow production logs (journal)
 	@journalctl --user -u 2bot-landing -u 2bot-dashboard -u 2bot-api -f
@@ -530,7 +490,7 @@ stop-prod:                  ## Stop production (systemd units + health timer); t
 			sudo -n fuser -k $${port}/tcp 2>/dev/null || true; \
 		fi; \
 	done
-	@echo "$(GREEN)✅ Production stopped. Bring it back with: make restart-quick (no rebuild) or make start$(RESET)"
+	@echo "$(GREEN)✅ Production stopped. Bring it back with: make restart-env (no rebuild) or make start$(RESET)"
 
 stop-all: stop              ## Stop everything including Docker containers
 	@echo "$(CYAN)Stopping Docker containers...$(RESET)"
@@ -543,14 +503,14 @@ stop-frontend:              ## Stop only Next.js (dev or production)
 	@if pgrep -f "next dev" >/dev/null 2>&1; then \
 		pkill -f "next dev" 2>/dev/null || true; \
 	fi
-	@echo "$(GREEN)✅ Next.js stopped (production + dev). Health timer paused; make restart-quick resumes it$(RESET)"
+	@echo "$(GREEN)✅ Next.js stopped (production + dev). Health timer paused; make restart-env resumes it$(RESET)"
 
 stop-backend:               ## Stop only Express API (dev or production)
 	@$(SYSTEMCTL) stop 2bot-healthcheck.timer 2bot-api 2>/dev/null || true
 	@if pgrep -f "tsx watch" >/dev/null 2>&1; then \
 		pkill -f "tsx watch" 2>/dev/null || true; \
 	fi
-	@echo "$(GREEN)✅ Express API stopped (production + dev). Health timer paused; make restart-quick resumes it$(RESET)"
+	@echo "$(GREEN)✅ Express API stopped (production + dev). Health timer paused; make restart-env resumes it$(RESET)"
 
 logs:                       ## View Docker container logs
 	$(DC) logs -f
@@ -700,19 +660,14 @@ build-backend: check-deps   ## Build Express API for production
 clean:                      ## Clean all build caches for a fresh build (keeps DB, source, node_modules)
 	@echo "$(CYAN)Cleaning build artifacts and caches...$(RESET)"
 	@echo ""
-	@# Next.js build output + dev caches.  The LIVE production slot is kept:
-	@# deleting it would break the running site, and `make start` builds into
-	@# the idle slot from scratch anyway.
-	@s=$$(cat .next-active 2>/dev/null); case "$$s" in .next|.next-b) ;; *) s=.next ;; esac; \
-	idle=$$([ "$$s" = .next ] && echo .next-b || echo .next); \
-	rm -rf "$$idle" "$$s/dev" .next-admin; \
-	echo "  Removed $$idle/ $$s/dev/ .next-admin/ (kept live production slot $$s/)"
+	@# Build slots: only the idle ones.  The live ones are serving production,
+	@# and `make start` rebuilds the idle ones from scratch anyway.
+	@rm -rf .next/dev .next-b/dev .next-admin
+	@echo "  Removed dev caches (.next/dev .next-b/dev .next-admin/)"
+	@scripts/prod.sh clean-idle
 	@# TypeScript incremental build info
 	@rm -f tsconfig.tsbuildinfo
 	@echo "  Removed tsconfig.tsbuildinfo"
-	@# Compiled server output
-	@rm -rf dist
-	@echo "  Removed dist/"
 	@# Test coverage reports
 	@rm -rf coverage
 	@echo "  Removed coverage/"
