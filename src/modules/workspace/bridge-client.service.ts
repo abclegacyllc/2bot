@@ -19,13 +19,16 @@ import { EventEmitter } from 'events';
 import PQueue from 'p-queue';
 import WebSocket from 'ws';
 
+import { encrypt } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
+import { prisma } from '@/lib/prisma';
 
 import type { PluginIpcRequest, PluginIpcResponse } from '@/modules/plugin/plugin-ipc.service';
 import { bridgeLeaseService, SERVER_INSTANCE_ID } from './bridge-lease.service';
 
 import type { BridgeAction, BridgeEvent, BridgeRequest, BridgeResponse } from '@/shared/types/workspace';
 import {
+    BRIDGE_AUTH_TOKEN_LENGTH,
     BRIDGE_LONG_REQUEST_TIMEOUT,
     BRIDGE_REQUEST_TIMEOUT,
     BRIDGE_WS_PATH,
@@ -717,13 +720,13 @@ class BridgeClientManager {
           clearTimeout(timeout);
           // Client failed to reconnect — create a fresh one
           this.clients.delete(containerDbId);
-          this._createClient(containerDbId, bridgePort, authToken).then(resolve, reject);
+          this.connectClient(containerDbId, bridgePort, authToken).then(resolve, reject);
         });
       });
     }
 
     // Create the connection promise and store it
-    const connectionPromise = this._createClient(containerDbId, bridgePort, authToken);
+    const connectionPromise = this.connectClient(containerDbId, bridgePort, authToken);
     this.pendingConnections.set(containerDbId, connectionPromise);
 
     try {
@@ -752,7 +755,8 @@ class BridgeClientManager {
     // Forward events
     client.on('max-reconnects', () => {
       log.error({ containerDbId }, 'Bridge client max reconnects — removing client');
-      this.clients.delete(containerDbId);
+      // Only if it is still the registered client; a newer one may have replaced it.
+      if (this.clients.get(containerDbId) === client) this.clients.delete(containerDbId);
     });
 
     // Clean up zombie clients: if connection is replaced (4002), remove from map
@@ -791,11 +795,75 @@ class BridgeClientManager {
       });
     });
 
-    // Connect
-    await client.connect();
+    // Connect. A client that fails (e.g. auth) must not linger: its close
+    // handler would keep reconnecting with the rejected token in the background.
+    try {
+      await client.connect();
+    } catch (err) {
+      client.disconnect();
+      throw err;
+    }
     this.clients.set(containerDbId, client);
 
     return client;
+  }
+
+  /**
+   * `_createClient`, healing a token that went stale when the container restarted.
+   */
+  private async connectClient(containerDbId: string, bridgePort: number, authToken: string): Promise<BridgeClient> {
+    try {
+      return await this._createClient(containerDbId, bridgePort, authToken);
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.startsWith('Bridge auth failed')) throw err;
+      const healed = await this.healStaleToken(containerDbId, bridgePort, authToken);
+      if (!healed) throw err;
+      return healed;
+    }
+  }
+
+  /**
+   * The bridge agent keeps a rotated token only in memory. After its container
+   * restarts it authenticates with the token baked into its env at creation,
+   * while the DB holds the latest rotated one -- so every workspace that ran
+   * through a daily rotation and was then stopped failed "Bridge auth" on its
+   * next start and went to ERROR (e.g. 2026-09-15).
+   *
+   * Retry with that creation token, read from Docker. If it works, rotate
+   * straight to a fresh token (the creation token sits in the container's env,
+   * which is what rotation exists to retire), save it, and reconnect holding it
+   * so later reconnects authenticate. Returns null when there is nothing to try.
+   */
+  private async healStaleToken(containerDbId: string, bridgePort: number, dbToken: string): Promise<BridgeClient | null> {
+    const row = await prisma.workspaceContainer.findUnique({
+      where: { id: containerDbId },
+      select: { containerId: true },
+    });
+    if (!row?.containerId) return null;
+
+    const { dockerService } = await import('./workspace-docker.service');
+    const creationToken = await dockerService.getEnvVar(row.containerId, 'BRIDGE_AUTH_TOKEN');
+    if (!creationToken || creationToken === dbToken) return null;
+
+    const probe = await this._createClient(containerDbId, bridgePort, creationToken);
+    const fresh = crypto.randomBytes(BRIDGE_AUTH_TOKEN_LENGTH).toString('hex');
+    try {
+      await probe.send('system.rotate-token', { token: fresh });
+    } catch (err) {
+      // Bridge still holds the creation token; make the DB agree so reconnects work.
+      await prisma.workspaceContainer.update({
+        where: { id: containerDbId },
+        data: { bridgeAuthToken: encrypt(creationToken) },
+      });
+      log.warn({ containerDbId, error: (err as Error).message }, 'Bridge token re-synced to the creation token; rotation failed, the daily cron will retry');
+      return probe;
+    }
+    await prisma.workspaceContainer.update({
+      where: { id: containerDbId },
+      data: { bridgeAuthToken: encrypt(fresh) },
+    });
+    log.warn({ containerDbId }, 'Bridge token was stale after a container restart — re-synced and rotated');
+    return this._createClient(containerDbId, bridgePort, fresh);
   }
 
   /**

@@ -352,6 +352,16 @@ class DockerService {
   }
 
   /**
+   * One variable from a container's creation-time env (Config.Env), or null.
+   */
+  async getEnvVar(containerId: string, name: string): Promise<string | null> {
+    const info = await getDocker().getContainer(containerId).inspect();
+    const prefix = `${name}=`;
+    const entry = (info.Config?.Env ?? []).find((e: string) => e.startsWith(prefix));
+    return entry ? entry.slice(prefix.length) : null;
+  }
+
+  /**
    * Best-effort stop for a container the platform has just marked ERROR.
    * Health checks and auto-stop only look at RUNNING rows, so a container left
    * running in ERROR is never touched again (one ran orphaned for two weeks
