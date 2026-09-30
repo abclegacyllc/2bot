@@ -306,6 +306,8 @@ class WorkspaceService {
       },
     });
 
+    // Hoisted so the catch below can stop a container this attempt started.
+    let dockerContainerId: string | undefined;
     try {
       // 6. Ensure network and volume directory
       await dockerService.ensureNetwork();
@@ -331,6 +333,8 @@ class WorkspaceService {
         env: {},
         enableHttpListener,
       });
+
+      dockerContainerId = containerId;
 
       // 8. Update DB with Docker container ID
       await prisma.workspaceContainer.update({
@@ -477,6 +481,7 @@ class WorkspaceService {
           errorMessage: (err as Error).message,
         },
       });
+      await dockerService.stopAfterError(dockerContainerId);
 
       // Audit: failed creation
       workspaceAuditService.log({
@@ -617,6 +622,7 @@ class WorkspaceService {
         where: { id: containerDbId },
         data: { status: 'ERROR', errorMessage: (err as Error).message },
       });
+      await dockerService.stopAfterError(container.containerId);
       workspaceAuditService.log({ userId: ctx.userId, containerId: containerDbId, action: 'START', success: false, errorMessage: (err as Error).message });
       return { success: false, message: `Start failed: ${(err as Error).message}`, containerId: containerDbId, status: 'ERROR' };
     }
@@ -715,6 +721,7 @@ class WorkspaceService {
         where: { id: containerDbId },
         data: { status: 'ERROR', errorMessage: (err as Error).message },
       });
+      await dockerService.stopAfterError(container.containerId);
       throw new Error(`Auto-start failed: ${(err as Error).message}`);
     }
   }

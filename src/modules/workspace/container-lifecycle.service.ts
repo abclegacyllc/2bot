@@ -363,6 +363,7 @@ class ContainerLifecycleService {
 
         // Disconnect bridge client
         bridgeClientManager.removeClient(container.id);
+        await dockerService.stopAfterError(container.containerId);
       }
     } else {
       // Increment failure count
@@ -504,6 +505,7 @@ class ContainerLifecycleService {
           errorMessage: `Restart failed: ${(err as Error).message}`,
         },
       });
+      await dockerService.stopAfterError(container.containerId);
 
       workspaceAuditService.log({
         containerId: container.id,

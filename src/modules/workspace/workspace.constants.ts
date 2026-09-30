@@ -16,6 +16,18 @@ export const WORKSPACE_IMAGE = '2bot-workspace:latest';
 /** Docker network for workspace containers */
 export const WORKSPACE_NETWORK = '2bot-workspace-net';
 
+/**
+ * Fixed address of the Squid egress proxy on WORKSPACE_NETWORK.
+ *
+ * Workspaces get the proxy as an IP, not the "2bot-proxy" hostname, so a
+ * process inside the network can't spoof the name and capture egress. That IP
+ * is baked into each container's env at creation, so it must never move: with
+ * a dynamic address the 2026-09-08 reboot moved the proxy and left a workspace
+ * pointing at its own IP. It stays at the address the proxy already had, so
+ * no existing container that baked it ends up pointing at a stranger.
+ */
+export const WORKSPACE_PROXY_IP = process.env.WORKSPACE_PROXY_IP || '172.20.0.2';
+
 /** Volume base path on host for persistent workspace storage */
 export const WORKSPACE_VOLUME_BASE = process.env.WORKSPACE_VOLUME_BASE || '/var/lib/2bot/workspaces';
 

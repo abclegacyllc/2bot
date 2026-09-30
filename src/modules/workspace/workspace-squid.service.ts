@@ -30,7 +30,7 @@ import Docker from 'dockerode';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 
-import { WORKSPACE_NETWORK } from './workspace.constants';
+import { WORKSPACE_NETWORK, WORKSPACE_PROXY_IP } from './workspace.constants';
 
 const execFileAsync = promisify(execFile);
 const log = logger.child({ module: 'workspace:squid' });
@@ -126,6 +126,28 @@ export interface EgressLogSummary {
   outbound: number;
   topDomains: { domain: string; count: number }[];
   bytesTotal: number;
+}
+
+/**
+ * From `iptables -t nat -S PREROUTING` output, the destinations of DNAT rules
+ * for `gatewayIp:port` other than `keepDest` -- the rules to delete.
+ */
+export function staleGatewayDnatTargets(
+  rules: string,
+  gatewayIp: string,
+  port: string,
+  keepDest: string,
+): string[] {
+  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(
+    `^-A PREROUTING -d ${esc(gatewayIp)}/32 -p tcp -m tcp --dport ${esc(port)} -j DNAT --to-destination (\\S+)$`,
+  );
+  const stale: string[] = [];
+  for (const line of rules.split('\n')) {
+    const m = line.trim().match(re);
+    if (m?.[1] && m[1] !== keepDest) stale.push(m[1]);
+  }
+  return stale;
 }
 
 // ===========================================
@@ -249,8 +271,9 @@ class EgressProxyService {
   // ===========================================
 
   /**
-   * Ensure the Squid proxy container is running on the workspace network.
-   * Creates it if it doesn't exist, starts it if stopped.
+   * Ensure the Squid proxy container is running on the workspace network at
+   * WORKSPACE_PROXY_IP. Creates it if it doesn't exist, starts it if stopped,
+   * and recreates it (once) if it was created without the pinned address.
    */
   async ensureProxyRunning(): Promise<void> {
     const docker = this.getDocker();
@@ -261,13 +284,24 @@ class EgressProxyService {
       const container = docker.getContainer(containerName);
       const info = await container.inspect();
 
-      if (!info.State.Running) {
-        log.info('Proxy container exists but not running — starting');
-        await container.start();
+      const pinned = info.NetworkSettings?.Networks?.[WORKSPACE_NETWORK]?.IPAMConfig?.IPv4Address;
+      if (pinned === WORKSPACE_PROXY_IP) {
+        if (!info.State.Running) {
+          log.info('Proxy container exists but not running — starting');
+          await container.start();
+        }
+        log.debug('Proxy container is running');
+        return;
       }
 
-      log.debug('Proxy container is running');
-      return;
+      // Created before the address was pinned (or pinned elsewhere). Its config
+      // and logs are host bind mounts, so recreating loses nothing; workspace
+      // egress blips for the few seconds this takes.
+      log.warn(
+        { pinned: pinned ?? null, want: WORKSPACE_PROXY_IP },
+        'Proxy container is not pinned to its fixed address — recreating it',
+      );
+      await container.remove({ force: true });
     } catch (err: unknown) {
       const statusCode = (err as { statusCode?: number }).statusCode;
       if (statusCode !== 404) throw err;
@@ -298,11 +332,35 @@ class EgressProxyService {
         ],
         RestartPolicy: { Name: 'unless-stopped' },
       },
+      // Pinned, so a reboot or a recreate can't move it (see WORKSPACE_PROXY_IP).
+      NetworkingConfig: {
+        EndpointsConfig: {
+          [WORKSPACE_NETWORK]: { IPAMConfig: { IPv4Address: WORKSPACE_PROXY_IP } },
+        },
+      },
       ExposedPorts: { [`${PROXY_CONFIG.port}/tcp`]: {} },
     });
 
     await created.start();
-    log.info({ containerName, network: WORKSPACE_NETWORK }, 'Proxy container created and started');
+    log.info({ containerName, network: WORKSPACE_NETWORK, ip: WORKSPACE_PROXY_IP }, 'Proxy container created and started');
+  }
+
+  /**
+   * Throw unless the proxy is running at WORKSPACE_PROXY_IP. Called before any
+   * workspace container starts: Docker frees a stopped container's address, so
+   * a workspace started while the proxy is down could be handed the proxy's IP
+   * and receive every other workspace's egress. Refusing to start is the safe
+   * failure; the workspace has no working egress without the proxy anyway.
+   */
+  async assertReadyForWorkspaces(): Promise<void> {
+    await this.ensureProxyRunning();
+    const status = await this.getProxyStatus();
+    if (!status.running || status.ipAddress !== WORKSPACE_PROXY_IP) {
+      throw new Error(
+        `Egress proxy is not running at ${WORKSPACE_PROXY_IP} (running=${status.running}, ip=${status.ipAddress ?? 'none'}) — ` +
+        'refusing to start a workspace that could take its address',
+      );
+    }
   }
 
   /**
@@ -327,6 +385,20 @@ class EgressProxyService {
       const gatewayIp = process.env.WORKSPACE_GATEWAY_IP || '172.20.0.1';
       const port = String(PROXY_CONFIG.port);
       const dest = `${proxyIp}:${port}`;
+
+      // Drop rules for this gateway:port that point anywhere else. Rules are
+      // only ever appended, so after the proxy moved the stale rule (first in
+      // the chain) kept winning, and its old IP could be reassigned to a
+      // workspace that would then receive the traffic.
+      const { stdout } = await execFileAsync('sudo', ['iptables', '-t', 'nat', '-S', 'PREROUTING']);
+      for (const stale of staleGatewayDnatTargets(stdout, gatewayIp, port, dest)) {
+        await execFileAsync('sudo', [
+          'iptables', '-t', 'nat', '-D', 'PREROUTING',
+          '-d', `${gatewayIp}/32`, '-p', 'tcp', '--dport', port,
+          '-j', 'DNAT', '--to-destination', stale,
+        ]);
+        log.warn({ gatewayIp, stale, dest }, 'Removed stale gateway forwarding DNAT rule');
+      }
 
       // Check if rule already exists (idempotent)
       try {

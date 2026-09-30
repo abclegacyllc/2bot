@@ -22,55 +22,28 @@ import {
     WORKSPACE_HTTP_PORT_INTERNAL,
     WORKSPACE_IMAGE,
     WORKSPACE_NETWORK,
+    WORKSPACE_PROXY_IP,
 } from './workspace.constants';
 import type { DockerContainerInfo, DockerCreateOptions } from './workspace.types';
 
 const log = logger.child({ module: 'workspace:docker' });
 
 // ===========================================
-// Squid proxy IP resolution
+// Squid proxy address
 // ===========================================
 //
-// We resolve the Squid proxy hostname ("2bot-proxy" by default) to an IP
-// at container-creation time and inject the IP form of the URL as the
-// HTTP(S)_PROXY env var. This neuters DNS-poisoning attacks where a malicious
-// process inside the workspace network could spoof the "2bot-proxy" hostname
-// and capture egress traffic.
-//
-// Cached for 60s so a burst of container creations doesn't hammer Docker.
+// Workspaces get the proxy as an IP, never the "2bot-proxy" hostname: that
+// neuters DNS-poisoning attacks where a process inside the workspace network
+// spoofs the name and captures egress traffic. The IP is baked into the
+// container's env at creation, so it is the pinned WORKSPACE_PROXY_IP, not
+// whatever the proxy happens to have right now. The proxy service keeps the
+// container at that address (see ensureProxyRunning / assertReadyForWorkspaces).
 
-let cachedProxyUrl: { url: string; expiresAt: number } | null = null;
-
-async function resolveProxyUrl(): Promise<string> {
+function resolveProxyUrl(): string {
   // Explicit override: trust the operator.
   if (process.env.WORKSPACE_PROXY_URL) return process.env.WORKSPACE_PROXY_URL;
-
-  const now = Date.now();
-  if (cachedProxyUrl && cachedProxyUrl.expiresAt > now) return cachedProxyUrl.url;
-
-  const proxyName = process.env.WORKSPACE_PROXY_CONTAINER || '2bot-proxy';
   const proxyPort = process.env.WORKSPACE_PROXY_PORT || '3128';
-  const fallback = `http://${proxyName}:${proxyPort}`;
-
-  try {
-    const docker = getDocker();
-    const info = await docker.getContainer(proxyName).inspect();
-    const networks = info.NetworkSettings?.Networks ?? {};
-    const ip =
-      networks[WORKSPACE_NETWORK]?.IPAddress ||
-      Object.values(networks).find((n) => n?.IPAddress)?.IPAddress ||
-      null;
-    const url = ip ? `http://${ip}:${proxyPort}` : fallback;
-    cachedProxyUrl = { url, expiresAt: now + 60_000 };
-    log.debug({ proxyName, ip, url }, 'Resolved Squid proxy IP');
-    return url;
-  } catch (err) {
-    log.warn(
-      { err: (err as Error).message, proxyName, fallback },
-      'Could not resolve Squid proxy by container — falling back to hostname'
-    );
-    return fallback;
-  }
+  return `http://${WORKSPACE_PROXY_IP}:${proxyPort}`;
 }
 
 // ===========================================
@@ -226,7 +199,7 @@ class DockerService {
 
     // Resolve Squid by container IP so DNS poisoning of the
     // proxy hostname inside the workspace network can't redirect egress.
-    const proxyUrl = await resolveProxyUrl();
+    const proxyUrl = resolveProxyUrl();
 
     // Build environment variables
     const envArray = [
@@ -357,6 +330,11 @@ class DockerService {
    * Start a container
    */
   async startContainer(containerId: string): Promise<void> {
+    // Fail closed: never start a workspace unless the egress proxy holds its
+    // pinned address, or this container could be handed that address.
+    const { egressProxyService } = await import('./workspace-squid.service');
+    await egressProxyService.assertReadyForWorkspaces();
+
     const docker = getDocker();
     const container = docker.getContainer(containerId);
     try {
@@ -370,6 +348,22 @@ class DockerService {
       } else {
         throw err;
       }
+    }
+  }
+
+  /**
+   * Best-effort stop for a container the platform has just marked ERROR.
+   * Health checks and auto-stop only look at RUNNING rows, so a container left
+   * running in ERROR is never touched again (one ran orphaned for two weeks
+   * after a failed start on 2026-09-15). Never throws: the ERROR status is
+   * already the real outcome.
+   */
+  async stopAfterError(containerId: string | null | undefined): Promise<void> {
+    if (!containerId) return;
+    try {
+      await this.stopContainer(containerId);
+    } catch (err) {
+      log.warn({ containerId, error: (err as Error).message }, 'Could not stop container after marking it ERROR');
     }
   }
 

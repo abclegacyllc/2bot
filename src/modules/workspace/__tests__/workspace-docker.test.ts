@@ -216,6 +216,23 @@ describe("createContainer — egress (Wave 3.5)", () => {
     expect(http).toMatch(/^HTTP_PROXY=http:\/\//);
     expect(https).toMatch(/^HTTPS_PROXY=http:\/\//);
   });
+
+  it("bakes the pinned proxy IP, not whatever the proxy has right now", async () => {
+    await dockerService.createContainer(baseOpts());
+    const env = lastEnv();
+    expect(env).toContain("HTTP_PROXY=http://172.20.0.2:3128");
+    expect(env).toContain("HTTPS_PROXY=http://172.20.0.2:3128");
+  });
+
+  it("honours an explicit WORKSPACE_PROXY_URL", async () => {
+    process.env.WORKSPACE_PROXY_URL = "http://10.9.8.7:3128";
+    try {
+      await dockerService.createContainer(baseOpts());
+      expect(lastEnv()).toContain("HTTP_PROXY=http://10.9.8.7:3128");
+    } finally {
+      delete process.env.WORKSPACE_PROXY_URL;
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
