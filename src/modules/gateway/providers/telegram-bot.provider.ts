@@ -7,7 +7,7 @@
  * @module modules/gateway/providers/telegram-bot.provider
  */
 
-import type { GatewayType } from "@prisma/client";
+import type { GatewayType, Prisma } from "@prisma/client";
 import type { GatewayAction } from "../gateway.registry";
 import type { TelegramBotConfig, TelegramBotCredentials } from "../gateway.types";
 import {
@@ -147,7 +147,15 @@ export class TelegramBotProvider extends BaseGatewayProvider<
       "getWebhookInfo"
     );
 
-    if (currentWebhook.url !== desiredWebhookUrl) {
+    const needsSetWebhook = currentWebhook.url !== desiredWebhookUrl;
+
+    // The webhook secret lives in the encrypted credentials. Rows written
+    // before that carried it in the plaintext config blob; pick it up from
+    // there once, and persistWebhookSecret moves it across.
+    const legacySecret = config?.webhookSecretToken;
+    let webhookSecretToken = credentials.webhookSecretToken || legacySecret;
+
+    if (needsSetWebhook) {
       // Default allowed updates covering all event types plugins might need
       const allowedUpdates = config?.allowedUpdates ?? [
         "message",
@@ -162,11 +170,13 @@ export class TelegramBotProvider extends BaseGatewayProvider<
         "chat_join_request",
       ];
 
-      // Generate a webhook secret token for authentication
-      // This is sent by Telegram in the X-Telegram-Bot-Api-Secret-Token header
-      const { randomBytes } = await import('crypto');
-      const webhookSecretToken = config?.webhookSecretToken
-        || randomBytes(32).toString('hex');
+      // A fresh secret is only minted when we are about to hand it to
+      // Telegram; generating one without a setWebhook would reject every
+      // delivery until the next reconnect.
+      if (!webhookSecretToken) {
+        const { randomBytes } = await import("crypto");
+        webhookSecretToken = randomBytes(32).toString("hex");
+      }
 
       await this.callApi(credentials.botToken, "setWebhook", {
         url: desiredWebhookUrl,
@@ -174,19 +184,6 @@ export class TelegramBotProvider extends BaseGatewayProvider<
         drop_pending_updates: config?.dropPendingUpdates,
         secret_token: webhookSecretToken,
       });
-
-      // Persist the secret token in gateway config for webhook validation
-      try {
-        const { prisma } = await import('@/lib/prisma');
-        const existing = await prisma.gateway.findUnique({ where: { id: gatewayId }, select: { config: true } });
-        const currentConfig = (existing?.config as Record<string, unknown>) || {};
-        await prisma.gateway.update({
-          where: { id: gatewayId },
-          data: { config: { ...currentConfig, webhookSecretToken } },
-        });
-      } catch (err) {
-        this.log.warn({ gatewayId, error: (err as Error).message }, 'Failed to persist webhook secret token');
-      }
 
       this.log.info(
         { gatewayId, webhookUrl: desiredWebhookUrl },
@@ -196,6 +193,47 @@ export class TelegramBotProvider extends BaseGatewayProvider<
       this.log.debug(
         { gatewayId, webhookUrl: desiredWebhookUrl },
         "Webhook already set correctly, skipping"
+      );
+    }
+
+    const secretChanged = webhookSecretToken !== undefined && credentials.webhookSecretToken !== webhookSecretToken;
+    if (webhookSecretToken && (secretChanged || legacySecret !== undefined)) {
+      await this.persistWebhookSecret(gatewayId, webhookSecretToken);
+      this.credentialsCache.set(gatewayId, { ...credentials, webhookSecretToken });
+    }
+  }
+
+  /**
+   * Store the webhook secret inside the gateway's encrypted credentials and
+   * drop the legacy plaintext copy from `config`, in one update. Best
+   * effort: a failure here leaves the gateway connected and is logged.
+   */
+  private async persistWebhookSecret(gatewayId: string, webhookSecretToken: string): Promise<void> {
+    try {
+      const { prisma } = await import("@/lib/prisma");
+      const { decryptJson, encrypt } = await import("@/lib/encryption");
+
+      const existing = await prisma.gateway.findUnique({
+        where: { id: gatewayId },
+        select: { credentialsEnc: true, config: true },
+      });
+      if (!existing) return;
+
+      const storedCredentials = decryptJson<TelegramBotCredentials>(existing.credentialsEnc);
+      const { webhookSecretToken: _legacy, ...config } =
+        (existing.config as Record<string, unknown> | null) ?? {};
+
+      await prisma.gateway.update({
+        where: { id: gatewayId },
+        data: {
+          credentialsEnc: encrypt({ ...storedCredentials, webhookSecretToken }),
+          config: config as Prisma.InputJsonObject,
+        },
+      });
+    } catch (err) {
+      this.log.warn(
+        { gatewayId, error: (err as Error).message },
+        "Failed to persist webhook secret token"
       );
     }
   }

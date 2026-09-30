@@ -21,6 +21,14 @@ export type { Gateway, GatewayStatus, GatewayType } from "@prisma/client";
  */
 export interface TelegramBotCredentials {
   botToken: string;
+  /**
+   * Secret Telegram echoes in `X-Telegram-Bot-Api-Secret-Token` on every
+   * webhook delivery. The provider generates it on setWebhook and keeps it
+   * here, inside the encrypted blob, so it is never returned by
+   * `toSafeGateway` or the account export. The API never accepts it from a
+   * client (`telegramBotCredentialsSchema` strips unknown keys).
+   */
+  webhookSecretToken?: string;
 }
 
 /**
@@ -69,7 +77,13 @@ export interface TelegramBotConfig {
   webhookUrl?: string;
   allowedUpdates?: string[];
   dropPendingUpdates?: boolean;
-  /** Secret token sent by Telegram in X-Telegram-Bot-Api-Secret-Token header */
+  /**
+   * @deprecated Legacy, plaintext location of the webhook secret. Rows
+   * written before it moved into `TelegramBotCredentials` still carry it;
+   * readers fall back to it, and the provider / migration script move it
+   * out. Remove once `scripts/migrate-telegram-webhook-secret.ts` has run
+   * in production.
+   */
   webhookSecretToken?: string;
 }
 

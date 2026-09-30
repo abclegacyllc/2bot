@@ -11,6 +11,18 @@
  *      any size export without OOMing the API. The route handler can
  *      stream the resulting iterator straight to the client.
  *
+ *      Two rules keep the export from becoming a side door:
+ *        - Rows on org-capable tables (`ORG_SCOPED_TABLES`) are included
+ *          only when personal (`organizationId = null`) or when the user
+ *          currently holds an ACTIVE membership of that organisation —
+ *          the same rule the rest of the API applies. A removed or
+ *          suspended member does not get the org's current state back
+ *          just because they created the row.
+ *        - Credential material is never emitted (`REDACTED_COLUMNS`,
+ *          `REDACTED_JSON_KEYS`): ciphertext columns, session tokens,
+ *          MFA secrets and the Telegram webhook secret are stripped from
+ *          every row before it leaves the service.
+ *
  *   2. **Soft delete** (`requestDeletion` / `cancelDeletion`) — sets
  *      `deletedAt` and `deletionScheduledFor` (= now + 30d) on the user
  *      row. Until that scheduled date the user can recover the account
@@ -92,13 +104,67 @@ export const EXPORT_TABLES: readonly Prisma.ModelName[] = [
 ] as const;
 
 /**
+ * Members of `EXPORT_TABLES` that also carry an `organizationId`. A row on
+ * one of these with `organizationId` set belongs to the organisation;
+ * `userId` only records who created it. The rest of the API serves such
+ * rows only to ACTIVE members (`gateway.service` checkOwnership,
+ * `workflow.service` ownerFilter, `org-auth` requireOrgHeaderMembership),
+ * so the export applies the same rule.
+ */
+export const ORG_SCOPED_TABLES: ReadonlySet<Prisma.ModelName> = new Set<Prisma.ModelName>([
+  "AIUsage",
+  "AgentSession",
+  "AuditLog",
+  "BuildSpecRun",
+  "Gateway",
+  "MCPServerConfig",
+  "Project",
+  "ProjectResource",
+  "UsageHistory",
+  "UserPlugin",
+  "Workflow",
+  "WorkspaceContainer",
+]);
+
+/**
+ * Columns removed from every exported row of the given model. Ciphertext,
+ * bearer material and MFA secrets are not "personal data" in the GDPR
+ * sense and must not end up in a file the user downloads and forwards.
+ */
+export const REDACTED_COLUMNS: Partial<Record<Prisma.ModelName, readonly string[]>> = {
+  User: ["passwordHash", "totpSecret", "totpRecoveryCodes"],
+  Session: ["token"],
+  Gateway: ["credentialsEnc"],
+  MCPServerConfig: ["configEnc"],
+  WorkspaceContainer: ["bridgeAuthToken"],
+};
+
+/**
+ * Keys removed from JSON columns per model. `Gateway.config` carried the
+ * Telegram webhook secret in plaintext before it moved into the encrypted
+ * credentials; rows written before that migration still have it.
+ */
+export const REDACTED_JSON_KEYS: Partial<Record<Prisma.ModelName, Readonly<Record<string, readonly string[]>>>> = {
+  Gateway: { config: ["webhookSecretToken"] },
+};
+
+/**
+ * The `where` shape the export sends to every delegate. `OR` is present
+ * only for `ORG_SCOPED_TABLES`.
+ */
+interface ExportWhere {
+  userId: string;
+  OR?: Array<{ organizationId: null } | { organizationId: { in: string[] } }>;
+}
+
+/**
  * Map a Prisma ModelName to its lowercase delegate (e.g. "Workflow" →
  * "workflow"). The Prisma client camelCases delegate names; that's the
  * convention every existing call site in this repo uses too.
  */
 function delegateFor<K extends Prisma.ModelName>(
   model: K,
-): { findMany: (args: { where: { userId: string }; take: number; cursor?: { id: string }; skip?: number; orderBy: { id: "asc" } }) => Promise<Array<{ id: string }>> } {
+): { findMany: (args: { where: ExportWhere; take: number; cursor?: { id: string }; skip?: number; orderBy: { id: "asc" } }) => Promise<Array<{ id: string }>> } {
   const key = (model.charAt(0).toLowerCase() + model.slice(1)) as keyof typeof prisma;
   return prisma[key] as unknown as ReturnType<typeof delegateFor<K>>;
 }
@@ -125,31 +191,46 @@ class AccountService {
     if (!user) {
       throw new Error(`User ${userId} not found`);
     }
-    yield { table: "User", row: stripPasswordHash(user) };
+    yield { table: "User", row: redactRow("User", user) };
+
+    // Org rows are visible only through a current ACTIVE membership.
+    // Resolved once so every org-scoped table sees the same set.
+    const memberships = await prisma.membership.findMany({
+      where: { userId, status: "ACTIVE" },
+      select: { organizationId: true },
+    });
+    const activeOrgIds = memberships.map((m) => m.organizationId);
 
     for (const tableName of EXPORT_TABLES) {
       if (tableName === "User") continue; // already yielded
-      yield* this.streamTableForUser(tableName, userId);
+      yield* this.streamTableForUser(tableName, userId, activeOrgIds);
     }
   }
 
   private async *streamTableForUser(
     tableName: Prisma.ModelName,
     userId: string,
+    activeOrgIds: readonly string[],
   ): AsyncIterable<ExportRow> {
     const delegate = delegateFor(tableName);
+    const where: ExportWhere = ORG_SCOPED_TABLES.has(tableName)
+      ? {
+          userId,
+          OR: [{ organizationId: null }, { organizationId: { in: [...activeOrgIds] } }],
+        }
+      : { userId };
     let cursor: { id: string } | undefined;
 
     while (true) {
       const page: Array<{ id: string }> = await delegate.findMany({
-        where: { userId },
+        where,
         orderBy: { id: "asc" },
         take: EXPORT_PAGE_SIZE,
         ...(cursor ? { cursor, skip: 1 } : {}),
       });
 
       for (const row of page) {
-        yield { table: tableName, row };
+        yield { table: tableName, row: redactRow(tableName, row) };
       }
 
       if (page.length < EXPORT_PAGE_SIZE) break;
@@ -298,10 +379,32 @@ class AccountService {
 // helpers
 // ---------------------------------------------------------------------------
 
-function stripPasswordHash<T extends { passwordHash?: string }>(user: T): Omit<T, "passwordHash"> {
+/**
+ * Shallow-copy `row` without the columns and nested JSON keys listed for
+ * `table`. Exported for the route tests; the service applies it to every
+ * chunk it yields.
+ */
+export function redactRow(table: Prisma.ModelName, row: object): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
 
-  const { passwordHash: _ph, ...rest } = user;
-  return rest;
+  for (const column of REDACTED_COLUMNS[table] ?? []) {
+    delete out[column];
+  }
+
+  const nested = REDACTED_JSON_KEYS[table];
+  if (nested) {
+    for (const [column, keys] of Object.entries(nested)) {
+      const blob = out[column];
+      if (!blob || typeof blob !== "object" || Array.isArray(blob)) continue;
+      const copy: Record<string, unknown> = { ...(blob as Record<string, unknown>) };
+      for (const key of keys) {
+        delete copy[key];
+      }
+      out[column] = copy;
+    }
+  }
+
+  return out;
 }
 
 export const accountService = new AccountService();

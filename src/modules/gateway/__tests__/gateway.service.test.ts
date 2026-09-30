@@ -394,6 +394,43 @@ describe('gatewayService.update', () => {
     });
   });
 
+  it('carries the Telegram webhook secret over when credentials are replaced', async () => {
+    mockedPrisma.gateway.findUnique.mockResolvedValue({
+      ...mockGateway,
+      credentialsEnc: 'encrypted:{"botToken":"123456:ABC","webhookSecretToken":"whsec-64hex"}',
+    });
+    mockedPrisma.gateway.update.mockResolvedValue(mockGateway);
+
+    const ctx = createTestContext();
+    await gatewayService.update(ctx, 'gw-123', {
+      credentials: { botToken: 'new-token' },
+    });
+
+    expect(mockedPrisma.gateway.update).toHaveBeenCalledWith({
+      where: { id: 'gw-123' },
+      data: expect.objectContaining({
+        credentialsEnc: 'encrypted:{"botToken":"new-token","webhookSecretToken":"whsec-64hex"}',
+      }),
+    });
+  });
+
+  it('does not invent a webhook secret for a Telegram gateway that never had one', async () => {
+    mockedPrisma.gateway.findUnique.mockResolvedValue(mockGateway);
+    mockedPrisma.gateway.update.mockResolvedValue(mockGateway);
+
+    const ctx = createTestContext();
+    await gatewayService.update(ctx, 'gw-123', {
+      credentials: { botToken: 'new-token' },
+    });
+
+    expect(mockedPrisma.gateway.update).toHaveBeenCalledWith({
+      where: { id: 'gw-123' },
+      data: expect.objectContaining({
+        credentialsEnc: 'encrypted:{"botToken":"new-token"}',
+      }),
+    });
+  });
+
   it('throws ForbiddenError if updating another user gateway', async () => {
     mockedPrisma.gateway.findUnique.mockResolvedValue({
       ...mockGateway,

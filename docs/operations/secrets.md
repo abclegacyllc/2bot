@@ -178,3 +178,24 @@ make install-hooks          # one-time setup on each clone
 make scan-secrets           # ad-hoc gitleaks scan of the working tree
 gitleaks protect --staged   # what the pre-commit hook runs (if installed)
 ```
+
+---
+
+## 6. Telegram webhook secret relocation (one-off)
+
+Until 2026-09-30 the Telegram `secret_token` (the only check on inbound
+`POST /webhooks/telegram/:gatewayId`) sat in `Gateway.config` as plaintext
+JSON, so `GET /gateways/:id` and the account export returned it. It now
+lives inside the encrypted credentials blob (`TelegramBotCredentials.
+webhookSecretToken`). Every reader falls back to the old location, and the
+provider moves the value across on each gateway's next reconnect, so the
+deploy itself needs no data step. Run the script once afterwards to close
+the gap for gateways that never reconnect, then the fallback can go:
+
+```bash
+DRY_RUN=1 npx tsx scripts/migrate-telegram-webhook-secret.ts   # report only
+npx tsx scripts/migrate-telegram-webhook-secret.ts             # move + strip plaintext
+```
+
+It needs the same `DATABASE_URL` and encryption key env as the API. Rows it
+cannot decrypt are reported and left untouched (exit code 1).

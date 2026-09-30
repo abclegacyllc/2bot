@@ -193,9 +193,14 @@ internalRouter.get('/credentials/:gatewayId', async (req: Request, res: Response
     // Decrypt credentials
     const credentials = decryptJson<GatewayCredentials>(gateway.credentialsEnc);
 
-    // Extract webhook secret token from config (if set)
+    // Webhook secret: inside the encrypted credentials; legacy rows still
+    // carry it in the plaintext config until the migration script has run.
     const config = (gateway.config as Record<string, unknown>) || {};
-    const webhookSecretToken = (config.webhookSecretToken as string) || undefined;
+    const storedSecret = (credentials as { webhookSecretToken?: unknown }).webhookSecretToken;
+    const legacySecret = config.webhookSecretToken;
+    const webhookSecretToken =
+      (typeof storedSecret === "string" && storedSecret ? storedSecret : undefined)
+      ?? (typeof legacySecret === "string" && legacySecret ? legacySecret : undefined);
 
     log.debug({ gatewayId, containerId: container.id, type: gateway.type }, 'Credentials served via REST');
 

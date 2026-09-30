@@ -26,6 +26,7 @@ import type {
     GatewayCredentials,
     GatewayListItem,
     SafeGateway,
+    TelegramBotCredentials,
     UpdateGatewayRequest
 } from "./gateway.types";
 
@@ -394,7 +395,7 @@ class GatewayService {
     }
 
     if (data.credentials !== undefined) {
-      updateData.credentialsEnc = encrypt(data.credentials);
+      updateData.credentialsEnc = encrypt(this.preserveWebhookSecret(existing, data.credentials));
     }
 
     if (data.config !== undefined) {
@@ -751,6 +752,27 @@ class GatewayService {
     if (!['OWNER', 'ADMIN'].includes(membership.role)) {
       throw new ForbiddenError("Only organization admins can modify gateways");
     }
+  }
+
+  /**
+   * A credential update from the API never carries the Telegram webhook
+   * secret (the provider generates it and the request schema strips
+   * unknown keys), so replacing the blob wholesale would drop it and leave
+   * the webhook unauthenticated until the next setWebhook. Carry the stored
+   * secret over.
+   */
+  private preserveWebhookSecret(existing: Gateway, incoming: GatewayCredentials): GatewayCredentials {
+    if (existing.type !== "TELEGRAM_BOT") return incoming;
+    if ("webhookSecretToken" in incoming) return incoming;
+    try {
+      const stored = decryptJson<TelegramBotCredentials>(existing.credentialsEnc);
+      if (stored.webhookSecretToken) {
+        return { ...incoming, webhookSecretToken: stored.webhookSecretToken };
+      }
+    } catch {
+      // Undecryptable old credentials: nothing to carry over.
+    }
+    return incoming;
   }
 
   /**

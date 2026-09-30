@@ -18,13 +18,14 @@ import { redis } from "@/lib/redis";
 import { wasReplayed } from "@/lib/webhook-replay-cache";
 import { gatewayRegistry, gatewayService } from "@/modules/gateway";
 import { gatewayChatService } from "@/modules/gateway/gateway-chats.service";
-import type { DiscordBotCredentials, SlackBotCredentials, WhatsAppBotCredentials } from "@/modules/gateway/gateway.types";
+import type { DiscordBotCredentials, SlackBotCredentials, TelegramBotCredentials, WhatsAppBotCredentials } from "@/modules/gateway/gateway.types";
 import type { DiscordInteraction } from "@/modules/plugin/plugin.events";
 import { handleDiscordWebhook, handleSlackWebhook, handleTelegramWebhook, handleWhatsAppWebhook } from "@/modules/plugin/plugin.events";
 import { recordV1Dispatch, shouldRunV1Dispatch } from "@/modules/workflow/v1-dispatch-telemetry";
 import { checkDiscordMessageTrigger, checkSlackMessageTrigger, checkTelegramCallbackTrigger, checkTelegramMessageTrigger, checkWhatsAppMessageTrigger, handleWebhookTrigger } from "@/modules/workflow/workflow.triggers";
 import type { ApiResponse } from "@/shared/types";
 
+import { timingSafeEqual } from "node:crypto";
 import { RateLimiterRes } from 'rate-limiter-flexible';
 import { createRateLimiter } from "../middleware/rate-limit";
 
@@ -205,6 +206,49 @@ interface GatewayParams {
 export const webhookRouter = Router();
 
 /**
+ * Resolve the secret Telegram must echo in `X-Telegram-Bot-Api-Secret-Token`.
+ *
+ * It lives in the encrypted credentials. Rows written before that carried
+ * it in the plaintext `config` blob; that location is read as a fallback
+ * until `scripts/migrate-telegram-webhook-secret.ts` has run. Returns
+ * undefined when the gateway has no secret configured at all.
+ */
+export function resolveTelegramWebhookSecret(gateway: {
+  credentialsEnc: string;
+  config: unknown;
+}): string | undefined {
+  try {
+    const credentials = decryptJson<TelegramBotCredentials>(gateway.credentialsEnc);
+    if (typeof credentials?.webhookSecretToken === "string" && credentials.webhookSecretToken) {
+      return credentials.webhookSecretToken;
+    }
+  } catch {
+    // Undecryptable credentials: fall through to the legacy location.
+  }
+  const config = gateway.config as { webhookSecretToken?: unknown } | null;
+  const legacy = config?.webhookSecretToken;
+  return typeof legacy === "string" && legacy ? legacy : undefined;
+}
+
+/**
+ * True when `provided` matches the gateway's webhook secret (timing-safe).
+ * A gateway with no secret configured accepts every delivery, as it did
+ * before secrets existed; the provider assigns one on its next setWebhook.
+ */
+export function verifyTelegramSecretToken(
+  gateway: { credentialsEnc: string; config: unknown },
+  provided: string | undefined,
+): boolean {
+  const expected = resolveTelegramWebhookSecret(gateway);
+  if (!expected) return true;
+  if (!provided) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
  * Handle Telegram webhook
  *
  * POST /webhooks/telegram/:gatewayId
@@ -302,14 +346,12 @@ webhookRouter.post(
         // Could queue for later processing
       }
 
-      // Optional: Verify webhook authenticity using secret_token
-      // If you set a secret_token when calling setWebhook, Telegram sends it
-      // in the X-Telegram-Bot-Api-Secret-Token header
+      // Verify webhook authenticity: Telegram echoes the secret_token we
+      // passed to setWebhook in X-Telegram-Bot-Api-Secret-Token.
       const secretTokenHeader = req.headers["x-telegram-bot-api-secret-token"];
       const secretToken = Array.isArray(secretTokenHeader) ? secretTokenHeader[0] : secretTokenHeader;
-      const config = gateway.config as { webhookSecretToken?: string } | null;
-      
-      if (config?.webhookSecretToken && secretToken !== config.webhookSecretToken) {
+
+      if (!verifyTelegramSecretToken(gateway, secretToken)) {
         webhookLogger.warn(
           { gatewayId },
           "Webhook secret token mismatch"

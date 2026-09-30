@@ -4,6 +4,9 @@
  * Covers:
  *   - export iterates User + every EXPORT_TABLES delegate, paginates,
  *     and strips passwordHash from the User chunk
+ *   - export scopes org-capable tables to personal rows + ACTIVE orgs
+ *   - export redacts ciphertext / token columns and the nested Telegram
+ *     webhook secret
  *   - requestDeletion sets deletedAt + deletionScheduledFor + isActive=false
  *   - requestDeletion is idempotent
  *   - cancelDeletion clears scheduling fields and re-activates
@@ -16,6 +19,9 @@ import {
   accountService,
   DELETION_GRACE_DAYS,
   EXPORT_TABLES,
+  ORG_SCOPED_TABLES,
+  REDACTED_COLUMNS,
+  redactRow,
 } from "../account.service";
 
 // ---------------------------------------------------------------------------
@@ -86,9 +92,21 @@ const mocked = prisma as unknown as {
   user: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   session: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   passwordResetToken: { deleteMany: ReturnType<typeof vi.fn> };
+  membership: { findMany: ReturnType<typeof vi.fn> };
   workflow: { findMany: ReturnType<typeof vi.fn> };
+  gateway: { findMany: ReturnType<typeof vi.fn> };
+  mCPServerConfig: { findMany: ReturnType<typeof vi.fn> };
+  workspaceContainer: { findMany: ReturnType<typeof vi.fn> };
   $transaction: ReturnType<typeof vi.fn>;
 };
+
+async function collect(userId: string): Promise<{ table: string; row: Record<string, unknown> }[]> {
+  const chunks: { table: string; row: Record<string, unknown> }[] = [];
+  for await (const chunk of accountService.exportUserData(userId)) {
+    chunks.push(chunk as { table: string; row: Record<string, unknown> });
+  }
+  return chunks;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -168,6 +186,146 @@ describe("exportUserData", () => {
     expect(secondCallArgs?.cursor).toEqual({ id: "wf-199" });
     expect(secondCallArgs?.skip).toBe(1);
     expect(chunks.filter((c) => c.table === "Workflow")).toHaveLength(201);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// exportUserData — org scoping
+// ---------------------------------------------------------------------------
+
+describe("exportUserData org scoping", () => {
+  beforeEach(() => {
+    mocked.user.findUnique.mockResolvedValue({ id: "u1", email: "x", passwordHash: "" });
+  });
+
+  it("every ORG_SCOPED_TABLES entry is also exported", () => {
+    for (const table of ORG_SCOPED_TABLES) {
+      expect(EXPORT_TABLES).toContain(table);
+    }
+  });
+
+  it("asks only for ACTIVE memberships", async () => {
+    await collect("u1");
+    expect(mocked.membership.findMany).toHaveBeenCalledWith({
+      where: { userId: "u1", status: "ACTIVE" },
+      select: { organizationId: true },
+    });
+  });
+
+  it("limits org-capable tables to personal rows plus orgs with an ACTIVE membership", async () => {
+    mocked.membership.findMany.mockResolvedValueOnce([
+      { organizationId: "org-active" },
+      { organizationId: "org-other" },
+    ]);
+
+    await collect("u1");
+
+    const gatewayWhere = mocked.gateway.findMany.mock.calls[0]?.[0]?.where;
+    expect(gatewayWhere).toEqual({
+      userId: "u1",
+      OR: [
+        { organizationId: null },
+        { organizationId: { in: ["org-active", "org-other"] } },
+      ],
+    });
+    const workflowWhere = mocked.workflow.findMany.mock.calls[0]?.[0]?.where;
+    expect(workflowWhere).toEqual(gatewayWhere);
+  });
+
+  it("excludes every org row when the user holds no ACTIVE membership (removed or suspended)", async () => {
+    mocked.membership.findMany.mockResolvedValueOnce([]);
+
+    await collect("u1");
+
+    const gatewayWhere = mocked.gateway.findMany.mock.calls[0]?.[0]?.where;
+    expect(gatewayWhere).toEqual({
+      userId: "u1",
+      OR: [{ organizationId: null }, { organizationId: { in: [] } }],
+    });
+  });
+
+  it("keeps the plain userId filter for tables without organizationId", async () => {
+    mocked.membership.findMany.mockResolvedValueOnce([{ organizationId: "org-active" }]);
+
+    await collect("u1");
+
+    const sessionWhere = mocked.session.findMany.mock.calls[0]?.[0]?.where;
+    expect(sessionWhere).toEqual({ userId: "u1" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// exportUserData — redaction
+// ---------------------------------------------------------------------------
+
+describe("exportUserData redaction", () => {
+  it("strips the password hash and MFA material from the User row", async () => {
+    mocked.user.findUnique.mockResolvedValue({
+      id: "u1",
+      email: "alice@example.com",
+      passwordHash: "bcrypt-hash",
+      totpSecret: "v2:1:ciphertext",
+      totpEnabledAt: new Date("2026-05-08T00:00:00Z"),
+      totpRecoveryCodes: ["hash-1", "hash-2"],
+    });
+
+    const chunks = await collect("u1");
+    const user = chunks[0]!.row;
+
+    expect(user.email).toBe("alice@example.com");
+    expect(user.totpEnabledAt).toBeInstanceOf(Date);
+    expect(user).not.toHaveProperty("passwordHash");
+    expect(user).not.toHaveProperty("totpSecret");
+    expect(user).not.toHaveProperty("totpRecoveryCodes");
+  });
+
+  it("strips ciphertext columns, the session token and the nested Telegram webhook secret", async () => {
+    mocked.user.findUnique.mockResolvedValue({ id: "u1", email: "x", passwordHash: "" });
+    mocked.gateway.findMany.mockResolvedValueOnce([
+      {
+        id: "gw1",
+        name: "bot",
+        credentialsEnc: "v2:1:ciphertext",
+        config: { webhookUrl: "https://webhook.2bot.org/telegram/gw1", webhookSecretToken: "64hex" },
+      },
+    ]);
+    mocked.session.findMany.mockResolvedValueOnce([{ id: "s1", token: "session-token", userId: "u1" }]);
+    mocked.mCPServerConfig.findMany.mockResolvedValueOnce([{ id: "m1", configEnc: "v2:1:ciphertext" }]);
+    mocked.workspaceContainer.findMany.mockResolvedValueOnce([{ id: "c1", bridgeAuthToken: "v2:1:ciphertext" }]);
+
+    const chunks = await collect("u1");
+    const byTable = (t: string) => chunks.find((c) => c.table === t)!.row;
+
+    const gateway = byTable("Gateway");
+    expect(gateway.name).toBe("bot");
+    expect(gateway).not.toHaveProperty("credentialsEnc");
+    expect(gateway.config).toEqual({ webhookUrl: "https://webhook.2bot.org/telegram/gw1" });
+
+    const session = byTable("Session");
+    expect(session.userId).toBe("u1");
+    expect(session).not.toHaveProperty("token");
+
+    expect(byTable("MCPServerConfig")).not.toHaveProperty("configEnc");
+    expect(byTable("WorkspaceContainer")).not.toHaveProperty("bridgeAuthToken");
+
+    // Nothing that looks like ciphertext or a token survives serialisation.
+    const serialised = JSON.stringify(chunks);
+    expect(serialised).not.toContain("ciphertext");
+    expect(serialised).not.toContain("session-token");
+    expect(serialised).not.toContain("64hex");
+  });
+
+  it("redactRow does not mutate its input and tolerates non-object JSON columns", () => {
+    const row = { id: "gw1", credentialsEnc: "x", config: "not-an-object" };
+    const out = redactRow("Gateway", row);
+    expect(out).toEqual({ id: "gw1", config: "not-an-object" });
+    expect(row.credentialsEnc).toBe("x");
+  });
+
+  it("REDACTED_COLUMNS only names exported tables", () => {
+    for (const table of Object.keys(REDACTED_COLUMNS)) {
+      expect(EXPORT_TABLES).toContain(table);
+    }
   });
 });
 
