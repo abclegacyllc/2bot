@@ -127,7 +127,7 @@ services:
   # `DATABASE_URL_REPLICA=postgresql://...@postgres-replica:5432/2bot_production`.
   # ===========================================
   postgres-replica:
-    image: bitnami/postgresql:15
+    image: soldevelo/postgresql:15
     container_name: 2bot-postgres-replica
     restart: unless-stopped
     profiles: ["scaling"]
